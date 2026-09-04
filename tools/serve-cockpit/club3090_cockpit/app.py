@@ -9235,7 +9235,24 @@ class CockpitApp(App):
         Binding("2", "mode_validate", "Bring & Validate", show=False),
         # Footer description is rewritten live by `_sync_footer_labels` (Fit-check /
         # Serve / Launch step / …) — "Select" is only the class default.
-        Binding("enter", "primary_action", "Select", show=True),
+        #
+        # show=False DELIBERATELY.  A focused DataTable declares its own
+        # `enter → select_cursor (show=False)`, and the deepest focused node
+        # wins the footer — so ⏎ silently vanished from the footer on every
+        # table-focused pane, which is the BOOT state of Catalog, Orchestration
+        # and ③ Gate.  The key itself always worked (RowSelected routes to
+        # `action_primary_action`); only the advertisement was inconsistent,
+        # present in some panes and absent in others for the same key.
+        #
+        # Rather than fight DataTable for the slot in the four primary tables,
+        # ⏎ is advertised in ONE consistent place instead: `#mode-action-hint`
+        # in the Modes rail, which `_sync_footer_labels` already writes with the
+        # SAME computed label ("⏎ Serve", "⏎ Fit-check", "⏎ Re-run health"), plus
+        # each pane's own hint line.  That is honest in every pane and frees
+        # ~14 columns of footer at 80 wide, where the footer is the scarcest
+        # space on screen.  `_relabel_binding` is still useful: it keeps the
+        # command-palette/tooltip text truthful.
+        Binding("enter", "primary_action", "Select", show=False),
         # Catalog (Run) — default pin management (.env write, gated=no GPU).
         Binding("d", "set_default", "Set default", show=False),
         Binding("D", "clear_default", "Clear default", show=False),

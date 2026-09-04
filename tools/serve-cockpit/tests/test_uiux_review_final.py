@@ -195,3 +195,57 @@ async def test_promote_footer_gains_enter_when_required_edits_fill():
 
         assert screen.query_one("#promote-stage-btn", Button).disabled is False
         assert "Write LOCAL layer" in _footer_keys(screen), _footer_keys(screen)
+
+
+# ── #2 · ⏎ is advertised consistently, in one place ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_enter_advertised_consistently_across_table_and_non_table_panes():
+    """⏎ used to appear in the footer on non-table panes and VANISH on
+    table-focused ones (Catalog, Orchestration and ③ Gate all boot with a
+    DataTable focused, and DataTable's own `enter → select_cursor` binding is
+    show=False and wins over the app's).  The key worked in all of them — only
+    the advertisement was inconsistent.
+
+    ⏎ is now advertised in exactly one place, the Modes rail's
+    `#mode-action-hint`, in EVERY pane and with the pane's real verb."""
+    from textual.widgets import Label
+    from textual.widgets._footer import FooterKey
+
+    app, _, _ = make_app(surface="producer")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        await _settle(pilot)
+
+        # Catalog: a DataTable owns focus (the case that used to lose ⏎).
+        assert isinstance(app.focused, DataTable), type(app.focused).__name__
+        hint = _renderable_text(app.query_one("#mode-action-hint", Label)).strip()
+        assert hint == "⏎ Serve", hint
+        assert "enter" not in {k.key for k in app.query(FooterKey)}
+
+        # Bring & Validate: focus is NOT a DataTable — used to be the pane where
+        # the footer DID show ⏎, i.e. the source of the inconsistency.
+        await pilot.press("2")
+        await _settle(pilot)
+        await _settle(pilot)
+        hint = _renderable_text(app.query_one("#mode-action-hint", Label)).strip()
+        assert hint == "⏎ Fit-check", hint
+        assert "enter" not in {k.key for k in app.query(FooterKey)}
+
+
+@pytest.mark.asyncio
+async def test_enter_still_works_on_a_table_focused_pane():
+    """Dropping show=True is a DISPLAY change only — ⏎ on a catalog row must
+    still reach the primary action (via DataTable.RowSelected)."""
+    app, _, _ = make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        await _settle(pilot)
+        fired = []
+        app.action_primary_action = lambda *a, **k: fired.append(True)  # type: ignore[method-assign]
+        app.query_one("#catalog-table", DataTable).focus()
+        await _settle(pilot)
+        await pilot.press("enter")
+        await _settle(pilot)
+        assert fired, "⏎ no longer routes to the primary action"
