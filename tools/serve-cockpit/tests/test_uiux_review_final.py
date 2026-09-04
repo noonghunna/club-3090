@@ -249,3 +249,76 @@ async def test_enter_still_works_on_a_table_focused_pane():
         await pilot.press("enter")
         await _settle(pilot)
         assert fired, "⏎ no longer routes to the primary action"
+
+
+# ── #4 · no keyboard trap after Inspect ─────────────────────────────────────
+
+
+async def _reveal_bring_stage2(app, pilot, monkeypatch=None):
+    """Drive ① Bring to the post-Inspect stage-2 reveal (no HF call)."""
+    await pilot.press("2")
+    await _settle(pilot)
+    entries, _err = await app._data.load_catalog_rows()
+    app._variants = [e.row for e in entries]
+    app._known_gpu_vram_gb = lambda: 24.0        # type: ignore[method-assign]
+    app._known_gpu_count = lambda: 2             # type: ignore[method-assign]
+    app._reveal_funnel_slugs("safetensors", 15.0)
+    await _settle(pilot)
+    await _settle(pilot)
+
+
+@pytest.mark.asyncio
+async def test_inspect_focuses_the_fit_check_button_not_the_select():
+    """After the stage-2 reveal the app focused the config Select while the
+    footer and Modes rail both advertise "⏎ Fit-check".  ⏎ on a focused Select
+    opens its dropdown, so the advertised primary action was unreachable from
+    the focus the app had just set — a keyboard trap.
+
+    The Fit-check button is the right target: the Select is one Shift+Tab away
+    and already defaults to the ⭐ recommendation."""
+    from textual.widgets import Label
+
+    app, _, _ = make_app(surface="producer")
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _settle(pilot)
+        await _reveal_bring_stage2(app, pilot)
+
+        assert app.focused is not None
+        assert app.focused.id == "lane-bring-fit-btn", (
+            f"focus landed on {app.focused.id!r}, so ⏎ does not do what the rail "
+            f"advertises"
+        )
+        # ...and the advertisement it has to match is still Fit-check.
+        hint = _renderable_text(app.query_one("#mode-action-hint", Label)).strip()
+        assert hint == "⏎ Fit-check", hint
+
+
+@pytest.mark.asyncio
+async def test_enter_after_inspect_runs_fit_check():
+    """The end-to-end claim behind the focus change: pressing the advertised ⏎
+    from the focus the app sets must actually fit-check."""
+    app, _, _ = make_app(surface="producer")
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _settle(pilot)
+        await _reveal_bring_stage2(app, pilot)
+        fired = []
+        app._trigger_lane_bring = lambda *a, **k: fired.append(True)  # type: ignore
+        await pilot.press("enter")
+        await _settle(pilot)
+        assert fired, "⏎ from the post-Inspect focus did not run the fit-check"
+
+
+@pytest.mark.asyncio
+async def test_bring_result_card_is_on_screen_at_80x24():
+    """At 80x24 the verdict card sat below the fold after Inspect, so the pane
+    answered the user's question off-screen with nothing saying so."""
+    app, _, _ = make_app(surface="producer")
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _settle(pilot)
+        await _reveal_bring_stage2(app, pilot)
+        card = app.query_one("#lane-bring-result-card", Static)
+        assert card.display
+        bottom = card.region.y + card.region.height
+        assert card.region.y >= 0 and bottom <= 24, (
+            f"result card {card.region} is off-screen at 80x24"
+        )

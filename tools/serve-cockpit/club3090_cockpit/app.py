@@ -7911,6 +7911,12 @@ class LaneBringPane(Container):
                  downloading: bool = False) -> None:
         card = self.query_one("#lane-bring-result-card", Static)
         card.update(_byo_result_text(res, weights_present, downloading))
+        # At 80x24 the verdict lands below the fold — the answer to the question
+        # the user just asked would be off-screen with nothing saying so.
+        try:
+            card.scroll_visible(animate=False)
+        except Exception:
+            pass
         # Stateful next-hint: failure → repair; success → single valid next key.
         can_continue = False
         if getattr(res, "error", ""):
@@ -11119,6 +11125,20 @@ class CockpitApp(App):
         except Exception:
             pass
 
+    def _scroll_bring_result_into_view(self) -> None:
+        """Bring ① Bring's verdict card on screen.
+
+        At 80x24 the result card sits below the fold after both Inspect and
+        Fit-check — the pane answers the user's question off-screen and nothing
+        indicates there is more to read.  Best-effort: a silent no-op when the
+        pane is not mounted."""
+        try:
+            self.query_one("#lane-bring-result-card", Static).scroll_visible(
+                animate=False
+            )
+        except Exception:
+            pass
+
     def _reveal_funnel_slugs(
         self, artifact_format: str, artifact_gb: Optional[float]
     ) -> None:
@@ -11147,13 +11167,22 @@ class CockpitApp(App):
             # Dogfood r2 — the pre-selected recommendation's details show
             # immediately (updates ride on_select_changed thereafter).
             pane.show_slug_details(self._funnel_slug_details(rec) if rec else "")
-            # Focus what was just revealed. Without this the user Tabs past the
-            # three action buttons to reach the config Select they were just told
-            # to pick from — four keys to reach the one control the pane is
-            # asking about. Deferred: the widget is not visible this cycle.
-            self.call_after_refresh(
-                lambda: self._focus_if_present("#lane-bring-profile-input")
-            )
+            # Focus what was just revealed, and focus the thing ⏎ actually does.
+            #
+            # This used to focus #lane-bring-profile-input (the config Select).
+            # That put the user in a keyboard trap: the footer and the Modes rail
+            # both say "⏎ Fit-check", but ⏎ on a focused Select opens its
+            # dropdown, so the advertised primary action was unreachable from the
+            # focus the app itself had just set.  The Fit-check button is the
+            # correct target — the Select is one Shift+Tab away and is already
+            # pre-set to the ⭐ recommendation, so the common path (accept the
+            # recommendation, fit-check it) is now zero keys instead of a trap.
+            # Deferred: the widgets are not visible this cycle.
+            def _focus_and_reveal() -> None:
+                self._focus_if_present("#lane-bring-fit-btn")
+                self._scroll_bring_result_into_view()
+
+            self.call_after_refresh(_focus_and_reveal)
             # Bug A (2026-07-09): the §2b size floor can hide EVERY slug — a 54G
             # bf16 repo on a 48G rig — leaving only the ✎ sentinel with NO
             # explanation.  Surface an honest verdict, distinguishing "too big for
