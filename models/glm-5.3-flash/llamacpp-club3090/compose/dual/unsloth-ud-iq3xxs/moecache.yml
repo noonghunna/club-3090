@@ -218,11 +218,13 @@ services:
       # 11,562 MiB grant UNUSED (15.6%), byte-identical across two boots, while
       # CUDA0 fills to within 7 MiB. Cause: the pool allocator halves a pool on a
       # failed cudaMalloc, so a small shortfall against the earlier budget costs
-      # half the pool. MOE_RESERVE_MB=3072 gives CUDA1 MORE cache (10,018 vs
-      # 9,762 MiB, +73% iq3_s slots) — reserving more yields more.
-      # NOT changed here: the THROUGHPUT effect is unmeasured, and per
-      # learnings/moe-cache-engine.md §3 hit rate is not the objective function.
-      # Details + repro: learnings/moe-cache-engine.md §8a.
+      # half the pool. ⚠️ DO NOT "fix" this by raising the reserve — MEASURED
+      # 2026-09-04 and it is WORSE: the reserve comes off EVERY card, so
+      # MOE_RESERVE_MB=3072 buys CUDA1 +256 MiB but costs CUDA0 -1,536 MiB
+      # (net -1,280 MiB of cache) and decode drops -12.5% (18.86 -> 16.50
+      # median, prefill flat). 1536 stays. The real fix is in the allocator
+      # (step down by 1/8 rather than halving), which recovers CUDA1 without
+      # shrinking CUDA0. Details + repro: learnings/moe-cache-engine.md §8a/§8c.
       - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
       # Cache hit/miss telemetry. Needs BOTH this AND LLAMA_ARG_LOG_VERBOSITY=4
       # — the moe-cache log line is GGML_LOG_INFO and the server's verbosity
