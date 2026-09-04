@@ -117,8 +117,6 @@ services:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     environment:
       # Drafter toggle - docker forwards only what is declared here.
-      - SPEC_N=${SPEC_N:-}
-      - SPEC=${SPEC:-}
       # Expert-cache tuning — every value MEASURED on 2×24 GB, see Caveats.
       - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
       - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}

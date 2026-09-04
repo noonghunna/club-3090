@@ -188,6 +188,12 @@ services:
       # Bare passthrough — forwarded ONLY if the caller sets it. Never write
       # `=${VAR:-}`: docker would set it EMPTY, which is not the same as unset.
       - LLAMA_ARG_LOG_VERBOSITY
+      # `--cache-reuse` via env. Inert unless the caller sets it; declared so
+      # trying it produces the ENGINE's answer (it can refuse — see the deepseek
+      # sibling's MLA+SWA note) instead of silence from an undeclared var.
+      - LLAMA_ARG_CACHE_REUSE
+      # Ring size for the above. Inert unless the caller sets it.
+      - GGML_EXPERT_PREFETCH_SLOTS
       # Bare passthrough — inert unless the caller sets it. Declared so a
       # graph-reuse A/B can run through the REAL delivery path: docker forwards
       # only what is listed here, so without this line the two arms of the
