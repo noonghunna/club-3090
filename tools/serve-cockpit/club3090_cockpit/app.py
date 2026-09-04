@@ -6996,6 +6996,13 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
             return
         stage.disabled = not self._can_stage()
         core.disabled = not self._can_stage()
+        # Enabling the buttons is only HALF the state change: ``check_action``
+        # gates ⏎ / C on the same ``_can_stage()``, and the Footer caches that
+        # verdict.  Without this the footer keeps showing only "esc Close"
+        # after the required edits are filled, so the ⏎ that just became valid
+        # is invisible.  Mutating state never repaints the footer on its own —
+        # ``refresh_bindings()`` is the other half.
+        self.refresh_bindings()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "promote-stage-btn":

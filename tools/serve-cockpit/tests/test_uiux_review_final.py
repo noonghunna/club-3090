@@ -139,3 +139,59 @@ async def test_first_run_guide_shows_the_keys_it_teaches():
         body = _renderable_text(app.screen.query_one("#first-run-body", Static))
         for key in ("[d]", "[D]", "[l]"):
             assert key in body, f"{key} missing from the rendered first-run guide:\n{body}"
+
+
+# ── #6 · ⑤ Promote's footer must follow the stage gate ──────────────────────
+
+
+def _footer_keys(screen) -> str:
+    """The footer as the user reads it — 'key description' per rendered key.
+
+    Footer.render() is a Blank (it paints through child FooterKey widgets), so
+    a str(render()) assertion would test nothing."""
+    from textual.widgets._footer import FooterKey
+
+    return " | ".join(f"{k.key_display} {k.description}" for k in screen.query(FooterKey))
+
+
+def _scaffold():
+    from club3090_cockpit.app import PromoteScaffold
+
+    return PromoteScaffold(
+        model_id="foo",
+        repo="org/foo",
+        profile_path="models/foo.yml",
+        profile_yaml="id: foo\n",
+        registry_entry="entry",
+        error="",
+    )
+
+
+@pytest.mark.asyncio
+async def test_promote_footer_gains_enter_when_required_edits_fill():
+    """`on_input_changed` enabled the stage buttons but never called
+    `refresh_bindings()`, so the footer stayed 'esc Close' after ⏎ had become
+    valid — the action that just unlocked was invisible.
+
+    Enablement and `refresh_bindings()` are two halves of one state change."""
+    from club3090_cockpit.app import PromoteScaffoldScreen
+    from textual.widgets import Button, Input
+
+    app, _, _ = make_app(surface="producer")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        await app.push_screen(PromoteScaffoldScreen(_scaffold()))
+        await _settle(pilot)
+        await _settle(pilot)
+        screen = app.screen
+
+        assert screen.query_one("#promote-stage-btn", Button).disabled is True
+        assert "Write LOCAL layer" not in _footer_keys(screen)
+
+        screen.query_one("#promote-display-input", Input).value = "Foo Model"
+        screen.query_one("#promote-family-input", Input).value = "qwen"
+        await _settle(pilot)
+        await _settle(pilot)
+
+        assert screen.query_one("#promote-stage-btn", Button).disabled is False
+        assert "Write LOCAL layer" in _footer_keys(screen), _footer_keys(screen)
