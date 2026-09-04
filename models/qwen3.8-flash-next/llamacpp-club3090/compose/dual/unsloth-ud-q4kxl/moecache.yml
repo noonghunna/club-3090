@@ -164,6 +164,14 @@ services:
       # — MLA + SWA is a plausible refusal case, so CHECK THE BOOT LOG rather
       # than assuming it engaged.
       - LLAMA_ARG_CACHE_REUSE
+      # Bare passthrough — inert unless the caller sets it (unset => the engine's
+      # getenv returns NULL => reuse stays ON; atoi("") would also be 0, so the
+      # empty form is harmless here, but bare is the house rule).
+      # Declared so the graph-reuse A/B can run through the REAL delivery path:
+      # docker forwards only what is listed here, so without this line the
+      # experiment's two arms are byte-identical and the null result is an
+      # artifact of the harness, not a measurement.
+      - LLAMA_GRAPH_REUSE_DISABLE
       # Thread count. Resolved in the entrypoint (see [threads]) because a
       # fixed compose default cannot be right on two different rigs.
       - THREADS
