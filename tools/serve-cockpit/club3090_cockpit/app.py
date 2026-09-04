@@ -4351,10 +4351,10 @@ class OperateOrchPane(Container):
                 id="scene-preview",
             )
             yield Label(
-                "[dim]\\[k] stop this model (gated)   \\[b] restart serving (gated)   "
-                "\\[n] switch model   \\[⏎] switch scene (gated)   \\[o] stop all (gated)   "
-                "\\[c] power cap… (default / clear / custom, gated)   "
-                "[dim](per-service start/stop → Containers tab)[/dim][/dim]",
+                "[dim]\\[k] stop this model   \\[b] restart serving   \\[n] switch model   "
+                "\\[⏎] switch scene   \\[o] stop all   \\[c] power cap… "
+                "(default / clear / custom) — all writes confirm-gated   "
+                "(per-service start/stop → Containers tab)[/dim]",
                 id="orch-hint",
             )
             # FIX 3 — the host disk-usage bars + system-RAM line MOVED out of this

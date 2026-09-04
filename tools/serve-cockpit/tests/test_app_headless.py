@@ -11723,6 +11723,31 @@ class TestTier1PrimaryActionAndSKeyHonesty:
             await _enter_operate(pilot, tab="tab-containers")
             assert app.check_action("primary_action", ()) is False
 
+
+    @pytest.mark.asyncio
+    async def test_orch_hint_names_keys_and_gates_once(self):
+        """#orch-hint used to append "(gated)" to four of its six keys, which
+        wrapped the hint to three or four lines at 80 columns.  The gating is
+        now stated once as a trailing clause.  Protected invariant: every key
+        is still named, and the confirm-gating is still taught."""
+        from rich.console import Console
+
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-orchestration")
+            # The hint wraps across visual lines at this width, so a
+            # line-based render drops later keys.  `_content` is the widget's
+            # full post-markup text; the screen capture below re-checks what
+            # the user actually sees, wrap-safely.
+            # ``.render().plain`` is the full pre-wrap content (this Textual's
+            # Label has no `_content`; `_renderable_text` would wrap-crop it).
+            hint = app.query_one("#orch-hint", Label).render().plain
+            for key in ("[k]", "[b]", "[n]", "[⏎]", "[o]", "[c]"):
+                assert key in hint, f"key {key} missing from hint: {hint!r}"
+            assert "(gated)" not in hint
+            assert hint.lower().count("gated") == 1
+            assert "confirm-gated" in hint
+
     @pytest.mark.asyncio
     async def test_doctor_rerun_verb_advertised_on_doctor(self):
         """The REAL Doctor verb ([y] doctor_rerun) is surfaced in the footer on
