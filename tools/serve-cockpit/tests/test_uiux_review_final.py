@@ -59,9 +59,12 @@ _KNOWN_SAFE = {
 
 
 def _string_nodes(tree: ast.AST):
-    """Yield (lineno, text) for every non-docstring string literal, with
+    """Yield (lineno, text) for every markup-RENDERED string literal, with
     f-string expression slots collapsed to \\x00 so a tag split across an
-    f-string boundary is still seen as one tag."""
+    f-string boundary is still seen as one tag.
+
+    Skips docstrings and `DEFAULT_CSS` / `CSS` blocks: neither is ever parsed as
+    markup, and both legitimately contain bracketed key names in comments."""
     docs = set()
     for n in ast.walk(tree):
         if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -73,6 +76,11 @@ def _string_nodes(tree: ast.AST):
                 and isinstance(body[0].value.value, str)
             ):
                 docs.add(id(body[0].value))
+        # CSS blocks: `DEFAULT_CSS = """…"""` / `CSS = """…"""`
+        if isinstance(n, ast.Assign):
+            names = {t.id for t in n.targets if isinstance(t, ast.Name)}
+            if names & {"DEFAULT_CSS", "CSS"}:
+                docs.add(id(n.value))
     seen = set()
     for node in ast.walk(tree):
         if id(node) in docs:
@@ -426,3 +434,172 @@ async def test_explain_error_still_reports_what_the_caller_knows():
         assert "explain failed" in body
         assert entry.model in body, body
         assert entry.engine in body, body
+
+
+# ── #16–#22 · narrow terminals (80x24 and 100x30 are real users) ────────────
+
+
+def _screen_text(app, width: int) -> str:
+    """The compositor as the user sees it.  NEVER collapse whitespace here — it
+    breaks matches across box-drawing characters and has twice reported a
+    working feature as broken."""
+    console = Console(width=width, no_color=True, legacy_windows=False)
+    with console.capture() as cap:
+        console.print(app.screen._compositor)
+    return cap.get()
+
+
+@pytest.mark.asyncio
+async def test_pane_headings_wrap_instead_of_truncating_at_80():
+    """#17 — the four pane headings are `width: auto` Labels, so at 80 cols they
+    were CUT, not wrapped: "① Bring — inspect an HF model, or bring a co".  Each
+    lost the clause that says what the pane is for.  They are now in the same
+    `width: 1fr` rule the hint lines already used."""
+    app, _, _ = make_app(surface="producer")
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("2")
+        await _settle(pilot)
+        await _settle(pilot)
+        heading = app.query_one("#lane-bring-heading")
+        assert heading.region.x + heading.region.width <= 80, heading.region
+        assert heading.region.height > 1, "heading did not wrap — still truncating"
+        assert "compose you already have" in _screen_text(app, 80)
+
+
+@pytest.mark.asyncio
+async def test_catalog_hint_shows_the_sort_and_columns_keys_at_80():
+    """#18 — `#catalog-hint` wraps (it is in the `width: 1fr` list) but was
+    `height: 1`, which clipped every wrapped row but the first.  At 80 cols the
+    line stopped at "[c]", so `[s] sort` and `[|] columns` never rendered at any
+    width below ~159 — and neither key had another teaching surface."""
+    app, _, _ = make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _settle(pilot)
+        await _settle(pilot)
+        rendered = _screen_text(app, 80)
+        assert "[s] sort" in rendered, rendered
+        assert "[|] columns" in rendered, rendered
+
+
+@pytest.mark.asyncio
+async def test_bring_action_buttons_fit_at_80():
+    """#19 — the three action buttons were fixed at 16/20/auto with 2-col
+    gutters: 58 columns of demand in the 42 the pane gets at 80 wide, so
+    "Validate compose" rendered as "Va"."""
+    app, _, _ = make_app(surface="producer")
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("2")
+        await _settle(pilot)
+        await _settle(pilot)
+        row = app.query_one("#lane-bring-actions")
+        for button in row.query("Button"):
+            right = button.region.x + button.region.width
+            assert right <= 80, f"{button.id} overflows to col {right}"
+        assert "Validate" in _screen_text(app, 80)
+
+
+@pytest.mark.asyncio
+async def test_catalog_table_survives_a_start_at_80x24():
+    """#21 — `#serve-live` was a fixed 13-row sibling; on a 24-row terminal it
+    squeezed the catalog DataTable to height 1, so not even its header row
+    survived.  Starting a model made the list you started it from vanish."""
+    app, _, _ = make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _settle(pilot)
+        await _settle(pilot)
+        app.query_one("#serve-live").add_class("serving")   # what _serving_live_pane does
+        await _settle(pilot)
+        await _settle(pilot)
+        table = app.query_one("#catalog-table", DataTable)
+        assert table.region.height >= 4, (
+            f"catalog table collapsed to {table.region.height} rows after a Start"
+        )
+        assert "slug" in _screen_text(app, 80)
+
+
+@pytest.mark.asyncio
+async def test_containers_hint_is_two_rows_and_the_log_pane_keeps_lines():
+    """#20 — the run-on Containers hint wrapped to FOUR of the 24 rows at 80x24,
+    which is what squeezed the Logs RichLog down to two lines."""
+    from textual.widgets import RichLog
+    from test_app_headless import _enter_operate
+
+    app, _, _ = make_app(surface="producer")
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _enter_operate(pilot, tab="tab-containers")
+        await _settle(pilot)
+        hint = app.query_one("#containers-hint")
+        assert hint.region.height <= 2, f"hint takes {hint.region.height} rows"
+        log = app.query_one("#drill-logs").query_one(RichLog)
+        assert log.region.height >= 4, f"log pane is {log.region.height} rows"
+
+
+@pytest.mark.parametrize(
+    "width,must_show",
+    [(80, ("Sort",)), (100, ("Sort",)), (120, ("Sort", "Refresh", "Settings"))],
+)
+@pytest.mark.asyncio
+async def test_footer_keeps_the_context_key_at_every_width(width, must_show):
+    """#16 — the footer renders bindings in declaration order and the six
+    globals are declared first, so the key that is actually about the pane you
+    are looking at was the one that got cut: "s Sort" → "s So", "s Submit" → "s
+    ".  `r`/`S` are width-gated now (both are in Help AND the command palette),
+    and the keys keep working at every width — only the advertisement is gated."""
+    app, _, _ = make_app()
+    async with app.run_test(size=(width, 30)) as pilot:
+        await _settle(pilot)
+        await _settle(pilot)
+        footer_line = _screen_text(app, width).splitlines()[-1]
+        for label in must_show:
+            assert label in footer_line, f"{label!r} clipped at {width}: {footer_line!r}"
+        if width < 120:
+            assert "Refresh" not in footer_line
+        # the gated keys still WORK — hidden is not disabled
+        assert app.check_action("refresh", ()) is not False
+        assert app.check_action("settings", ()) is not False
+
+
+@pytest.mark.parametrize(
+    "width,expected",
+    [
+        (80, ["slug", "ctx", "tps", "status"]),
+        (100, ["model", "slug", "ctx", "tps", "status"]),
+        (120, [k for k, _ in __import__("club3090_cockpit.app", fromlist=["x"])._CATALOG_COLUMNS]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_catalog_narrow_column_default(width, expected):
+    """#22 — with all 16 columns on, the table needs 151 cols and gets 46 at 80
+    wide, so status/ctx/TPS (the columns you PICK on) sat ~100 columns
+    off-screen right behind an unadvertised horizontal scroll.  Narrow widths
+    now default to the decision columns; 120+ is unchanged."""
+    from club3090_cockpit.app import CatalogPane
+
+    app, _, _ = make_app()
+    async with app.run_test(size=(width, 30)) as pilot:
+        await _settle(pilot)
+        await _settle(pilot)
+        pane = app.query_one("#catalog-pane", CatalogPane)
+        assert pane._visible_columns() == expected
+
+
+@pytest.mark.asyncio
+async def test_catalog_narrow_default_never_overrides_a_saved_picker_choice():
+    """The narrow default is a DEFAULT.  A user who has used the [|] picker
+    keeps exactly what they chose, at every width."""
+    from club3090_cockpit.app import CatalogPane
+
+    app, _, _ = make_app()
+    app.catalog_columns_pref = {
+        "order": [k for k, _ in __import__(
+            "club3090_cockpit.app", fromlist=["x"]
+        )._CATALOG_COLUMNS],
+        "hidden": ["ctx"],
+    }
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _settle(pilot)
+        await _settle(pilot)
+        pane = app.query_one("#catalog-pane", CatalogPane)
+        visible = pane._visible_columns()
+        assert "ctx" not in visible          # their choice honoured
+        assert "provider" in visible         # narrow default NOT applied on top

@@ -389,6 +389,28 @@ _CATALOG_COLUMNS: "list[tuple[str, str]]" = [
 ]
 _CATALOG_HEADERS = dict(_CATALOG_COLUMNS)
 _CATALOG_PINNED = {"slug"}  # identity — never hideable
+
+# #22 — narrow-terminal column default.  With all 16 columns on, an 80-col
+# terminal shows `model · slug · provider · we…` and nothing else: the table
+# needs 151 columns and gets 46, so the columns you actually PICK on (status,
+# ctx, TPS) sit ~100 columns off-screen right, reachable only by horizontal
+# scroll that nothing advertises.  Below _CATALOG_NARROW_COLS the config and
+# topology facets fold away by default, leaving identity + the decision columns.
+# This is a DEFAULT, not a lock: it applies only when the user has no persisted
+# [|] picker preference, and picking columns overrides it permanently.
+# Two tiers, because 80 and 120 are very different budgets.  Measured against
+# the rendered table width, not guessed:
+#   < 120 : fold the config + topology facets  → model · slug · ctx · TPS · status
+#   < 100 : also fold `model`  → slug · ctx · TPS · status  (the model is still
+#           named by the \\[\\] model-scope dropdown, the preview strip under the
+#           table, and the default group-by-model sort)
+_CATALOG_NARROW_COLS = 120
+_CATALOG_VERY_NARROW_COLS = 100
+_CATALOG_NARROW_HIDDEN = {
+    "provider", "weights", "gb", "kv", "act", "offload", "host_ram", "spec",
+    "8pk", "topo", "engine",
+}
+_CATALOG_VERY_NARROW_HIDDEN = _CATALOG_NARROW_HIDDEN | {"model"}
 _CATALOG_SORTS: "list[tuple[str, str]]" = [
     # The [s] catalog sort cycle, in order.  "model" is the DEFAULT — the
     # stable group-by-model registry view (switch.sh --list look); the other
@@ -410,18 +432,38 @@ def _sanitize_catalog_sort(saved: Any) -> str:
     return key if key in _CATALOG_SORT_KEYS else "model"
 
 
-def _sanitize_catalog_columns(saved: Any) -> tuple[list[str], set[str]]:
+def _sanitize_catalog_columns(
+    saved: Any, *, width: Optional[int] = None
+) -> tuple[list[str], set[str]]:
     """Normalise a persisted ``{"order": [...], "hidden": [...]}`` into a safe
     ``(order, hidden)`` pair: unknown keys dropped, canonical keys missing from
     a saved order inserted next to their canonical neighbour (a NEWLY-shipped
     column appears, visible, without wiping the user's layout), pinned keys
-    forced visible.  Tolerant of any malformed shape → canonical defaults."""
+    forced visible.  Tolerant of any malformed shape → canonical defaults.
+
+    ``width`` is the terminal width and applies ONLY when there is no persisted
+    preference: below ``_CATALOG_NARROW_COLS`` the default hidden set becomes
+    ``_CATALOG_NARROW_HIDDEN`` so the pick-decision columns are on screen
+    instead of scrolled off the right edge.  A user who has touched the [|]
+    picker keeps exactly what they chose, at every width."""
     default_order = [k for k, _ in _CATALOG_COLUMNS]
+
+    def _default_hidden() -> set[str]:
+        if width is None:
+            return set()
+        if width < _CATALOG_VERY_NARROW_COLS:
+            return set(_CATALOG_VERY_NARROW_HIDDEN) - _CATALOG_PINNED
+        if width < _CATALOG_NARROW_COLS:
+            return set(_CATALOG_NARROW_HIDDEN) - _CATALOG_PINNED
+        return set()
+
+    if not saved:
+        return list(default_order), _default_hidden()
     try:
         raw_order = [str(k) for k in (saved or {}).get("order", [])]
         raw_hidden = [str(k) for k in (saved or {}).get("hidden", [])]
     except (AttributeError, TypeError):
-        return list(default_order), set()
+        return list(default_order), _default_hidden()
     order = [k for k in raw_order if k in _CATALOG_HEADERS]
     # de-dup, first occurrence wins
     seen: set[str] = set()
@@ -1005,7 +1047,8 @@ class HelpScreen(ModalScreen):
             "  [cyan]o[/cyan] stop ALL (tears down the whole estate)   [cyan]c[/cyan] power cap… (default 230W / clear / custom W)   (all gated)",
             "  [cyan]N[/cyan] new pod (run several models on GPU subsets — name · slug · GPU set, fit-checked + gated)",
             "[bold]Run & Operate · Containers[/bold]",
-            "  [cyan]l[/cyan] logs   [cyan]t[/cyan] top (read)   [cyan]s[/cyan] restart   [cyan]x[/cyan] stop   [cyan]X[/cyan] rm   (writes gated)",
+            "  [cyan]l[/cyan] logs   [cyan]t[/cyan] top   [cyan]c[/cyan] compose   [cyan]f[/cyan] follow (arm/pause the live tail)   (all read)",
+            "  [cyan]s[/cyan] restart · start if stopped   [cyan]x[/cyan] stop   [cyan]X[/cyan] rm   (writes gated)",
             "[bold]Run & Operate · Doctor[/bold]  — is it serving correctly?",
             "  [cyan]y[/cyan] health (read)   [cyan]v[/cyan] verify   [cyan]V[/cyan] verify-full   [cyan]R[/cyan] report   [cyan]F[/cyan] report --full   [cyan]w[/cyan] power-cap sweep (gated)",
         ]
@@ -1160,7 +1203,12 @@ class CatalogPane(Container):
         height: 1fr;
     }
     CatalogPane #catalog-status {
-        height: 1;
+        /* `width: auto` computed a 112-col region against a 46-col viewport, so
+           the line was truncated horizontally at every realistic width — the
+           "run bench.sh / quality-test.sh" nudge never finished rendering below
+           ~170 cols.  1fr + auto height makes it wrap instead of vanish. */
+        width: 1fr;
+        height: auto;
         color: $text-muted;
         padding: 0 1;
     }
@@ -1183,6 +1231,13 @@ class CatalogPane(Container):
     }
     CatalogPane DataTable {
         height: 1fr;
+        /* The table is the pane.  With `height: 1fr` alone it lost every row to
+           its auto-height siblings (status / preview / hint) plus the 12-row
+           #serve-live that appears after a Start: at 80x24 it collapsed to
+           height 1 — not even the header — so starting a model made the list
+           you started it from vanish.  Floor it; the preview strip already has
+           `overflow-y: auto` and is the right thing to squeeze. */
+        min-height: 6;
     }
     CatalogPane #catalog-preview {
         height: auto;
@@ -1198,7 +1253,12 @@ class CatalogPane(Container):
         color: $text;
     }
     CatalogPane #catalog-hint {
-        height: 1;
+        /* This one IS in the app-level `width: 1fr` list, so it wraps — but
+           `height: 1` then clipped every wrapped row but the first.  At 80 cols
+           that cut the line at "[c]", so `[s] sort` and `[|] columns` never
+           rendered at ANY width below ~159.  Those two keys have no other
+           teaching surface, which is why they read as nonexistent. */
+        height: auto;
         color: $text-muted;
         padding: 0 1;
     }
@@ -1265,8 +1325,11 @@ class CatalogPane(Container):
         # the user's picker state ([|]), applied at launch from the persisted
         # "catalog_columns" settings key via apply_persisted_settings (an app
         # constructed directly — tests — starts canonical).
+        # `width` folds the config/topology facets away on a narrow terminal —
+        # but ONLY when there is no persisted [|] preference (see #22 above).
         self._col_order, self._col_hidden = _sanitize_catalog_columns(
-            getattr(self.app, "catalog_columns_pref", None)
+            getattr(self.app, "catalog_columns_pref", None),
+            width=getattr(getattr(self.app, "size", None), "width", None),
         )
         self._apply_columns_to_table(table)
         # Full enriched catalog, and the current filter substring.
@@ -4850,11 +4913,14 @@ class OperateContainersPane(Container):
                 yield Static("[dim]highlight a container (move cursor) or press \\[t] — docker top loads[/dim]", id="drill-stats")
             with TabPane("Config", id="drill-tab-config"):
                 yield Static("[dim]highlight a container (move cursor) to load its config[/dim]", id="drill-config")
+        # Two deliberate lines, not one long wrap.  At 80x24 this pane gets 46
+        # columns, and the old single run-on hint wrapped to FOUR of the 24 rows
+        # — which is what squeezed the Logs RichLog down to two lines.  Reads /
+        # writes are split so the gating fact is stated once, and the full
+        # per-key detail lives in ? (Help), which carries all seven keys.
         yield Label(
-            "[dim]move cursor or \\[l]/\\[t] to load detail · \\[l] logs   \\[t] top   "
-            "\\[c] compose   "
-            "\\[f] follow   \\[s] restart · start if stopped (gated)   \\[x] stop (gated)   "
-            "\\[X] rm (reconcile-gated)[/dim]",
+            "[dim]\\[l] logs  \\[t] top  \\[c] compose  \\[f] follow\n"
+            "\\[s] restart  \\[x] stop  \\[X] rm  · gated[/dim]",
             id="containers-hint",
         )
 
@@ -7626,19 +7692,16 @@ class LaneBringPane(Container):
         height: auto;
         margin-top: 1;
     }
-    LaneBringPane #lane-bring-inspect-btn {
-        /* was width:14 with NO margin — below Button's min width, and it sat
-           flush against its neighbour so the two read as one control. */
-        width: 16;
-        margin-left: 2;
-    }
-    LaneBringPane #lane-bring-validate-compose-btn {
-        width: 20;
-        margin-left: 2;
-    }
-    LaneBringPane #lane-bring-search-btn {
-        width: auto;
-        margin-left: 2;
+    /* The three buttons were fixed at 16 / 20 / auto with `margin-left: 2` each
+       — 58 columns of demand in the 42 the pane gets at 80 wide.  The third
+       button overflowed the screen edge and "Validate compose" rendered as
+       "Va": still clickable, unreadable, and invisible as a control.  Share the
+       row instead (1fr each) with a floor that keeps every label legible, and
+       halve the gutters. */
+    LaneBringPane #lane-bring-actions Button {
+        width: 1fr;
+        min-width: 12;
+        margin-left: 1;
     }
     LaneBringPane #lane-bring-gguf-select {
         width: 36;
@@ -9207,6 +9270,13 @@ class CockpitCommands(Provider):
 
 # ── Main application ──────────────────────────────────────────────────────────────
 
+# Footer width policy (#16): at/above this many columns the footer shows the
+# redundant global keys (r Refresh · S Settings); below it they are hidden so the
+# pane's own context key is not the one that gets clipped.  120 is the width at
+# which the WORST case — Doctor, the only pane with two context keys ("v Verify
+# serving" + "y Re-run health") — still fits alongside them; at 100 it did not.
+_FOOTER_WIDE_COLS = 120
+
 # Containers log-follow (\\[f]) — docker-logs poll cadence while armed.  2s is
 # imperceptible for a log tail and keeps the read-runner calls cheap.
 _LOG_FOLLOW_PERIOD = 2.0
@@ -9232,6 +9302,8 @@ class CockpitApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
         Binding("question_mark", "help", "Help", show=True),
+        # r / S are width-gated in the footer by _apply_footer_width_policy:
+        # shown at >= _FOOTER_WIDE_COLS, hidden below it.  See that method.
         Binding("r", "refresh", "Refresh", show=True),
         # Sub-tab cycle — shown when the mode has sub-tabs (check_action gates).
         # Both brackets show=True so [ and ] are symmetric in the footer (the
@@ -9441,6 +9513,14 @@ class CockpitApp(App):
     #evidence-hint, #lane-bring-hint, #lane-serve-hint, #lane-promote-hint {
         width: 1fr;
     }
+    /* Pane HEADINGS have exactly the same problem and were never added here:
+       being `width: auto` Labels they were TRUNCATED (not wrapped) at 80 cols —
+       "① Bring — inspect an HF model, or bring a co", "Doctor — is the running
+       model serving cor", "Gate (⏎ launches the selected step — confirm-".
+       Each loses the clause that says what the pane is for. */
+    #doctor-heading, #lane-bring-heading, #lane-serve-heading, #run-heading {
+        width: 1fr;
+    }
     #main-layout {
         height: 1fr;
     }
@@ -9497,8 +9577,19 @@ class CockpitApp(App):
     }
     #panel-run > #serve-live.serving {
         display: block;
-        height: 12;
+        /* Was a fixed `height: 12`.  On a 24-row terminal that 13-row sibling
+           squeezed #operate-tabs until the catalog DataTable collapsed to
+           height 1 — not even its header row survived, so starting a model made
+           the list you started it from disappear.  Take the space only when
+           there is space: `1fr` up to the old 12, with a min-height on the tabs
+           so the table always keeps a usable number of rows. */
+        height: 1fr;
+        max-height: 12;
+        min-height: 5;
         margin: 0 1 1 1;
+    }
+    #panel-run > #operate-tabs {
+        min-height: 12;
     }
     /* FIX 1 — while a ModalScreen is topmost, suppress the BASE FocusableFooter
        (the main screen's footer renders UNDER/around the modal otherwise, showing
@@ -9897,6 +9988,56 @@ class CockpitApp(App):
                         return
         except Exception:
             pass
+
+    def _set_binding_show(self, action: str, show: bool) -> bool:
+        """Flip a BINDING's footer visibility in place; True if it changed.
+
+        Per-instance copy, same pattern as `_relabel_binding`.  Note this is the
+        only way to hide a key WITHOUT disabling it: returning False from
+        `check_action` would also stop the key firing, and None would grey it
+        out — neither of which is wanted for keys that must keep working."""
+        import dataclasses
+
+        changed = False
+        try:
+            for bindings in self._bindings.key_to_bindings.values():
+                for i, b in enumerate(bindings):
+                    if b.action == action and b.show != show:
+                        bindings[i] = dataclasses.replace(b, show=show)
+                        changed = True
+        except Exception:
+            pass
+        return changed
+
+    def _apply_footer_width_policy(self) -> None:
+        """Width-gate the two redundant global keys so the CONTEXT key survives.
+
+        The footer renders bindings in declaration order and the six globals are
+        declared first, so at 80 columns the key that is actually about the pane
+        you are looking at is the one that gets cut — measured: "s Sort" → "s
+        So", "s Restart" → "s Re", "v Verify serving" → "v Ve", and on ④ Measure
+        "s Submit" lost its description entirely.  That is exactly backwards.
+
+        `r` (Refresh) and `S` (Settings) are the two globals with a full fallback
+        elsewhere — both are in the ? Help overlay AND in the ^p command palette —
+        so they are the right ~23 columns to reclaim below _FOOTER_WIDE_COLS.
+        The KEYS keep working at every width; only the footer advertisement is
+        gated.  Above the threshold everything is shown as before."""
+        try:
+            wide = self.size.width >= _FOOTER_WIDE_COLS
+        except Exception:
+            return
+        changed = False
+        for action in ("refresh", "settings"):
+            if self._set_binding_show(action, wide):
+                changed = True
+        if changed:
+            # Flipping `show` is only half of it — the Footer caches the
+            # displayed-binding signature and will not repaint on its own.
+            self.refresh_bindings()
+
+    def on_resize(self, event) -> None:
+        self._apply_footer_width_policy()
 
     def _sync_footer_labels(self) -> None:
         """Phase 1.3 — mirror the live meaning of context keys in the footer.
