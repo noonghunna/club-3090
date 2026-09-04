@@ -686,6 +686,28 @@ def test_help_teaches_the_hidden_catalog_keys(phrase):
     assert phrase in text, f"{phrase!r} missing from Help"
 
 
+@pytest.mark.asyncio
+async def test_help_title_matches_the_app_name():
+    """c3 cleanup item 4 — the Help title said 'club3090 serve cockpit' while
+    the app header renders 'club3090 cockpit' (SUB_TITLE = 'local LLM
+    cockpit').  Help must agree with the app's own name.  The title is a
+    compose() Label, so read it from the mounted screen, not help_text."""
+    from club3090_cockpit.app import HelpScreen
+    from textual.widgets import Label
+
+    from test_app_headless import make_app, _settle
+
+    app, _, _ = make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        await pilot.press("?")
+        await _settle(pilot)
+        assert isinstance(app.screen, HelpScreen)
+        title = app.screen.query_one(".help-title", Label).render().plain
+        assert title == "club3090 cockpit — Help"
+        assert "serve cockpit" not in title
+
+
 def test_help_shows_the_backslash_and_pipe_keys_literally():
     """The two punctuation keys must survive the markup parse — `\\` in
     particular is the escape character, so getting it into rendered output takes

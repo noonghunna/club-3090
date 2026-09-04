@@ -1108,7 +1108,7 @@ class HelpScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Label("club3090 serve cockpit — Help", classes="help-title")
+            yield Label("club3090 cockpit — Help", classes="help-title")
             with VerticalScroll():
                 yield Static(self.help_text)
 
