@@ -322,3 +322,49 @@ async def test_bring_result_card_is_on_screen_at_80x24():
         assert card.region.y >= 0 and bottom <= 24, (
             f"result card {card.region} is off-screen at 80x24"
         )
+
+
+# ── #7 · Settings must be saveable at 80x24 ─────────────────────────────────
+
+
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (120, 40)])
+@pytest.mark.asyncio
+async def test_settings_save_affordance_is_on_screen(size):
+    """SettingsScreen was `height: auto` with ~27 rows of content and no
+    max-height, so on a 24-row terminal BOTH the hint line and the
+    `^s Save / esc Cancel` Footer rendered below the bottom of the screen — a
+    first-run user on a small terminal had no visible way to save.  The card was
+    also `width: 84` on an 80-col screen.
+
+    Geometry alone is not enough here (an in-bounds region can still be clipped),
+    so this asserts the footer's rendered TEXT is present too."""
+    from club3090_cockpit.app import SettingsScreen
+    from textual.widgets import Footer
+
+    width, height = size
+    app, _, _ = make_app(surface="producer")
+    async with app.run_test(size=size) as pilot:
+        await _settle(pilot)
+        await app.push_screen(SettingsScreen("/mnt/models/huggingface", False))
+        await _settle(pilot)
+        await _settle(pilot)
+
+        card = app.screen.query_one("Vertical")
+        assert card.region.y + card.region.height <= height, (
+            f"settings card {card.region} overflows a {width}x{height} screen"
+        )
+        assert card.region.x + card.region.width <= width, (
+            f"settings card {card.region} is wider than {width} cols"
+        )
+
+        footer = app.screen.query_one(Footer)
+        assert footer.region.y + footer.region.height <= height, (
+            f"the Save/Cancel footer is off-screen at {width}x{height}: {footer.region}"
+        )
+
+        console = Console(width=width, no_color=True, legacy_windows=False)
+        with console.capture() as cap:
+            console.print(app.screen._compositor)
+        rendered = cap.get()
+        assert "Save" in rendered, f"no visible way to save at {width}x{height}"
+        assert "Cancel" in rendered

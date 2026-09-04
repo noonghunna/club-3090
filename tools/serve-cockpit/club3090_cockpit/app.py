@@ -6070,10 +6070,22 @@ class SettingsScreen(ModalScreen):
     }
     SettingsScreen > Vertical {
         width: 84;
+        /* An 80-col terminal is narrower than the card: without max-width the
+           right edge (and the Select's ▼) rendered off-screen. */
+        max-width: 100%;
         height: auto;
+        /* ~27 rows of fields on a 24-row terminal pushed BOTH the hint line and
+           the `^s Save / esc Cancel` Footer off the bottom of the screen — a
+           first-run user on a small terminal had no visible way to save.  Cap
+           the card at the viewport and let the fields scroll INSIDE it, so the
+           Footer stays pinned and reachable at every size. */
+        max-height: 100%;
         border: thick $accent;
         background: $surface;
         padding: 1 2;
+    }
+    SettingsScreen #settings-scroll {
+        height: auto;
     }
     SettingsScreen .settings-title {
         text-style: bold;
@@ -6115,40 +6127,50 @@ class SettingsScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label("Settings", classes="settings-title")
-            yield Label("Model dir  [dim](weights live under <dir>/huggingface/)[/dim]",
-                        classes="settings-field")
-            yield Input(value=self._model_dir, placeholder="/mnt/models/huggingface", id="set-model-dir")
-            tok_ph = ("hf_…  (leave blank to keep the current token)"
-                      if self._hf_token_set else "hf_…  (for gated / private repos)")
-            yield Label("HuggingFace token", classes="settings-field")
-            yield Input(value="", password=True, placeholder=tok_ph, id="set-hf-token")
-            yield Label("Director placement  [dim](ai-studio prompt-crafter · :8090)[/dim]",
-                        classes="settings-field")
-            yield Select(
-                [("GPU 0 — fast craft, ~4.6 GB (default)", "gpu0"),
-                 ("GPU 1 — only when free, not during video", "gpu1"),
-                 ("CPU — frees GPU0 for long video, slow craft", "cpu")],
-                value=self._director_device, allow_blank=False, id="set-director-device",
-            )
-            yield Label(
-                "Master logging  [dim](app + non-download commands · downloads always log)[/dim]",
-                classes="settings-field",
-            )
-            log_switch = Switch(value=self._log_enabled, id="set-c3-log")
-            log_switch.disabled = self._log_env_override
-            yield log_switch
-            if self._log_path:
-                yield Label(f"[dim]Active log: {self._log_path}[/dim]", classes="settings-field")
-            elif self._log_env_override:
+            # The fields scroll; the title and the Footer do not.  See the
+            # max-height note in DEFAULT_CSS.
+            with VerticalScroll(id="settings-scroll"):
+                yield Label("Model dir  [dim](weights live under <dir>/huggingface/)[/dim]",
+                            classes="settings-field")
+                yield Input(value=self._model_dir, placeholder="/mnt/models/huggingface",
+                            id="set-model-dir")
+                tok_ph = ("hf_…  (leave blank to keep the current token)"
+                          if self._hf_token_set else "hf_…  (for gated / private repos)")
+                yield Label("HuggingFace token", classes="settings-field")
+                yield Input(value="", password=True, placeholder=tok_ph, id="set-hf-token")
+                yield Label("Director placement  [dim](ai-studio prompt-crafter · :8090)[/dim]",
+                            classes="settings-field")
+                yield Select(
+                    [("GPU 0 — fast craft, ~4.6 GB (default)", "gpu0"),
+                     ("GPU 1 — only when free, not during video", "gpu1"),
+                     ("CPU — frees GPU0 for long video, slow craft", "cpu")],
+                    value=self._director_device, allow_blank=False, id="set-director-device",
+                )
                 yield Label(
-                    "[dim]C3_LOG controls this launch; change the shell override to alter it.[/dim]",
+                    "Master logging  [dim](app + non-download commands · downloads always log)[/dim]",
                     classes="settings-field",
                 )
-            yield Label(
-                "[dim]Ctrl+S save · Esc cancel · HF_HOME auto-derived under the model dir · "
-                "director change applies on next ai-studio start[/dim]",
-                classes="settings-field",
-            )
+                log_switch = Switch(value=self._log_enabled, id="set-c3-log")
+                log_switch.disabled = self._log_env_override
+                yield log_switch
+                if self._log_path:
+                    yield Label(f"[dim]Active log: {self._log_path}[/dim]",
+                                classes="settings-field")
+                elif self._log_env_override:
+                    yield Label(
+                        "[dim]C3_LOG controls this launch; change the shell override to "
+                        "alter it.[/dim]",
+                        classes="settings-field",
+                    )
+                # The "Ctrl+S save · Esc cancel" half of this line was a duplicate
+                # of the Footer directly below it, and duplicating it is what
+                # pushed the Footer off a 24-row screen.  Keep only what the
+                # Footer cannot say.
+                yield Label(
+                    "[dim]HF_HOME auto-derived under the model dir · "
+                    "director change applies on next ai-studio start[/dim]",
+                    classes="settings-field",
+                )
             yield Footer()
 
     def action_save(self) -> None:
