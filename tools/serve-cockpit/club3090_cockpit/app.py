@@ -1108,7 +1108,7 @@ class HelpScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Label("club3090 serve cockpit — Help", classes="help-title")
+            yield Label("club3090 cockpit — Help", classes="help-title")
             with VerticalScroll():
                 yield Static(self.help_text)
 
@@ -3939,7 +3939,6 @@ class ConfirmActionScreen(ModalScreen):
         if rec.safe:
             lines.append("")
             lines.append("  [green]● gate clear[/green] — nothing live overlaps the requested GPUs.")
-            lines.append("  [dim]⏎ Confirm (streams below) · Esc Cancel[/dim]")
         else:
             lines.append("")
             lines.append("  [yellow]⚠ this will tear down / collide with:[/yellow]")
@@ -4351,10 +4350,10 @@ class OperateOrchPane(Container):
                 id="scene-preview",
             )
             yield Label(
-                "[dim]\\[k] stop this model (gated)   \\[b] restart serving (gated)   "
-                "\\[n] switch model   \\[⏎] switch scene (gated)   \\[o] stop all (gated)   "
-                "\\[c] power cap… (default / clear / custom, gated)   "
-                "[dim](per-service start/stop → Containers tab)[/dim][/dim]",
+                "[dim]\\[k] stop this model   \\[b] restart serving   \\[n] switch model   "
+                "\\[⏎] switch scene   \\[o] stop all   \\[c] power cap… "
+                "(default / clear / custom) — all writes confirm-gated   "
+                "(per-service start/stop → Containers tab)[/dim]",
                 id="orch-hint",
             )
             # FIX 3 — the host disk-usage bars + system-RAM line MOVED out of this
@@ -7401,8 +7400,13 @@ class OptimizeScreen(ModalScreen):
         sel = self.query_one("#optimize-kv", Select)
         btn = self.query_one("#optimize-apply", Button)
         if not report.available:
-            sel.disabled = True
-            btn.disabled = True
+            # Hide the controls (absent, not merely greyed) and their rows, so
+            # the card is just the honest message — the KV label and advisory
+            # note go too, and ~6 rows of inert widgets don't sit under it.
+            sel.display = False
+            btn.display = False
+            for row in self.query(".optimize-row"):
+                row.display = False
             # Honest error / unsupported-engine card — never a fabricated rec.
             body.update(
                 f"  [red]{report.message}[/red]\n"
@@ -7413,6 +7417,12 @@ class OptimizeScreen(ModalScreen):
             )
             return
 
+        # A later available report must bring everything back (a screen that
+        # first showed an unavailable one must not render with no controls).
+        sel.display = True
+        btn.display = True
+        for row in self.query(".optimize-row"):
+            row.display = True
         lines = [
             f"  [bold]{report.slug}[/bold] · {report.engine or '—'} · card {report.card}",
             "",
@@ -8562,8 +8572,10 @@ class LaneServePane(Container):
 class LanePromotePane(Container):
     """⑤ Promote — checklist + the scaffold/write action.
 
-    Hosts [P] / the Preview button → PromoteScaffoldScreen.  Write remains
-    mock-only this phase (preview badge is persistent)."""
+    Hosts [P] / the Preview button → PromoteScaffoldScreen.  The write is
+    real: it runs promote.py to register the served compose into the LOCAL
+    layer, confirm-gated like every other write (the preview badge is
+    persistent)."""
 
     DEFAULT_CSS = """
     LanePromotePane {

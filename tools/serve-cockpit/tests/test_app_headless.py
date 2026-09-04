@@ -3892,6 +3892,28 @@ class TestEveryWriteGoesThroughReconcile:
             assert screen.check_action("force", ()) is False
 
     @pytest.mark.asyncio
+    async def test_legacy_confirm_body_does_not_repeat_footer_keys(self):
+        """c3 cleanup item 3 — the safe-gate body used to print
+        '⏎ Confirm (streams below) · Esc Cancel' while the modal's Footer
+        already showed the same two keys, doubling them on one screen.  The
+        body line is gone; the Footer still teaches Confirm (its only job)."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            plan = app._data.scene_switch("27b")
+            app.push_screen(ConfirmActionScreen(plan))
+            await _settle(pilot)
+            screen = app.screen
+            assert isinstance(screen, ConfirmActionScreen)
+            assert screen._is_serve is False      # the legacy card, not the serve one
+            assert screen._reconcile.safe is True
+            body = str(screen.query_one("#confirm-body", Static).render())
+            assert "gate clear" in body
+            assert "streams below" not in body    # the duplicated key line
+            footer_keys = {k.key for k in screen.query(FooterKey)}
+            assert "enter" in footer_keys         # Confirm still taught — once
+
+    @pytest.mark.asyncio
     async def test_unsafe_gate_disables_confirm_enables_force(self):
         """When a container is running, the gate is unsafe → Confirm disabled,
         Force enabled.  The teardown list is surfaced."""
@@ -6411,7 +6433,10 @@ class TestOptimizeBrain:
             body = str(app.screen.query_one("#optimize-body", Static).render())
             assert "kv-calc failed" in body                 # honest error card
             assert "Recommended max-model-len" not in body  # no fabricated numbers
-            assert app.screen.query_one("#optimize-apply", Button).disabled is True
+            # Rebased (c3 cleanup item 2): the unavailable card now HIDES the
+            # KV/Apply rows instead of greying them — absent, not disabled.
+            assert app.screen.query_one("#optimize-apply", Button).display is False
+            assert app.screen.query_one("#optimize-kv", Select).display is False
 
     @pytest.mark.asyncio
     async def test_skip_engine_gets_explicit_unsupported_message(self):
@@ -6424,10 +6449,39 @@ class TestOptimizeBrain:
             body = str(app.screen.query_one("#optimize-body", Static).render())
             assert "kvcalc_key=SKIP" in body
             assert "Recommended max-model-len" not in body
-            assert app.screen.query_one("#optimize-apply", Button).disabled is True
+            assert app.screen.query_one("#optimize-apply", Button).display is False
+            assert app.screen.query_one("#optimize-kv", Select).display is False
             # The SKIP check short-circuits BEFORE any kv-calc call.
             assert all("kv-calc.py" not in " ".join(c) for c in runner.calls
                        if "--fit " in " ".join(c))
+
+    @pytest.mark.asyncio
+    async def test_optimize_rows_restored_after_unavailable_report(self):
+        """c3 cleanup item 2 — hiding is not sticky: a screen that first shows
+        an unavailable report and later receives a good one must render the
+        KV/Apply rows again, enabled (`.display` toggles both directions)."""
+        from club3090_cockpit.app import OptimizeScreen
+        from club3090_cockpit.data import KvOption, OptimizerReport
+
+        app, runner, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await self._open_optimize(pilot, app, row=1)  # kvcalc_key=SKIP → unavailable
+            screen = app.screen
+            assert isinstance(screen, OptimizeScreen)
+            assert screen.query_one("#optimize-apply", Button).display is False
+            good = OptimizerReport(
+                available=True, slug="vllm/dual", engine="vllm", card="3090",
+                recommended_kv_format="fp8_e5m2", recommended_max_ctx=262144,
+                fit_vram_est_gb=18.0, band_gb=0.5,
+                options=[KvOption(kv_format="fp8_e5m2", solved_max_ctx=262144,
+                                  vram_est_gb=18.0, headroom_gb=6.0,
+                                  verdict="fits-clean")],
+            )
+            screen.set_report(good)
+            assert screen.query_one("#optimize-apply", Button).display is True
+            assert screen.query_one("#optimize-kv", Select).display is True
+            assert screen.query_one("#optimize-apply", Button).disabled is False
 
     @pytest.mark.asyncio
     async def test_optimize_is_a_noop_no_write(self):
@@ -11722,6 +11776,31 @@ class TestTier1PrimaryActionAndSKeyHonesty:
         async with app.run_test(size=(120, 40)) as pilot:
             await _enter_operate(pilot, tab="tab-containers")
             assert app.check_action("primary_action", ()) is False
+
+
+    @pytest.mark.asyncio
+    async def test_orch_hint_names_keys_and_gates_once(self):
+        """#orch-hint used to append "(gated)" to four of its six keys, which
+        wrapped the hint to three or four lines at 80 columns.  The gating is
+        now stated once as a trailing clause.  Protected invariant: every key
+        is still named, and the confirm-gating is still taught."""
+        from rich.console import Console
+
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-orchestration")
+            # The hint wraps across visual lines at this width, so a
+            # line-based render drops later keys.  `_content` is the widget's
+            # full post-markup text; the screen capture below re-checks what
+            # the user actually sees, wrap-safely.
+            # ``.render().plain`` is the full pre-wrap content (this Textual's
+            # Label has no `_content`; `_renderable_text` would wrap-crop it).
+            hint = app.query_one("#orch-hint", Label).render().plain
+            for key in ("[k]", "[b]", "[n]", "[⏎]", "[o]", "[c]"):
+                assert key in hint, f"key {key} missing from hint: {hint!r}"
+            assert "(gated)" not in hint
+            assert hint.lower().count("gated") == 1
+            assert "confirm-gated" in hint
 
     @pytest.mark.asyncio
     async def test_doctor_rerun_verb_advertised_on_doctor(self):
