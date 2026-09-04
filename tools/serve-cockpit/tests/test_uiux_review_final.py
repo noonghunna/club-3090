@@ -368,3 +368,61 @@ async def test_settings_save_affordance_is_on_screen(size):
         rendered = cap.get()
         assert "Save" in rendered, f"no visible way to save at {width}x{height}"
         assert "Cancel" in rendered
+
+
+# ── #15 · Explain must not show dashes for facts the row behind it displays ──
+
+
+@pytest.mark.asyncio
+async def test_explain_falls_back_to_the_catalog_row_when_explain_has_no_registry():
+    """`switch.sh --explain` can answer without a `registry` block.  Reading it
+    with a "—" default rendered "Model — / Engine — / Status —" directly on top
+    of a catalog row that was showing the real values.  The CatalogEntry carries
+    the same registry facts, so the modal falls back to them."""
+    from club3090_cockpit.app import CatalogPane
+
+    app, _, _ = make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        await _settle(pilot)
+        entry = app.query_one("#catalog-pane", CatalogPane).selected_entry()
+        assert entry.model and entry.engine and entry.status  # not a vacuous test
+
+        app.action_explain()
+        await _settle(pilot)
+        await _settle(pilot)
+        screen = app.screen
+        # explain answered, but with nothing structured in it
+        screen.set_detail({"registry": {}}, None)
+        await _settle(pilot)
+
+        body = _renderable_text(screen.query_one("#explain-body", Static))
+        assert entry.model in body, body
+        assert entry.engine in body, body
+        assert entry.status in body, body
+        for field in ("Model", "Engine", "Status"):
+            assert f"{field}   —" not in body and f"{field}  —" not in body, body
+
+
+@pytest.mark.asyncio
+async def test_explain_error_still_reports_what_the_caller_knows():
+    """A hard explain failure used to render only "explain failed: …", hiding
+    the three identity fields the catalog row behind it was displaying."""
+    from club3090_cockpit.app import CatalogPane
+
+    app, _, _ = make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        await _settle(pilot)
+        entry = app.query_one("#catalog-pane", CatalogPane).selected_entry()
+        app.action_explain()
+        await _settle(pilot)
+        await _settle(pilot)
+        screen = app.screen
+        screen.set_detail(None, "switch.sh exited 1")
+        await _settle(pilot)
+
+        body = _renderable_text(screen.query_one("#explain-body", Static))
+        assert "explain failed" in body
+        assert entry.model in body, body
+        assert entry.engine in body, body

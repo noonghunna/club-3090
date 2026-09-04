@@ -2334,12 +2334,17 @@ class ExplainScreen(_CopyableModal, ModalScreen):
         Binding("Y", "app.copy_context", "Copy", show=True),
     ]
 
-    def __init__(self, slug: str, *, model: str = "", engine: str = "", **kwargs):
+    def __init__(self, slug: str, *, model: str = "", engine: str = "",
+                 status: str = "", **kwargs):
         super().__init__(**kwargs)
         self._slug = slug
-        # (model, engine) drive the cross-rig benchmark fold (Fold 3).
+        # (model, engine) drive the cross-rig benchmark fold (Fold 3).  They —
+        # and `status` — are ALSO the fallback for the identity rows: see
+        # `_rerender`.  The caller already holds these on the CatalogEntry, so
+        # the modal never has to show "—" for a fact the row behind it displays.
         self._model = model
         self._engine = engine
+        self._status = status
         # Cached detail (our-rig story) so the cross-rig benchmark rows folded in
         # from the retired Benchmarks tab can be appended once they arrive.
         self._detail: Optional[dict] = None
@@ -2379,15 +2384,38 @@ class ExplainScreen(_CopyableModal, ModalScreen):
         body = self.query_one("#explain-body", Static)
         detail, error = self._detail, self._detail_error
         if error or detail is None:
-            body.update(f"[red]explain failed:[/red] {error or 'no data'}")
+            # Even a hard failure should not hide what the caller already knows —
+            # the catalog row behind this modal is displaying these three fields.
+            known = [
+                f"  [bold]{label}[/bold]  {value}"
+                for label, value in (
+                    ("Model ", self._model),
+                    ("Engine", self._engine),
+                    ("Status", self._status),
+                )
+                if value
+            ]
+            head = f"[red]explain failed:[/red] {error or 'no data'}"
+            body.update("\n".join([head, "", *known]) if known else head)
             return
         reg = detail.get("registry", {}) or {}
         fit = detail.get("fit", {}) or {}
         benches = detail.get("benchmarks", []) or []
+        # `switch.sh --explain` can answer without a `registry` block (or with an
+        # empty one).  Reading it with a "—" default then rendered "Model — /
+        # Engine — / Status —" directly on top of a catalog row that was showing
+        # the real values — the modal contradicting the screen behind it.  The
+        # CatalogEntry's fields are the SAME registry facts, already in hand, so
+        # use them whenever explain doesn't carry its own.
+        model = reg.get("model") or self._model or "—"
+        engine = reg.get("engine") or self._engine or "—"
+        status = str(reg.get("status") or self._status or "")
         lines: list[str] = []
-        lines.append(f"  [bold]Model[/bold]   {reg.get('model', '—')}")
-        lines.append(f"  [bold]Engine[/bold]  {reg.get('engine', '—')}")
-        lines.append(f"  [bold]Status[/bold]  {_status_glyph(str(reg.get('status', '')))} {reg.get('status', '—')}")
+        lines.append(f"  [bold]Model[/bold]   {model}")
+        lines.append(f"  [bold]Engine[/bold]  {engine}")
+        lines.append(
+            f"  [bold]Status[/bold]  {_status_glyph(status)} {status or '—'}"
+        )
         if reg.get("status_note"):
             lines.append(f"  [bold]Caveat[/bold]  [yellow]{reg.get('status_note')}[/yellow]")
         lines.append(f"  [bold]Card[/bold]    {detail.get('card', '—')}")
@@ -12955,7 +12983,14 @@ class CockpitApp(App):
             return
         # The screen loads its own detail + cross-rig on mount (so the body query
         # resolves against a fully-mounted modal — Fold 3 cross-rig fold included).
-        self.push_screen(ExplainScreen(entry.slug, model=entry.model, engine=entry.engine))
+        self.push_screen(
+            ExplainScreen(
+                entry.slug,
+                model=entry.model,
+                engine=entry.engine,
+                status=entry.status,
+            )
+        )
 
     def action_model_info(self) -> None:
         """[i] — the local-data model-info popup for the selected catalog row
