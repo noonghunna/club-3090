@@ -3892,6 +3892,28 @@ class TestEveryWriteGoesThroughReconcile:
             assert screen.check_action("force", ()) is False
 
     @pytest.mark.asyncio
+    async def test_legacy_confirm_body_does_not_repeat_footer_keys(self):
+        """c3 cleanup item 3 — the safe-gate body used to print
+        '⏎ Confirm (streams below) · Esc Cancel' while the modal's Footer
+        already showed the same two keys, doubling them on one screen.  The
+        body line is gone; the Footer still teaches Confirm (its only job)."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            plan = app._data.scene_switch("27b")
+            app.push_screen(ConfirmActionScreen(plan))
+            await _settle(pilot)
+            screen = app.screen
+            assert isinstance(screen, ConfirmActionScreen)
+            assert screen._is_serve is False      # the legacy card, not the serve one
+            assert screen._reconcile.safe is True
+            body = str(screen.query_one("#confirm-body", Static).render())
+            assert "gate clear" in body
+            assert "streams below" not in body    # the duplicated key line
+            footer_keys = {k.key for k in screen.query(FooterKey)}
+            assert "enter" in footer_keys         # Confirm still taught — once
+
+    @pytest.mark.asyncio
     async def test_unsafe_gate_disables_confirm_enables_force(self):
         """When a container is running, the gate is unsafe → Confirm disabled,
         Force enabled.  The teardown list is surfaced."""

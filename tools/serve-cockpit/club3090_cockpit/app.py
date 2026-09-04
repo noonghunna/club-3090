@@ -3939,7 +3939,6 @@ class ConfirmActionScreen(ModalScreen):
         if rec.safe:
             lines.append("")
             lines.append("  [green]● gate clear[/green] — nothing live overlaps the requested GPUs.")
-            lines.append("  [dim]⏎ Confirm (streams below) · Esc Cancel[/dim]")
         else:
             lines.append("")
             lines.append("  [yellow]⚠ this will tear down / collide with:[/yellow]")
