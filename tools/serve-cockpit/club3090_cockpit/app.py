@@ -10020,7 +10020,7 @@ class CockpitApp(App):
             pass
         return changed
 
-    def _apply_footer_width_policy(self) -> None:
+    def _apply_footer_width_policy(self, width: Optional[int] = None) -> None:
         """Width-gate the two redundant global keys so the CONTEXT key survives.
 
         The footer renders bindings in declaration order and the six globals are
@@ -10035,7 +10035,13 @@ class CockpitApp(App):
         The KEYS keep working at every width; only the footer advertisement is
         gated.  Above the threshold everything is shown as before."""
         try:
-            wide = self.size.width >= _FOOTER_WIDE_COLS
+            # `width` comes from the Resize EVENT.  `self.size` is not updated
+            # yet while the event is being handled, so reading it here gated on
+            # the PREVIOUS width — the footer lagged one resize behind (verified:
+            # 140 → 80 still showed r/S, 80 → 140 then hid them).
+            if width is None:
+                width = self.size.width
+            wide = width >= _FOOTER_WIDE_COLS
         except Exception:
             return
         changed = False
@@ -10048,7 +10054,9 @@ class CockpitApp(App):
             self.refresh_bindings()
 
     def on_resize(self, event) -> None:
-        self._apply_footer_width_policy()
+        self._apply_footer_width_policy(
+            getattr(getattr(event, "size", None), "width", None)
+        )
 
     def _sync_footer_labels(self) -> None:
         """Phase 1.3 — mirror the live meaning of context keys in the footer.

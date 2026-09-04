@@ -697,3 +697,37 @@ def test_help_shows_the_backslash_and_pipe_keys_literally():
     text = Content.from_markup(HelpScreen(surface="producer").help_text).plain
     assert "\\ model scope" in text, text[:0] or "backslash key not rendered"
     assert "| columns picker" in text
+
+
+@pytest.mark.asyncio
+async def test_footer_width_gate_follows_a_live_resize():
+    """The gate must read the RESIZE EVENT's width, not `self.size`.
+
+    `self.size` is not updated yet while a Resize event is being handled, so
+    reading it there gated on the PREVIOUS width and the footer lagged one
+    resize behind: 140 → 80 still showed `r`/`S`, and 80 → 140 then hid them —
+    exactly inverted."""
+    from textual.widgets._footer import FooterKey
+
+    app, _, _ = make_app()
+    async with app.run_test(size=(140, 40)) as pilot:
+        await _settle(pilot)
+        await _settle(pilot)
+
+        def keys():
+            return {k.key_display for k in app.screen.query(FooterKey)}
+
+        assert {"r", "S"} <= keys()
+
+        await pilot.resize_terminal(80, 24)
+        await _settle(pilot)
+        await _settle(pilot)
+        assert not ({"r", "S"} & keys()), keys()
+
+        await pilot.resize_terminal(140, 40)
+        await _settle(pilot)
+        await _settle(pilot)
+        assert {"r", "S"} <= keys(), keys()
+
+        # hidden is never disabled
+        assert app.check_action("refresh", ()) is not False
