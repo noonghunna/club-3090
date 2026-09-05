@@ -180,6 +180,9 @@ services:
       # lives in the entrypoint, not in these lines, so it cannot drift.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
+      - ASYNC_SCHED=${ASYNC_SCHED:-}
+      - MAMBA_BLOCK_SIZE=${MAMBA_BLOCK_SIZE:-}
+      - MAMBA_CACHE_DTYPE=${MAMBA_CACHE_DTYPE:-}
       # Sampler env passthrough (#984/#1014): the ENTRYPOINT — not compose
       # interpolation, which has no if/else — derives --override-generation-config
       # from the model-card row matching ENABLE_THINKING, so these must reach the
@@ -261,6 +264,18 @@ services:
         else
           echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
         fi
+        # -- Async-scheduling toggle: vllm#50021 mitigation (1), keeps the drafter --
+        ASYNC_ARGS=()
+        case "$${ASYNC_SCHED:-}" in off|OFF|Off|false|no|0)
+          ASYNC_ARGS=(--no-async-scheduling)
+          echo "[async] async scheduling OFF (ASYNC_SCHED=off) - vllm#50021 mitigation, drafter kept" >&2 ;;
+        esac
+        # -- Mamba/GDN cache knobs (hybrid-model KV headroom) --
+        #   MAMBA_BLOCK_SIZE=<tokens>  checkpoint SSM state every N tokens (align mode; multiple of 8)
+        #   MAMBA_CACHE_DTYPE=bfloat16 store conv+ssm state in bf16 instead of fp32
+        MAMBA_ARGS=()
+        if [ -n "$${MAMBA_BLOCK_SIZE:-}" ]; then MAMBA_ARGS+=(--mamba-block-size "$${MAMBA_BLOCK_SIZE}"); echo "[mamba] block size $${MAMBA_BLOCK_SIZE}" >&2; fi
+        if [ -n "$${MAMBA_CACHE_DTYPE:-}" ]; then MAMBA_ARGS+=(--mamba-cache-dtype "$${MAMBA_CACHE_DTYPE}"); echo "[mamba] cache dtype $${MAMBA_CACHE_DTYPE}" >&2; fi
         # -- Sampler follows the reasoning mode ----------------------------------
         # The card publishes TWO sampler rows (see the header); ENABLE_THINKING
         # now selects the row — one variable instead of the four-variable ritual
@@ -276,7 +291,7 @@ services:
           echo "[sampler] instruct row (default): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
         fi
         SAMPLER_ARGS=(--override-generation-config "{\"temperature\":$$_temp,\"top_p\":$${TOP_P},\"top_k\":$${TOP_K:-20},\"min_p\":$${MIN_P:-0.0},\"presence_penalty\":$${PRESENCE_PENALTY}}")
-        exec vllm serve $$AR "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
+        exec vllm serve $$AR "$$@" "$${SPEC_ARGS[@]}" "$${ASYNC_ARGS[@]}" "$${MAMBA_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
       - --
     command:
       - --model
@@ -319,6 +334,18 @@ services:
       # (6.8x vs 9.7x); decode-neutral, soak PASS (0 leak). ⚠️ align mode is
       # upstream-EXPERIMENTAL + adds ~100ms cold-start TTFT (precopy JIT). Disable
       # with MAMBA_CACHE_MODE=none. pmu is inert unless align is active.
+      # ⚠️ align mode checkpoints the GDN/SSM state at EVERY attention block
+      # (1,616 tok here) and those pages come out of the KV pool but are NOT in
+      # vLLM's "GPU KV cache size" figure — measured 2026-09-04: the pool filled
+      # at ~80% of its nominal token count (2x200K preempted in a "530K" pool).
+      # MAMBA_BLOCK_SIZE=8192 (entrypoint knob) cuts the checkpoints 5x: 2x242K
+      # then ran fully concurrent, 0 preemptions, prefix cache intact (29x TTFT).
+      # Trade-off check 2026-09-05: NO per-turn cost. Prompt sweep 2K..200K x
+      # cold+3 follow-ups at 1616 / 4096 / 8192 — follow-up TTFT, decode tok/s
+      # and vLLM's uncached-token counters are identical to the row (hits are
+      # keyed every --prefix-match-unit=16 tok, not per mamba block, so the
+      # uncached tail does not grow with the block). 4096 also holds 2x200K
+      # with 0 preemptions if you want a smaller step. Leave unset = upstream.
       - --mamba-cache-mode
       - "${MAMBA_CACHE_MODE:-align}"
       - --prefix-match-unit
