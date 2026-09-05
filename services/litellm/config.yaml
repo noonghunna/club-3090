@@ -23,7 +23,7 @@ model_list:
   # port per model, same as every other local backend here.
   # === BEGIN GENERATED LOCAL BLOCK — scripts/lib/litellm-emit.sh (#1078); DO NOT hand-edit ===
 
-  - model_name: deepseek-v4-flash  # status: incubating
+  - model_name: deepseek-v4-flash  # status: experimental
     litellm_params:
       model: openai/deepseek-v4-flash
       api_base: http://host.docker.internal:8030/v1
@@ -53,7 +53,7 @@ model_list:
       api_base: http://host.docker.internal:8032/v1
       api_key: EMPTY
 
-  - model_name: glm-5.3-flash  # status: incubating
+  - model_name: glm-5.3-flash  # status: experimental
     litellm_params:
       model: openai/glm-5.3-flash
       api_base: http://host.docker.internal:8119/v1
@@ -95,7 +95,7 @@ model_list:
       api_base: http://host.docker.internal:8091/v1
       api_key: EMPTY
 
-  - model_name: qwen3.8-flash-next  # status: incubating
+  - model_name: qwen3.8-flash-next  # status: experimental
     litellm_params:
       model: openai/qwen3.8-flash-next
       api_base: http://host.docker.internal:8122/v1

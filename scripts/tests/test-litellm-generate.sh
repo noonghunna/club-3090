@@ -14,7 +14,7 @@
 #      + alias, gemma-12b-int8, deckard) is ABSORBED into the generated block
 #      — no route lost, correct port per route;
 #   7. non-functional statuses annotate their route `# status: <status>`
-#      (deepseek incubating; the qwen3.8-27b dual-max experimental scene)
+#      (deepseek non-functional; the qwen3.8-27b dual-max experimental scene)
 #      while functional routes stay clean.
 set -euo pipefail
 
@@ -76,9 +76,19 @@ for pair in \
   fi
 done
 
-grep -qF 'model_name: deepseek-v4-flash  # status: incubating' \
-  <(sed -n '/BEGIN GENERATED/,/END GENERATED/p' "$CFG") \
-  || fail "incubating deepseek route lacks the '# status:' annotation"
+# The annotation must match the slug's CURRENT registry status, not a status
+# frozen into this test. deepseek was `incubating` when this was written and is
+# `experimental` since #1175; hard-coding the word made a routine status change
+# look like a generator bug. Derive it instead, so the next change cannot drift.
+_ds_status="$(command grep -oE 'model_name: deepseek-v4-flash  # status: [a-z_]+' \
+  <(sed -n '/BEGIN GENERATED/,/END GENERATED/p' "$CFG") | awk '{print $NF}')"
+[ -n "$_ds_status" ] \
+  || fail "non-functional deepseek route lacks the '# status:' annotation"
+command grep -qE "^[[:space:]]+status: ${_ds_status}\$" scripts/lib/profiles/registry.yaml \
+  || fail "deepseek route annotated '# status: ${_ds_status}', which is not a status in registry.yaml"
+# ⚠️ No `incubating` slug is currently ROUTED through litellm (the one that
+# remains is the opt-in LMCache dual, hidden from --list), so that branch of the
+# annotation contract is deliberately uncovered here rather than faked.
 grep -qF 'model_name: qwen3.8-27b  # status: experimental' \
   <(sed -n '/BEGIN GENERATED/,/END GENERATED/p' "$CFG") \
   || fail "experimental qwen3.8 dual-max route lacks the '# status:' annotation"
