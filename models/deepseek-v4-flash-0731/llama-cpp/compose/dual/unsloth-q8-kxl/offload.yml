@@ -12,7 +12,7 @@
 #   Vision:    no
 #   Max ctx:   204800  (⚠️ NOT 262144 — see Caveats)
 #   Genesis:   N/A — llama.cpp engine
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Caveats:   • Canonical bench PUBLISHED 2026-08-09 (BENCHMARKS.md row 2, reference
 #                2×3090, 3-boot medians): decode 17.1 narrative / 26.9 code
 #                (canonical sampling), prefill 369 @10K / 287 @90K, TTFT 169 ms.

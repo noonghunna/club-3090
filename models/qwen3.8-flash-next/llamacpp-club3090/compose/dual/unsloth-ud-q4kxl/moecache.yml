@@ -36,7 +36,7 @@
 #   Max ctx:   204800 shipped. 262144 is the model's NATIVE figure and boots,
 #              but 204800 is what was benched and what the pool was sized for.
 #   Genesis:   N/A — llama.cpp engine
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 # CPU-Offload-Host-RAM-GB: 110
 #   ⤷ ALL-on-CPU worst case, from the 105 GB of weights + headroom. Registry
 #     `host_ram_gb` is the NOMINAL figure and must stay <= this.

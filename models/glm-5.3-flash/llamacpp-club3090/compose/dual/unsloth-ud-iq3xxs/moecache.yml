@@ -80,7 +80,7 @@
 #      (-mmdev none), which is what keeps this survivable. Watch it.
 #      ⚠️ Quality at IQ3 is STILL UNTESTED — coherent on a one-word probe is
 #      not a quality result. No verify-full, no bench, no 8-pack.
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Best for:  long-context MoE serving experiments on the moe-cache engine
 #   Caveats:
 #     • ⚠️ ATTRIBUTION: the MoE expert cache is **leloch's** work

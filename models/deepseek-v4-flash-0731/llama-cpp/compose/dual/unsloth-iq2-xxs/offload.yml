@@ -11,7 +11,7 @@
 #   Vision:    no
 #   Max ctx:   204800
 #   Genesis:   N/A — llama.cpp engine
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Caveats:   • Canonical bench PUBLISHED 2026-08-09 (BENCHMARKS.md row 3, reference
 #                2×3090): decode 15.4 narrative / 24.3 code (canonical sampling),
 #                prefill 436 @10K / 311 @90K, TTFT ~165 ms. The 8-pack is still
