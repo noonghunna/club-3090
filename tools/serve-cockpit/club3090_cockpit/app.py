@@ -8756,9 +8756,101 @@ class RailStatus(Static):
 
     def __init__(self, **kwargs):
         super().__init__(self.PLACEHOLDER, **kwargs)
+        # #1118 -- the parsed VRAM component split (CockpitData.vram_breakdown)
+        # and which slice the card shows: "estate" (aggregate) or a device name.
+        self._vram: Optional[dict] = None
+        self._vram_at: float = 0.0
+        self._vram_view: str = "estate"
+        self._last_state: Optional[EstateState] = None
+        self._last_as_of: str = ""
+
+    def set_vram_split(self, vram: Optional[dict]) -> None:
+        """Store the parsed VRAM split (#1118) and re-render.  ``vram`` is the
+        ok-payload of CockpitData.vram_breakdown, or None to fall back to the
+        plain used/total card (nothing serving / parse failed)."""
+        import time as _t
+
+        self._vram = vram or None
+        self._vram_at = _t.monotonic() if self._vram else 0.0
+        names = [d.get("device", "") for d in (self._vram or {}).get("devices", [])]
+        if self._vram_view != "estate" and self._vram_view not in names:
+            self._vram_view = "estate"
+        self._render_card()
+
+    def cycle_vram_view(self) -> None:
+        """[G] — estate-wide -> per-GPU -> back, over the devices the log named."""
+        names = [d.get("device", "") for d in (self._vram or {}).get("devices", [])]
+        if not names:
+            return
+        order = ["estate"] + names
+        i = order.index(self._vram_view) if self._vram_view in order else 0
+        self._vram_view = order[(i + 1) % len(order)]
+        self._render_card()
 
     def update_from_state(self, state: EstateState, *, as_of: str = "") -> None:
+        self._last_state = state
+        self._last_as_of = as_of
+        self._render_card()
+
+    def _vram_lines(self) -> list[str]:
+        """The #1118 breakdown block: aggregate across devices by default,
+        one card's slice after [G] cycles to it.  Empty when there is no
+        split (degrades to the plain used/total card)."""
+        vram = self._vram or {}
+        devices = vram.get("devices") or []
+        if not devices:
+            return []
+        import time as _t
+
+        age_min = max(0, int((_t.monotonic() - self._vram_at) // 60))
+        clamped = any("staler than the card" in w for w in vram.get("warnings", []))
+        lines: list[str] = []
+
+        def _dev_row(d: dict) -> None:
+            title = f"VRAM split · {self._vram_view}"
+            lines.append(f"[bold]{title}[/bold]")
+            for label in ("model", "pool", "compute", "kv", "state"):
+                v = d.get(label)
+                if v is not None:
+                    lines.append(f"  {label:<8} {_human_gb(int(v) * 1024 * 1024)}")
+            raw = d.get("unaccounted")
+            if raw is not None:
+                # Never a negative `other`: the parser clamps, and the rail
+                # clamps again defensively; "≥" marks the clamp.
+                shown = max(0, int(raw))
+                ge = "≥ " if (int(raw) < 0 or clamped) else ""
+                lines.append(f"  other    {ge}{_human_gb(shown * 1024 * 1024)} ⚠")
+            lines.append(f"[dim]  split from boot log · {age_min}m old · \\[G] cycle[/dim]")
+
+        if self._vram_view == "estate":
+            agg: dict[str, float] = {}
+            for d in devices:
+                for k in ("model", "pool", "compute", "kv", "state"):
+                    if d.get(k) is not None:
+                        agg[k] = agg.get(k, 0.0) + d[k]
+            other = sum(max(0, d.get("unaccounted") or 0) for d in devices)
+            agg_row = dict(agg)
+            agg_row["device"] = "estate"
+            agg_row["unaccounted"] = other
+            _dev_row(agg_row)
+        else:
+            d = next((x for x in devices if x.get("device") == self._vram_view), None)
+            if d is not None:
+                _dev_row(d)
+        if clamped:
+            lines.append("[dim]  ⚠ components exceed the live total — split is from a staler boot log[/dim]")
+        if vram.get("warnings"):
+            lines.append(f"[dim]  ⚠ {vram['warnings'][0][:60]}[/dim]")
+        return lines
+
+    def _render_card(self) -> None:
+        state, as_of = self._last_state, self._last_as_of
         lines: list[str] = ["[bold]Estate[/bold]", ""]
+        if state is None:
+            # set_vram_split before the first estate poll: breakdown-only card
+            # (nothing else is known yet).
+            self.update("\n".join(lines + self._vram_lines()))
+            return
         # A2/N2: a READ error (docker / nvidia-smi failure) shows as a distinct
         # red line at the top of the rail — the always-visible card must not
         # quietly read as a healthy idle rig when the read actually failed.
@@ -8772,7 +8864,7 @@ class RailStatus(Static):
             lines.append(f"[red]⚠ {_error_headline(err)}[/red]")
             lines.append("")
         for i in (0, 1):
-            gpu = next((g for g in state.gpus if getattr(g, "index", -1) == i), None)
+            gpu = next((g for g in (state.gpus or []) if getattr(g, "index", -1) == i), None)
             if gpu is None:
                 continue
             used = getattr(gpu, "mem_used_mib", 0) / 1024
@@ -8791,6 +8883,12 @@ class RailStatus(Static):
             lines.append(f"[dim]kv pool {dr.kv_pool_pct}%[/dim]")
         else:
             lines.append("[dim]kv pool —[/dim]")
+
+        # #1118 -- the VRAM component split, parsed from the serving
+        # container's boot log on a long stride.  Aggregate by default; [G]
+        # collapses to one card.  Degrades to the plain used/total card when
+        # there is no split (non-llama engine, nothing serving, parse failed).
+        lines += self._vram_lines()
         lines.append("")
         if state.matched_slug:
             # F9: a port/substring registry match is a SHAPE guess, not a verified
@@ -9498,6 +9596,8 @@ class CockpitApp(App):
         # context-gated to mode 0 · Doctor in _CONTEXT_KEYS, so it only renders
         # there.
         Binding("y", "doctor_rerun", "Re-run health", show=True),
+        # #1118 — the estate VRAM split: estate-wide -> per-GPU -> back.
+        Binding("G", "estate_vram_cycle", "VRAM breakdown", show=True),
         # Batch 3 — Operate · Doctor: "is the model serving correctly?".  [v] sends
         # a test query (verify.sh), [V] runs the ~1-2 min functional battery
         # (verify-full.sh).  Both READ-only.  [v] DELIBERATELY shares its key with
@@ -9727,6 +9827,9 @@ class CockpitApp(App):
         #   report_problem — any merged-mode tab (surfaced AT a failed serve in
         #                    Catalog, and reachable while operating).
         "rig_report":       ({0}, None),
+        # #1118 — [G] cycles the estate-bar VRAM split; the rail is visible on
+        # every merged-mode tab, so no subtab restriction.
+        "estate_vram_cycle": ({0}, None),
         "submit_bench":     ({0}, None),
         "report_problem":   ({0}, None),
     }
@@ -9786,6 +9889,11 @@ class CockpitApp(App):
         # [k] cancels an in-flight ① Bring download — enabled ONLY in mode 1 with
         # a live download, so the shared "k" falls through to serving_stop
         # everywhere else (mode 1 is producer-only, so no surface leak).
+        # [G] VRAM breakdown view — only in the merged mode WITH a parsed
+        # split to cycle (no split -> nothing to show, key hidden).
+        if action == "estate_vram_cycle":
+            return self._active_mode == 0 and bool(self._vram_split)
+
         if action == "bring_cancel_download":
             # Cancelable when this session started a download (tracker) OR a
             # disk-truth download lock is live for the fit-checked repo (a
@@ -10260,6 +10368,11 @@ class CockpitApp(App):
         # A3: the last estate snapshot, cached so the periodic as-of re-render can
         # re-stamp the rail's freshness WITHOUT a fresh subprocess poll.
         self._last_estate_state: Optional[EstateState] = None
+
+        self._vram_split: Optional[dict] = None          # #1118 parsed --json payload
+        self._vram_split_at: float = 0.0                 # monotonic ts of the last parse
+        self._vram_split_container: str = ""            # container the split was parsed for
+        self._estate_vram_view: str = "estate"               # rail view cycle state
         # Last GPU/host telemetry (cached for the video⊕voice guard — read in the
         # sync container-write path without a fresh async poll).
         self._last_telemetry: Optional[EstateTelemetry] = None
@@ -10494,6 +10607,55 @@ class CockpitApp(App):
         # The heavy docker+host batch runs only on a due tick (burst/steady/idle).
         if self._docker_poll_due():
             self.load_estate()
+        # #1118 -- the VRAM component split re-parses on a LONG stride (600s)
+        # or when the serving container changes; the rail's totals stay per-tick.
+        self._maybe_reparse_vram_split()
+
+    _VRAM_REPARSE_SECS = 600       # #1118: boot-log re-parse stride (10 min)
+
+    def _maybe_reparse_vram_split(self) -> None:
+        """Re-parse the serving container's boot log only on a long stride or
+        when the serving container changed (#1118) -- the component split moves
+        at container-start and as the moe-cache pool grows, never per poll."""
+        import time as _t
+
+        con = self._serving_container()
+        name = con.name if con is not None else ""
+        if not name:
+            return
+        if (self._vram_split_container == name
+                and (_t.monotonic() - self._vram_split_at) < self._VRAM_REPARSE_SECS):
+            return
+        self._vram_split_container = name
+        self._vram_split_at = _t.monotonic()
+        self.run_vram_breakdown_worker(name)
+
+    @work(exclusive=True, group="vram-split")
+    async def run_vram_breakdown_worker(self, container: str) -> None:
+        try:
+            res = await self._data.vram_breakdown(container)
+        except Exception as exc:  # pragma: no cover - defensive
+            res = {"ok": False, "container": container, "devices": [],
+                   "warnings": [], "error": str(exc)}
+        # Cache the result either way: an ok=False payload renders the rail's
+        # degraded used/total card (the caller checks .ok for the view).
+        self._vram_split = res
+        import time as _t
+        self._vram_split_at = _t.monotonic()
+        try:
+            self.query_one("#rail-status", RailStatus).set_vram_split(
+                res if res.get("ok") else None)
+        except Exception:
+            pass
+
+    def action_estate_vram_cycle(self) -> None:
+        """[G] — cycle the estate-bar VRAM split: estate-wide -> per-GPU."""
+        if not self._vram_split:
+            return
+        try:
+            self.query_one("#rail-status", RailStatus).cycle_vram_view()
+        except Exception:
+            pass
 
     def _note_activity(self) -> None:
         """Reset the idle clock — any key/mouse/action keeps the docker poll out of the
