@@ -15594,7 +15594,7 @@ class CockpitApp(App):
         except Exception:
             pass
 
-    def _focus_tab_primary(self, widget_id: str) -> None:
+    def _focus_tab_primary(self, widget_id: str, origin_screen: object = None) -> None:
         """Deferred body of the tab-activation focus move (see FIX B below).
 
         Runs one render cycle AFTER ``on_tabbed_content_tab_activated`` decided to
@@ -15630,6 +15630,17 @@ class CockpitApp(App):
         not re-fire a reaching RowHighlighted.  The flag is managed entirely by
         the populate path ([r]-refresh) + the highlight handler.
         """
+        # FIX B (screen half) — bail if a screen was pushed after we were scheduled.
+        # ``self.set_focus`` acts on the ACTIVE screen, and ``self.query_one`` will
+        # happily find a widget on the screen underneath a modal.  Between the
+        # ``TabActivated`` and this callback a modal can be pushed (``?`` help, the
+        # first-run screen), and without this guard we reach past it, steal focus
+        # from the modal, and its own bindings (``escape`` to dismiss, ``q``
+        # suppression) stop receiving keys — the modal is left on screen with no way
+        # out.  The focus guard below cannot catch this: focus is legitimately NOT a
+        # ``Tabs`` at that moment, it is the modal's own widget.
+        if origin_screen is not None and self.screen is not origin_screen:
+            return
         if isinstance(self.focused, Tabs):
             return
         try:
@@ -15645,7 +15656,14 @@ class CockpitApp(App):
             # indivisible step.  Same acceptance rule either way (Screen.set_focus
             # honours ``widget.focusable``), and we are already one render cycle
             # late, so the pane is displayed and the target is focusable.
-            self.set_focus(self.query_one(widget_id))
+            # Query from the ACTIVE SCREEN, not the app.  ``App.query_one`` searches
+            # the whole DOM and will find the tab's widget on the screen underneath a
+            # modal; ``Screen.query_one`` cannot, so a modal that does not contain
+            # ``widget_id`` raises NoMatches and we correctly do nothing.  This is the
+            # case the screen-identity guard above cannot catch: the first-run screen
+            # is pushed BEFORE the tab activation is scheduled, so origin and active
+            # screen are the same object and only the query scope distinguishes them.
+            self.set_focus(self.screen.query_one(widget_id))
         except Exception:
             pass
 
@@ -15745,7 +15763,7 @@ class CockpitApp(App):
             return
         widget_id = _focus_map.get(tab_id, "") or _TAB_FOCUS_FALLBACK.get(tab_id, "")
         if widget_id:
-            self.call_after_refresh(self._focus_tab_primary, widget_id)
+            self.call_after_refresh(self._focus_tab_primary, widget_id, self.screen)
             return
 
         # No primary list for this tab — the table-less lane stages (① Bring /
