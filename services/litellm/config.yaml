@@ -149,3 +149,21 @@ model_list:
       rpm: 110
       tpm: 480000
       extra_body: {"thinking_budget": 1}
+
+  # === Cloud reference endpoint (OrcaRouter AI gateway, OpenAI-compatible) ===
+  # Second named cloud reference for benchlocal-cli quality runs. OrcaRouter is a
+  # multi-model AI gateway: it exposes a provider/model namespace (orcarouter/auto,
+  # orcarouter/fusion-flash, …) across many upstream models, so one endpoint serves
+  # as a drop-in cloud comparison the same way DashScope does. No rpm/tpm set — no
+  # rate limits prescribed to us, so let LiteLLM pass through untuned.
+  - model_name: orcarouter-auto
+    litellm_params:
+      model: openai/orcarouter/auto
+      api_base: https://api.orcarouter.ai/v1
+      api_key: os.environ/ORCAROUTER_API_KEY
+  # A concrete, stable model id (orcarouter/auto routes dynamically).
+  - model_name: orcarouter-fusion-flash
+    litellm_params:
+      model: openai/orcarouter/fusion-flash
+      api_base: https://api.orcarouter.ai/v1
+      api_key: os.environ/ORCAROUTER_API_KEY
