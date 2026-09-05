@@ -277,7 +277,7 @@ services:
         # residency, so the optimum could differ. NOT measured on iq4xs.
         # multi4/multi8 deliberately stay at n=3: more cards means more resident
         # experts, so the mechanism weakens, and we cannot test them on 2 GPUs.
-        _spec_n="$${SPEC_N:-3}"
+        _spec_n="$${SPEC_N:-2}"
         case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
         case "$$_spec_n" in
           ""|*[!0-9]*)
