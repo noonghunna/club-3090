@@ -41,6 +41,12 @@ def check(cond: bool, msg: str) -> None:
         failures.append(msg)
 
 
+def _log_path(log_text: str) -> str:
+    f = tempfile.NamedTemporaryFile("w", suffix=".log", delete=False)
+    f.write(log_text)
+    return f.name
+
+
 def run(log_text: str) -> str:
     with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as f:
         f.write(log_text)
@@ -88,6 +94,50 @@ single = """\
 out = run(single)
 check("model=2048" in out and "model=1024" in out,
       "no-drafter boot: one line per device, values unchanged")
+
+# --- #1118: --json emits one object per device with the full field set
+import json as _json
+import os as _os
+import subprocess as _sp
+
+r = _sp.run(PARSER + ["--json", _log_path(glm)], capture_output=True, text=True)
+data = _json.loads(r.stdout)
+devs = {d["device"]: d for d in data["devices"]}
+check(set(devs) == {"CUDA0", "CUDA1"}, "--json: one object per device")
+c1 = devs["CUDA1"]
+check(c1["model"] == 3969 and c1["state"] == 206 and c1["kv"] == 80
+      and c1["pool"] is None and c1["compute"] == 5208,
+      "--json: component fields carry the parsed values (absent -> null)")
+check(isinstance(data.get("warnings"), list), "--json: warnings list is present")
+
+# --- #1118: negative unaccounted (stale log vs a live, nearly-empty card)
+# must be CLAMPED to 0 and flagged in warnings -- never a negative other.
+# A fake nvidia-smi on PATH simulates the stopped-container total (100 MiB
+# used against ~10 GiB of log-derived components).
+fake_dir = tempfile.mkdtemp(prefix="vram-smi-")
+fake_smi = Path(fake_dir) / "nvidia-smi"
+fake_smi.write_text('#!/bin/sh\necho "0, 100, 24576"\necho "1, 100, 24576"\n')
+fake_smi.chmod(0o755)
+env = dict(_os.environ)
+env["PATH"] = fake_dir + ":" + env.get("PATH", "")
+with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as f:
+    f.write(glm)
+    stale_path = f.name
+r = _sp.run(PARSER + ["--json", stale_path], capture_output=True, text=True,
+            env=env)
+Path(stale_path).unlink()
+if r.returncode != 0:
+    failures.append(f"--json (stale) parser exited {r.returncode}")
+else:
+    data = _json.loads(r.stdout)
+    stale = [d for d in data["devices"] if d["device"] == "CUDA1"][0]
+    check(stale["unaccounted"] == 0,
+          "negative unaccounted is CLAMPED to 0, never negative")
+    check(stale["model"] == 3969,
+          "components still reported alongside the clamp")
+    check(any("staler than the card" in w for w in data["warnings"]),
+          "the clamp is flagged in warnings (staleness cue)")
+Path(fake_smi).unlink()
 
 if failures:
     print(f"\n{len(failures)} assertion(s) failed.", file=sys.stderr)

@@ -17,6 +17,7 @@ Scope: the BYTE split only. Pool slot counts, hit rates and cache health belong 
 CAPTURE: EXPERT CACHE and are deliberately not duplicated here -- one owner per
 number, so the two sections can never disagree.
 """
+import json
 import re
 import subprocess
 import sys
@@ -30,14 +31,12 @@ def _per_dev(text, pat, agg=False):
     return out
 
 
-def main() -> int:
-    if len(sys.argv) < 2:
-        return 1
-    try:
-        text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
-    except OSError:
-        return 1
+def breakdown(text):
+    """Parse the engine log -> the named-buffer dicts.
 
+    Returns (model, compute, kv, state, pool, slots, allocs).  Pure -- no
+    subprocess, no printing -- so the text and --json emitters cannot drift,
+    and tests can drive it without a GPU."""
     # A GPU-pinned drafter emits the same `model buffer size` line as the
     # target model -- the two weights are additive, so last-wins would report
     # the drafter's and drop the target's into unaccounted.
@@ -49,6 +48,112 @@ def main() -> int:
     # state as DeepSeek's `_comp_state`, so it folds into the `state` column.
     for d, v in _per_dev(text, r"llama_memory_recurrent:\s+(CUDA\d) RS buffer size =\s+([\d.]+) MiB", agg=True).items():
         state[d] = state.get(d, 0.0) + v
+
+    # LAST report per (device, pool) -- never sum every match, see module docstring
+    last = {}
+    for m in re.finditer(
+        r"\[moe-cache\] (CUDA\d) pool\[(\d)\]:.*?slots=(\d+).*?total=(\d+) MiB", text
+    ):
+        last[(m.group(1), m.group(2))] = (int(m.group(3)), int(m.group(4)))
+    pool, slots = {}, {}
+    for (dev, idx), (sl, mib) in last.items():
+        pool[dev] = pool.get(dev, 0) + mib
+        slots[dev] = slots.get(dev, 0) + sl
+    allocs = {}
+    for m in re.finditer(r"\[moe-cache\] (CUDA\d) pool\[(\d)\]:", text):
+        k = (m.group(1), m.group(2))
+        allocs[k] = allocs.get(k, 0) + 1
+    return model, compute, kv, state, pool, slots, allocs
+
+
+def _fetch_smi() -> dict:
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, encoding="utf-8", timeout=10,
+        ).stdout
+        smi = {}
+        for line in out.strip().splitlines():
+            i, used, tot = [x.strip() for x in line.split(",")]
+            smi["CUDA" + i] = (float(used), float(tot))
+        return smi
+    except Exception:
+        return {}
+
+
+def main() -> int:
+    argv = [a for a in sys.argv[1:] if a != "--json"]
+    as_json = len(argv) != len(sys.argv) - 1
+    if len(argv) < 1:
+        return 1
+    try:
+        text = open(argv[0], encoding="utf-8", errors="replace").read()
+    except OSError:
+        return 1
+
+    model, compute, kv, state, pool, slots, allocs = breakdown(text)
+    smi = _fetch_smi()
+
+    devs = sorted(set(model) | set(smi) | set(pool))
+    if not devs:
+        return 1
+
+    warnings: list[str] = []
+    n = max(allocs.values()) if allocs else 0
+    if n > 1:
+        warnings.append(
+            "%d moe-cache allocations logged per pool -- figures take the "
+            "LAST (summing them double-counts)" % n)
+
+    devices = []
+    text_lines = []
+    for dev in devs:
+        parts, acc = [], 0.0
+        entry = {"device": dev, "model": None, "kv": None, "state": None,
+                 "compute": None, "pool": None, "used": None, "total": None,
+                 "unaccounted": None}
+        for label, src in (("model", model), ("kv", kv), ("state", state),
+                           ("compute", compute), ("pool", pool)):
+            if dev in src:
+                parts.append("%s=%.0f" % (label, src[dev]))
+                acc += src[dev]
+                entry[label] = round(src[dev])
+        if dev in smi:
+            used, tot = smi[dev]
+            entry["used"], entry["total"] = round(used), round(tot)
+            parts.append("total=%.0f/%.0fMiB(%.0f%%)" % (used, tot, 100 * used / tot))
+            if acc:
+                unacc = used - acc
+                if unacc < 0:
+                    # The components come from the boot log; the total is live
+                    # nvidia-smi.  A negative gap means the log is STALER than
+                    # the card (container restarted / shrunk) -- clamp and say
+                    # so instead of printing a nonsense negative (#1118).
+                    warnings.append(
+                        "%s: components (%.0f MiB) exceed the live total "
+                        "(%.0f MiB) -- the log is staler than the card; "
+                        "unaccounted clamped to 0" % (dev, acc, used))
+                    unacc = 0.0
+                entry["unaccounted"] = round(unacc)
+                # everything the card reports that the engine did not name:
+                # draft context, CUDA runtime, fragmentation
+                parts.append("unaccounted=%.0f" % unacc)
+        devices.append(entry)
+        text_lines.append("  %s: %s" % (dev, "  ".join(parts)))
+
+    if as_json:
+        print(json.dumps({"devices": devices, "warnings": warnings}))
+        return 0
+    for line in text_lines:
+        print(line)
+    if warnings:
+        for w in warnings:
+            print("  WARNING: %s" % w)
+    if pool:
+        print("  pool slots + hit rate: see CAPTURE: EXPERT CACHE below (this line is the "
+              "BYTE split only)")
+    return 0
 
     # LAST report per (device, pool) -- never sum every match, see module docstring
     last = {}
