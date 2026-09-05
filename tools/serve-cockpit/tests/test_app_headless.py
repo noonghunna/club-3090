@@ -10090,6 +10090,136 @@ class TestFixBTabBarFocusStays:
             assert app.focused.id == "catalog-table", \
                 "mode switch lands the user on the primary list"
 
+    # ── FIX B, deferred half — the guard is re-checked, and applied atomically ──
+    #
+    # ``on_tabbed_content_tab_activated`` decides "move focus into the new tab's
+    # primary list" while handling the event, but performs it one render cycle
+    # later via ``call_after_refresh(self._focus_tab_primary, …)``.  Focus can move
+    # onto the tab bar inside that window — Textual re-homes focus when the
+    # outgoing pane's focused widget is hidden, the user Tabs/clicks onto the bar
+    # while the UI is busy, or a caller calls ``.focus()`` (itself deferred).  The
+    # two tests below pin the two properties that make "the tab bar keeps focus" an
+    # invariant rather than a race; without BOTH, the keyboard-economy tests
+    # (`TestOrchScrollNotATabStop`, `TestModesRailNavigation`, …) are order- and
+    # load-dependent and fail intermittently under a full-suite run.
+
+    @pytest.mark.asyncio
+    async def test_deferred_tab_focus_rechecks_the_tab_bar_guard(self):
+        """The DEFERRED focus must re-read focus, not trust the event-time read.
+
+        Drives ``_focus_tab_primary`` directly: that is the callback
+        ``call_after_refresh`` drains, and calling it here reproduces the adverse
+        ordering (focus reached the tab bar first) deterministically, which the
+        pilot cannot schedule reliably."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            tc.active = "tab-orchestration"
+            await _settle(pilot)
+            tc.query_one(ContentTabs).focus()
+            await pilot.pause()
+            assert isinstance(app.focused, Tabs), "precondition: focus on the tab bar"
+            # The deferred body now lands, one cycle late.
+            app._focus_tab_primary("#scene-table")
+            await pilot.pause()
+            assert isinstance(app.focused, Tabs), \
+                f"deferred tab-activation focus must not yank the user off the " \
+                f"tab bar, got {app.focused!r}"
+
+    @pytest.mark.asyncio
+    async def test_deferred_tab_focus_is_applied_synchronously(self):
+        """The guard and its effect must be ONE step.
+
+        ``Widget.focus()`` does not focus — it queues ``set_focus`` on the app
+        message queue.  ``_focus_tab_primary`` is drained off the SCREEN's
+        post-refresh callback list, so a focus it merely QUEUES can land behind a
+        caller's own queued ``.focus()`` and win, re-opening the window the guard
+        above closes.  Assert with NO await between call and check."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            tc.active = "tab-orchestration"
+            await _settle(pilot)
+            app.query_one("#catalog-table", DataTable).focus()
+            await pilot.pause()
+            app._focus_tab_primary("#scene-table")
+            assert app.focused is app.query_one("#scene-table", DataTable), \
+                "the deferred focus must be APPLIED, not queued for a later turn"
+
+
+class TestDeferredTabFocusRespectsModals:
+    """The deferred tab-activation focus must never reach past a modal.
+
+    ``_focus_tab_primary`` is drained one render cycle after the ``TabActivated``
+    that scheduled it, and a modal can be open by the time it lands.  If it focuses
+    the tab's widget anyway, focus leaves the modal and the modal's OWN bindings
+    (``escape`` to dismiss, ``q`` suppression) stop receiving keys — the modal is
+    stranded on screen with no way out.
+
+    ⚠️ The ``isinstance(self.focused, Tabs)`` guard CANNOT catch this: at that
+    moment focus is legitimately not a ``Tabs``, it is the modal's own widget.
+
+    Two independent paths, and a fix for one does not fix the other:
+
+    * modal pushed AFTER scheduling → the active screen is no longer the one we
+      were scheduled from (``origin_screen`` guard);
+    * modal pushed BEFORE scheduling → origin and active screen are the SAME
+      object, and only the query SCOPE separates them.  ``App.query_one`` searches
+      the whole DOM and finds the widget beneath the modal; ``Screen.query_one``
+      cannot, so it raises and the callback correctly does nothing.
+
+    Regression test for the 9 failures this caused in ``TestModalKeyCapture`` and
+    ``test_uiux_first_run`` — all of which read as "escape stopped working".
+    """
+
+    @pytest.mark.asyncio
+    async def test_deferred_focus_does_not_escape_a_modal_opened_after_scheduling(self):
+        """Modal pushed AFTER the callback was scheduled.
+
+        Called with ONE argument on purpose: that signature exists both before and
+        after the fix, so a failure here is the BEHAVIOUR regressing, never a
+        TypeError from the added parameter."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            main_screen = app.screen
+            await pilot.press("question_mark")
+            await pilot.pause()
+            assert isinstance(app.screen, HelpScreen), "precondition: help modal open"
+            # The deferred body lands while the modal is up, carrying the screen it
+            # was scheduled from — as the real call site passes it.
+            app._focus_tab_primary("#scene-table")
+            await pilot.pause()
+            assert isinstance(app.screen, HelpScreen), "the modal must still be open"
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, HelpScreen), \
+                "escape must still dismiss the modal — the deferred focus stole its keys"
+
+    @pytest.mark.asyncio
+    async def test_deferred_focus_does_not_escape_a_modal_open_before_scheduling(self):
+        """Modal already open when scheduled — only the query SCOPE separates them.
+
+        Called with ONE argument, so the identity guard is inert (``origin_screen``
+        defaults to None) and this isolates the SCOPE fix.  Without it,
+        ``App.query_one`` finds ``#scene-table`` on the screen underneath and focus
+        leaves the modal."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("question_mark")
+            await pilot.pause()
+            assert isinstance(app.screen, HelpScreen), "precondition: help modal open"
+            app._focus_tab_primary("#scene-table")
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, HelpScreen), \
+                "escape must still dismiss the modal — the deferred focus reached " \
+                "past it via App.query_one"
+
 
 class TestBareBootFocusOnCatalog:
     """MUST-FIX 1 — the app must BOOT with focus on mode 0's primary list

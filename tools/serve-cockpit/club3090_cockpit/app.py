@@ -15594,6 +15594,79 @@ class CockpitApp(App):
         except Exception:
             pass
 
+    def _focus_tab_primary(self, widget_id: str, origin_screen: object = None) -> None:
+        """Deferred body of the tab-activation focus move (see FIX B below).
+
+        Runs one render cycle AFTER ``on_tabbed_content_tab_activated`` decided to
+        move focus into the newly active tab's primary widget, so it MUST re-check
+        the decision against live state rather than trust the one taken at event
+        time.
+
+        FIX B (deferred half) — the "don't yank focus off the TAB BAR" guard is
+        evaluated twice: once in the handler (cheap, skips scheduling) and again
+        HERE.  Evaluating it only at event time was a real ordering bug: between
+        the ``TabActivated`` and this callback, focus can legitimately land on the
+        tab bar — the outgoing pane's focused widget is hidden and Textual
+        re-homes focus, the user Tab/Shift+Tabs (or clicks) onto the bar while the
+        UI is busy, or a caller calls ``.focus()`` (itself deferred via
+        ``call_later``, so it can drain either side of this callback).  Whenever
+        that happened, this callback overrode it and dragged the user back down
+        into the list.  Re-checking here is what makes "the tab bar keeps focus"
+        an invariant instead of a race — and it is why the keyboard-economy tests
+        (one Tab from the tab bar reaches the primary list) are deterministic
+        rather than order-dependent.
+
+        Query WITHOUT a type constraint.  This used to be
+        ``query_one(widget_id, DataTable)``, which raised for any non-DataTable
+        target and was swallowed by the ``except`` — so the Doctor entry
+        (#doctor-scroll, a focusable ScrollableContainer: the scroll box IS the
+        content there) silently focused nothing and left ↓/PgDn dead on a page
+        that overflows at 46 rows.
+
+        #3/NH1: the Containers tab is CALM on entry — focus the table but do NOT
+        auto-load the highlighted row's drill detail.  No arming is needed here:
+        the row-0 echo from the entry populate fired while Orchestration was
+        active (guarded out of the highlight handler), and focusing the table does
+        not re-fire a reaching RowHighlighted.  The flag is managed entirely by
+        the populate path ([r]-refresh) + the highlight handler.
+        """
+        # FIX B (screen half) — bail if a screen was pushed after we were scheduled.
+        # ``self.set_focus`` acts on the ACTIVE screen, and ``self.query_one`` will
+        # happily find a widget on the screen underneath a modal.  Between the
+        # ``TabActivated`` and this callback a modal can be pushed (``?`` help, the
+        # first-run screen), and without this guard we reach past it, steal focus
+        # from the modal, and its own bindings (``escape`` to dismiss, ``q``
+        # suppression) stop receiving keys — the modal is left on screen with no way
+        # out.  The focus guard below cannot catch this: focus is legitimately NOT a
+        # ``Tabs`` at that moment, it is the modal's own widget.
+        if origin_screen is not None and self.screen is not origin_screen:
+            return
+        if isinstance(self.focused, Tabs):
+            return
+        try:
+            # ``self.set_focus`` (App -> Screen.set_focus), NOT ``widget.focus()``.
+            # ``Widget.focus()`` does not focus: it queues ``set_focus`` on the APP
+            # message queue via ``call_later``.  That second deferral re-opens the
+            # very window the guard above closes — this callback is drained off the
+            # SCREEN's post-refresh callback list, so it can run while a
+            # ``.focus()`` queued earlier by a caller is still sitting unapplied on
+            # the app queue: the guard reads the stale focus, misses the tab bar,
+            # and our own queued focus then lands BEHIND the caller's and wins.
+            # Setting focus synchronously makes the check and its effect one
+            # indivisible step.  Same acceptance rule either way (Screen.set_focus
+            # honours ``widget.focusable``), and we are already one render cycle
+            # late, so the pane is displayed and the target is focusable.
+            # Query from the ACTIVE SCREEN, not the app.  ``App.query_one`` searches
+            # the whole DOM and will find the tab's widget on the screen underneath a
+            # modal; ``Screen.query_one`` cannot, so a modal that does not contain
+            # ``widget_id`` raises NoMatches and we correctly do nothing.  This is the
+            # case the screen-identity guard above cannot catch: the first-run screen
+            # is pushed BEFORE the tab activation is scheduled, so origin and active
+            # screen are the same object and only the query scope distinguishes them.
+            self.set_focus(self.screen.query_one(widget_id))
+        except Exception:
+            pass
+
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         """Refresh footer bindings whenever a sub-tab changes so context keys
         show/hide correctly (e.g. [/] appears only on Run·Catalog).  Also move
@@ -15690,25 +15763,7 @@ class CockpitApp(App):
             return
         widget_id = _focus_map.get(tab_id, "") or _TAB_FOCUS_FALLBACK.get(tab_id, "")
         if widget_id:
-            def _do_focus() -> None:
-                # Query WITHOUT a type constraint.  This used to be
-                # `query_one(widget_id, DataTable)`, which raised for any
-                # non-DataTable target and was swallowed by the `except` — so the
-                # Doctor entry (#doctor-scroll, a focusable ScrollableContainer:
-                # the scroll box IS the content there) silently focused nothing
-                # and left ↓/PgDn dead on a page that overflows at 46 rows.
-                try:
-                    self.query_one(widget_id).focus()
-                except Exception:
-                    pass
-                # #3/NH1: the Containers tab is CALM on entry — focus the table
-                # but do NOT auto-load the highlighted row's drill detail.  No
-                # arming is needed here: the row-0 echo from the entry populate
-                # fired while Orchestration was active (guarded out of the
-                # highlight handler), and focusing the table does not re-fire a
-                # reaching RowHighlighted.  The flag is managed entirely by the
-                # populate path ([r]-refresh) + the highlight handler.
-            self.call_after_refresh(_do_focus)
+            self.call_after_refresh(self._focus_tab_primary, widget_id, self.screen)
             return
 
         # No primary list for this tab — the table-less lane stages (① Bring /
