@@ -40,7 +40,7 @@
 #   ⤷ ALL-on-CPU worst case. Grounded: UD-IQ4_XS is 146.1 GiB of weights and the
 #     measured serving RSS with experts offloaded was 141.5 GiB (bench 2026-08-29).
 #     Registry `host_ram_gb: 142` is the NOMINAL figure and must stay <= this.
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Best for:  long-context MoE serving experiments on the moe-cache engine
 #   Caveats:
 #     • ⚠️ ATTRIBUTION: the MoE expert cache is **leloch's** work
@@ -270,6 +270,13 @@ services:
           done
           set -- "$${ARGS[@]}"
         fi
+        # ⚠️ n=2, NOT n=3. EXTRAPOLATED from the iq3xxs sibling, where it measured
+        # ~+8-10% decode (2026-09-04, 2 boots/arm, order reversed). Same topology
+        # and the same CPU-offload mechanism — a rejected draft is verified
+        # against CPU-resident experts — but this quant's larger experts change
+        # residency, so the optimum could differ. NOT measured on iq4xs.
+        # multi4/multi8 deliberately stay at n=3: more cards means more resident
+        # experts, so the mechanism weakens, and we cannot test them on 2 GPUs.
         _spec_n="$${SPEC_N:-3}"
         case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
         case "$$_spec_n" in

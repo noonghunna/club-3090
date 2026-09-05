@@ -10,7 +10,7 @@
 #   Vision:    no
 #   Max ctx:   204800
 #   Genesis:   N/A — llama.cpp engine
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Caveats:   • NO performance or quality numbers are published for this slug —
 #                it is INCUBATING. A canonical bench and the 8-pack are both owed;
 #                only operational validation (boot + prefill probe + verify-full) exists.

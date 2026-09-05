@@ -125,7 +125,7 @@
 #      not a quality result. No verify-full, no bench, no 8-pack.
 #      ⚠️ The numbers above are the DUAL measurement, inherited here.
 #      Pools are sized per device (free-minus-reserve) — re-measure.
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Caveats:   • ⚠️⚠️ THE TUNING BELOW IS INHERITED FROM THE DUAL SLUG, NOT DERIVED
 #                FOR 8 CARDS — the single most important caveat on this file.
 #                `RESERVE_MB=1536`, `-ub/-b 4096`, `SPEC_N=3` and `DRAFT_DEVICE=CUDA1`
