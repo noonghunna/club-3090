@@ -2452,6 +2452,49 @@ class CockpitData:
 
     # ── READ: container logs ──────────────────────────────────────────────────────
 
+    async def vram_breakdown(self, container: str, *, tail: int = 4000) -> dict[str, Any]:
+        """Per-GPU VRAM component split for the serving container (#1118, READ).
+
+        Same seam as bootlog_solve: ``docker logs --tail <N> <container>``
+        through the injected read runner, then
+        ``scripts/lib/vram_breakdown.py <log> --json`` (the parser bench.sh
+        uses; the packaged TUI never imports repo internals).
+
+        Returns ``{"ok": bool, "container", "devices": [...], "warnings":
+        [...], "error"}``.  Honest failures (no container, docker logs
+        unavailable, parser garbage) return ``ok=False`` with the reason;
+        the caller renders last-known + a staleness cue instead of guessing."""
+        if not container:
+            return {"ok": False, "container": container, "devices": [],
+                    "warnings": [], "error": "no serving container resolved"}
+        res = await self.container_logs(container, tail=tail)
+        if res.get("error"):
+            return {"ok": False, "container": container, "devices": [],
+                    "warnings": [],
+                    "error": f"docker logs unavailable: {res['error']}"}
+        lines = res.get("lines") or []
+        import tempfile
+
+        fd, path = tempfile.mkstemp(prefix="c3-vram-", suffix=".log")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
+                fh.write("\n".join(lines))
+            data, err = await self._run_json(
+                ["python3", "scripts/lib/vram_breakdown.py", path, "--json"],
+                timeout=30.0,
+            )
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:  # pragma: no cover - defensive
+                pass
+        if err:
+            return {"ok": False, "container": container, "devices": [],
+                    "warnings": [], "error": err}
+        return {"ok": True, "container": container,
+                "devices": data.get("devices", []),
+                "warnings": data.get("warnings", []), "error": None}
+
     async def container_logs(
         self, name: str, *, tail: int = 200
     ) -> dict[str, Any]:

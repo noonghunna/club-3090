@@ -3092,6 +3092,157 @@ class TestRailKvPool:
             assert "kv pool 61%" in txt
 
 
+class TestEstateVramSplit:
+    """c3 #1118 — the estate card renders the parsed VRAM component split
+    (CockpitData.vram_breakdown), aggregate by default, per-GPU via [G].
+    Degrades to the plain used/total card when there is no split."""
+
+    PAYLOAD = {
+        "ok": True,
+        "container": "llama-cpp-glm53-flash-iq3xxs-moecache",
+        "devices": [
+            {"device": "CUDA0", "model": 3524, "kv": 1238, "state": 231,
+             "compute": 5329, "pool": 11714, "used": 22938, "total": 24576,
+             "unaccounted": 902},
+            {"device": "CUDA1", "model": 3969, "kv": 1111, "state": 206,
+             "compute": 5240, "pool": 9903, "used": 22992, "total": 24576,
+             "unaccounted": 2563},
+        ],
+        "warnings": ["2 moe-cache allocations logged per pool"],
+    }
+
+    @staticmethod
+    def _state():
+        from club3090_cockpit.data import DoctorRead
+
+        return EstateState(
+            gpus=[GpuInfo(index=0, mem_used_mib=22938, mem_total_mib=24576),
+                  GpuInfo(index=1, mem_used_mib=22992, mem_total_mib=24576)],
+            doctor=DoctorRead(reachable=True, serving=True, kv_pool_pct=61,
+                              summary="serving"),
+        )
+
+    @pytest.mark.asyncio
+    async def test_rail_renders_aggregate_split(self):
+        app, _, _ = make_app()
+        app._active_mode = 1                  # keep the mode-0 estate poll out
+        app._periodic_estate_refresh = lambda: None   # freeze the poll for assertions
+        app.load_estate = lambda: None                # frozen: tests drive the rail directly
+        async with app.run_test(size=(120, 60)) as pilot:
+            await _settle(pilot)
+            rail = app.query_one("#rail-status", RailStatus)
+            rail.set_vram_split(self.PAYLOAD)
+            rail.update_from_state(self._state(), as_of="just now")
+            txt = rail.render().plain
+            assert "VRAM split · estate" in txt
+            assert "boot log" in txt                 # staleness cue
+            assert "cycle" in txt                    # [G] affordance
+            # model aggregates: 3524 + 3969 MiB ≈ 7 GiB
+            assert "7G" in txt
+
+    @pytest.mark.asyncio
+    async def test_rail_drills_down_to_one_gpu(self):
+        app, _, _ = make_app()
+        app._active_mode = 1                  # keep the mode-0 estate poll out
+        app._periodic_estate_refresh = lambda: None   # freeze the poll for assertions
+        app.load_estate = lambda: None                # frozen: tests drive the rail directly
+        async with app.run_test(size=(120, 60)) as pilot:
+            await _settle(pilot)
+            rail = app.query_one("#rail-status", RailStatus)
+            rail.set_vram_split(self.PAYLOAD)
+            rail.update_from_state(self._state(), as_of="")
+            rail.cycle_vram_view()                   # estate -> CUDA0
+            t0 = rail.render().plain
+            assert "VRAM split · CUDA0" in t0
+            rail.cycle_vram_view()                   # CUDA0 -> CUDA1
+            t1 = rail.render().plain
+            assert "VRAM split · CUDA1" in t1
+
+    @pytest.mark.asyncio
+    async def test_rail_clamps_negative_other(self):
+        bad = {"ok": True, "container": "c",
+               "warnings": ["CUDA0: components (10622 MiB) exceed the live total "
+                            "(100 MiB) -- the log is staler than the card; "
+                            "unaccounted clamped to 0"],
+               "devices": [{"device": "CUDA0", "model": 3524, "kv": 1238,
+                            "state": 231, "compute": 5329, "pool": 11714,
+                            "used": 100, "total": 24576,
+                            "unaccounted": -22035}]}
+        app, _, _ = make_app()
+        app._active_mode = 1                  # keep the mode-0 estate poll out
+        app._periodic_estate_refresh = lambda: None   # freeze the poll for assertions
+        app.load_estate = lambda: None                # frozen: tests drive the rail directly
+        async with app.run_test(size=(120, 60)) as pilot:
+            await _settle(pilot)
+            rail = app.query_one("#rail-status", RailStatus)
+            rail.set_vram_split(bad)
+            rail.update_from_state(self._state(), as_of="")
+            txt = rail.render().plain
+            assert "-22035" not in txt and "-21G" not in txt
+            assert "≥ " in txt and "0G" in txt
+
+    @pytest.mark.asyncio
+    async def test_no_split_degrades_to_used_total(self):
+        app, _, _ = make_app()
+        app._active_mode = 1                  # keep the mode-0 estate poll out
+        app._periodic_estate_refresh = lambda: None   # freeze the poll for assertions
+        app.load_estate = lambda: None                # frozen: tests drive the rail directly
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await app.workers.wait_for_complete()  # flush startup workers
+            await pilot.pause()
+            rail = app.query_one("#rail-status", RailStatus)
+            rail.update_from_state(self._state(), as_of="")
+            await pilot.pause()                   # let polled continuations land
+            rail.update_from_state(self._state(), as_of="")
+            txt = rail.render().plain
+            assert "VRAM split" not in txt
+            assert "GPU0 22/24G" in txt
+
+    @pytest.mark.asyncio
+    async def test_worker_populates_split_and_G_cycles(self):
+        payload = json.dumps({
+            "devices": self.PAYLOAD["devices"],
+            "warnings": self.PAYLOAD["warnings"],
+        })
+        glm_log = (
+            "0.12.593.897 I load_tensors:        CUDA0 model buffer size =  3524.46 MiB\n"
+            "1.03.561.019 I llama_kv_cache:      CUDA1 KV buffer size =    80.00 MiB\n")
+        runner = FakeRunner(responses={
+            "docker logs": RunResult(returncode=0, stdout=glm_log, stderr=""),
+            "vram_breakdown.py": RunResult(returncode=0, stdout=payload,
+                                           stderr=""),
+        })
+        app, _, _ = make_app(runner=runner)
+        app._active_mode = 1                  # keep the mode-0 estate poll out
+        app._periodic_estate_refresh = lambda: None   # freeze the poll for assertions
+        app.load_estate = lambda: None                # frozen: tests drive the rail directly
+        async with app.run_test(size=(120, 60)) as pilot:
+            await _settle(pilot)
+            await app.workers.wait_for_complete()  # flush startup workers
+            await pilot.pause()
+            from club3090_cockpit.data import DoctorRead
+
+            app._last_estate_state = EstateState(
+                matched_slug="vllm/dual",
+                containers=[ContainerInfo(
+                    name="llama-cpp-glm53-flash-iq3xxs-moecache",
+                    kind="engine", slug="vllm/dual")],
+                gpus=[GpuInfo(index=0, mem_used_mib=22938),
+                      GpuInfo(index=1, mem_used_mib=22992)],
+                doctor=DoctorRead(reachable=True, serving=True,
+                                  kv_pool_pct=61, summary="serving"),
+            )
+            app._maybe_reparse_vram_split()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app._vram_split and app._vram_split["ok"]
+            rail = app.query_one("#rail-status", RailStatus)
+            assert "VRAM split · estate" in rail.render().plain
+            app.action_estate_vram_cycle()           # estate -> CUDA0
+            assert "VRAM split · CUDA0" in rail.render().plain
+
+
 @pytest.mark.asyncio
 class TestFix1CursorPreserveAcrossPoll:
     """FIX 1 — the B2 periodic refresh re-populates the scene + container tables
