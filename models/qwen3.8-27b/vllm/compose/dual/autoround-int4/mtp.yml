@@ -340,6 +340,12 @@ services:
       # at ~80% of its nominal token count (2x200K preempted in a "530K" pool).
       # MAMBA_BLOCK_SIZE=8192 (entrypoint knob) cuts the checkpoints 5x: 2x242K
       # then ran fully concurrent, 0 preemptions, prefix cache intact (29x TTFT).
+      # Trade-off check 2026-09-05: NO per-turn cost. Prompt sweep 2K..200K x
+      # cold+3 follow-ups at 1616 / 4096 / 8192 — follow-up TTFT, decode tok/s
+      # and vLLM's uncached-token counters are identical to the row (hits are
+      # keyed every --prefix-match-unit=16 tok, not per mamba block, so the
+      # uncached tail does not grow with the block). 4096 also holds 2x200K
+      # with 0 preemptions if you want a smaller step. Leave unset = upstream.
       - --mamba-cache-mode
       - "${MAMBA_CACHE_MODE:-align}"
       - --prefix-match-unit
