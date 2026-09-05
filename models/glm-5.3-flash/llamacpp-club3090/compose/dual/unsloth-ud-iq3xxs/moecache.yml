@@ -321,7 +321,19 @@ services:
           done
           set -- "$${ARGS[@]}"
         fi
-        _spec_n="$${SPEC_N:-3}"
+        # ⚠️ n=2, NOT n=3. MEASURED on this compose 2026-09-04, two boots per arm
+        # with the arm ORDER REVERSED between runs so boot-order bias could not
+        # masquerade as the effect:
+        #     SPEC_N=3  decode median 17.55
+        #     SPEC_N=2  decode median 19.04 / 19.32   -> ~+8-10%
+        # Our original n-sweep tested no-spec / 3 / 5 / 7 and called n=3 the peak
+        # because everything DEEPER collapsed — it never probed below it. The
+        # mechanism: a rejected draft token is verified against CPU-RESIDENT
+        # experts, and on this rig that verification outweighs the extra
+        # acceptance the third token buys. Mean accepted length (3.27-3.75) is
+        # what made n=3 look right; it does not price the rejected tail.
+        # Details: learnings/moe-cache-engine.md + learnings/glm-5.3-flash.md.
+        _spec_n="$${SPEC_N:-2}"
         case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
         case "$$_spec_n" in
           ""|*[!0-9]*)
