@@ -587,6 +587,16 @@ _disk_need_gb() {
       compgen -G "${MODEL_DIR}/${dir}/${glob}" >/dev/null 2>&1 && present=1
     fi
     [[ "$present" == "1" ]] && continue
+    # Some profiles declare a non-numeric size (qwen3.6-27b gguf emits the
+    # literal `WEIGHT_SIZE_GB=variable`, #1131).  Bash arithmetic would read
+    # that string as an unset variable name under `set -u` and kill the
+    # preflight.  Skip it with a note -- the download reports the real size
+    # when it runs -- instead of crashing.  (The note goes to stderr: stdout
+    # of this function is command-substituted into PREFLIGHT_DISK_GB.)
+    if [[ ! "$size" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      echo "[preflight] WARN:  $key: non-numeric size '$size' -- excluded from the disk estimate; set PREFLIGHT_DISK_GB=<N> to override." >&2
+      continue
+    fi
     total=$(( total + ${size%%.*} ))
   done
   # Headroom for partial-download temp files, plus a floor so a fully-present
