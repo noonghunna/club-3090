@@ -66,20 +66,55 @@ def breakdown(text):
     return model, compute, kv, state, pool, slots, allocs
 
 
-def _fetch_smi() -> dict:
+def _bus_key(bus: str) -> str:
+    """nvidia-smi may print the domain short ("0000:01:00.0") or long
+    ("00000000:0000:01:00.0") -- compare the last two segments."""
+    return ":".join(bus.strip().lower().split(":")[-2:])
+
+
+def _prepare_devices(text) -> dict:
+    """{CUDA ordinal: PCI bus id} from llama.cpp's device announcement
+    (`llama_prepare_model_devices: using device CUDA0 (name) (0000:01:00.0)`)
+    -- the log's own ordinal -> physical-GPU mapping (#1118 §4, option A)."""
+    out = {}
+    for m in re.finditer(
+        r"llama_prepare_model_devices:\s+using device (CUDA\d) \([^)]*\) "
+        r"\(([0-9A-Fa-f:.]+)\)", text):
+        out[m.group(1)] = m.group(2)
+    return out
+
+
+def _join_smi(prep: dict, by_bus: dict, by_index: dict, warnings: list) -> dict:
+    """Join log ordinals to physical GPUs by PCI bus id.  All-or-nothing: if
+    every logged ordinal resolves, the joined map is exact under any
+    ESTATE_GPUS ordering; if anything is missing (older log, odd nvidia-smi),
+    fall back to index order and say so rather than half-map."""
+    if prep and all(_bus_key(bus) in by_bus for bus in prep.values()):
+        return {d: by_bus[_bus_key(bus)] for d, bus in prep.items()}
+    if prep:
+        warnings.append(
+            "CUDA ordinals could not be joined to physical GPUs by PCI bus id "
+            "-- falling back to index order (#1118 §4)")
+    return dict(by_index)
+
+
+def _fetch_smi() -> tuple[dict, dict]:
+    """(by_bus, by_index): the same readings keyed by normalized PCI bus id
+    and by CUDA-style index, so callers join whichever way the log allows."""
     try:
         out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,memory.used,memory.total",
+            ["nvidia-smi", "--query-gpu=index,pci.bus_id,memory.used,memory.total",
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, encoding="utf-8", timeout=10,
         ).stdout
-        smi = {}
+        by_bus, by_index = {}, {}
         for line in out.strip().splitlines():
-            i, used, tot = [x.strip() for x in line.split(",")]
-            smi["CUDA" + i] = (float(used), float(tot))
-        return smi
+            i, bus, used, tot = [x.strip() for x in line.split(",")]
+            by_bus[_bus_key(bus)] = (float(used), float(tot))
+            by_index["CUDA" + i] = (float(used), float(tot))
+        return by_bus, by_index
     except Exception:
-        return {}
+        return {}, {}
 
 
 def main() -> int:
@@ -93,13 +128,15 @@ def main() -> int:
         return 1
 
     model, compute, kv, state, pool, slots, allocs = breakdown(text)
-    smi = _fetch_smi()
+    warnings: list[str] = []
+    prep = _prepare_devices(text)
+    by_bus, by_index = _fetch_smi()
+    smi = _join_smi(prep, by_bus, by_index, warnings)
 
     devs = sorted(set(model) | set(smi) | set(pool))
     if not devs:
         return 1
 
-    warnings: list[str] = []
     n = max(allocs.values()) if allocs else 0
     if n > 1:
         warnings.append(
