@@ -491,6 +491,75 @@ with tempfile.TemporaryDirectory() as td:
 check(callable(getattr(HF, "_main", None)) and callable(getattr(HF, "fetch", None)),
       "hf_fetch exposes a standalone fetch() + a CLI entry point")
 
+# ---------------------------------------------------------------------------
+# #1132 -- a missing `hf` binary must ESCALATE to rung 3 instead of dying with
+# a bare exit 1, and _main must announce the failure token + detail on stderr.
+# ---------------------------------------------------------------------------
+import subprocess as _sp
+
+_orig_tree, _orig_which, _orig_run, _orig_raw = (
+    HF.repo_tree, HF.shutil.which, HF.subprocess.run, HF.raw_resolve_fetch)
+try:
+    HF.repo_tree = lambda *a, **k: TREE
+
+    # (a) tool unavailable -> rung 3 serves the pull; entry names the cause.
+    # null BOTH probe names: a rig with `huggingface-cli` installed would
+    # otherwise run the real downloader here.
+    HF.shutil.which = lambda n: None if n in ("hf", "huggingface-cli") else _orig_which(n)
+    def _fake_raw(repo, name, local_dir, **kw):
+        dest = Path(local_dir) / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(BODY)
+        return dest
+    HF.raw_resolve_fetch = _fake_raw
+    log127 = Log()
+    with tempfile.TemporaryDirectory() as td:
+        def _runner_127(repo, local_dir, includes, xet):
+            return 127, "neither `hf` nor `huggingface-cli` is on PATH"
+        res = HF.fetch("org/Repo", Path(td), [BIG], allow_xet=False,
+                       log=log127)
+    check(res.ok and res.rung == "raw-resolve",
+          f"#1132 missing hf binary: rung 3 serves the pull "
+          f"(rung={res.rung!r} ok={res.ok})")
+    check(res.verified == [BIG], "#1132 missing hf: sha256 gate still runs")
+    check("never stood a chance" in log127.text()
+          and "not on PATH" in log127.text(),
+          "#1132 missing hf: entry announcement names the real cause")
+    check("rung 3" in log127.text(), "#1132 missing hf: escalation reached rung 3")
+
+    # (b) a NON-tool failure (network/auth) stays a hard failure -- no escalation.
+    HF.shutil.which = lambda n: "/usr/bin/hf" if n == "hf" else None
+    HF.subprocess.run = lambda argv, **kw: SimpleNamespace(
+        returncode=1, stdout="", stderr="connection reset by peer")
+    lognet = Log()
+    with tempfile.TemporaryDirectory() as td:
+        def _runner_netfail(repo, local_dir, includes, xet):
+            return 1, "connection reset by peer"
+        res = HF.fetch("org/Repo", Path(td), [BIG], allow_xet=False,
+                       log=lognet)
+    check(not res.ok and res.failure == "fallback-failed",
+          "#1132 non-tool rung-1 failure stays a hard failure")
+    check("rung 3" not in lognet.text(),
+          "#1132 non-tool failure does NOT escalate")
+
+    # (c) _main announces the failure token + detail on stderr, then exits 1.
+    HF.subprocess.run = _orig_run
+    probe = (
+        "import sys; sys.path.insert(0, %r); "
+        "from scripts.lib.profiles import hf_fetch as HF;"
+        "HF.fetch = lambda *a, **k: HF.LadderResult("
+        "ok=False, failure='fallback-failed', "
+        "detail='rung 1 failed (rc=1): boom');"
+        "sys.exit(HF._main(['some/repo', '--local-dir', 'x']))" % str(root)
+    )
+    proc = _sp.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    check(proc.returncode == 1, "#1132 _main still exits 1 on failure")
+    check("FAILED: fallback-failed" in proc.stderr and "boom" in proc.stderr,
+          "#1132 _main announces the failure token + detail on stderr")
+finally:
+    HF.repo_tree, HF.shutil.which, HF.subprocess.run, HF.raw_resolve_fetch = (
+        _orig_tree, _orig_which, _orig_run, _orig_raw)
+
 if failures:
     print(f"\n{len(failures)} assertion(s) failed.", file=sys.stderr)
     sys.exit(1)

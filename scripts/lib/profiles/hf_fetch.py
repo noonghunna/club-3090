@@ -144,6 +144,14 @@ def is_xet_refusal(blob: str) -> bool:
     return all(m in low for m in _XET_REFUSAL_MARKERS)
 
 
+def _is_tool_unavailable(rc: int, blob: str) -> bool:
+    """True iff rung 1 failed because the `hf` CLI is not installed at all
+    (rc=127, or the which() probe's message) — a fallback-ELIGIBLE cause:
+    rung 3 needs only curl, so a missing binary must not kill the ladder
+    (#1132).  Distinct from the 50 GB refusal, which is a policy wall."""
+    return rc == 127 or "is on PATH" in blob
+
+
 def hf_xet_importable(python: Optional[str] = None) -> bool:
     """Is `hf_xet` ALREADY importable in the environment the `hf` CLI runs under?
 
@@ -813,8 +821,11 @@ def escalate(repo_id: str, local_dir: Path, includes: list[str], *,
              curl_runner: Optional[Callable] = None,
              xet_available: Optional[Callable[[], bool]] = None,
              tree_fn: Optional[Callable] = None,
-             stall_timeout: int = 300) -> LadderResult:
-    """Rungs 2 and 3, entered ONLY after rung 1 hit the too-large refusal.
+             stall_timeout: int = 300,
+             entry_note: str = "") -> LadderResult:
+    """Rungs 2 and 3, entered after rung 1 failed in a fallback-ELIGIBLE way:
+    the too-large refusal, or the `hf` CLI missing entirely (#1132 — rung 3
+    needs only curl).
 
     Each rung announces why the previous one could not deliver, so a log shows
     the whole decision chain rather than a bare "downloading (again)"."""
@@ -822,9 +833,12 @@ def escalate(repo_id: str, local_dir: Path, includes: list[str], *,
     allow = allow_xet_enabled() if allow_xet is None else allow_xet
     notes: list[str] = []
 
-    log("[hf-fetch] rung 1 (classic LFS) REFUSED this repo: huggingface_hub "
-        "client-side blocks the plain HTTP path for files over 50 GB. This is "
-        "a hard policy wall, not flakiness — retrying it cannot succeed.")
+    if entry_note:
+        log(f"[hf-fetch] rung 1 (classic LFS) never stood a chance: {entry_note}")
+    else:
+        log("[hf-fetch] rung 1 (classic LFS) REFUSED this repo: huggingface_hub "
+            "client-side blocks the plain HTTP path for files over 50 GB. This is "
+            "a hard policy wall, not flakiness — retrying it cannot succeed.")
     if classic_error:
         log(f"[hf-fetch]   hub said: {classic_error.strip()[:300]}")
 
@@ -976,14 +990,21 @@ def fetch(repo_id: str, local_dir: Path, includes: list[str], *,
             f"`hf download` hashes as it writes, so no separate gate is run "
             f"on this rung.")
         return LadderResult(ok=True, rung="classic", files=list(names))
-    if not is_xet_refusal(blob):
+    # #1132: the too-large refusal escalates, and so does a missing `hf`
+    # binary -- rung 3 needs only curl, so a bare exit would waste the one
+    # rung that could have served the pull.  Anything else (network, auth)
+    # stays a hard failure.
+    tool_missing = _is_tool_unavailable(rc, blob)
+    if not (is_xet_refusal(blob) or tool_missing):
         return LadderResult(ok=False, failure="fallback-failed",
                             detail=f"rung 1 failed (rc={rc}): "
                                    f"{blob.strip()[-400:]}")
     try:
         return escalate(repo_id, local_dir, todo, classic_error=blob,
                         meta=metas, revision=revision, allow_xet=allow,
-                        token=token, log=log)
+                        token=token, log=log,
+                        entry_note=("`hf`/`huggingface-cli` is not on PATH"
+                                    if tool_missing else ""))
     except LadderError as exc:
         log(f"[hf-fetch] FAILED: {exc.detail or exc.token}")
         return LadderResult(ok=False, failure=exc.token, detail=exc.detail)
@@ -1031,6 +1052,12 @@ def _main(argv: list[str]) -> int:
     res = fetch(args.repo, Path(args.local_dir), includes,
                 revision=args.revision, allow_xet=args.allow_xet or None,
                 do_verify_in_place=args.verify_in_place or None)
+    if not res.ok:
+        # #1132 -- a bare `exit 1` discarded the failure token + detail,
+        # contradicting the #804/#812 auditability contract exactly when the
+        # pull failed.  Announce, then exit.
+        default_log(f"[hf-fetch] FAILED: {res.failure}"
+                    + (f" — {res.detail.strip()[-400:]}" if res.detail else ""))
     return 0 if res.ok else 1
 
 
