@@ -406,6 +406,21 @@ services:
       - '1,1'
       - '-fa'
       - 'on'
+      # KV cache type. ⚠️ DEFAULT IS f16 — NOT q8_0, unlike the Qwen sibling.
+      # GLM is MLA on its 12 full-attention blocks (34 of 46 are SSM/recurrent), so
+      # V is DERIVED, not stored: a boot logs `K (f16): 1650.00 MiB, V (f16): 0.00`.
+      # KV is therefore already small and q8 buys ~825 MiB, not the ~3 GB it buys on
+      # the GQA sibling. Set KV_TYPE=q8_0 to try it. Requires -fa on (above).
+      # ⚠️ UNVALIDATED on glm5next as of 2026-09-04: the V-transpose gate that blocks
+      # quantised KV on the inkling sibling is AMBIGUOUS on a hybrid — it would apply,
+      # if at all, only to the 12 MLA blocks, not the 34 recurrent ones. Boot before
+      # trusting. Do NOT flip this default until that boot is on record.
+      # q8_0 is the SERVING-GRADE FLOOR on this stack — never go below it for a
+      # serving slug (sub-q8 is a speed exhibit only).
+      - '--cache-type-k'
+      - '${KV_TYPE:-f16}'
+      - '--cache-type-v'
+      - '${KV_TYPE:-f16}'
       # ⚠️ SINGLE -ot with comma-separated rules. Current mainline DEPRECATES
       # repeated -ot and honours ONLY THE LAST occurrence.
       # ✅ Stock regex is CORRECT for glm5next — verified 2026-08-27 against the
