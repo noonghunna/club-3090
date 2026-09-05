@@ -38,10 +38,17 @@ def main() -> int:
     except OSError:
         return 1
 
-    model = _per_dev(text, r"load_tensors:\s+(CUDA\d) model buffer size =\s+([\d.]+) MiB")
+    # A GPU-pinned drafter emits the same `model buffer size` line as the
+    # target model -- the two weights are additive, so last-wins would report
+    # the drafter's and drop the target's into unaccounted.
+    model = _per_dev(text, r"load_tensors:\s+(CUDA\d) model buffer size =\s+([\d.]+) MiB", agg=True)
     compute = _per_dev(text, r"sched_reserve:\s+(CUDA\d) compute buffer size =\s+([\d.]+) MiB")
     kv = _per_dev(text, r"llama_kv_cache:\s+(CUDA\d) KV buffer size =\s+([\d.]+) MiB", agg=True)
     state = _per_dev(text, r"_comp_state:\s+(CUDA\d) \S+ \S+ state buffer size =\s+([\d.]+) MiB", agg=True)
+    # GLM names this buffer `llama_memory_recurrent ... RS` -- same kind of
+    # state as DeepSeek's `_comp_state`, so it folds into the `state` column.
+    for d, v in _per_dev(text, r"llama_memory_recurrent:\s+(CUDA\d) RS buffer size =\s+([\d.]+) MiB", agg=True).items():
+        state[d] = state.get(d, 0.0) + v
 
     # LAST report per (device, pool) -- never sum every match, see module docstring
     last = {}
