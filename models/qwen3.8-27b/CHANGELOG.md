@@ -15,6 +15,19 @@ The `dual/fp8/mtp.yml` header has documented two mitigations for the [vllm#50021
 | BENCHMARKS row 2026-08-17 (async ON, MTP n=3) | 67.4 / 85.8 | 1166 / 942 | 152 ms | 2.62 |
 
 Mitigation (1) restores **+53% prose / +95% code** decode over the drafter-off path and is at parity or better with the async-ON catalog row on every column — the header's ~0% cost claim holds. Decode CV 2.1% / 3.3%; VRAM 22.3 GB/card, 0 MiB leak; no Xid / CUDA-error signatures across bench + 8-pack + verify-full on the new config. ⚠️ This bounds the crash *mechanism* the maintainer identified (MTP + prefix-cache + async), not #50021 itself, which is still open — a 10-minute bench is not 44 h of agent traffic. If Xid 31 recurs, `SPEC=off` remains the fallback.
+## 2026-08-23 — every vLLM slug accepts `reasoning_effort: "high"` again (mapped to `medium`)
+
+All 20 Qwen3.8 vLLM slugs returned **HTTP 500** on any thinking-mode request carrying `reasoning_effort: "high"`. Qwen3.8's ladder is `low` / `medium` / `xhigh` — there is **no `high`** — and the stock `chat_template.jinja` `raise_exception()`s on anything else. OpenAI and Anthropic both use `low`/`medium`/`high`, so a generic client sending the standard top rung got a Jinja `TemplateError` surfaced as a 500. Reported on-rig through vLLM's Anthropic-compatible `POST /v1/messages`: a Claude-API client turns thinking **on** and sends `high`, which overrides *both* keys of `--default-chat-template-kwargs` (a fallback for callers that send nothing, never a clamp) and re-arms the raise that the shipped `enable_thinking: false` default otherwise keeps dormant.
+
+⚠️ **Wider than first reported, since the 2026-09-01 thinking flip (#1135):** `ENABLE_THINKING` now defaults to `true` on all 20 slugs, so `reasoning_effort` is read on *every* request and the raise is armed by default — a caller no longer has to opt into thinking to reach it. `ENABLE_THINKING=false` is now the only thing that puts it back to sleep.
+
+⚠️ **The failure mode is the dangerous kind:** `/v1/models` and `/health` keep returning 200 and the model is demonstrably serving, so the endpoint looks healthy while every thinking-mode chat request fails.
+
+New patch [`qwen38-reasoning-effort-template`](vllm/patches/qwen38-reasoning-effort-template/PROVENANCE.md) — the model's own template plus **seven lines** mapping `high` → `medium` before the validation. `medium` is the **un-nudged baseline** (no branch in the template, no injected preamble), deliberately not `xhigh`: `xhigh` injects a "think carefully, validate assumptions, consider alternatives" preamble that is slow and timeout-prone, and a Claude-API client sends `high` on *every* request, which would put all agent traffic in the slowest mode on slugs shipping `max_num_seqs=1`. `xhigh` remains reachable by name; `xhigh`/`medium`/`low` and invalid values are byte-for-byte unchanged.
+
+**Wired mount-only** — bind-mounted *over* the served checkpoint's own `chat_template.jinja`, which vLLM auto-loads from the model dir, so no `--chat-template` argument and the compose `command:` lists are untouched (the carnice override's style, not froggeric's). That is a rebase-surface choice: 11 upstream commits touched these composes in the 7 days to 2026-08-23, and an inserted flag collides with every one of them.
+
+One vendored file covers all 20 slugs: `chat_template.jinja` is sha256 `c3cf9e34…81041` (8,952 bytes) on all three served checkpoints — official FP8, the Frozenlock AutoRound INT4 repack, and the RadixArk NVFP4 export — unchanged by the [#1070](https://github.com/noonghunna/club-3090/pull/1070) weights swap. The DFlash2 drafter repo ships no `chat_template.jinja` at all and is never the render source.
 
 ## 2026-08-23 — dual-fast: FlashInfer decode-buffer unpin merged (#1051) — MTP concurrency unlocked to C=32
 

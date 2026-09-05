@@ -348,7 +348,7 @@ Tested via `URL=http://localhost:8004 MODEL=luce-dflash bash scripts/verify-stre
 
 ## Qwen3.8-27B
 
-Dense 27B, Qwen3-Next hybrid (16 full-attention + 48 linear-attention layers, 24 attention heads / 4 KV heads, head_dim 256, 262144 architectural ceiling). Same arch shape as Qwen3.6-27B, different checkpoint. Embedded MTP head. Native chat template (NOT froggeric).
+Dense 27B, Qwen3-Next hybrid (16 full-attention + 48 linear-attention layers, 24 attention heads / 4 KV heads, head_dim 256, 262144 architectural ceiling). Same arch shape as Qwen3.6-27B, different checkpoint. Embedded MTP head. Native chat template (NOT froggeric), vendored with a seven-line `high` -> `medium` reasoning-effort mapping — see `patches.yml` qwen38-reasoning-effort-template.
 
 ### Dual-card (2× RTX 3090, TP=2) — vLLM
 

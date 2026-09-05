@@ -152,7 +152,7 @@ the three sampler vars by hand remains the only way to change them.
 | `--max-tokens 4096` | The ~1024 default silently truncates long answers into `token_limit` failures that look like wrong answers. |
 | `--thinking-max-tokens 16384` | The thinking arm needs the headroom. |
 | `--timeout-per-case 600` | 16,384 tokens takes real wall-clock. Too tight a cap produces `timeout` rows that read as content misses. |
-| `REASONING_EFFORT=` | Env only — forwarded as the per-request OpenAI `reasoning_effort`. The qwen3.8 composes default to `low` server-side since #1029; pin it anyway so the run records what it measured. ⚠️ Effort is **not** comparable across runs. ⚠️ `high` **raises** on vLLM — only `xhigh`/`medium`/`low` exist. |
+| `REASONING_EFFORT=` | Env only — forwarded as the per-request OpenAI `reasoning_effort`. The qwen3.8 composes default to `low` server-side since #1029; pin it anyway so the run records what it measured. ⚠️ Effort is **not** comparable across runs. ⚠️ Qwen3.8's own rungs are `xhigh`/`medium`/`low` — there is no `high`. On the **vLLM** slugs the vendored template (`qwen38-reasoning-effort-template`) maps `high` → `medium`, so it is accepted and records as medium — the un-nudged baseline, NOT xhigh; anything else still raises. Elsewhere `high` **raises**. |
 | `--repeat 3` | Add it for anything you'll quote. With `--sampling-from-server` both legs are sampled, so single draws aren't quotable. |
 
 ⚠️⚠️ **Read the failure modes before reading the score.** `timeout` and `token_limit` are **harness
