@@ -553,7 +553,12 @@ check_output_quality() {
 import sys, json, re
 try:
     d = json.load(sys.stdin)
-    c = d['choices'][0]['message'].get('content') or ''
+    msg = d['choices'][0]['message']
+    c = msg.get('content') or ''
+    # Thinking models put the reasoning elsewhere; an empty content with a
+    # non-empty reasoning trace is a spent budget, not a dead generator.
+    r = msg.get('reasoning_content') or msg.get('reasoning') or ''
+    rlen = len(r)
     finish = d['choices'][0].get('finish_reason') or 'n/a'
     clen = len(c)
     cascade = 'tool_call_cascade' if '<tool_call>' in c else 'none'
@@ -570,14 +575,20 @@ try:
     words = re.findall(r\"[A-Za-z']+\", c.lower())
     sample = words[:200]
     variety = (len(set(sample)) / len(sample)) if sample else 0.0
-    print(f'{clen}|{cascade}|{max_repeat}|{variety:.3f}|{finish}')
+    print(f'{clen}|{cascade}|{max_repeat}|{variety:.3f}|{finish}|{rlen}')
 except Exception as e:
-    print(f'err|{e}|0|0|n/a')
+    print(f'err|{e}|0|0|n/a|0')
 " 2>/dev/null)"
 
-  IFS='|' read -r clen cascade max_repeat variety finish <<< "$analysis"
+  IFS='|' read -r clen cascade max_repeat variety finish rlen <<< "$analysis"
   if [[ "$clen" == "err" ]]; then
     fail "couldn't parse response: $cascade" "$(echo "$resp" | head -c 200)"
+  elif [[ "${clen:-0}" == "0" && "$finish" == "length" ]]; then
+    # finish=length means tokens WERE generated — they just never reached content.
+    # On a thinking model whose thinking switch is inert, the reasoning trace eats
+    # the whole budget. That is not a silent generation failure and must not be
+    # scored as one (see GLM-5.3-Flash: no per-request thinking switch takes effect).
+    skip "coherence INCONCLUSIVE — no content but ${rlen:-0} reasoning chars, finish=length (budget spent on reasoning; raise max_tokens or disable thinking)"
   elif [[ "${clen:-0}" == "0" ]]; then
     fail "empty completion (finish=${finish})" "Likely silent generation failure"
   elif [[ "$cascade" == "tool_call_cascade" ]]; then

@@ -1544,6 +1544,10 @@ with open('${cal_req}', 'w') as f:
 
   # Step 3: run each rung
   local any_pass=0 any_fail=0 any_skipped=0 any_recall_miss=0 any_sizing_error=0
+  # A recall miss with EMPTY content is not a quality result — the model returned
+  # nothing to score (thinking models can spend the whole budget on reasoning).
+  # Tracked separately so it is never reported as an attention-quality ceiling.
+  local any_recall_empty=0
   local last_pass_tokens=0 last_pass_pct=0
   local first_fail_tokens=0 first_recall_miss_tokens=0 first_recall_miss_pct=0
   local vram_before_all vram_after_all
@@ -1628,8 +1632,17 @@ with open('${cal_req}', 'w') as f:
         done
         local pct=0
         [[ "$prompt_tok" -gt 0 && "$n_ctx" -gt 0 ]] && pct=$(( prompt_tok * 100 / n_ctx ))
-        local outcome="recalled"
-        [[ "$all_match" == "1" ]] || outcome="recall_miss"
+        local outcome="recalled" recall_empty=0 miss_label="quality ceiling reached"
+        if [[ "$all_match" != "1" ]]; then
+          outcome="recall_miss"
+          # Whitespace-only content = the model produced no answer at all. That is
+          # NOT an attention-quality ceiling (it shows up even at trivial depth) —
+          # classify it INCONCLUSIVE and say so.
+          if [[ -z "$(printf '%s' "$content_raw" | tr -d '[:space:]')" ]]; then
+            outcome="recall_empty"; recall_empty=1
+            miss_label="no content returned — INCONCLUSIVE, recall not scorable"
+          fi
+        fi
         record_rung "ceiling_ladder" "${rung_idx}" "${target_tokens}" "200" "$outcome" \
           "$prompt_tok" "$prefill_tps" "$prefill_ms" "$hit_delta" "$cache_dirty"
         if [[ "$all_match" == "1" ]]; then
@@ -1644,10 +1657,11 @@ with open('${cal_req}', 'w') as f:
           # Log it, break out of the ladder, and pass the probe so the
           # pipeline moves to the next stage without wasting time on
           # unreliable depths.
-          printf "    \033[33m△\033[0m rung %d/%d: target=%dK  actual=%dK tok (%d%%)  recall MISS (got: '%s') — quality ceiling reached%s%s\n" \
+          printf "    \033[33m△\033[0m rung %d/%d: target=%dK  actual=%dK tok (%d%%)  recall MISS (got: '%s') — %s%s%s\n" \
             "$rung_idx" "$rung_count" "$((target_tokens / 1000))" "$((prompt_tok / 1000))" "$pct" \
-            "$(echo "$content_raw" | head -c 60 | tr '\n' ' ')" "$prefill_str" "$vram_str"
+            "$(echo "$content_raw" | head -c 60 | tr '\n' ' ')" "$miss_label" "$prefill_str" "$vram_str"
           any_recall_miss=1
+          [[ "$recall_empty" == "1" ]] && any_recall_empty=1
           if [[ "$first_recall_miss_tokens" -eq 0 ]]; then
             first_recall_miss_tokens="$prompt_tok"
             first_recall_miss_pct="$pct"
@@ -1763,6 +1777,19 @@ with open('${cal_req}', 'w') as f:
   elif [[ "$any_fail" == "1" ]]; then
     fail "ceiling ladder: first rung at ${ceiling_start} tok already failed — ceiling may be below probe 7 range" \
          "Check whether the engine survived probe 7's 90K rung. If not, the ceiling is <90K. Check: ${LOG_CMD}"
+  elif [[ "$any_recall_empty" == "1" && "$any_fail" == "0" ]]; then
+    # The ladder ran, the system filled the rung, but the model returned no content
+    # so recall could not be scored. Not a system failure, and NOT a quality ceiling
+    # (it shows up at trivial depth too). INCONCLUSIVE — counts in neither bucket.
+    skip "ceiling ladder INCONCLUSIVE — system filled ${first_recall_miss_tokens} tok, model returned no content (recall not scorable)"
+    printf "    \033[33m→\033[0m %s\n" "On thinking models this is the reasoning budget consuming the whole completion."
+    printf "      %s\n" "Disable thinking for this model or raise max_tokens. The engine did NOT crash."
+  elif [[ "$any_recall_miss" == "1" && "$any_fail" == "0" ]]; then
+    # Recall missed on the first rung and the loop broke there by design (see the
+    # ladder body: "break out of the ladder, and pass the probe"). Without this
+    # branch that intent was lost and the run fell through to the catch-all below,
+    # reporting a crash that never happened.
+    pass "ceiling ladder: quality ceiling at or below the first rung (${first_recall_miss_tokens} tok, ${first_recall_miss_pct:-?}% of n_ctx=${n_ctx}) — system filled it, recall missed"
   elif [[ "$any_pass" == "0" && "$any_skipped" == "1" ]]; then
     # All rungs got legitimate HTTP 400 (target > n_ctx) — ladder measured nothing.
     # This is NOT a pass. A ladder that tested nothing must warn.
