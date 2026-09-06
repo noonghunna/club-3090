@@ -1635,13 +1635,21 @@ except Exception:
 # python3 — callers keep working defaults. Overridden by VERIFY_THINK_OFF /
 # VERIFY_THINK_ON (plain JSON objects).
 _preflight_probe_thinking_key() {
+  # ⚠️ THE PROBE'S OWN BUDGET MUST CLEAR THE MINIMUM REASONING, or a
+  # thinking-only model is undetectable BY CONSTRUCTION. At 24 tokens
+  # GLM-5.3-Flash at its lowest level returns finish=length with 98 chars of
+  # reasoning and EMPTY content -- so every level scores 0, the ladder finds no
+  # working level, and the model is declared switch-less. Measured at
+  # reasoning_effort=low: 24 tok -> content='' (length); 256 tok -> content='OK.'
+  # (stop). 256 still discriminates, because a high-effort level burns straight
+  # through it (max: 1367 chars of reasoning, no content, at 300 tok).
   # Echo the content length a trivial question returns under the given kwargs.
   # A working off-switch answers in a few tokens; an ignored one burns the whole
   # budget reasoning and returns empty content.
   local url="$1" model="$2" kwargs="$3"
   curl -sf -m 90 "${url%/}/v1/chat/completions" \
     -H "Content-Type: application/json" \
-    -d "{\"model\": \"${model}\", \"messages\": [{\"role\": \"user\", \"content\": \"Say OK.\"}], \"max_tokens\": 24, \"temperature\": 0.0, \"chat_template_kwargs\": ${kwargs}}" 2>/dev/null \
+    -d "{\"model\": \"${model}\", \"messages\": [{\"role\": \"user\", \"content\": \"Say OK.\"}], \"max_tokens\": 256, \"temperature\": 0.0, \"chat_template_kwargs\": ${kwargs}}" 2>/dev/null \
     | python3 -c "import sys,json; print(len((json.load(sys.stdin)['choices'][0]['message'].get('content') or '').strip()))" 2>/dev/null \
     || echo 0
 }
