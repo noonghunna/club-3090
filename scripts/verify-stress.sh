@@ -174,7 +174,11 @@ content = (
 req = {
     "model": model,
     "messages": [{"role": "user", "content": content}],
-    "max_tokens": 30,
+    # A thinking-only model spends part of every budget reasoning before it can
+    # answer (GLM-5.3-Flash: ~30 tokens even at its lowest level), so a flat 30
+    # leaves nothing for the phrase and the needle reads as a recall miss.
+    # preflight sets NEEDLE_MAX_TOKENS from THINK_ALWAYS_ON.
+    "max_tokens": int(os.environ.get("NEEDLE_MAX_TOKENS") or 30),
     "temperature": 0.0,
     **json.loads(os.environ.get("THINK_FRAG_OFF") or '{"chat_template_kwargs": {"enable_thinking": false}}'),
     }
@@ -365,11 +369,27 @@ MODEL="${MODEL:-qwen3.6-27b}"
 # failures. See preflight.sh::preflight_detect_thinking_control. THINK_FRAG_*
 # is the complete request fragment, splatted by the python blocks below.
 if declare -F preflight_detect_thinking_control >/dev/null; then
+  # Opt in to the effort-ladder probe. Without it the detector stops at the
+  # template SCAN, which only proves a key is NAMED — and for the GLM-5.3 family
+  # the scan's default off-value `reasoning_effort: "none"` is not a valid level.
+  # The template accepts only low|high and coerces everything else to MAX, so the
+  # "thinking off" request was the strongest possible thinking request: the model
+  # spent the whole budget reasoning, returned empty content, and every needle in
+  # the ladder above read as a recall failure (#1128, #1129). The ladder probe
+  # walks minimal|low|medium and finds a level that actually yields content.
+  # Same reasoning as verify-full.sh: this is a functional check, and one extra
+  # request is cheap next to a ladder that can run for 400s per rung.
+  THINK_PROBE=1
   preflight_detect_thinking_control
 else
   THINK_FRAG_OFF='{"chat_template_kwargs": {"enable_thinking": false}}'
   THINK_FRAG_ON='{"chat_template_kwargs": {"enable_thinking": true}}'
 fi
+# Needle replies are a short phrase, so 30 tokens is right for a model that can
+# actually stop thinking. One that cannot needs room for the reasoning first.
+NEEDLE_MAX_TOKENS=30
+[[ "${THINK_ALWAYS_ON:-0}" == "1" ]] && NEEDLE_MAX_TOKENS="${VERIFY_NEEDLE_MAX_TOKENS:-512}"
+export NEEDLE_MAX_TOKENS
 export THINK_FRAG_OFF THINK_FRAG_ON
 if [[ -z "${CONTAINER:-}" && -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
   # The old literal default 'vllm-qwen36-27b' matches NO registry container, so

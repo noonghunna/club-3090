@@ -184,7 +184,14 @@ fi
 # would then fire instead. Scale both together. Every model with a detected
 # switch is unaffected: the multiplier is 1 and the timeouts are unchanged.
 TOK_SCALE=1
-[[ "$THINK_CONTROL" == none* ]] && TOK_SCALE="${VERIFY_TOK_SCALE:-64}"
+# Widen for BOTH "no switch at all" and "switch exists but has no OFF position".
+# The second case is a thinking-only model (GLM-5.3-Flash: the dial accepts only
+# low|high and every level still reasons). It used to fall through to TOK_SCALE=1
+# and got a 30-token budget against ~30 tokens of unavoidable reasoning, which
+# surfaces as "empty completion" and reads as a model fault rather than a budget.
+if [[ "$THINK_CONTROL" == none* || "${THINK_ALWAYS_ON:-0}" == "1" ]]; then
+  TOK_SCALE="${VERIFY_TOK_SCALE:-64}"
+fi
 MT_BASIC=$(( 30 * TOK_SCALE ))
 MT_STREAM=$(( 120 * TOK_SCALE ))
 if (( TOK_SCALE > 1 )); then

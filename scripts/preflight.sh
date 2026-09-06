@@ -1716,6 +1716,18 @@ preflight_detect_thinking_control() {
       # (scenario 3's no-regression promise holds). Only a demonstrably-IGNORED
       # switch is downgraded to `none` — which is what makes the caller widen its
       # token budgets instead of blaming the model.
+      # ⚠️ The scan proves a template NAMES a key. Its SILENCE proves nothing:
+      # in endpoint-first mode (--url, no container) there is no template to scan
+      # at all, and a reasoning_effort-only model is then declared switch-less.
+      # That is how a GLM-5.3-Flash run reported `thinking-control=none off={}
+      # on={}` while the dial worked perfectly -- and the resulting TOK_SCALE=64
+      # then masked it on the short checks while [8] still failed. When the scan
+      # comes back empty, ask the SERVER before believing it.
+      if [[ "$THINK_CONTROL" == "none" ]] && [[ "${THINK_PROBE:-0}" == "1" ]] \
+         && [[ -n "$model" ]] && curl -sf -m 5 "${url%/}/v1/models" >/dev/null 2>&1 \
+         && [[ "$(_preflight_probe_thinking_key "$url" "$model" '{"reasoning_effort": "low"}')" != "0" ]]; then
+        THINK_CONTROL="reasoning_effort"
+      fi
       if [[ "$THINK_CONTROL" != "none" ]] && [[ "${THINK_PROBE:-0}" == "1" ]] \
          && [[ -n "$model" ]] && curl -sf -m 5 "${url%/}/v1/models" >/dev/null 2>&1; then
         local _off_probe_kw=""
@@ -1752,6 +1764,21 @@ preflight_detect_thinking_control() {
                 THINK_EFFORT_OFF_VALUE="$_lvl"; break
               fi
             done
+            # ⚠️ A DIAL IS NOT AN OFF SWITCH — three states, not two.
+            # GLM-5.3-Flash accepts only low|high (everything else, `none` included,
+            # coerces to MAX) and has NO zero-reasoning level: even the minimum still
+            # spends tokens thinking. Consumers size token budgets on "can this be
+            # turned off", so a model with a working dial but no off position got the
+            # un-widened budget — ~30 tokens against ~30 tokens of unavoidable
+            # reasoning — which reads downstream as empty content and gets blamed on
+            # the model (#1128, #1129). Measure it and say so.
+            if [[ -n "${THINK_EFFORT_OFF_VALUE:-}" ]]; then
+              local _off_rlen
+              _off_rlen="$(_preflight_probe_thinking_reasoning "$url" "$model" "{\"reasoning_effort\": \"${THINK_EFFORT_OFF_VALUE}\"}")"
+              if [[ "$_off_rlen" =~ ^[0-9]+$ ]] && (( _off_rlen > 0 )); then
+                THINK_ALWAYS_ON=1
+              fi
+            fi
             if [[ -z "${THINK_EFFORT_OFF_VALUE:-}" ]]; then
               THINK_CONTROL="none"
             else
@@ -1829,6 +1856,8 @@ preflight_detect_thinking_control() {
   # it directly instead of parsing the fragment above.
   THINK_OFF_STD=''
   THINK_ON_STD=''
+  # 1 = model always reasons, even at its lowest level (dial, but no OFF).
+  THINK_ALWAYS_ON="${THINK_ALWAYS_ON:-0}"
   THINK_EFFORT_OFF_VALUE="${THINK_EFFORT_OFF_VALUE:-}"
   THINK_EFFORT_ON_VALUE="${THINK_EFFORT_ON_VALUE:-}"
   THINK_OFF_EFFORT=''
