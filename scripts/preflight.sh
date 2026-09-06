@@ -1666,6 +1666,32 @@ _preflight_probe_thinking_reasoning_both() {
     || echo 0
 }
 
+_preflight_probe_thinking_pair() {
+  # Echo "<content_len>:<reasoning_len>" from ONE request.
+  #
+  # ⚠️ CONTENT PRESENCE DOES NOT DISCRIMINATE EFFORT LEVELS. The sibling probe
+  # asks "Say OK." and checks whether any content came back, and the OFF ladder
+  # used that to decide whether a level turns thinking off. On a trivial prompt
+  # with a workable budget EVERY level answers -- including max -- so the test is
+  # blind exactly where it matters. It also flipped behaviour when the budget was
+  # raised from 24 to 256: at 24 no level answered (ladder ran, found nothing,
+  # model declared switch-less); at 256 the scan's own value answered (gate went
+  # false and the ladder was skipped entirely). Same symptom, different cause.
+  #
+  # "Did thinking stop?" is a question about REASONING length, so ask that.
+  local url="$1" model="$2" kwargs="$3"
+  curl -sf -m 90 "${url%/}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\": \"${model}\", \"messages\": [{\"role\": \"user\", \"content\": \"Say OK.\"}], \"max_tokens\": 256, \"temperature\": 0.0, \"chat_template_kwargs\": ${kwargs}}" 2>/dev/null \
+    | python3 -c "
+import sys, json
+d = json.load(sys.stdin)['choices'][0]['message']
+c = (d.get('content') or '').strip()
+r = (d.get('reasoning_content') or d.get('reasoning') or '').strip()
+print(f'{len(c)}:{len(r)}')" 2>/dev/null \
+    || echo "0:0"
+}
+
 _preflight_probe_thinking_reasoning() {
   # Echo the REASONING length a trivial question returns under the given kwargs.
   # The sibling probe measures CONTENT — right for proving a value turns thinking
@@ -1743,8 +1769,28 @@ preflight_detect_thinking_control() {
           enable_thinking)  _off_probe_kw='{"enable_thinking": false}'   ;;
           reasoning_effort) _off_probe_kw='{"reasoning_effort": "none"}' ;;
         esac
-        if [[ -n "$_off_probe_kw" ]] \
-           && [[ "$(_preflight_probe_thinking_key "$url" "$model" "$_off_probe_kw")" == "0" ]]; then
+        # Ask whether the scan's off-value actually STOPS the reasoning. If it
+        # leaves reasoning behind it is not an off-switch, whatever it is named,
+        # and we must walk the ladder. Asymmetric on purpose, as before: a value
+        # that genuinely silences thinking (rlen 0) keeps the scan's answer and
+        # every model passing today keeps its exact request shape.
+        local _off_pair="" _off_rlen0=0
+        if [[ -n "$_off_probe_kw" ]]; then
+          _off_pair="$(_preflight_probe_thinking_pair "$url" "$model" "$_off_probe_kw")"
+          _off_rlen0="${_off_pair##*:}"
+          [[ "$_off_rlen0" =~ ^[0-9]+$ ]] || _off_rlen0=0
+        fi
+        local _off_clen0="${_off_pair%%:*}"
+        [[ "$_off_clen0" =~ ^[0-9]+$ ]] || _off_clen0=0
+        # Enter the ladder when EITHER signal says the value is not an off-switch:
+        #   rlen > 0  -> it left reasoning behind (the GLM case)
+        #   clen == 0 -> it produced no answer at all (the original "named but
+        #                ignored" case, and the only signal available on engines
+        #                that never expose reasoning_content -- vLLM inlines
+        #                thinking in content, so rlen is always 0 there and a
+        #                reasoning-only test would be blind).
+        # A genuine off-switch (rlen 0 AND clen > 0) still keeps the scan's answer.
+        if [[ -n "$_off_probe_kw" ]] && { (( _off_rlen0 > 0 )) || (( _off_clen0 == 0 )); }; then
           # ⚠️ "this VALUE did not work" is NOT "this KEY does not exist" — the
           # distinction caused a real misdiagnosis. `reasoning_effort: none` is
           # INVALID on the GLM-5.3 family (vendor lists max|high|low only) and is
@@ -1767,26 +1813,28 @@ preflight_detect_thinking_control() {
           # A model whose first candidate works is unaffected — the ladder stops there.
           if [[ "$THINK_CONTROL" == "reasoning_effort" ]]; then
             local _lvl
+            # ⚠️ PICK BY REASONING, NOT BY "IT ANSWERED". Taking the first level
+            # that returns content picks whichever is tried first, because on a
+            # trivial prompt every level answers. Probe all candidates and keep the
+            # one that reasons LEAST while still producing an answer -- that is the
+            # closest thing to "off" the model actually offers. For GLM-5.3-Flash
+            # only low|high are valid and everything else coerces to max, so
+            # `minimal` and `medium` reason heavily and `low` wins on merit rather
+            # than on loop order.
+            local _lvl _pair _clen _rlen _best_rlen=-1
             for _lvl in minimal low medium; do
-              if [[ "$(_preflight_probe_thinking_key "$url" "$model" "{\"reasoning_effort\": \"${_lvl}\"}")" != "0" ]]; then
-                THINK_EFFORT_OFF_VALUE="$_lvl"; break
+              _pair="$(_preflight_probe_thinking_pair "$url" "$model" "{\"reasoning_effort\": \"${_lvl}\"}")"
+              _clen="${_pair%%:*}"; _rlen="${_pair##*:}"
+              [[ "$_clen" =~ ^[0-9]+$ ]] || continue
+              [[ "$_rlen" =~ ^[0-9]+$ ]] || continue
+              (( _clen > 0 )) || continue          # produced no answer -- unusable
+              if (( _best_rlen < 0 || _rlen < _best_rlen )); then
+                _best_rlen="$_rlen"; THINK_EFFORT_OFF_VALUE="$_lvl"
               fi
+              (( _rlen == 0 )) && break            # a true off-switch; stop looking
             done
-            # ⚠️ A DIAL IS NOT AN OFF SWITCH — three states, not two.
-            # GLM-5.3-Flash accepts only low|high (everything else, `none` included,
-            # coerces to MAX) and has NO zero-reasoning level: even the minimum still
-            # spends tokens thinking. Consumers size token budgets on "can this be
-            # turned off", so a model with a working dial but no off position got the
-            # un-widened budget — ~30 tokens against ~30 tokens of unavoidable
-            # reasoning — which reads downstream as empty content and gets blamed on
-            # the model (#1128, #1129). Measure it and say so.
-            if [[ -n "${THINK_EFFORT_OFF_VALUE:-}" ]]; then
-              local _off_rlen
-              _off_rlen="$(_preflight_probe_thinking_reasoning "$url" "$model" "{\"reasoning_effort\": \"${THINK_EFFORT_OFF_VALUE}\"}")"
-              if [[ "$_off_rlen" =~ ^[0-9]+$ ]] && (( _off_rlen > 0 )); then
-                THINK_ALWAYS_ON=1
-              fi
-            fi
+            # Reuse the winning measurement rather than spending another request.
+            (( _best_rlen > 0 )) && THINK_ALWAYS_ON=1
             if [[ -z "${THINK_EFFORT_OFF_VALUE:-}" ]]; then
               THINK_CONTROL="none"
             else
