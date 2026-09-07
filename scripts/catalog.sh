@@ -12,6 +12,8 @@
 #                         [--engine-type T] [--min-sm N] [--dry-run] [-y]
 #   catalog.sh register   --spec-file <path> [--dry-run] [-y]
 #   catalog.sh unregister --slug <engine>/<name> [--dry-run] [-y]
+#   catalog.sh rename     --slug <old> --to <new>  [--dry-run]
+#   catalog.sh update     --slug <slug> --set K=V  [--dry-run]   (repeatable)
 #
 #   --root <dir>  operate on a throwaway tree instead of this checkout (tests).
 #
@@ -34,7 +36,7 @@ usage() {
 [[ $# -gt 0 ]] || usage 2
 SUB="$1"; shift
 
-COMPOSE="" SPEC_FILE="" ENGINE="" MODEL="" WORKLOAD="" PORT="" SLUG="" DRY="" YES="" RROOT="" WEIGHTS="" ETYPE="" MINSM=""
+COMPOSE="" SPEC_FILE="" ENGINE="" MODEL="" WORKLOAD="" PORT="" SLUG="" DRY="" YES="" RROOT="" WEIGHTS="" ETYPE="" MINSM="" TO=""; declare -a SETS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --compose)   COMPOSE="${2:-}"; shift 2 ;;
@@ -47,6 +49,8 @@ while [[ $# -gt 0 ]]; do
     --engine-type) ETYPE="${2:-}"; shift 2 ;;
     --min-sm)    MINSM="${2:-}"; shift 2 ;;
     --slug)      SLUG="${2:-}"; shift 2 ;;
+    --to)        TO="${2:-}"; shift 2 ;;
+    --set)       SETS+=("${2:-}"); shift 2 ;;
     --root)      RROOT="${2:-}"; shift 2 ;;
     --dry-run)   DRY="--dry-run"; shift ;;
     -y|--yes)    YES="--yes"; shift ;;
@@ -86,6 +90,23 @@ prof.unlink()
 print(f"[catalog] removed the now-unused local engine profile: engines.d/{engine}.yml")
 PY_ENG
     exit 0
+    ;;
+
+  rename)
+    # The remedy #1202 promised for a SHADOWED slug and never shipped: a curated
+    # entry appearing under your name leaves your row loaded but unreachable, and
+    # "rename it" was the advice with no way to do it.
+    [[ -n "$SLUG" && -n "$TO" ]] || die "rename needs --slug <old> --to <new>"
+    exec python3 scripts/lib/profiles/amend.py --slug "$SLUG" --to "$TO" \
+         ${RROOT:+--root "$RROOT"} ${DRY:+--dry-run} ${YES:+-y}
+    ;;
+
+  update)
+    [[ -n "$SLUG" ]] || die "update needs --slug <slug>"
+    [[ ${#SETS[@]} -gt 0 ]] || die "update needs at least one --set KEY=VALUE"
+    _args=(); for _kv in "${SETS[@]}"; do _args+=(--set "$_kv"); done
+    exec python3 scripts/lib/profiles/amend.py --slug "$SLUG" "${_args[@]}" \
+         ${RROOT:+--root "$RROOT"} ${DRY:+--dry-run} ${YES:+-y}
     ;;
 
   register)
@@ -306,5 +327,5 @@ PY
     ;;
 
   -h|--help) usage 0 ;;
-  *) die "unknown subcommand: $SUB (expected register | unregister)" ;;
+  *) die "unknown subcommand: $SUB (expected register | unregister | rename | update)" ;;
 esac

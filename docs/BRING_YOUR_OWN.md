@@ -339,8 +339,27 @@ listing tells you so instead of quietly swallowing it:
 ```
 
 Core wins on purpose: a stack update must never silently change what one of our
-slugs points at. Your files are untouched — unregister and re-register under
-another name to get it back. (Renaming in place is not yet possible; see #1202.)
+slugs points at. Your files are untouched — rename it and it is reachable again:
+
+```bash
+bash scripts/catalog.sh rename --slug vllm/minimal --to my-llamacpp/minimal --dry-run
+bash scripts/catalog.sh rename --slug vllm/minimal --to my-llamacpp/minimal
+```
+
+The slug's namespace **is** the engine, so renaming across engines moves the compose
+tree and rewrites the entry's `engine` field with it — and is refused outright if the
+target engine has no profile, rather than leaving you with a slug that claims an
+engine which does not exist.
+
+You can also edit an entry in place without re-registering:
+
+```bash
+bash scripts/catalog.sh update --slug my-llamacpp/my-model --set workload=fast-chat --set max_ctx=32768
+```
+
+`origin` is not editable — it is stamped by the loader, and a local row able to call
+itself `core` would hide from the very listings meant to mark it. `model` is not
+editable either: it names the files on disk, so changing it is a move, not an edit.
 
 The directory is
 **gitignored** (everything except its README and `.gitignore`), so:
