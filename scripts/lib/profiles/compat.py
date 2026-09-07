@@ -825,7 +825,9 @@ def load_profiles(root: Path = PROFILE_ROOT) -> Profiles:
             **_load_local_models(root),
         },
         workloads=_load_dir(root, "workloads", _workload),
-        engines=_load_dir(root, "engines", _engine),
+        # Local first, core second: core wins a collision (same precedence as
+        # the registry — a user cannot redefine a shipped engine out from under us).
+        engines={**_load_local_engines(root), **_load_dir(root, "engines", _engine)},
         drafters=_load_dir(root, "drafters", _drafter),
         calibration=_load_dir(root, "calibration", _calibration),
     )
@@ -861,6 +863,25 @@ def _load_local_models(root: Path) -> dict[str, Any]:
     if not local_dir.is_dir():
         return {}
     return _load_dir(local_dir, ".", _model)
+
+
+def _load_local_engines(root: Path) -> dict[str, Any]:
+    """The LOCAL layer's engine profiles (scripts/lib/profiles-local/engines.d/).
+
+    #1202: a user running their OWN engine build — a fork of something we ship,
+    or something we have never seen — could register a model whose `engine`
+    referenced nothing, and cross-reference validation refused it *after* the
+    write. Engines were core-only while models beside them already merged a local
+    layer; this closes that asymmetry.
+
+    Same schema/factory as core engines, so a broken local engine profile fails
+    as loudly as a broken core one. Absent layer → {} (pristine checkout
+    unchanged). Core wins a collision, matching the registry's precedence: a user
+    cannot silently redefine a shipped engine."""
+    local_dir = Path(root).parent / "profiles-local" / "engines.d"
+    if not local_dir.is_dir():
+        return {}
+    return _load_dir(local_dir, ".", _engine)
 
 
 def _cudagraph_mode(hardware: list[HardwareProfile]) -> Optional[str]:
