@@ -178,6 +178,43 @@ for (model, engine, topology), target in DEFAULTS.items():
 PY_EMIT
 }
 
+# Local-layer provenance, as a SIDE CHANNEL (#1202 P5).
+#
+# Deliberately not a new column on the VARIANT tab row. That row is index-coupled
+# across five readers (this file twice, parse_variant_rows' documented positions,
+# and the parity test) and pins `status_note` LAST as the free-text catch-all, so
+# widening it to carry one boolean risks a silent mis-parse in a reader nobody
+# remembered. The JSON contract already carries `source`; this gives the shell the
+# same fact without touching the tab schema.
+#
+# Prints, for the given root:
+#   LOCAL\t<slug>       a registered local row
+#   SHADOWED\t<slug>    a local row whose slug a CURATED entry now occupies:
+#                       loaded and kept, but core wins the lookup, so it must be
+#                       shown as shadowed rather than silently vanish.
+registry_local_slugs() {
+  local root="${1:-$PWD}"
+  python3 - "$root" <<'PY_LOCAL' 2>/dev/null || true
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root))
+try:
+    from scripts.lib.profiles.compose_registry import (
+        COMPOSE_REGISTRY, load_local_registry,
+    )
+    local = load_local_registry(root)
+except Exception:
+    raise SystemExit(0)          # no local layer, or a broken one: say nothing
+for slug, entry in sorted(local.items()):
+    if entry.get("shadowed_by_core") or slug in COMPOSE_REGISTRY:
+        print(f"SHADOWED\t{slug}")
+    else:
+        print(f"LOCAL\t{slug}")
+PY_LOCAL
+}
+
 derive_switch_variant_tables() {
   local root="$1" emit key switch_engine _launch_engine cdir cfile port _model _profile_engine _kvcalc container _compose_path status max_ctx status_note
   # Self-declare so every caller (switch.sh + test-switch-registry-parity) gets
@@ -761,7 +798,19 @@ for vr in _tui_registry.parse_variant_rows(tab):
                 (REG.get(d["slug"], {}) or {}).get("workload") == "vision-coding"
             ),
             "status_note": d["status_note"],
-            "source": "curated",
+            # Provenance, from the entry's `origin` field (#1202) rather than a
+            # constant. `source` already existed on VariantRow (default "·") and
+            # was hardcoded "curated" — so local rows were indistinguishable in
+            # every listing, which mattered little while they lived under a
+            # `local/` namespace and matters a lot now that they carry the same
+            # `<engine>/<name>` shape as curated ones.
+            # Mapped, not passed through: the contract's value is "curated", and
+            # consumers compare against it.
+            "source": (
+                "local"
+                if (REG.get(d["slug"], {}) or {}).get("origin") == "local"
+                else "curated"
+            ),
             # The shipped baseline row ("the bar") + computed staleness — the
             # ONLY measured-display source for consumers (replaces the c3-side
             # BENCHMARKS.md scrape).  None when the slug has no accepted row.

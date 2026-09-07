@@ -14,6 +14,7 @@
 #   bash scripts/switch.sh --list               # actionable variants on THIS machine (deprecated hidden) + defaults
 #   bash scripts/switch.sh --list --all         # every variant — all GPU counts + deprecated
 #   bash scripts/switch.sh --list-all           # alias for --list --all
+#   bash scripts/switch.sh --local              # only models YOU registered (local layer)
 #   bash scripts/switch.sh --defaults           # just the per-model defaults view
 #   bash scripts/switch.sh --down               # just bring down whatever's up
 #   bash scripts/switch.sh --set-default <slug>  # pin <slug> as YOUR default for its model (.env)
@@ -454,6 +455,20 @@ list_variants() {
   # DEVICES then nvidia-smi). `--list --all` (LIST_ALL=1) shows everything for
   # discoverability. Fail-open: if detection is unavailable we show ALL rather
   # than hide based on a failed probe.
+  # Provenance (#1202). Local rows were INDISTINGUISHABLE in this listing: nothing
+  # rendered a marker, which mattered little while they lived under a `local/`
+  # namespace and matters a lot now they share the curated <engine>/<name> shape.
+  declare -A _is_local=(); local _shadowed=""
+  if declare -F registry_local_slugs >/dev/null; then
+    local _k _v
+    while IFS=$'\t' read -r _k _v; do
+      case "$_k" in
+        LOCAL)    _is_local["$_v"]=1 ;;
+        SHADOWED) _shadowed+="${_shadowed:+, }$_v" ;;
+      esac
+    done < <(registry_local_slugs "$ROOT_DIR" 2>/dev/null)
+  fi
+
   local show_all="${LIST_ALL:-0}" detected_topo max_rank
   detected_topo="$(switch_topology_from_gpus 2>/dev/null || true)"
   if [[ -z "$detected_topo" ]] || ! list_gpu_detect_reliable; then
@@ -497,6 +512,9 @@ list_variants() {
       _hidden_by_topo["$_vtopo"]=$(( ${_hidden_by_topo["$_vtopo"]:-0} + 1 ))
       continue
     fi
+    if [[ "${LIST_LOCAL:-0}" == "1" && -z "${_is_local[$v]:-}" ]]; then
+      continue                       # --local: yours only
+    fi
     _seen_models["${_ds[1]:-?}"]=1
     case "${VARIANT_STATUS[$v]:-production}" in
       production) _prod=$((_prod + 1)) ;;
@@ -535,6 +553,13 @@ list_variants() {
   if [[ "$_inc_hidden" -gt 0 ]]; then
     _inc_note="  (+${_inc_hidden} incubating hidden — --all)"
   fi
+  if [[ -n "$_shadowed" ]]; then
+    echo ""
+    echo "  ⚠ shadowed local slug(s): ${_shadowed}"
+    echo "    A curated entry now ships under that name, and core wins the lookup."
+    echo "    Your registration is intact but unreachable by slug — rename it:"
+    echo "      bash scripts/catalog.sh unregister --slug <slug>   # then re-register under another name"
+  fi
   echo "  Models: ${#_seen_models[@]} · variants: ${_visible} (${_prod} production · ${_cav} caveats · ${_na} NA)${_hidden_note}${_dep_note}${_gated_note}${_inc_note}"
 
   {
@@ -544,6 +569,10 @@ list_variants() {
       IFS=/ read -ra fseg <<< "$file"   # fseg[0]=topology fseg[1]=quant fseg[2]=serving
       topo="${fseg[0]:-unknown}"
       rank="$(topology_rank "$topo")"
+      # --local applies HERE too. Listing is two passes — one that counts, one
+      # that renders — and filtering only the first produced a header saying
+      # "variants: 1" above every curated row.
+      if [[ "${LIST_LOCAL:-0}" == "1" && -z "${_is_local[$v]:-}" ]]; then continue; fi
       if [[ "$show_all" != "1" ]]; then
         case "${VARIANT_STATUS[$v]:-production}" in deprecated|upstream-gated|incubating) continue ;; esac
       fi
@@ -551,8 +580,9 @@ list_variants() {
         continue
       fi
       marker="$(status_marker "${VARIANT_STATUS[$v]:-production}")"
-      printf '%s\t%d\t%s\t%s\t%s/%s\t%s\t%s\n' \
-        "${dseg[1]:-?}" "$rank" "$topo" "$v" "${fseg[1]:-?}" "${fseg[2]:-${file}}" "$marker" "${VARIANT_CTX[$v]:-}"
+      printf '%s\t%d\t%s\t%s\t%s/%s\t%s\t%s\t%s\n' \
+        "${dseg[1]:-?}" "$rank" "$topo" "$v" "${fseg[1]:-?}" "${fseg[2]:-${file}}" "$marker" "${VARIANT_CTX[$v]:-}" \
+        "${_is_local[$v]:+local}"
     done
   } | LC_ALL=C sort -t$'\t' -k1,1 -k2,2n -k4,4 | awk -F'\t' '
     { rows[NR] = $0; cnt[$1]++ }
@@ -566,6 +596,9 @@ list_variants() {
           if (ann == "") ann = ctx                  # production: bare max-ctx (stays "unmarked")
           else sub(/\)$/, ", " ctx ")", ann)         # caveats / NA: fold ctx into the paren
         }
+        # provenance: yours vs shipped. Local rows look exactly like curated ones
+        # since #1202 gave them the same <engine>/<name> shape, so say it.
+        if (f[8] != "") ann = (ann == "" ? "local" : ann " · local")
         printf "  %-8s %-34s %-36s %s\n", tl, f[4], f[5], ann
       }
     }
@@ -1363,6 +1396,7 @@ FORCE="${FORCE:-0}"
 VARIANT=""
 LIST_REQUESTED=0
 LIST_ALL=0
+LIST_LOCAL=0
 OWUI_REGISTER=0
 EXPLAIN_REQUESTED=0
 EXPLAIN_SLUG=""
@@ -1376,6 +1410,11 @@ while [[ $# -gt 0 ]]; do
     --list) LIST_REQUESTED=1 ;;
     --all) LIST_ALL=1 ;;
     --list-all) LIST_REQUESTED=1; LIST_ALL=1 ;;
+    # --local: only the models YOU registered (catalog.sh / promote.py). Locality
+    # is the entry's `origin` field, never the slug string — local slugs carry the
+    # same <engine>/<name> shape as curated ones (#1202), so there is nothing in
+    # the name to filter on.
+    --local) LIST_REQUESTED=1; LIST_LOCAL=1; LIST_ALL=1 ;;
     # --explain <slug> [--json] is a deferred terminal action (like --list), so
     # `--explain X --json` and `--explain --json X` both work. The slug is the
     # next non-flag token; --json (below) toggles structured output.

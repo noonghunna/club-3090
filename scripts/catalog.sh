@@ -58,7 +58,34 @@ done
 case "$SUB" in
   unregister)
     [[ -n "$SLUG" ]] || die "unregister needs --slug <engine>/<name>"
-    exec python3 scripts/lib/profiles/demote.py --slug "$SLUG" ${RROOT:+--root "$RROOT"} ${DRY:+--dry-run} ${YES:+-y}
+    python3 scripts/lib/profiles/demote.py --slug "$SLUG" ${RROOT:+--root "$RROOT"} ${DRY:+--dry-run} ${YES:+-y} || exit $?
+    # `register` may have written a LOCAL engine profile for this slug's engine.
+    # demote.py knows nothing about it (engines are not its layer), so removing
+    # the model alone orphans it — and orphans accumulate silently. Drop it only
+    # when NO remaining local row uses that engine, and only from the local layer.
+    [[ -n "$DRY" ]] && exit 0
+    python3 - "${RROOT:-$ROOT}" "$SLUG" <<'PY_ENG' || true
+import json, sys
+from pathlib import Path
+
+root, slug = Path(sys.argv[1]), sys.argv[2]
+engine = slug.split("/", 1)[0]
+prof = root / "scripts/lib/profiles-local/engines.d" / f"{engine}.yml"
+if not prof.is_file():
+    raise SystemExit(0)                       # curated engine, or none written
+reg = root / "scripts/lib/profiles-local/registry.local.json"
+still = {}
+if reg.is_file():
+    try:
+        still = json.loads(reg.read_text(encoding="utf-8"))
+    except Exception:
+        raise SystemExit(0)                   # unreadable: leave it alone, loudly nothing
+if any(str(s).split("/", 1)[0] == engine for s in still):
+    raise SystemExit(0)                       # another local model still needs it
+prof.unlink()
+print(f"[catalog] removed the now-unused local engine profile: engines.d/{engine}.yml")
+PY_ENG
+    exit 0
     ;;
 
   register)
@@ -213,9 +240,16 @@ if engine not in known:
               "  once measured." + ("" if not drafted else " A drafter flag was seen in the compose.")]
     engine_yaml = "\n".join(lines) + "\n"
 
-cpath = f"scripts/lib/profiles-local/composes/{mid}/{engine}/compose/local/base.yml"
-slug = f"{engine}/{mid}"
 fmt = "gguf" if (f.model_path or "").endswith(".gguf") else "safetensors"
+# The emitter splits compose_path on "/compose/" and reads <topology>/<quant>/<file>
+# from the tail — so the segment after /compose/ IS the topology in every listing.
+# Writing ".../compose/local/base.yml" made "local" render as the topology.
+_tp = int(f.tp or 1)
+_topo = "single" if _tp <= 1 else ("dual" if _tp == 2 else f"multi{_tp}")
+cpath = (f"scripts/lib/profiles-local/composes/{mid}/{engine}"
+         f"/compose/{_topo}/{fmt}/base.yml")
+slug = f"{engine}/{mid}"
+
 
 spec = {
     "model_id": mid,
