@@ -2374,45 +2374,6 @@ def _quant_slug_for_arch(byo: Optional["ByoResult"]) -> str:
     return "autoround-int4"
 
 
-@dataclass
-class ComposeFacts:
-    """What a compose file mechanically tells us (#1153 Route-K).
-
-    A user who already has a working compose is the most common BYOM position,
-    and until now the funnel had no door for them: ① takes an HF repo, and the
-    only compose that could enter was one c3 itself emitted. This is the read
-    half — everything a compose CAN state about itself. Arch dims are absent by
-    construction (a compose does not carry hidden_size); those come from the
-    weights, or stay as required inline edits in ⑤.
-
-    Regex over text, stdlib only — matching serve_override_defaults, which must
-    stay importable on the launcher's no-PyYAML path."""
-
-    path: str = ""
-    ok: bool = False
-    error: str = ""
-    image: str = ""
-    engine: str = ""          # vllm | llama-cpp | ik-llama | unknown
-    model_path: str = ""      # --model / -m / GGUF_FILE
-    served_name: str = ""     # --served-model-name / -a
-    port: str = ""            # ${PORT:-N} or a ports: mapping
-    max_ctx: str = ""         # --max-model-len / -c
-    kv_dtype: str = ""        # --kv-cache-dtype / -ctk
-    tp: str = ""              # --tensor-parallel-size / -ts / device count
-    status_header: str = ""   # the profile-header Status: line, when present
-    service: str = ""
-
-
-_ENGINE_BY_IMAGE = (
-    ("vllm", "vllm"),
-    ("llamacpp-club3090", "llama-cpp"),
-    ("llama.cpp", "llama-cpp"),
-    ("llama-cpp", "llama-cpp"),
-    ("ik-llama", "ik-llama"),
-    ("ik_llama", "ik-llama"),
-)
-
-
 # Compose `Status:` header emoji → registry status word.  DUPLICATED from
 # scripts/lib/profiles/compose_registry.COMPOSE_STATUS_EMOJI on purpose: data.py
 # is stdlib-only and importable on the launcher's no-PyYAML path, so it must not
@@ -2578,20 +2539,37 @@ def classify_compose_provenance(path: str, repo_root) -> ComposeProvenance:
     return prov
 
 
-def derive_compose_facts(text: str, path: str = "") -> ComposeFacts:
-    """Read a user-supplied compose (#1153 Route-K). Never raises.
+def _compose_facts_mod():
+    """Shared compose-facts implementation (#1202 P1).
 
-    Flags are read from a TOKEN stream, not by regex-guessing around each name:
-    a compose states its command either as a YAML list (``- --model`` / ``- val``
-    on separate lines) or as one folded string (``>- -m x -c 65536``), and a
-    per-flag regex gets the list form wrong — it captures the next line's ``-``.
-    Flatten first, then walk pairs."""
-    import re as _re
+    It used to live here, which made it unreachable from the CLI — the local
+    layer was write-only from the UI *because the UI owned the only
+    implementation* (#1153). It now lives in scripts/lib/profiles/.
 
-    f = ComposeFacts(path=path)
-    if not (text or "").strip():
-        f.error = "empty compose"
-        return f
+    The cockpit venv does NOT carry the repo root on sys.path (services.py
+    inserts it at runtime for exactly this reason), so resolve it from this
+    file's own location — cwd- and caller-independent."""
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    root = str(_Path(__file__).resolve().parents[3])
+    if root not in _sys.path:
+        _sys.path.insert(0, root)
+    from scripts.lib.profiles import compose_facts as _cf
+
+    return _cf
+
+
+def derive_compose_facts(text: str, path: str = ""):
+    """See scripts/lib/profiles/compose_facts.derive_compose_facts."""
+    return _compose_facts_mod().derive_compose_facts(text, path)
+
+
+def __getattr__(name):
+    """Keep ComposeFacts importable from this module after the P1 move."""
+    if name == "ComposeFacts":
+        return _compose_facts_mod().ComposeFacts
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
     f.image = ""
     m = _re.search(r"^\s*image:\s*(\S+)", text, _re.M)
