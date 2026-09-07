@@ -310,8 +310,14 @@ def engine_stats(container):
     # below max_num_seqs when --max-num-batched-tokens caps the per-step budget:
     # a sweep rung labelled N=64 may only ever run ~10 wide. Reporting the label
     # without this reads as a concurrency measurement when it is a queue-depth one.
+    #
+    # Returns (run, wait, run_max, wait_max, hit). The bare run/wait are the LAST
+    # "Running:" line in the tail; run_max/wait_max are the PEAK across every line.
+    # The last sample is racy: a request that finishes before the sample is taken
+    # reads running < N even though it was admitted and ran, so the peak is the
+    # honest admission signal and the last sample is only a snapshot.
     if not container:
-        return (None, None, None)
+        return (None, None, None, None, None)
     try:
         out = subprocess.run(
             ["docker", "logs", "--tail", "400", container],
@@ -323,15 +329,18 @@ def engine_stats(container):
         )
         txt = (out.stdout or "") + (out.stderr or "")
     except Exception:
-        return (None, None, None)
-    run = wait = hit = None
+        return (None, None, None, None, None)
+    run = wait = run_max = wait_max = hit = None
     for m in re.finditer(
         r"Running:\s*(\d+)\s*reqs?,\s*Waiting:\s*(\d+)\s*reqs?", txt
     ):
-        run, wait = int(m.group(1)), int(m.group(2))
+        r, w = int(m.group(1)), int(m.group(2))
+        run, wait = r, w
+        run_max = r if run_max is None else max(run_max, r)
+        wait_max = w if wait_max is None else max(wait_max, w)
     for m in re.finditer(r"[Pp]refix cache hit rate:\s*([0-9.]+)", txt):
         hit = float(m.group(1))
-    return (run, wait, hit)
+    return (run, wait, run_max, wait_max, hit)
 
 
 def vram_used_mb():
@@ -578,6 +587,8 @@ def run_probe():
     tps_p05_by_round = []
     run_by_round = []
     wait_by_round = []
+    runmax_by_round = []
+    waitmax_by_round = []
     hit_by_round = []
     for rnd in range(1, ROUNDS + 1):
         t0 = time.time()
@@ -611,9 +622,11 @@ def run_probe():
         tps_p05 = pct(tps_ok, 0.05)
         ttft_p95_by_round.append(ttft_p95)
         tps_p05_by_round.append(tps_p05)
-        run, wait, hit = engine_stats(CONTAINER)
+        run, wait, run_max, wait_max, hit = engine_stats(CONTAINER)
         run_by_round.append(run)
         wait_by_round.append(wait)
+        runmax_by_round.append(run_max)
+        waitmax_by_round.append(wait_max)
         hit_by_round.append(hit)
         print(
             f"{rnd:>5} {done:>4}/{N:<2} {silent:>7} {errs:>7} {v:>8} "
@@ -652,7 +665,19 @@ def run_probe():
     else:
         retention = 1.0  # too few post-warmup rounds to judge
 
-    clean_fit = (bad == 0) and (0 <= leak <= GROWTH)
+    # Admission: did the engine actually run N wide at some point? The peak
+    # across samples is the honest signal — a request that finishes before a
+    # sample is taken reads running < N on that (last) sample alone, so the
+    # last sample (s_run) is racy and must not by itself fail fit. If the peak
+    # reached N, N were admitted; a later sample dipping below N is just a
+    # request completing. If the peak never reached N we cannot prove N were
+    # admitted, so fail closed — a genuinely under-admitted server shows this
+    # as running < N (usually with requests WAITING, but the peak alone is the
+    # conservative, race-free test).
+    run_peak = max([r for r in run_by_round if r is not None], default=None)
+    wait_peak = max([w for w in wait_by_round if w is not None], default=None)
+    admitted_ok = (run_peak is None) or (run_peak >= N)
+    clean_fit = (bad == 0) and (0 <= leak <= GROWTH) and admitted_ok
     floor_ok = (report_tps >= TPS_FLOOR) if TPS_FLOOR > 0 else True
     retention_ok = (retention >= RETENTION_MIN) if ROUNDS >= 3 else True
     PASS = clean_fit and floor_ok and (retention_ok if VALIDATE else True)
@@ -691,13 +716,19 @@ def run_probe():
         f"· slowest-decile stream {s_p05:.1f} tok/s (vs median {report_tps:.1f})"
     )
     if s_run is not None:
+        # Only flag under-admission when the PEAK never reached N. A late sample
+        # reading running < N after a request finished is normal completion, not
+        # queuing — so a run whose peak reached N must not print the QUEUED warning.
+        peak_note = ""
+        if run_peak is not None and run_peak < N:
+            peak_note = f"  (peak {run_peak} across {ROUNDS} samples)"
         admitted = (
             ""
-            if s_run >= N
+            if admitted_ok
             else f"  ** engine admitted {s_run} of {N} requested — the rest QUEUED **"
         )
         print(
-            f"  engine: running {s_run} · waiting {s_wait}"
+            f"  engine: running {s_run} · waiting {s_wait}{peak_note}"
             + (f" · prefix-cache hit {s_hit:.1f}%" if s_hit is not None else "")
             + admitted
         )
@@ -735,6 +766,8 @@ def run_probe():
         "tps_p05": _fmt_num(s_p05, 2),
         "running": "-" if s_run is None else s_run,
         "waiting": "-" if s_wait is None else s_wait,
+        "running_max": "-" if run_peak is None else run_peak,
+        "waiting_max": "-" if wait_peak is None else wait_peak,
         "prefix_hit": "-" if s_hit is None else f"{s_hit:.1f}",
         "cache": CACHE,
         "cached_toks": f"{steady_cached:.0f}",

@@ -524,10 +524,16 @@ PY
     fail=0
     clean="$(sed -n 's/.* clean=\([0-9]*\).*/\1/p' <<<"$line")"
     running="$(sed -n 's/.* running=\([^ ]*\).*/\1/p' <<<"$line")"
+    running_max="$(sed -n 's/.* running_max=\([^ ]*\).*/\1/p' <<<"$line")"
+    waiting_max="$(sed -n 's/.* waiting_max=\([^ ]*\).*/\1/p' <<<"$line")"
     [[ "$rc" != "0" || "$clean" != "1" ]] && fail=1
-    if [[ "$running" =~ ^[0-9]+$ && "$running" -lt "$n" ]]; then
+    # A late sample reading running < n after a request finished is normal
+    # completion, not under-admission — so fail (and early-stop) only when the
+    # PEAK running stayed below n. (clean already encodes this; the explicit
+    # check keeps the early-stop reason self-documenting in the log.)
+    if [[ "$running_max" =~ ^[0-9]+$ && "$running_max" -lt "$n" ]]; then
       fail=1
-      echo "[sweep] admitted ${running}/${n} — treating as fail for early-stop"
+      echo "[sweep] admitted ${running_max}/${n} (waiting ${waiting_max:-?}) — treating as fail for early-stop"
     fi
     if [[ "$fail" == "1" && "$EARLY_STOP" == "1" ]]; then
       ROW_DEAD[$ctx]="$n"
