@@ -55,6 +55,12 @@ COMPOSE_STATUS_EMOJI = {
 
 def _entry(
     *,
+    # Catalog provenance (#1202). FIRST-CLASS FIELD, never derived from the slug
+    # string: publishing a local recipe upstream later must flip this value and
+    # leave the slug alone. Encoding provenance in the NAME would make publish a
+    # rename, breaking every reference a user holds (their scripts, notes,
+    # compose pins). Core rows default; the local loader injects "local".
+    origin="core",
     model,
     weights_variant,
     workload,
@@ -196,6 +202,7 @@ def _entry(
             f"{compose_path}: status={status!r} not in {STATUS_VALUES}"
         )
     entry = {
+        "origin": origin,
         "model": model,
         "weights_variant": weights_variant,
         "workload": workload,
@@ -841,8 +848,15 @@ def load_local_registry(root=None):
                 f"{path}: local slug {slug!r} must live under the "
                 f"{LOCAL_SLUG_PREFIX!r} namespace"
             )
-        if slug in core_slugs or slug in local:
-            raise LocalRegistryError(f"{path}: local slug collides: {slug!r}")
+        if slug in local:
+            raise LocalRegistryError(f"{path}: duplicate local slug: {slug!r}")
+        # ⚠️ A collision with CORE is NOT an error (#1202). Refusing at load would
+        # let a routine stack update — us shipping a curated slug whose name a user
+        # already registered — break their working setup with no warning, and take
+        # the whole local layer down with it. Core wins the lookup; the local row
+        # stays loaded and MARKED so `--list` can show what happened and the user
+        # can rename it. Silent shadowing in either direction is the bad outcome.
+        shadowed = slug in core_slugs
         model = kwargs.get("model")
         if model in core_models:
             raise LocalRegistryError(
@@ -850,14 +864,20 @@ def load_local_registry(root=None):
             )
         if model in local_models:
             raise LocalRegistryError(f"{path}: duplicate local model id {model!r}")
+        if "origin" in kwargs:
+            raise LocalRegistryError(
+                f"{path}: local entry {slug!r} may not set 'origin' — it is "
+                f"stamped by the loader, not self-declared"
+            )
         try:
-            entry = _entry(**kwargs)
+            entry = _entry(origin="local", **kwargs)
         except TypeError as exc:
             raise LocalRegistryError(
                 f"{path}: local entry {slug!r} has bad _entry kwargs: {exc}"
             ) from exc
         except ValueError as exc:
             raise LocalRegistryError(f"{path}: local entry {slug!r}: {exc}") from exc
+        entry["shadowed_by_core"] = shadowed
         local[slug] = entry
         local_models.add(model)
     return local
@@ -874,8 +894,17 @@ def get_registry(root=None):
     local = load_local_registry(root)
     if not local:
         return COMPOSE_REGISTRY
+    # CORE WINS (#1202). `merged.update(local)` would let a local row shadow a
+    # shipped slug silently. That is unreachable while local slugs live under a
+    # separate namespace, but P3 gives them the same `<engine>/<name>` shape as
+    # curated rows, at which point the collision is real. Decide it here, once:
+    # core owns the lookup, and the shadowed local row is still returned by
+    # load_local_registry (flagged `shadowed_by_core`) so listings can show it.
     merged = dict(COMPOSE_REGISTRY)
-    merged.update(local)
+    for slug, entry in local.items():
+        if slug in merged:
+            continue
+        merged[slug] = entry
     return merged
 
 
