@@ -86,6 +86,29 @@ fi
 # 3. round trip
 if scripts/catalog.sh register --compose "$C" --engine their-engine --engine-type llama.cpp --weights "$W" --root "$TMP" -y >/dev/null 2>&1; then
   REG="$TMP/scripts/lib/profiles-local/registry.local.json"
+  # A registry entry alone proves little: `register` DERIVES the compose path and
+  # model id, so a derivation bug can write an entry pointing at files that were
+  # never created. Assert the artifacts exist and that the entry is USABLE.
+  MID=byo-probe
+  PROF="$TMP/scripts/lib/profiles-local/models.d/$MID.yml"
+  [[ -f "$PROF" ]] && echo "  ok   model profile written" \
+    || { echo "  FAIL no model profile at models.d/$MID.yml"; rc=1; }
+  CPATH="$(python3 -c "
+import json,sys
+d=json.load(open('$REG'))
+print((d.get('their-engine/byo-probe') or {}).get('compose_path',''))" 2>/dev/null)"
+  if [[ -n "$CPATH" && -f "$TMP/$CPATH" ]]; then
+    echo "  ok   compose written where the entry says it is"
+  else
+    echo "  FAIL entry points at a compose that does not exist: ${CPATH:-<none>}"; rc=1
+  fi
+  # The point of registering is that the model becomes addressable.
+  if (cd "$TMP" && python3 -c "
+import sys; sys.path.insert(0,'.')
+from scripts.lib.profiles.compose_registry import get_registry
+raise SystemExit(0 if 'their-engine/byo-probe' in get_registry('.') else 1)") 2>/dev/null
+  then echo "  ok   slug resolves in the merged registry (it is usable)"
+  else echo "  FAIL registered slug is not in the merged registry"; rc=1; fi
   if command grep -q "their-engine/byo-probe" "$REG" 2>/dev/null; then
     echo "  ok   register wrote their-engine/byo-probe"
   else
@@ -112,7 +135,17 @@ if scripts/catalog.sh register --compose "$C" --engine their-engine --engine-typ
     if [[ -f "$REG" ]] && command grep -q "their-engine/byo-probe" "$REG" 2>/dev/null; then
       echo "  FAIL unregister left the slug behind"; rc=1
     else
-      echo "  ok   unregister removed it (clean round trip)"
+      # Removal must take the ARTIFACTS too, not just the registry key —
+      # otherwise re-registering the same model collides with its own leftovers.
+      if [[ -f "$PROF" ]]; then
+        echo "  FAIL unregister left the model profile behind"; rc=1
+      elif [[ -d "$TMP/scripts/lib/profiles-local/composes/$MID" ]]; then
+        echo "  FAIL unregister left the compose tree behind"; rc=1
+      elif [[ -f "$TMP/scripts/lib/profiles-local/engines.d/their-engine.yml" ]]; then
+        echo "  FAIL unregister left an orphaned engine profile behind"; rc=1
+      else
+        echo "  ok   unregister removed it (clean round trip: entry, profile, composes, engine)"
+      fi
     fi
   else
     echo "  FAIL unregister failed"; rc=1
