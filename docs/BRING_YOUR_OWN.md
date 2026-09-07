@@ -315,6 +315,33 @@ and notes already point at. A local slug whose name collides with a shipped one 
 > ⚠️ The old `local/<name>` namespace was removed (#1202). A `local/…` slug is now
 > refused with the replacement spelled out; re-register it as `<engine>/<name>`.
 
+### Seeing what you registered
+
+Because local slugs now share the curated `<engine>/<name>` shape, they are marked
+rather than named:
+
+```bash
+bash scripts/switch.sh --local          # only the models YOU registered
+bash scripts/switch.sh --list --all     # everything; yours are tagged “· local”
+```
+
+```
+  single   my-llamacpp/my-model    gguf/base.yml    (NA: 66K) · local
+```
+
+If a later `git pull` ships a curated slug under a name you already used, the
+listing tells you so instead of quietly swallowing it:
+
+```
+  ⚠ shadowed local slug(s): vllm/minimal
+    A curated entry now ships under that name, and core wins the lookup.
+    Your registration is intact but unreachable by slug — rename it:
+```
+
+Core wins on purpose: a stack update must never silently change what one of our
+slugs points at. Your files are untouched — unregister and re-register under
+another name to get it back. (Renaming in place is not yet possible; see #1202.)
+
 The directory is
 **gitignored** (everything except its README and `.gitignore`), so:
 
