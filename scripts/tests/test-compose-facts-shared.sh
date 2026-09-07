@@ -12,6 +12,8 @@
 # consumer and the two drift. The test derives the SAME compose through BOTH
 # import paths and requires byte-identical results.
 set -uo pipefail
+# Non-UTF-8 locales break python3 reads/writes on this rig (#599/#584).
+export PYTHONUTF8="${PYTHONUTF8:-1}"
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 ROOT="$PWD"
 rc=0

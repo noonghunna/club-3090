@@ -85,19 +85,38 @@ def _model_id_for(slug: str, entry: dict) -> str:
     Both are recorded by promote.py, and disagreeing about which files belong to
     a slug is exactly how a removal deletes the wrong tree."""
     mid = str(entry.get("model") or "").strip()
-    return mid or slug[len(_LOCAL_NS):]
+    # The tail of '<engine>/<name>'. Was slug[len("local/"):] — string surgery on
+    # a prefix that no longer exists would return the whole slug (#1202 P3).
+    return mid or slug.split("/", 1)[-1]
 
 
 def plan_removal(root: Path, slug: str) -> dict:
     """What removing `slug` would touch. Pure: reads only, never writes."""
-    if not slug.startswith(_LOCAL_NS):
-        raise Refusal(
-            f"{slug!r} is not a local slug. This tool only removes the "
-            f"{_LOCAL_NS!r} layer; a curated catalog entry is git-tracked and "
-            f"git is its removal tool."
-        )
+    # ⛔ CORE SAFETY. This used to be `if not slug.startswith("local/")` — a
+    # string test, and the ONLY thing between `--slug vllm/dual` and the curated
+    # catalog. The hard-cut (#1202 P3) removes that namespace, so the guard is now
+    # grounded in WHERE THE ENTRY PHYSICALLY LIVES: a slug absent from the local
+    # registry is refused before anything is read or written. That is strictly
+    # safer than a name check — a curated slug can never appear in a file this
+    # tool is the only writer of — and it FAILS CLOSED: unknown means refuse.
     raw = _load_local_raw(root)
     if slug not in raw:
+        # Distinguish "that is curated" from "typo" so the refusal is useful.
+        try:
+            import sys as _sys
+
+            _sys.path.insert(0, str(root))
+            from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+
+            is_core = slug in COMPOSE_REGISTRY
+        except Exception:
+            is_core = False
+        if is_core:
+            raise Refusal(
+                f"{slug!r} is a CURATED catalog entry, not a local one. This tool "
+                f"only removes the local layer; a curated entry is git-tracked and "
+                f"git is its removal tool."
+            )
         known = ", ".join(sorted(raw)) or "(none registered)"
         raise Refusal(f"{slug} is not in {_LOCAL_REGISTRY_REL}. Registered: {known}")
 

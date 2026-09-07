@@ -843,10 +843,20 @@ def load_local_registry(root=None):
     local: dict = {}
     local_models: set = set()
     for slug, kwargs in raw.items():
-        if not slug.startswith(LOCAL_SLUG_PREFIX):
+        # HARD-CUT (#1202 P3). Local slugs take the SAME `<engine>/<name>` shape
+        # as curated rows. `local/` used to occupy the ENGINE slot, so a local
+        # model could not say which engine it runs — and a user on their own
+        # build had nowhere to record it. Provenance is the `origin` field now.
+        if slug.startswith(LOCAL_SLUG_PREFIX):
             raise LocalRegistryError(
-                f"{path}: local slug {slug!r} must live under the "
-                f"{LOCAL_SLUG_PREFIX!r} namespace"
+                f"{path}: the {LOCAL_SLUG_PREFIX!r} namespace was removed. Local "
+                f"slugs now use the same '<engine>/<name>' shape as curated ones "
+                f"(provenance lives in the 'origin' field). Re-register {slug!r} "
+                f"as '<engine>/{slug[len(LOCAL_SLUG_PREFIX):]}'."
+            )
+        if slug.count("/") != 1 or slug.startswith("/") or slug.endswith("/"):
+            raise LocalRegistryError(
+                f"{path}: local slug {slug!r} must be '<engine>/<name>'"
             )
         if slug in local:
             raise LocalRegistryError(f"{path}: duplicate local slug: {slug!r}")

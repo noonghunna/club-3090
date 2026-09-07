@@ -413,11 +413,15 @@ def validate_spec(spec: Any, root: Path, layer: str) -> dict:
 
     if layer == "local":
         # ── Namespace + containment (C4-rev): local writes NEVER leave the layer.
-        if not slug.startswith(_LOCAL_SLUG_PREFIX):
+        # HARD-CUT (#1202 P3): local slugs are '<engine>/<name>', same as core.
+        if slug.startswith(_LOCAL_SLUG_PREFIX):
             raise Refusal(
-                f"local-layer slugs must carry the {_LOCAL_SLUG_PREFIX!r} namespace "
-                f"(got {slug!r}); use --layer core for a curated engine slug"
+                f"the {_LOCAL_SLUG_PREFIX!r} namespace was removed — local slugs "
+                f"now use '<engine>/<name>' (provenance is the 'origin' field). "
+                f"Use '<engine>/{slug[len(_LOCAL_SLUG_PREFIX):]}'."
             )
+        if slug.count("/") != 1:
+            raise Refusal(f"local slug {slug!r} must be '<engine>/<name>'")
         _refuse_if_path_escapes(cpath, _LOCAL_COMPOSES_REL, "spec.compose.path")
         if kwargs.get("compose_path") != cpath:
             raise Refusal(

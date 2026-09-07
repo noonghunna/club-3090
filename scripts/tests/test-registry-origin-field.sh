@@ -14,6 +14,8 @@
 #      `merged.update(local)`, i.e. LOCAL silently won. Unreachable while local
 #      slugs sit in their own namespace, live the moment P3 lands.
 set -uo pipefail
+# Non-UTF-8 locales break python3 reads/writes on this rig (#599/#584).
+export PYTHONUTF8="${PYTHONUTF8:-1}"
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 rc=0
 
@@ -46,14 +48,14 @@ try:
 
     # 2. a valid local row is stamped local, not self-declared
     mine = dict(kw); mine["model"] = "guard-local-model"; mine["status"] = "experimental"
-    reg.write_text(json.dumps({"local/guard": mine}))
-    e = cr.load_local_registry(root)["local/guard"]
+    reg.write_text(json.dumps({"my-engine/guard": mine}))
+    e = cr.load_local_registry(root)["my-engine/guard"]
     if e.get("origin") != "local":
         fail.append(f"local row origin={e.get('origin')!r}, want 'local'")
 
     # 3. spoofing origin must be refused
     spoof = dict(mine); spoof["origin"] = "core"
-    reg.write_text(json.dumps({"local/spoof": spoof}))
+    reg.write_text(json.dumps({"my-engine/spoof": spoof}))
     try:
         cr.load_local_registry(root)
         fail.append("a local row was allowed to declare origin='core' (spoofable)")

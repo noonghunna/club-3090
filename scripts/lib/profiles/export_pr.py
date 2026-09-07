@@ -135,7 +135,7 @@ def load_local_state(root: Path, mid: str) -> dict:
             "promote it into the LOCAL layer first (c3 ⑤ Promote)"
         )
     for e in entries:
-        if not str(e["slug"]).startswith(_LOCAL_SLUG_PREFIX):
+        if str(e["slug"]).startswith(_LOCAL_SLUG_PREFIX):
             raise Refusal(
                 f"registry slug {e['slug']!r} lacks the {_LOCAL_SLUG_PREFIX!r} "
                 "namespace — not a LOCAL-layer entry"
@@ -279,7 +279,19 @@ def translated_entry(state: dict, entry: dict) -> dict:
     ns = compose_slug_namespace(cpath)
     if not kw.get("kvcalc_key"):
         kw["kvcalc_key"] = "SKIP"  # llama.cpp family default; vLLM was gated above
-    core_slug = f"{ns}/{str(entry['slug'])[len(_LOCAL_SLUG_PREFIX):]}"
+    # PUBLISH IS NO LONGER A RENAME (#1202 P3). This was
+    #   f"{ns}/{slug[len('local/'):]}"
+    # — strip the namespace, re-prefix the engine derived from the compose path.
+    # Local slugs already ARE '<engine>/<name>', so the core slug is the slug the
+    # user has been running, and every reference they hold survives publication.
+    # `ns` is kept as a consistency check: a slug whose engine namespace disagrees
+    # with where its compose lives is a packaging mistake worth surfacing.
+    core_slug = str(entry["slug"])
+    if ns and not core_slug.startswith(f"{ns}/"):
+        raise Refusal(
+            f"slug {core_slug!r} does not match the namespace implied by its "
+            f"compose path ({ns!r}); fix one or the other before exporting"
+        )
     return {"slug": core_slug, "kwargs": kw}
 
 

@@ -6035,7 +6035,11 @@ class TestPromoteHookWired:
             _spec = json.loads(app.screen._plan.env["C3_PROMOTE_SPEC"])
             assert _spec["display_name"] == "Qwen3 27B Abliterated"
             assert _spec["family"] == "qwen3-dense"
-            assert _spec["registry_entry"]["slug"].startswith("local/")
+            # #1202 P3: engine namespace, not `local/`. `--layer local` above is
+            # what keeps the write inside the gitignored layer.
+            _slug = _spec["registry_entry"]["slug"]
+            assert not _slug.startswith("local/")
+            assert _slug.count("/") == 1, _slug
             # #1156: THIS assertion was missing, and its absence let a plan that
             # promote.py always refuses (empty compose.content) pass as green.
             assert _spec["compose"]["content"].strip(), "spec.compose.content is empty"

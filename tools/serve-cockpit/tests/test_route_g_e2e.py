@@ -232,7 +232,9 @@ def test_route_g_all_legs_end_to_end(tmp_path: Path, monkeypatch):
     assert weight_meta["hf_repo"] == REPO
 
     slug = spec["registry_entry"]["slug"]
-    assert slug.startswith("local/")
+    # #1202 P3: engine namespace, not `local/` (layer asserted above).
+    assert not slug.startswith("local/")
+    assert slug.count("/") == 1, slug
     assert spec["registry_entry"]["kwargs"]["model"] == MID
     assert spec["registry_entry"]["kwargs"]["max_ctx"] == 131072
     assert spec["registry_entry"]["kwargs"]["status"] == "incubating"

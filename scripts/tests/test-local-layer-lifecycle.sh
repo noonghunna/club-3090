@@ -36,7 +36,8 @@ cp -r scripts/lib "$TMP/scripts/"
 # registry-emit.sh imports the shared VariantRow from tools/tui-core.
 cp -r tools/tui-core "$TMP/tools/"
 
-SLUG="local/lifecycle-probe"
+# #1202 P3: local slugs carry the ENGINE namespace, like curated rows.
+SLUG="llama-cpp/lifecycle-probe"
 MID="lifecycle-probe"
 SPEC="$TMP/spec.json"
 
@@ -161,8 +162,13 @@ python3 scripts/lib/profiles/demote.py --slug "$SLUG" --root "$TMP" --yes >/dev/
 
 python3 scripts/lib/profiles/demote.py --slug "vllm/dual" --root "$TMP" --yes >"$TMP/core.log" 2>&1 \
   && bad "a CORE slug must never be removable" || ok "core slug refused"
-command grep -qi "not a local slug" "$TMP/core.log" \
-  && ok "core refusal names the reason" || bad "core refusal message unclear"
+# The refusal must say WHY, not just "no". Post-#1202 the guard is location-based
+# (absent from registry.local.json) and the message names the curated layer.
+if command grep -qi "curated" "$TMP/core.log" && command grep -qi "git" "$TMP/core.log"; then
+  ok "core refusal names the reason (curated + git is its removal tool)"
+else
+  bad "core refusal message unclear"
+fi
 
 # ── 5. Round-trip: promote again after a removal ────────────────────────────
 python3 scripts/lib/profiles/promote.py --spec-file "$SPEC" --root "$TMP" \

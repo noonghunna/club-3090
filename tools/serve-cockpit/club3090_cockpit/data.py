@@ -2759,15 +2759,20 @@ def compute_promote_scaffold(
     _moe = getattr(mspec, "moe", None)  # rendered into the preview below
     vision_hint = _vis.value if _vis is not None else None
     short = mid.replace("qwen3.6-", "qwen-").replace("gemma-4-", "gemma-")
+    # HARD-CUT (#1202 P3): a local slug carries the ENGINE namespace, exactly like
+    # a curated one — `local/` used to squat in that slot. Provenance is the
+    # `origin` field now, stamped by the loader, so the layer still decides where
+    # the FILES go; it no longer decides what the slug is CALLED. A user model
+    # whose name happens to match a shipped slug is shadowed (core wins) and
+    # marked, not refused.
+    registry_slug = f"vllm/{short}-dual-{quant}"
     if layer == "local":
-        registry_slug = f"local/{short}-dual-{quant}"
         profile_path = f"scripts/lib/profiles-local/models.d/{mid}.yml"
         compose_path = (
             sibling_compose_path
             or f"scripts/lib/profiles-local/composes/{mid}/vllm/compose/dual/{quant}/base.yml"
         )
     else:
-        registry_slug = f"vllm/{short}-dual-{quant}"
         profile_path = f"scripts/lib/profiles/models/{mid}.yml"
         compose_path = (
             sibling_compose_path

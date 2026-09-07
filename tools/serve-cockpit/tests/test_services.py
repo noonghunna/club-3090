@@ -3989,7 +3989,12 @@ class TestPromoteScaffold:
         # C4-rev: LOCAL layer by default — gitignored paths + local/ namespace.
         assert sc.layer == "local"
         assert sc.profile_path.startswith("scripts/lib/profiles-local/models.d/")
-        assert sc.registry_slug.startswith("local/")
+        # #1202 P3: the slug carries the ENGINE namespace, like a curated row —
+        # `local/` used to squat in that slot. The LAYER (asserted above) still
+        # decides where the files go; it no longer decides what the slug is called.
+        assert not sc.registry_slug.startswith("local/")
+        assert sc.registry_slug.count("/") == 1, sc.registry_slug
+        assert sc.registry_slug.split("/", 1)[0] == "vllm", sc.registry_slug
         assert sc.spec["compose"]["path"].startswith(
             "scripts/lib/profiles-local/composes/"
         )
