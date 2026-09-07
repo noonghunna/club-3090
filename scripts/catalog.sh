@@ -198,8 +198,15 @@ if weights_in:
 # The profile factory bracket-accesses SIX arch fields; a missing one is a
 # KeyError in compat.py AFTER promote has written the layer. Enumerated from the
 # factory rather than guessed — twice now a shorter list let a broken write through.
+# NOT attention_k_eq_v: promote.py fills it with a documented conservative
+# default ("compat.ModelProfile REQUIRES attention_k_eq_v — emit the conservative
+# default when the spec doesn't carry the fact"), and the post-write diagnose +
+# kv-calc gates flag it for correction. Requiring it here refused every
+# --weights <gguf> registration, because gguf_facts_from_file does not return it
+# — so the GGUF path, the likelier one for this rig, was broken while the
+# config.json path (which sets it explicitly) passed the test.
 _ARCH_REQUIRED = ("hidden_size", "num_hidden_layers", "num_attn_heads",
-                  "num_kv_heads", "max_ctx_supported", "attention_k_eq_v")
+                  "num_kv_heads", "max_ctx_supported")
 if "max_ctx_supported" not in arch and max_ctx:
     arch["max_ctx_supported"] = max_ctx      # the compose proves at least this much
 need = [k for k in _ARCH_REQUIRED if arch.get(k) is None]

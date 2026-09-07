@@ -9701,7 +9701,7 @@ class CockpitApp(App):
         # bisection: "L" hangs test_force_button_reissues_forced_plan, "Z" and
         # "ctrl+l" pass. Only `a` and `j` are free in both cases app-wide, and
         # neither reads as "local layer".
-        Binding("ctrl+l", "local_layer", "Local layer", show=False),
+        Binding("ctrl+l", "local_layer", "Local layer", show=True),
         # R3b-1 — producer lane ② Serve: generate a compose + serve it untested
         # (also reachable via ⏎ on the ② Serve stage).
         Binding("g", "serve_untested", "Serve untested", show=False),
@@ -10042,6 +10042,12 @@ class CockpitApp(App):
         4. Sub-tab cycle keys — True only in modes that have sub-tabs.
         5. Everything else — True (pass-through; modals handle their own capture).
         """
+        # [ctrl+l] is advertised only when the local layer has something in it —
+        # a footer entry that opens an empty table is noise on every rig that has
+        # never registered a model.
+        if action == "local_layer":
+            return self._has_local_entries()
+
         from textual.widgets import Input as _Input
 
         # Surface gate (R3a): producer-only actions are hidden on the consumer
@@ -15745,6 +15751,21 @@ class CockpitApp(App):
                 ),
             )
         )
+
+    def _has_local_entries(self) -> bool:
+        """Is there anything in the local layer to manage?
+
+        Drives whether [ctrl+l] is advertised in the footer. A user who has
+        registered a model looks for the remove action ON THE ROW and does not
+        find it — the affordance existed but only behind a hidden key, which is
+        barely shipping it. Showing the binding exactly when it does something is
+        the cheap half of that fix."""
+        try:
+            from scripts.lib.profiles.compose_registry import local_entries
+
+            return bool(local_entries())
+        except Exception:
+            return False
 
     def action_local_layer(self) -> None:
         """[L] — list the LOCAL layer and act on it (#1153)."""

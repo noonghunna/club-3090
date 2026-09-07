@@ -47,7 +47,13 @@ enum = set(STATUS_VALUES)
 
 # C4-rev: merged view — a LOCAL layer entry's compose header is drift-checked
 # exactly like a core one.
+# LOCAL rows are skipped. This gate asserts that a compose WE ship carries a
+# Status header matching its registry status. A user's own compose is theirs:
+# demanding our header convention in it makes the whole suite red the moment
+# anyone registers a model (#1202/#1153), which is exactly what happened.
 for key, entry in sorted(get_registry().items()):
+    if (entry or {}).get("origin") == "local":
+        continue
     status = entry.get("status")
     # (a) registry status in the enum.
     check(status in enum, f"{key}: registry status {status!r} in enum")

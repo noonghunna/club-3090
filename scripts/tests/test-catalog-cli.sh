@@ -154,6 +154,49 @@ else
   echo "  FAIL register failed in a throwaway root"; rc=1
 fi
 
+# 3b. THE OTHER ARCH SOURCE. Arch dims come from a GGUF header or an HF
+# config.json, and the two are NOT interchangeable: gguf_facts_from_file does not
+# return `attention_k_eq_v` while a config.json path can set it. Testing only the
+# config.json leg passed while `--weights <model.gguf>` — the likelier path on a
+# GGUF rig — refused every registration. Cover both, and SKIP LOUDLY rather than
+# silently passing when this machine has no .gguf to read.
+# Pick a MODEL gguf, not just any .gguf. The first hit on this rig was
+# `mmproj-F16.gguf` — a multimodal projector with no arch dims — so the leg
+# failed on a bad fixture while the code was correct. Done in ONE python call:
+# the bash loop that did this was fragile under the test's quoting and silently
+# selected nothing, which read as "no gguf on this machine".
+GG="$(python3 - <<'PY_PICK' 2>/dev/null
+import glob, sys
+sys.path.insert(0, ".")
+from scripts.lib.profiles.deriver import gguf_facts_from_file
+
+need = ("hidden_size", "num_hidden_layers", "num_attn_heads", "num_kv_heads")
+for cand in sorted(glob.glob("/mnt/models/huggingface/**/*.gguf", recursive=True))[:40]:
+    try:
+        f = gguf_facts_from_file(cand) or {}
+    except Exception:
+        continue
+    if all(f.get(k) is not None for k in need):
+        print(cand)
+        break
+PY_PICK
+)"
+if [[ -z "$GG" ]]; then
+  echo "  skip GGUF arch leg — no .gguf on this machine (config.json leg still ran)"
+else
+  if scripts/catalog.sh register --compose "$C" --engine gguf-engine --engine-type llama.cpp \
+       --weights "$GG" --root "$TMP" -y >/dev/null 2>&1; then
+    if command grep -q "gguf-engine/byo-probe" "$REG" 2>/dev/null; then
+      echo "  ok   arch derived from a real GGUF header"
+    else
+      echo "  FAIL GGUF register reported success but wrote no entry"; rc=1
+    fi
+    scripts/catalog.sh unregister --slug gguf-engine/byo-probe --root "$TMP" -y >/dev/null 2>&1
+  else
+    echo "  FAIL --weights <gguf> refused; only the config.json path works"; rc=1
+  fi
+fi
+
 # 4. the curated catalog is unreachable from the front door too
 CORE="$(python3 -c "
 import sys; sys.path.insert(0,'.')
