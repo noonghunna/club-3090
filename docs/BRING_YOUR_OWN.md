@@ -252,10 +252,56 @@ Serving by hand (§1) gets you a running model but not a *first-class* one: no
 `launch.sh` / `switch.sh --list` discovery, no VRAM projection, no guard coverage.
 You can have all of that **without touching a single tracked file**.
 
+**If you already have a working compose, that is all you need:**
+
+```bash
+bash scripts/catalog.sh register --compose ./my-compose.yml \
+     --engine my-llamacpp --engine-type llama.cpp \
+     --weights /path/to/model.gguf            # or an HF config.json
+bash scripts/preflight-add-model.sh  my-llamacpp/<your-model>   # diagnose-profile + 9 catalog guards
+```
+
+`register` reads your compose and fills in what it can — engine, context, KV format,
+tensor split, port, model id, weights path — then **prints every value it resolved,
+marked `(given)` or `(derived)`, before writing anything**. `--dry-run` shows the whole
+plan and writes nothing. A compose is read mechanically: it cannot know whether your
+`-ts 1,1` means a layer split or tensor parallelism in the catalog's sense, so check the
+list rather than trusting it.
+
+Three things it will **refuse** rather than guess, because guessing wrong is silent:
+
+| refusal | why |
+|---|---|
+| `--engine` | your image matches nothing we ship. Recording `engine: unknown` is worse than stopping. |
+| `--weights` | a compose cannot state `hidden_size`; the dims come from your GGUF header or an HF `config.json`. Refused **before** writing, so a half-written layer never happens. |
+| `--engine-type` | what your engine *behaves like* (`llama.cpp`, `vllm`, …). It drives drafter and feature logic, and a wrong value fails silently. |
+
+**Running your own engine build is expected, not exceptional.** If `--engine` names an
+engine the catalog does not know, a profile is written for it under
+`profiles-local/engines.d/` from evidence only: your image, the KV format your compose
+actually uses, and the compute capability of the card it demonstrably runs on. Capability
+blocks it cannot verify are left **empty** — the stack makes no promises on your behalf.
+Widen them once you have measured. This is exactly how our own fork is registered:
+`llamacpp-club3090` is a distinct `id` with `type: llama.cpp`.
+
+To remove one again:
+
+```bash
+bash scripts/catalog.sh unregister --slug my-llamacpp/<your-model>   # --dry-run first if you like
+```
+
+It refuses any slug that is not in your local layer, so a curated entry is unreachable
+from it — those are git-tracked and git is their removal tool.
+
+<details><summary>Hand-authoring the spec instead</summary>
+
+Still supported, and what `register` builds for you underneath:
+
 ```bash
 python3 scripts/lib/profiles/promote.py --spec-file <spec>.json     # --layer local is the DEFAULT
-bash    scripts/preflight-add-model.sh  <engine>/<your-slug>       # diagnose-profile + 9 catalog guards
 ```
+
+</details>
 
 That writes `scripts/lib/profiles-local/` — `models.d/<id>.yml`, `composes/<id>/…`
 and `registry.local.json`. Slugs use the **same `<engine>/<name>` shape as curated
