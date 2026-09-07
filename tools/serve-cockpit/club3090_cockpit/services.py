@@ -5108,6 +5108,65 @@ class CockpitData:
             requires_confirm=True,       # repo mutation — confirm, never auto
         )
 
+    def local_amend_plan(
+        self,
+        kind: str,
+        slug: str,
+        *,
+        to: str = "",
+        sets: Optional[list] = None,
+    ) -> ActionPlan:
+        """GATED plan for managing an entry in the LOCAL layer (#1153).
+
+        The layer was write-only from the UI: ⑤ Promote could create an entry and
+        nothing could list, edit or remove one, so changing anything meant
+        hand-editing registry.local.json — the exact friction the layer exists to
+        remove.
+
+        The executor is scripts/catalog.sh, so the UI and the CLI share one
+        implementation and one set of refusals: a CURATED slug is unreachable
+        from every one of these (resolved in registry.local.json first, refused
+        before anything is read), `origin` is not editable, and renaming onto a
+        curated slug is refused because it would be shadowed instantly.
+
+        ⚠️ REPO MUTATION — never auto-fired. requires_confirm=True routes it
+        through ConfirmActionScreen; no GPU is claimed → requires_reconcile=False.
+        """
+        import shlex
+
+        q = shlex.quote
+        if kind == "remove":
+            cmd = f"bash scripts/catalog.sh unregister --slug {q(slug)} -y"
+            desc = (
+                f"unregister {slug} from the LOCAL layer — removes its model "
+                f"profile, compose tree and registry entry (core is untouched)"
+            )
+        elif kind == "rename":
+            if not to:
+                raise ValueError("rename needs a target slug")
+            cmd = f"bash scripts/catalog.sh rename --slug {q(slug)} --to {q(to)}"
+            desc = (
+                f"rename {slug} → {to} in the LOCAL layer "
+                f"(moves the compose tree when the engine changes)"
+            )
+        elif kind == "update":
+            pairs = list(sets or [])
+            if not pairs:
+                raise ValueError("update needs at least one KEY=VALUE")
+            args = " ".join(f"--set {q(kv)}" for kv in pairs)
+            cmd = f"bash scripts/catalog.sh update --slug {q(slug)} {args}"
+            desc = f"update {slug} in the LOCAL layer: {', '.join(pairs)}"
+        else:
+            raise ValueError(f"unknown amend kind: {kind!r}")
+
+        return ActionPlan(
+            kind=f"local_{kind}",
+            cmd=["bash", "-c", cmd],
+            description=desc,
+            requires_reconcile=False,   # a repo write, not a GPU claim
+            requires_confirm=True,      # repo mutation — confirm, never auto
+        )
+
     def export_pr_plan(self, spec: dict, *, out_dir: Optional[str] = None) -> ActionPlan:
         """Build the GATED ActionPlan for ``export_pr.py`` — translate an
         already-promoted LOCAL-layer model into the three ready-to-commit CORE

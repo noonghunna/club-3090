@@ -893,6 +893,43 @@ def load_local_registry(root=None):
     return local
 
 
+def local_entries(root=None):
+    """The LOCAL layer as a management view (#1153): what a user registered.
+
+    `get_registry()` is the LOOKUP view — core wins, so a shadowed local row is
+    absent from it by design. That makes it the wrong source for a management
+    UI: the row a user most needs to act on (rename it, it is unreachable) is
+    exactly the one the lookup view hides. This returns every local row with the
+    facts needed to manage it, `shadowed` included.
+
+    Returns a list of dicts sorted by slug; [] when there is no local layer.
+    Never raises: a broken layer yields [] rather than taking a UI down with it.
+    """
+    try:
+        local = load_local_registry(root)
+    except Exception:
+        return []
+    out = []
+    for slug, entry in sorted(local.items()):
+        out.append(
+            {
+                "slug": slug,
+                "engine": entry.get("engine"),
+                "model": entry.get("model"),
+                "port": entry.get("default_port"),
+                "workload": entry.get("workload"),
+                "max_ctx": entry.get("max_ctx"),
+                "status": entry.get("status"),
+                "compose_path": entry.get("compose_path"),
+                # core wins the lookup, so this row is registered but unreachable
+                # by slug until it is renamed.
+                "shadowed": bool(entry.get("shadowed_by_core"))
+                or slug in COMPOSE_REGISTRY,
+            }
+        )
+    return out
+
+
 def get_registry(root=None):
     """The SINGLE merged catalog view: core COMPOSE_REGISTRY + the local layer.
 

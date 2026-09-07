@@ -6292,6 +6292,150 @@ class SettingsScreen(ModalScreen):
         self.app.pop_screen()
 
 
+class LocalLayerScreen(ModalScreen):
+    """[L] Manage the LOCAL layer (#1153) — list, rename, edit, remove.
+
+    ⑤ Promote owned the WRITE half and nothing owned the rest: the layer was
+    write-only from the UI, so changing an entry meant hand-editing
+    registry.local.json — the exact friction the layer exists to remove.
+
+    Reads ``local_entries()``, NOT ``get_registry()``. The lookup view lets core
+    win a collision, so a SHADOWED row is absent from it by design — and that is
+    precisely the row a user needs to act on (registered, but unreachable by slug
+    until renamed). A management view that hides it would omit the one entry that
+    cannot be fixed any other way.
+
+    Per the modal rule this screen never mutates: it hands an intent back to the
+    caller, which routes it through ConfirmActionScreen like every other repo
+    write. The executor is scripts/catalog.sh, so the UI inherits the CLI's
+    refusals rather than re-implementing them — a curated slug is unreachable
+    from here for the same reason it is from the shell.
+    """
+
+    BINDINGS = [
+        Binding("r", "remove", "Remove", show=True),
+        Binding("n", "rename", "Rename", show=True),
+        Binding("e", "edit", "Edit field", show=True),
+        Binding("escape", "cancel", "Close", show=True),
+    ]
+
+    def __init__(self, entries: list, *, on_amend=None, **kwargs):
+        super().__init__(**kwargs)
+        self._entries = list(entries or [])
+        self._on_amend = on_amend
+        self._pending = ""          # "" | "rename" | "edit"
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("Local layer — models you registered", classes="settings-title")
+            table: DataTable = DataTable(id="local-table")
+            table.cursor_type = "row"
+            yield table
+            inp = Input(placeholder="", id="local-input")
+            inp.display = False          # revealed only for rename / edit
+            yield inp
+            yield Label("", id="local-hint")
+            yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#local-table", DataTable)
+        table.add_columns("slug", "engine", "port", "max_ctx", "status", "")
+        self._refill()
+        self._set_hint()
+
+    def _refill(self) -> None:
+        table = self.query_one("#local-table", DataTable)
+        table.clear()
+        for e in self._entries:
+            # A shadowed row is registered but unreachable by slug: say so here,
+            # because nothing else in the UI can.
+            flag = "[yellow]shadowed[/yellow]" if e.get("shadowed") else ""
+            table.add_row(
+                str(e.get("slug") or ""),
+                str(e.get("engine") or ""),
+                str(e.get("port") or ""),
+                str(e.get("max_ctx") or ""),
+                str(e.get("status") or ""),
+                flag,
+                key=str(e.get("slug") or ""),
+            )
+
+    def _set_hint(self, msg: str = "") -> None:
+        if msg:
+            text = msg
+        elif not self._entries:
+            text = ("[dim]nothing registered yet — ⑤ Promote writes here, or "
+                    "`catalog.sh register --compose <path>`[/dim]")
+        else:
+            text = ("[dim]r remove · n rename · e edit field · esc close   "
+                    "(every action is confirm-gated; core is never touched)[/dim]")
+        try:
+            self.query_one("#local-hint", Label).update(text)
+        except Exception:
+            pass
+
+    def _selected(self):
+        if not self._entries:
+            return None
+        try:
+            i = int(self.query_one("#local-table", DataTable).cursor_row or 0)
+        except Exception:
+            i = 0
+        return self._entries[max(0, min(i, len(self._entries) - 1))]
+
+    def _prompt(self, kind: str, placeholder: str) -> None:
+        row = self._selected()
+        if row is None:
+            return
+        self._pending = kind
+        inp = self.query_one("#local-input", Input)
+        inp.placeholder = placeholder
+        inp.value = ""
+        inp.display = True
+        inp.focus()
+        self._set_hint(f"[dim]{kind} {row['slug']} — ⏎ to confirm, esc to cancel[/dim]")
+
+    def action_remove(self) -> None:
+        row = self._selected()
+        if row is not None:
+            self._emit("remove", row["slug"])
+
+    def action_rename(self) -> None:
+        self._prompt("rename", "new <engine>/<name>")
+
+    def action_edit(self) -> None:
+        self._prompt("edit", "KEY=VALUE  (workload, max_ctx, default_port, …)")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        row = self._selected()
+        val = (event.value or "").strip()
+        if row is None or not val:
+            return
+        if self._pending == "rename":
+            self._emit("rename", row["slug"], to=val)
+        elif self._pending == "edit":
+            self._emit("update", row["slug"], sets=[val])
+
+    def _emit(self, kind: str, slug: str, **kw) -> None:
+        """Hand the intent back; the caller confirms and runs it (modal rule)."""
+        self.app.pop_screen()
+        if self._on_amend is not None:
+            self._on_amend(kind, slug, kw)
+
+    def action_cancel(self) -> None:
+        # esc backs out of a prompt first, then closes the screen — otherwise a
+        # mistyped rename would need the whole screen reopened.
+        if self._pending:
+            self._pending = ""
+            inp = self.query_one("#local-input", Input)
+            inp.value = ""
+            inp.display = False
+            self.query_one("#local-table", DataTable).focus()
+            self._set_hint()
+            return
+        self.dismiss(None)
+
+
 class CatalogColumnsScreen(ModalScreen):
     """[|] Catalog columns picker (#724) — show/hide + reorder the catalog
     table's columns.  Per the modal rule, this screen never touches the pane:
@@ -9550,6 +9694,14 @@ class CockpitApp(App):
         #   [O] Optimize for my card (kv-calc brain; apply = gated stage)
         Binding("v", "evaluate_target", "Evaluate via c3t", show=False),
         Binding("P", "promote_catalog", "Scaffold preview", show=False),
+        # [ctrl+l] — manage what you registered (#1153). ⑤ Promote owns the write
+        # half; this is the rest of it.
+        # ⚠️ NOT a bare "L". `l` is already bound at app level (container_logs),
+        # and adding the uppercase twin HANGS the headless suite — verified by
+        # bisection: "L" hangs test_force_button_reissues_forced_plan, "Z" and
+        # "ctrl+l" pass. Only `a` and `j` are free in both cases app-wide, and
+        # neither reads as "local layer".
+        Binding("ctrl+l", "local_layer", "Local layer", show=False),
         # R3b-1 — producer lane ② Serve: generate a compose + serve it untested
         # (also reachable via ⏎ on the ② Serve stage).
         Binding("g", "serve_untested", "Serve untested", show=False),
@@ -15593,6 +15745,30 @@ class CockpitApp(App):
                 ),
             )
         )
+
+    def action_local_layer(self) -> None:
+        """[L] — list the LOCAL layer and act on it (#1153)."""
+        try:
+            from scripts.lib.profiles.compose_registry import local_entries
+
+            entries = local_entries()
+        except Exception:
+            entries = []
+        self.push_screen(
+            LocalLayerScreen(entries, on_amend=self._stage_local_amend)
+        )
+
+    def _stage_local_amend(self, kind: str, slug: str, kw: dict) -> None:
+        """Route a local-layer amendment through the SAME confirm gate as every
+        other repo write. The screen only expresses intent; nothing mutates until
+        the user confirms, and the executor (catalog.sh) re-asserts every refusal
+        independently — a curated slug is unreachable from here regardless."""
+        try:
+            plan = self._data.local_amend_plan(kind, slug, **(kw or {}))
+        except ValueError as exc:
+            self.notify(str(exc), title="Local layer", severity="warning", timeout=5)
+            return
+        self.push_screen(ConfirmActionScreen(plan))
 
     def _stage_promote_write(self, scaffold, layer: str, spec: dict) -> None:
         """Gate the ⑤ write on having a compose to register (#1156).
