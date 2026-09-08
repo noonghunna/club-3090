@@ -3043,6 +3043,129 @@ async def test_scene_preview_shows_all_services_no_clip():
         assert "max-height" not in preview_rule
 
 
+class TestGpuCardsScaleToCardCount:
+    """The GPU panel renders ONE card per detected GPU, at any count.
+
+    Reported from the field 2026-09-08: "c3 cockpit only detects 2 GPU of 4 while
+    nvtop detects everyone".  Detection was never the problem — get_gpu_info()
+    parses every nvidia-smi line — but compose() defined exactly two card widgets
+    and _populate_gpus iterated a hardcoded (0, 1) pair, so cards 2+ were read and
+    dropped at render time.
+
+    This rig has TWO GPUs, so every count here is otherwise unreachable and would
+    ship on assumption.  That is the point of these fixtures.
+    """
+
+    @staticmethod
+    def _cards(n):
+        return [
+            GpuInfo(index=i, mem_used_mib=(i + 1) * 1024, mem_total_mib=24 * 1024,
+                    utilization=10 * i)
+            for i in range(n)
+        ]
+
+    async def _settled(self, app, pilot):
+        """Enter Operate and run a SECOND poll, so cards mounted on the first pass
+        (mount is async — they carry the startup placeholder until the DOM catches
+        up) are filled before anything is asserted."""
+        await _enter_operate(pilot)
+        app._periodic_estate_refresh()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    @pytest.mark.asyncio
+    async def test_four_gpu_rig_renders_four_cards(self):
+        gpus = self._cards(4)
+        app, _, _ = make_app(gpus=gpus, target=ServingTarget(gpus=gpus))
+        async with app.run_test(size=(120, 60)) as pilot:
+            await self._settled(app, pilot)
+            assert len(app.query(".gpu-card")) == 4
+            for i in range(4):
+                bar = str(app.query_one(f"#gpu{i}-bar", Static).render())
+                assert f"{(i + 1)}.0 / 24.0 GiB" in bar, f"card {i}: {bar!r}"
+
+    @pytest.mark.asyncio
+    async def test_eight_gpu_rig_renders_eight_cards(self):
+        gpus = self._cards(8)
+        app, _, _ = make_app(gpus=gpus, target=ServingTarget(gpus=gpus))
+        async with app.run_test(size=(120, 80)) as pilot:
+            await self._settled(app, pilot)
+            assert len(app.query(".gpu-card")) == 8
+            bar7 = str(app.query_one("#gpu7-bar", Static).render())
+            assert "8.0 / 24.0 GiB" in bar7
+
+    @pytest.mark.asyncio
+    async def test_single_gpu_rig_drops_the_second_static_card(self):
+        """compose() lays down two cards; a 1-card rig must converge DOWN, not keep
+        an empty "not present" slot forever."""
+        gpus = self._cards(1)
+        app, _, _ = make_app(gpus=gpus, target=ServingTarget(gpus=gpus))
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self._settled(app, pilot)
+            assert len(app.query(".gpu-card")) == 1
+            assert not app.query("#gpu1-card")
+
+    @pytest.mark.asyncio
+    async def test_card_count_change_between_polls_converges_both_ways(self):
+        """A card appearing or falling off the bus mid-session must not leave stale
+        widgets behind in either direction."""
+        gpus = self._cards(2)
+        app, _, _ = make_app(gpus=gpus, target=ServingTarget(gpus=gpus))
+        async with app.run_test(size=(120, 80)) as pilot:
+            await self._settled(app, pilot)
+            assert len(app.query(".gpu-card")) == 2
+            pane = app.query_one("#operate-orch-pane", OperateOrchPane)
+            st = pane._last_state
+            # 2 -> 4
+            st.gpus = self._cards(4)
+            pane._populate_gpus(st)
+            await pilot.pause()
+            pane._populate_gpus(st)
+            await pilot.pause()
+            assert len(app.query(".gpu-card")) == 4
+            # 4 -> 2 (two cards vanish)
+            st.gpus = self._cards(2)
+            pane._populate_gpus(st)
+            await pilot.pause()
+            assert len(app.query(".gpu-card")) == 2
+            assert not app.query("#gpu3-card")
+
+    @pytest.mark.asyncio
+    async def test_index_gap_keeps_real_gpu_numbers(self):
+        """Cards 0 and 2 present, 1 missing: slot 2 must still BE GPU2 (a
+        len()-driven count would slide it down to slot 1 and mislabel it), and the
+        gap keeps the calm "not present" — not the alarming empty-read message."""
+        gpus = [
+            GpuInfo(index=0, mem_used_mib=1024, mem_total_mib=24 * 1024),
+            GpuInfo(index=2, mem_used_mib=3 * 1024, mem_total_mib=24 * 1024),
+        ]
+        app, _, _ = make_app(gpus=gpus, target=ServingTarget(gpus=gpus))
+        async with app.run_test(size=(120, 60)) as pilot:
+            await self._settled(app, pilot)
+            assert len(app.query(".gpu-card")) == 3
+            assert "3.0 / 24.0 GiB" in str(app.query_one("#gpu2-bar", Static).render())
+            gap = str(app.query_one("#gpu1-bar", Static).render())
+            assert "not present" in gap
+            assert "nvidia-smi returned nothing" not in gap
+
+    @pytest.mark.asyncio
+    async def test_empty_read_keeps_one_card_and_the_honest_message(self):
+        """N2 degradation is unchanged: an empty read is nvidia-smi failing, not a
+        GPU-less rig, and it still says so on card 0."""
+        app, _, _ = make_app(gpus=[], target=ServingTarget(gpus=[]))
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            pane = app.query_one("#operate-orch-pane", OperateOrchPane)
+            st = pane._last_state
+            if st is not None:
+                st.gpus = []
+                pane._populate_gpus(st)
+                await pilot.pause()
+                assert len(app.query(".gpu-card")) == 1
+                bar0 = str(app.query_one("#gpu0-bar", Static).render())
+                assert "nvidia-smi returned nothing" in bar0
+
+
 class TestRailKvPool:
     """c3 — the estate rail card shows the serving target's KV pool from the
     SAME poll (doctor.kv_pool_pct, parsed by health.sh), honestly '—' when the
@@ -12829,6 +12952,95 @@ class TestProfileTemplateDerivation:
                     f"rep {o.slug!r} is {o.status!r} but its ({fam},{o.topology}) "
                     f"group has a functional sibling"
                 )
+
+
+class TestRigTopologyLadder:
+    """The rig default understands rigs bigger than this one.
+
+    The picker asked only for "single" (1 card) or "dual" (anything more), so a 4-
+    or 8-GPU rig was offered DUAL templates while the multi4/multi8 slugs it wanted
+    were reachable only through the custom escape hatch.  This rig has TWO cards, so
+    every count below is otherwise untestable.
+    """
+
+    def _mk(self, slug, engine, path, status="production"):
+        return VariantRow(
+            slug=slug, switch_engine=engine, launch_engine=engine,
+            compose_dir=path.rsplit("/", 1)[0], file=path.rsplit("/", 1)[1],
+            port=8000, model="q", engine=engine, kvcalc_key="k", container="c",
+            compose_path=path, status=status, ctx_label="262K", status_note="",
+        )
+
+    def _full_ladder_rows(self):
+        return [
+            self._mk("vllm/single", "vllm-stable", "models/q/vllm/compose/single/aq/base.yml"),
+            self._mk("vllm/dual", "vllm-stable", "models/q/vllm/compose/dual/aq/fp8.yml"),
+            self._mk("vllm/multi4", "vllm-stable", "models/q/vllm/compose/multi4/aq/fp8.yml"),
+            self._mk("vllm/multi8", "vllm-stable", "models/q/vllm/compose/multi8/aq/fp8.yml"),
+        ]
+
+    def test_exact_topology_per_card_count(self):
+        opts = profile_templates(self._full_ladder_rows())
+        assert default_profile_template(opts, 1) == "vllm/single"
+        assert default_profile_template(opts, 2) == "vllm/dual"
+        assert default_profile_template(opts, 4) == "vllm/multi4"
+        assert default_profile_template(opts, 8) == "vllm/multi8"
+
+    def test_counts_without_a_topology_take_the_largest_that_fits(self):
+        """3 -> dual (no multi3 composes exist), 5-7 -> multi4, >8 -> multi8.  The
+        alternative — inventing multi3/multi5 — names slugs the registry does not
+        have."""
+        opts = profile_templates(self._full_ladder_rows())
+        assert default_profile_template(opts, 3) == "vllm/dual"
+        for n in (5, 6, 7):
+            assert default_profile_template(opts, n) == "vllm/multi4", f"{n} cards"
+        assert default_profile_template(opts, 16) == "vllm/multi8"
+
+    def test_degrades_when_the_rig_topology_has_no_option(self):
+        """A 4-card rig on a registry with no multi4 slug lands on dual — the
+        largest that fits and exists — not on a single-card slug picked by sort
+        order, which is what "first option" used to hand it."""
+        rows = [
+            self._mk("vllm/single", "vllm-stable", "models/q/vllm/compose/single/aq/base.yml"),
+            self._mk("vllm/dual", "vllm-stable", "models/q/vllm/compose/dual/aq/fp8.yml"),
+        ]
+        opts = profile_templates(rows)
+        assert default_profile_template(opts, 4) == "vllm/dual"
+        assert default_profile_template(opts, 8) == "vllm/dual"
+
+    def test_status_floor_outranks_topology_fit(self):
+        """FIX 2's floor is preserved: a launchable DUAL beats an incubating multi4
+        on a 4-card rig.  A Select default must be launchable; degrading topology is
+        the cheaper concession."""
+        rows = [
+            self._mk("vllm/dual", "vllm-stable", "models/q/vllm/compose/dual/aq/fp8.yml"),
+            self._mk("vllm/multi4", "vllm-stable",
+                     "models/q/vllm/compose/multi4/aq/fp8.yml", status="incubating"),
+        ]
+        opts = profile_templates(rows)
+        assert default_profile_template(opts, 4) == "vllm/dual"
+
+    def test_non_functional_only_still_returns_a_real_option(self):
+        """The invariant that outlives every rule here: a Select cannot default to a
+        value absent from its options."""
+        rows = [
+            self._mk("vllm/multi4", "vllm-stable",
+                     "models/q/vllm/compose/multi4/aq/fp8.yml", status="incubating"),
+        ]
+        opts = profile_templates(rows)
+        slugs = {o.slug for o in opts}
+        for n in (1, 2, 4, 8):
+            assert default_profile_template(opts, n) in slugs, f"{n} cards"
+
+    def test_ladder_shape(self):
+        from club3090_cockpit.app import _topology_ladder
+
+        assert _topology_ladder(1) == ["single"]
+        assert _topology_ladder(2) == ["dual", "single"]
+        assert _topology_ladder(4) == ["multi4", "dual", "single"]
+        assert _topology_ladder(8) == ["multi8", "multi4", "dual", "single"]
+        # Degenerate inputs must not produce an empty ladder.
+        assert _topology_ladder(0) == ["single"]
 
 
 class TestCatalogPreview:

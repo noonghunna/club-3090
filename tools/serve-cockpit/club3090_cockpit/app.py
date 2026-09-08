@@ -843,18 +843,53 @@ def profile_templates(
     return out
 
 
+# Card counts that have REAL composes, smallest first.  Scanned from the registry
+# 2026-09-08: single 34 · dual 52 · multi4 17 · multi8 9 — and NO multi3, even
+# though `_TOPO_ORDER` still lists one (that entry is vestigial: `_variant_topology`
+# would accept a multi3 path, but no compose has ever used it).  Deriving the ladder
+# from card counts rather than from `_TOPO_ORDER` keeps a topology nobody ships out
+# of the default path.
+_TOPO_BY_CARDS: tuple[tuple[int, str], ...] = (
+    (1, "single"), (2, "dual"), (4, "multi4"), (8, "multi8"),
+)
+
+
+def _topology_ladder(num_gpus: int) -> list[str]:
+    """Topologies to try for a rig with ``num_gpus`` cards, BEST FIT FIRST.
+
+    The rule is *the largest topology that fits, then degrade*.  A topology needing
+    MORE cards than the rig has cannot run at all; one needing fewer always can.  So
+    4 cards → multi4, dual, single; 8 → multi8, multi4, dual, single; 1 → single.
+
+    Counts with no exact topology take the largest that fits rather than inventing a
+    slug: **3 → dual** (there are no multi3 composes) and **5-7 → multi4**.
+
+    The DEGRADING half matters as much as the exact fit.  Before this, a ≥2-card rig
+    asked only for "dual" and, when no dual option existed, fell through to "the first
+    option" — which sorts by ``_TOPO_ORDER``, i.e. a SINGLE-card slug.  A 4-card rig
+    with no multi4 default now lands on dual, which is both launchable and closer to
+    the hardware, instead of a one-card slug chosen by sort order.
+    """
+    n = max(1, int(num_gpus or 1))
+    fits = [topo for cards, topo in _TOPO_BY_CARDS if cards <= n]
+    return list(reversed(fits)) or ["single"]
+
+
 def default_profile_template(
     options: list["ProfileOption"], num_gpus: int
 ) -> Optional[str]:
     """A12 — pick the dropdown's default value for the rig's own topology.
 
     Rule (deterministic, meaningful): prefer the registry's CANONICAL slug for
-    the rig topology — a slug literally named ``<engine>/<topo>`` (``vllm/dual``
-    for ≥2 cards, ``vllm/single`` for 1 card), preferring a ``vllm/``-prefixed
-    slug; then any literal ``<engine>/<topo>`` slug; then any slug whose
-    topology matches; finally the first option.  NEVER an arbitrary alphabetical
-    (e.g. Gemma/beellama) slug.  Topology comes from the carried-through
-    ``ProfileOption.topology`` — never re-derived from the label.
+    the rig topology — a slug literally named ``<engine>/<topo>`` (``vllm/multi4``
+    on 4 cards, ``vllm/dual`` on 2, ``vllm/single`` on 1), preferring a
+    ``vllm/``-prefixed slug; then any literal ``<engine>/<topo>`` slug; then any
+    slug whose topology matches; finally the first option.  NEVER an arbitrary
+    alphabetical (e.g. Gemma/beellama) slug.  Topology comes from the
+    carried-through ``ProfileOption.topology`` — never re-derived from the label.
+
+    The rig topology is the largest that FITS the card count, degrading when it has
+    no option — see ``_topology_ladder``.
 
     **FIX 2 status floor — a Select default MUST be launchable.** The earlier
     rule returned the FIRST vllm-single option for a 1-card rig, which (since the
@@ -868,11 +903,15 @@ def default_profile_template(
     default to an absent value)."""
     if not options:
         return None
-    want = "single" if num_gpus <= 1 else "dual"
+    # ≥4-card rigs (#David412, 2026-09-08): this asked only for "single" or "dual",
+    # so a 4- or 8-GPU rig was offered DUAL templates and the multi4/multi8 slugs it
+    # actually wanted were reachable only through the custom escape hatch.  The
+    # ladder is best-fit-first with degradation — see _topology_ladder.
+    ladder = _topology_ladder(num_gpus)
 
-    def _pick(pool: list["ProfileOption"]) -> Optional[str]:
+    def _pick(pool: list["ProfileOption"], want: str) -> Optional[str]:
         """The original topology-preference order, applied to a pre-filtered
-        option pool (functional-only, then the full set)."""
+        option pool (functional-only, then the full set) for ONE topology."""
         same_topo = [o for o in pool if o.topology == want]
         # 1. the canonical vllm slug literally named "vllm/<topo>".
         canonical_vllm = f"vllm/{want}"
@@ -896,10 +935,19 @@ def default_profile_template(
 
     # Status floor: a functional default first.  Fall back to the full set, then
     # to the first option, so the return is always a real (selectable) value.
+    #
+    # ORDER MATTERS: the whole ladder is walked over the FUNCTIONAL pool before any
+    # of it is walked over the full set.  A launchable dual slug beats an
+    # incubating multi4 one on a 4-card rig — that is the FIX 2 status floor
+    # (a Select default MUST be launchable), and degrading topology is the cheaper
+    # concession of the two.
     functional = [o for o in options if _status_is_functional(o.status)]
-    return _pick(functional) or _pick(options) or (
-        functional[0].slug if functional else options[0].slug
-    )
+    for pool in (functional, options):
+        for want in ladder:
+            hit = _pick(pool, want)
+            if hit:
+                return hit
+    return functional[0].slug if functional else options[0].slug
 
 
 def _set_select_options(
@@ -4638,6 +4686,68 @@ class OperateOrchPane(Container):
         except Exception:
             pass
 
+    @staticmethod
+    def _gpu_slot_count(gpus) -> int:
+        """How many card widgets a GPU snapshot needs.
+
+        Driven by the HIGHEST index present, not by ``len(gpus)``: with a gap in the
+        indices (card 1 fell off the bus, 0 and 2 remain) the slot count must still
+        cover index 2, so the surviving cards keep their real GPU numbers instead of
+        sliding down a slot.  Floors at 1 so an EMPTY read still has a card 0 for the
+        "nvidia-smi returned nothing" message to live on.
+        """
+        idxs = [
+            int(getattr(g, "index", -1)) for g in (gpus or [])
+            if isinstance(getattr(g, "index", None), int)
+        ]
+        return max(1, (max(idxs) + 1) if idxs else 0, len(gpus or []))
+
+    def _sync_gpu_cards(self, want: int) -> None:
+        """Mount/remove GPU cards so exactly ``want`` slots exist.
+
+        The panel used to compose exactly two cards, so a 4-GPU rig read all four and
+        rendered two — reported from the field as "c3 only detects 2 GPU of 4 while
+        nvtop detects everyone" (2026-09-08).  Detection was never the problem; these
+        widgets were.
+
+        Idempotent, and converges in BOTH directions so a count that changes between
+        polls (a card dropping off the bus, or appearing) does not leave stale cards.
+        Newly mounted cards carry the same "querying nvidia-smi…" placeholder they
+        would have had at startup and are filled by the caller on this same pass when
+        Textual has already processed the mount, otherwise on the next poll tick —
+        never left blank.
+        """
+        try:
+            scroll = self.query_one("#orch-scroll")
+        except Exception:
+            return
+        have = len(self.query(".gpu-card"))
+        want = max(1, int(want))
+        if want == have:
+            return
+        if want > have:
+            cards = [
+                Container(
+                    Label(f"GPU{i}", classes="gpu-card-title"),
+                    Static("[dim]querying nvidia-smi…[/dim]", id=f"gpu{i}-bar"),
+                    classes="gpu-card",
+                    id=f"gpu{i}-card",
+                )
+                for i in range(have, want)
+            ]
+            try:
+                # Anchored BEFORE #serving-line: the cards belong at the top of the
+                # pane, and a bare mount() would append them under the scene table.
+                scroll.mount_all(cards, before=scroll.query_one("#serving-line"))
+            except Exception:
+                pass
+            return
+        for i in range(want, have):
+            try:
+                self.query_one(f"#gpu{i}-card").remove()
+            except Exception:
+                pass
+
     def _populate_gpus(self, state: EstateState) -> None:
         # N2: when nvidia-smi returned NOTHING at all (no cards in the snapshot),
         # say so honestly on the first card rather than a calm "not present" per
@@ -4645,8 +4755,17 @@ class OperateOrchPane(Container):
         # GPU-less rig.  A per-index gap (one card present, the other not) still
         # uses the calm "not present".
         no_gpus_at_all = not state.gpus
-        for i, bar_id, title_id in ((0, "#gpu0-bar", "#gpu0-card"), (1, "#gpu1-bar", "#gpu1-card")):
-            bar = self.query_one(bar_id, Static)
+        slots = self._gpu_slot_count(state.gpus)
+        self._sync_gpu_cards(slots)
+        for i in range(slots):
+            bar_id = f"#gpu{i}-bar"
+            # A card mounted THIS pass may not be in the DOM yet (mount is async);
+            # it keeps its startup placeholder and fills on the next tick rather
+            # than raising and aborting the cards that ARE present.
+            try:
+                bar = self.query_one(bar_id, Static)
+            except Exception:
+                continue
             gpu = next((g for g in state.gpus if getattr(g, "index", -1) == i), None)
             if gpu is None:
                 if no_gpus_at_all and i == 0:
