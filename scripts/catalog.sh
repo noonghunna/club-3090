@@ -134,7 +134,7 @@ PY_ENG
     # nobody saw is worse than a prompt.
     python3 - "$COMPOSE" "$SPEC" "$ENGINE" "$MODEL" "$WORKLOAD" "$PORT" "$WEIGHTS" \
              "${RROOT:-$ROOT}" "$ETYPE" "$MINSM" "$HFREPO" <<'PY' || exit $?
-import json, sys, zlib
+import json, os, sys, zlib
 from pathlib import Path
 
 sys.path.insert(0, ".")
@@ -366,6 +366,25 @@ if _wdir and _wdir.is_dir():
             _size_gb = round(_b / 2**30, 1)
     except OSError:
         pass
+# ⚠️ RELATIVE TO MODEL_DIR, never absolute. The launcher's preflight joins
+# MODEL_DIR onto `path`, so an absolute value yields
+# "/mnt/models/huggingface//mnt/models/huggingface/<dir>" and the boot refuses on a
+# path that plainly exists. Core profiles are relative
+# ("glm-5.3-flash-gguf/UD-IQ4_XS"), with local_subdir the FIRST segment. And the
+# subdir is the real DIRECTORY name — it was the model id, which is only the same
+# string by coincidence.
+_md = os.environ.get("MODEL_DIR") or "/mnt/models/huggingface"
+_rel_path = ""
+if _wdir:
+    try:
+        _rel_path = str(_wdir.resolve().relative_to(Path(_md).resolve()))
+    except ValueError:
+        _rel_path = _wdir.name
+        print(f"[catalog] note: {_wdir} is not under MODEL_DIR ({_md}); recording "
+              f"{_rel_path!r} as the subdir. Launch with MODEL_DIR pointing at its "
+              f"parent, or the preflight will not find it.", file=sys.stderr)
+_rel_subdir = _rel_path.split("/")[0] if _rel_path else mid
+
 _hf_repo = hf_repo_in or ""
 spec_family = cfg_extra.get("family", "dense")
 
@@ -384,12 +403,51 @@ elif f.cpu_offload_gb and int(f.cpu_offload_gb) > 0:
           f"the value decides the mechanism. Left unset; state it with: "
           f"catalog.sh update --slug <slug> --set offload=uva", file=sys.stderr)
 
+# ⚠️ DETECTABILITY. A compose can be perfectly valid and still be INVISIBLE to
+# c3: club3090_tui_core.detect classifies engine containers by NAME PREFIX and by
+# the CONTAINER-SIDE port. Miss either and no ServingTarget is built, health.sh
+# falls back to the curated default port, and the estate reads "not reachable"
+# while the GPU bars plainly show the model loaded. That is a heuristic we own,
+# and it predates the local layer — a user's own engine cannot be expected to
+# satisfy it. WARN, never refuse: the registration is correct, our detector is
+# the narrow part. Tracked in club-3090-todo.md (registry-first detection).
+#
+# ⚠️ These two constants MIRROR club3090_tui_core.detect. They are duplicated
+# because catalog.sh must run on the launcher's no-extra-deps path;
+# test-catalog-detectability.sh asserts they still match, so a change there
+# cannot silently strand this warning.
+_DETECT_PREFIXES = ("vllm-", "llama-cpp-", "ik-llama-", "sglang-", "beellama-")
+_DETECT_PORTS = ("8000", "8080", "30000")
+_undetectable = []
+if f.container_name and not f.container_name.startswith(_DETECT_PREFIXES):
+    _undetectable.append(
+        f"container_name {f.container_name!r} starts with none of "
+        f"{', '.join(_DETECT_PREFIXES)}"
+    )
+if f.internal_port and f.internal_port not in _DETECT_PORTS:
+    _undetectable.append(
+        f"container-side port {f.internal_port} is not one of "
+        f"{', '.join(_DETECT_PORTS)}"
+    )
+if _undetectable:
+    print("[catalog] ⚠️  REGISTERED, BUT c3 WILL NOT SEE IT SERVING:", file=sys.stderr)
+    for _u in _undetectable:
+        print(f"[catalog]     - {_u}", file=sys.stderr)
+    print("[catalog]   The slug, weights and compose are fine — this is our estate "
+          "detector,", file=sys.stderr)
+    print("[catalog]   which infers engines from naming conventions that predate the "
+          "local layer.", file=sys.stderr)
+    print("[catalog]   Until that is registry-driven, rename the container to a "
+          "listed prefix", file=sys.stderr)
+    print("[catalog]   and publish on a listed container-side port to be detected.",
+          file=sys.stderr)
+
 spec = {
     "model_id": mid,
     "display_name": mid,
     "family": spec_family,
-    "weights": {"local": {"path": str(_wdir) if _wdir else f.model_path,
-                          "local_subdir": mid, "size_gb": _size_gb,
+    "weights": {"local": {"path": _rel_path, "local_subdir": _rel_subdir,
+                          "size_gb": _size_gb,
                           "format": fmt, "status": "incubating", "hf_repo": _hf_repo,
                           "engine": engine, "kind": "main",
                           "verify_glob": "*.gguf" if fmt == "gguf" else "*.safetensors"}},

@@ -48,6 +48,12 @@ class ComposeFacts:
     # residency axis). They were never read, so a recipe whose whole point is
     # CPU-offloaded experts with an MTP drafter registered as a plain resident
     # model with no speculation — every column blank, nothing wrong on screen.
+    # Detectability: what the ESTATE layer needs to recognise this container.
+    # club3090_tui_core.detect classifies by container NAME prefix and by the
+    # CONTAINER-SIDE port, so a compose can be perfectly valid and still be
+    # invisible to c3. Surfaced here so registration can say so up front.
+    container_name: str = ""  # services.<svc>.container_name
+    internal_port: str = ""   # the CONTAINER side of a ports: mapping
     cpu_offload_gb: str = ""  # --cpu-offload-gb / CPU_OFFLOAD_GB
     offload_backend: str = "" # --offload-backend (uva / …)
     spec_method: str = ""     # --speculative-config "method" / MTP_DEPTH / -md
@@ -62,6 +68,18 @@ _ENGINE_BY_IMAGE = (
     ("ik-llama", "ik-llama"),
     ("ik_llama", "ik-llama"),
 )
+
+
+def _expand_default_token(tok: str) -> str:
+    """`${VAR:-value}` -> `value`; anything else unchanged.
+
+    container_name is routinely written as an override-able expansion
+    (`${ESTATE_CONTAINER:-llama-cpp-foo}`), and the DEFAULT is the name that
+    actually runs when nothing overrides it — which is what detection sees.
+    """
+    tok = (tok or "").strip().strip("\"'")
+    m = re.fullmatch(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]*)\}", tok)
+    return m.group(1) if m else tok
 
 
 def _numeric(tok: str) -> str:
@@ -200,6 +218,23 @@ def derive_compose_facts(text: str, path: str = "") -> ComposeFacts:
         m = _re.search(r"CUDA_VISIBLE_DEVICES[=:\s]+\"?([0-9,]+)", text)
         if m:
             f.tp = str(len([x for x in m.group(1).split(",") if x.strip()]))
+
+    # container_name + the CONTAINER side of the port mapping (detectability).
+    m = _re.search(r"^\s*container_name:\s*[\"']?([^\"'\s]+)", text, _re.M)
+    if m:
+        f.container_name = _expand_default_token(m.group(1))
+    # The CONTAINER side is the TRAILING number of a mapping inside the ports:
+    # block. Scoped to that block, and taken as the last ":<digits>" on the line,
+    # because the host side is routinely a nested expansion full of colons
+    # (`${ESTATE_PORT:-${PORT:-8119}}`) that a naive segment split gets wrong.
+    _pm = _re.search(r"^(\s*)ports:\s*$(.*?)(?=^\1\S|\Z)", text, _re.M | _re.S)
+    if _pm:
+        for _line in _pm.group(2).splitlines():
+            _lm = _re.match(r"\s*-\s*[\"']?.*?:([0-9]+)(?:/(?:tcp|udp))?[\"']?\s*$",
+                            _line)
+            if _lm:
+                f.internal_port = _lm.group(1)
+                break
 
     # ── offload + speculation evidence ────────────────────────────────
     # Flag first (authoritative), then the env spelling, because a compose whose
