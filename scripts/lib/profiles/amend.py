@@ -40,8 +40,13 @@ EXIT_REFUSED = 3
 # set itself to "core" would hide from the very listings meant to mark it — the
 # same anti-spoof reasoning as registration. `model` is absent too: it names the
 # files on disk, so changing it is a move, not an edit.
+# `offload` and `spec_method` are editable because a compose often CANNOT prove
+# them: when the image's own entrypoint builds the command line, the backend name
+# and the speculative config live inside the image, not the compose. The
+# derivation says so rather than guessing (a wrong `offload` value has caused a
+# real misdiagnosis before), which leaves stating it as the user's job.
 _EDITABLE = ("workload", "max_ctx", "max_num_seqs", "mem_util", "default_port",
-             "kv_format", "tp", "drafter", "status")
+             "kv_format", "tp", "drafter", "status", "offload", "spec_method")
 
 
 class Refusal(Exception):

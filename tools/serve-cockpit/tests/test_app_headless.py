@@ -12774,7 +12774,32 @@ class TestProfileTemplateDerivation:
         # representative (vllm/qwen38-27b-multi8-*). Same shape as the #905 note
         # above: an entirely incubating group still gets a representative, which is
         # rule (d) working as designed, not a regression.
-        assert len(opts) == 10, f"expected 10 reps, got {len(opts)}: {[o.slug for o in opts]}"
+        # LOCAL-AWARE. This reads the REAL registry, so a model the user has
+        # registered on this rig legitimately adds groups: a local slug on its own
+        # engine creates a new (engine, topology) pair and a representative for it.
+        # Counting those would make the guard fail for anyone who has used the
+        # local layer — the #1213 lesson, where hardcoded core counts went red the
+        # moment a local model existed. Count the CURATED reps and let local ones
+        # ride along.
+        import subprocess as _sp, sys as _sys
+        _local = set()
+        try:
+            _out = _sp.run(
+                [_sys.executable, "-c",
+                 "import sys;sys.path.insert(0,'.');"
+                 "from scripts.lib.profiles.compose_registry import local_entries;"
+                 "print('\\n'.join(e['slug'] for e in local_entries()))"],
+                capture_output=True, text=True, timeout=60, cwd=str(repo_root),
+            )
+            if _out.returncode == 0:
+                _local = {l.strip() for l in _out.stdout.splitlines() if l.strip()}
+        except (OSError, _sp.TimeoutExpired):
+            pass
+        core_opts = [o for o in opts if o.slug not in _local]
+        assert len(core_opts) == 10, (
+            f"expected 10 curated reps, got {len(core_opts)}: "
+            f"{[o.slug for o in core_opts]} (local: {sorted(_local)})"
+        )
 
         # The 1-card rig default must be FUNCTIONAL + non-incubating — ideally the
         # registry's curated single default (vllm/minimal).

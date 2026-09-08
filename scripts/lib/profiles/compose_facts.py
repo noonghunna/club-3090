@@ -43,6 +43,15 @@ class ComposeFacts:
     tp: str = ""              # --tensor-parallel-size / -ts / device count
     status_header: str = ""   # the profile-header Status: line, when present
     service: str = ""
+    # ── evidence a compose carries about HOW it serves ────────────────
+    # These decide three c3 catalog columns (Offload · Spec Dec · and the
+    # residency axis). They were never read, so a recipe whose whole point is
+    # CPU-offloaded experts with an MTP drafter registered as a plain resident
+    # model with no speculation — every column blank, nothing wrong on screen.
+    cpu_offload_gb: str = ""  # --cpu-offload-gb / CPU_OFFLOAD_GB
+    offload_backend: str = "" # --offload-backend (uva / …)
+    spec_method: str = ""     # --speculative-config "method" / MTP_DEPTH / -md
+    spec_depth: str = ""      # num_speculative_tokens / MTP_DEPTH / SPEC_N
 
 
 _ENGINE_BY_IMAGE = (
@@ -53,6 +62,32 @@ _ENGINE_BY_IMAGE = (
     ("ik-llama", "ik-llama"),
     ("ik_llama", "ik-llama"),
 )
+
+
+def _numeric(tok: str) -> str:
+    """A flag's value as a plain number, or "" when it is not one.
+
+    Compose flags are usually written `--max-model-len ${MAX_MODEL_LEN:-262144}`,
+    so the raw token is a shell expansion, not a number. Callers int() these, and
+    an unexpanded token is an unhandled ValueError rather than a clean refusal —
+    which is what registering most of this repo's own composes used to do. Take
+    the DEFAULT out of a ${VAR:-N} expansion, since that is the value that runs
+    when the variable is unset; anything still non-numeric returns "" so the
+    caller's own fallback (and its "derived" labelling) takes over honestly.
+    """
+    tok = (tok or "").strip().strip("\"'")
+    if not tok:
+        return ""
+    if tok.isdigit():
+        return tok
+    if tok.startswith("${") and tok.endswith("}"):
+        # Defaults CHAIN: `${MAX_MODEL_LEN:-${CTX:-262144}}` falls through to the
+        # INNERMOST default when nothing is set, so that is the value a plain
+        # `up -d` runs with. Take the last one rather than the first.
+        nums = re.findall(r":-\s*([0-9]+)\s*\}", tok)
+        if nums:
+            return nums[-1]
+    return ""
 
 
 def derive_compose_facts(text: str, path: str = "") -> ComposeFacts:
@@ -138,13 +173,68 @@ def derive_compose_facts(text: str, path: str = "") -> ComposeFacts:
 
     f.model_path  = flag("--model", "-m", "GGUF_FILE")
     f.served_name = flag("--served-model-name", "-a", "--alias")
-    f.max_ctx     = flag("--max-model-len", "-c", "--ctx-size")
+    f.max_ctx     = _numeric(flag("--max-model-len", "-c", "--ctx-size"))
     f.kv_dtype    = flag("--kv-cache-dtype", "-ctk", "--cache-type-k")
-    f.tp          = flag("--tensor-parallel-size", "-tp", "-ts")
+    f.tp          = _numeric(flag("--tensor-parallel-size", "-tp", "-ts"))
+
+    # ENV-DRIVEN COMPOSES. A compose that drives its engine through `environment:`
+    # states the context there, not as a flag — either because the image's own
+    # entrypoint builds the command line (every third-party runtime does this) or
+    # because the engine reads LLAMA_ARG_*. 75 composes in THIS repo do it, so a
+    # flag-only read is not an edge case: it silently returns nothing and the
+    # caller falls back to a small default, advertising a 262K model as 4K.
+    # Accepts `KEY: "${KEY:-N}"`, `KEY: N`, and list-form `- KEY=N`, taking the
+    # DEFAULT out of a ${VAR:-N} expansion since that is what runs unset.
+    if not f.max_ctx:
+        for var in ("MAX_MODEL_LEN", "LLAMA_ARG_CTX_SIZE", "MAX_CTX", "CTX_SIZE"):
+            # ⚠️ ANCHORED. Unanchored, `MAX_MODEL_LEN` matches inside
+            # `VLLM_ALLOW_LONG_MAX_MODEL_LEN=1` and derives a 1-token context for
+            # seven of this repo's own composes.
+            m = _re.search(
+                rf"(?:^|[\s\-\"']){var}\s*[:=]\s*[\"']?"
+                rf"(?:\$\{{{var}:-)?([0-9]+)", text, _re.M)
+            if m:
+                f.max_ctx = m.group(1)
+                break
     if not f.tp:
         m = _re.search(r"CUDA_VISIBLE_DEVICES[=:\s]+\"?([0-9,]+)", text)
         if m:
             f.tp = str(len([x for x in m.group(1).split(",") if x.strip()]))
+
+    # ── offload + speculation evidence ────────────────────────────────
+    # Flag first (authoritative), then the env spelling, because a compose whose
+    # IMAGE builds the command line can only state these in `environment:`.
+    f.cpu_offload_gb = _numeric(flag("--cpu-offload-gb"))
+    if not f.cpu_offload_gb:
+        m = _re.search(r"(?:^|[\s\-\"'])CPU_OFFLOAD_GB\s*[:=]\s*[\"']?"
+                       r"(?:\$\{CPU_OFFLOAD_GB:-)?([0-9]+)", text, _re.M)
+        if m:
+            f.cpu_offload_gb = m.group(1)
+    f.offload_backend = (flag("--offload-backend") or "").strip("\"'")
+
+    # Speculation. `--speculative-config '{"method":"mtp",...}'` is the vLLM
+    # spelling; MTP_DEPTH/SPEC_N is how an env-driven compose says the same
+    # thing. A drafter MODEL flag proves speculation without naming a method.
+    m = _re.search(r'"method"\s*:\s*\\?"([a-z0-9_-]+)', text)
+    if m:
+        f.spec_method = m.group(1)
+    m = _re.search(r'"num_speculative_tokens"\s*:\s*\\?"?'
+                   r'(?:\$\{[A-Za-z_][A-Za-z0-9_]*:-)?([0-9]+)', text)
+    if m:
+        f.spec_depth = m.group(1)
+    if not f.spec_depth:
+        for var, meth in (("MTP_DEPTH", "mtp"), ("SPEC_N", "")):
+            m = _re.search(rf"(?:^|[\s\-\"']){var}\s*[:=]\s*[\"']?"
+                           rf"(?:\$\{{{var}:-)?([0-9]+)", text, _re.M)
+            if m:
+                f.spec_depth = m.group(1)
+                f.spec_method = f.spec_method or meth
+                break
+    if not f.spec_method and flag("--speculative-model", "-md", "--model-draft"):
+        f.spec_method = "draft-model"
+    # An explicit zero disables it; do not report speculation that is off.
+    if f.spec_depth == "0":
+        f.spec_method, f.spec_depth = "", ""
 
     m = (_re.search(r"\$\{PORT:-([0-9]+)\}", text)
          or _re.search(r"^\s*-\s*\"?([0-9]{2,5}):[0-9]+", text, _re.M))

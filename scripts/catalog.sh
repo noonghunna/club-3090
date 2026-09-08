@@ -9,7 +9,8 @@
 #
 #   catalog.sh register   --compose <path> [--engine ID] [--model ID]
 #                         [--workload W] [--port N] [--weights PATH]
-#                         [--engine-type T] [--min-sm N] [--dry-run] [-y]
+#                         [--engine-type T] [--min-sm N] [--hf-repo ID]
+#                         [--dry-run] [-y]
 #   catalog.sh register   --spec-file <path> [--dry-run] [-y]
 #   catalog.sh unregister --slug <engine>/<name> [--dry-run] [-y]
 #   catalog.sh rename     --slug <old> --to <new>  [--dry-run]
@@ -36,7 +37,7 @@ usage() {
 [[ $# -gt 0 ]] || usage 2
 SUB="$1"; shift
 
-COMPOSE="" SPEC_FILE="" ENGINE="" MODEL="" WORKLOAD="" PORT="" SLUG="" DRY="" YES="" RROOT="" WEIGHTS="" ETYPE="" MINSM="" TO=""; declare -a SETS=()
+COMPOSE="" SPEC_FILE="" ENGINE="" MODEL="" WORKLOAD="" PORT="" SLUG="" DRY="" YES="" RROOT="" WEIGHTS="" HFREPO="" ETYPE="" MINSM="" TO=""; declare -a SETS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --compose)   COMPOSE="${2:-}"; shift 2 ;;
@@ -46,6 +47,7 @@ while [[ $# -gt 0 ]]; do
     --workload)  WORKLOAD="${2:-}"; shift 2 ;;
     --port)      PORT="${2:-}"; shift 2 ;;
     --weights)   WEIGHTS="${2:-}"; shift 2 ;;
+    --hf-repo)   HFREPO="${2:-}"; shift 2 ;;
     --engine-type) ETYPE="${2:-}"; shift 2 ;;
     --min-sm)    MINSM="${2:-}"; shift 2 ;;
     --slug)      SLUG="${2:-}"; shift 2 ;;
@@ -131,14 +133,15 @@ PY_ENG
     # layer split or tensor parallelism in the catalog's sense, so a wrong value
     # nobody saw is worse than a prompt.
     python3 - "$COMPOSE" "$SPEC" "$ENGINE" "$MODEL" "$WORKLOAD" "$PORT" "$WEIGHTS" \
-             "${RROOT:-$ROOT}" "$ETYPE" "$MINSM" <<'PY' || exit $?
+             "${RROOT:-$ROOT}" "$ETYPE" "$MINSM" "$HFREPO" <<'PY' || exit $?
 import json, sys, zlib
 from pathlib import Path
 
 sys.path.insert(0, ".")
 from scripts.lib.profiles.compose_facts import derive_compose_facts
 
-src, out, engine_in, model_in, workload_in, port_in, weights_in, wroot, etype_in, minsm_in = sys.argv[1:11]
+(src, out, engine_in, model_in, workload_in, port_in, weights_in, wroot,
+ etype_in, minsm_in, hf_repo_in) = sys.argv[1:12]
 text = Path(src).read_text(encoding="utf-8")
 f = derive_compose_facts(text, src)
 if not f.ok:
@@ -176,16 +179,68 @@ port = int(port_in) if port_in else 20200 + (zlib.crc32(mid.encode("utf-8")) % 1
 # in compat.py, leaving the layer WRITTEN AND BROKEN ("NO ROLLBACK"). A compose
 # cannot carry arch dims by construction, so read them from the weights.
 arch = {}
+cfg_extra = {}          # provenance/shape facts read off the checkpoint, not defaulted
 if weights_in:
     from scripts.lib.profiles.deriver import gguf_facts_from_file
+    # A DIRECTORY is what anyone naturally passes (it is what they downloaded),
+    # so resolve it to the file we actually read instead of refusing with advice
+    # that looks like it was already followed.
+    wpath = Path(weights_in)
+    if wpath.is_dir():
+        if (wpath / "config.json").is_file():
+            weights_in = str(wpath / "config.json")
+        else:
+            ggufs = sorted(g for g in wpath.glob("*.gguf")
+                           if "mmproj" not in g.name.lower())
+            if len(ggufs) == 1:
+                weights_in = str(ggufs[0])
+            elif ggufs:
+                print(f"[catalog] {wpath} holds {len(ggufs)} .gguf files — "
+                      f"name the one to read with --weights <file>.", file=sys.stderr)
+                raise SystemExit(2)
+            else:
+                print(f"[catalog] {wpath} has no config.json and no .gguf — "
+                      f"arch dims cannot be read from it.", file=sys.stderr)
+                raise SystemExit(2)
     facts = gguf_facts_from_file(weights_in) if weights_in.endswith(".gguf") else None
     if facts is None and weights_in.endswith(".json"):
         cfg = json.loads(Path(weights_in).read_text(encoding="utf-8"))
-        facts = {"hidden_size": cfg.get("hidden_size"),
-                 "num_hidden_layers": cfg.get("num_hidden_layers"),
-                 "num_attn_heads": cfg.get("num_attention_heads"),
-                 "num_kv_heads": cfg.get("num_key_value_heads"),
-                 "max_ctx_supported": cfg.get("max_position_embeddings"),
+        # A MULTIMODAL wrapper config (…ForConditionalGeneration) states the text
+        # dims in a NESTED section and leaves the top level holding only the
+        # wrapper's own fields, so a top-level-only read sees None for every dim
+        # and refuses a model that is perfectly describable. Prefer the top level
+        # when it has the dims; otherwise take the first nested section that does.
+        # Per-key fallback to the top level, because some configs split
+        # max_position_embeddings out of the text section.
+        _NESTED = ("text_config", "language_model_config", "thinker_config",
+                   "llm_config")
+        sect = cfg if cfg.get("hidden_size") is not None else next(
+            (cfg[k] for k in _NESTED
+             if isinstance(cfg.get(k), dict)
+             and cfg[k].get("hidden_size") is not None),
+            cfg,
+        )
+        def _cfg(key):
+            v = sect.get(key)
+            return cfg.get(key) if v is None else v
+        # Provenance + shape the model profile needs, taken from the SAME config
+        # rather than defaulted. `family` was hardcoded "dense", which is not even
+        # in this field's vocabulary (it names the model FAMILY — qwen/gemma/glm),
+        # and vision_capable was hardcoded False for checkpoints that ship a
+        # vision_config.
+        _mt = str(cfg.get("model_type") or sect.get("model_type") or "")
+        for _fam in ("qwen", "gemma", "glm", "deepseek", "llama", "mistral",
+                     "phi", "nemotron"):
+            if _mt.startswith(_fam):
+                cfg_extra["family"] = _fam
+                break
+        if isinstance(cfg.get("vision_config"), dict):
+            cfg_extra["vision_capable"] = True
+        facts = {"hidden_size": _cfg("hidden_size"),
+                 "num_hidden_layers": _cfg("num_hidden_layers"),
+                 "num_attn_heads": _cfg("num_attention_heads"),
+                 "num_kv_heads": _cfg("num_key_value_heads"),
+                 "max_ctx_supported": _cfg("max_position_embeddings"),
                  # A KV-math hint. The GGUF path derives it; an HF config does not
                  # state it, and False is the ordinary case (K and V differ). Said
                  # out loud because it is the one value here that is assumed.
@@ -205,6 +260,22 @@ if weights_in:
 # --weights <gguf> registration, because gguf_facts_from_file does not return it
 # — so the GGUF path, the likelier one for this rig, was broken while the
 # config.json path (which sets it explicitly) passed the test.
+# ⛔ THE WORKLOAD MUST EXIST, AND MUST ALSO BE CHECKED BEFORE THE WRITE.
+# compat's cross-reference validation runs AFTER promote has written all three
+# artifacts, and a dangling workload ref fails it — which does not just break the
+# new entry, it takes the WHOLE profile system down: every launcher calls
+# load_profiles(), so one typo in one local registration makes every CORE slug
+# unloadable until the user hand-edits a gitignored JSON. `--workload max-context`
+# (a plausible-sounding name that does not exist) did exactly that here.
+_known_wl = sorted(x.stem for x in Path("scripts/lib/profiles/workloads").glob("*.yml"))
+if workload and _known_wl and workload not in _known_wl:
+    print(f"[catalog] unknown workload {workload!r}. Known: {', '.join(_known_wl)}.",
+          file=sys.stderr)
+    print(f"[catalog] Refusing BEFORE writing — a dangling workload reference fails "
+          f"compat's cross-reference check AFTER the write, and that failure takes "
+          f"the ENTIRE profile system down, core slugs included.", file=sys.stderr)
+    raise SystemExit(2)
+
 _ARCH_REQUIRED = ("hidden_size", "num_hidden_layers", "num_attn_heads",
                   "num_kv_heads", "max_ctx_supported")
 if "max_ctx_supported" not in arch and max_ctx:
@@ -279,21 +350,58 @@ cpath = (f"scripts/lib/profiles-local/composes/{mid}/{engine}"
 slug = f"{engine}/{mid}"
 
 
+# Weights FACTS, not placeholders. size_gb was hardcoded 1.0 and hf_repo "",
+# so the catalog reported a 120 GiB checkpoint as 1 GB from an unnamed provider
+# — the c3 "provider" column is blank for exactly this reason.
+_wdir = None
+if weights_in:
+    _wp = Path(weights_in)
+    _wdir = _wp if _wp.is_dir() else _wp.parent
+_size_gb = 1.0
+if _wdir and _wdir.is_dir():
+    try:
+        _b = sum(x.stat().st_size for x in _wdir.rglob("*")
+                 if x.is_file() and ".cache" not in x.parts)
+        if _b:
+            _size_gb = round(_b / 2**30, 1)
+    except OSError:
+        pass
+_hf_repo = hf_repo_in or ""
+spec_family = cfg_extra.get("family", "dense")
+
+# OFFLOAD. The vocabulary is a closed set whose values mean different mechanisms
+# ("uva" = vLLM demand-paged experts, "prefetch" = bulk layer prefetch,
+# "residency"/"tensor-override" = llama.cpp -ot). A wrong value here has already
+# caused a real misdiagnosis, so name it only when the compose NAMES it; when the
+# compose only proves offload is ON, say so and let the user state which.
+_offload = None
+_ob = (f.offload_backend or "").strip().lower()
+if _ob in ("uva", "prefetch", "residency", "tensor-override"):
+    _offload = _ob
+elif f.cpu_offload_gb and int(f.cpu_offload_gb) > 0:
+    print(f"[catalog] note: the compose offloads to host RAM "
+          f"(cpu-offload-gb={f.cpu_offload_gb}) but does not name the BACKEND, and "
+          f"the value decides the mechanism. Left unset; state it with: "
+          f"catalog.sh update --slug <slug> --set offload=uva", file=sys.stderr)
+
 spec = {
     "model_id": mid,
     "display_name": mid,
-    "family": "dense",
-    "weights": {"local": {"path": f.model_path, "local_subdir": mid, "size_gb": 1.0,
-                          "format": fmt, "status": "incubating", "hf_repo": "",
+    "family": spec_family,
+    "weights": {"local": {"path": str(_wdir) if _wdir else f.model_path,
+                          "local_subdir": mid, "size_gb": _size_gb,
+                          "format": fmt, "status": "incubating", "hf_repo": _hf_repo,
                           "engine": engine, "kind": "main",
                           "verify_glob": "*.gguf" if fmt == "gguf" else "*.safetensors"}},
     "arch": arch,
     "default_weight_variant": "local",
-    "vision_capable": False,
+    "vision_capable": bool(cfg_extra.get("vision_capable", False)),
     "compose": {"path": cpath, "content": text},
     "registry_entry": {"slug": slug, "kwargs": {
         "model": mid, "weights_variant": "local", "workload": workload,
         "engine": engine, "drafter": None,
+        "spec_method": f.spec_method or None,
+        "offload": _offload,
         "kv_format": f.kv_dtype or "f16", "tp": int(f.tp or 1),
         "max_ctx": max_ctx, "max_num_seqs": 1, "mem_util": 0.9,
         "compose_path": cpath, "default_port": port, "kvcalc_key": "SKIP"}},
@@ -320,6 +428,17 @@ for label, val, given in (
     ("tp",        f.tp or 1,         False),
     ("port",      port,              bool(port_in)),
     ("weights",   f.model_path,      False),
+    # These four decide c3 catalog COLUMNS (Spec Dec · Offload · provider ·
+    # size). They were hardcoded to None/""/1.0 and so rendered as blanks, which
+    # reads as "this recipe does not do that" rather than "nobody looked".
+    ("spec",      (f"{f.spec_method} n={f.spec_depth}" if f.spec_method and f.spec_depth
+                   else (f.spec_method or "(none found)")), False),
+    ("offload",   _offload or (f"on, backend unnamed (cpu-offload-gb={f.cpu_offload_gb})"
+                               if f.cpu_offload_gb else "(none found)"), False),
+    ("provider",  _hf_repo or "(none — pass --hf-repo)", bool(hf_repo_in)),
+    ("size_gb",   _size_gb,          False),
+    ("family",    spec_family,       False),
+    ("vision",    bool(cfg_extra.get("vision_capable", False)), False),
     ("arch",      f"hidden={arch['hidden_size']} layers={arch['num_hidden_layers']} "
                   f"heads={arch['num_attn_heads']}/{arch['num_kv_heads']}", True),
 ):

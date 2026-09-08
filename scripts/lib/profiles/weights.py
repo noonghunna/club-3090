@@ -78,13 +78,32 @@ def _require_yaml() -> None:
 
 
 def _load_models() -> dict[str, dict[str, Any]]:
+    """Every model profile: the curated set, plus the LOCAL layer.
+
+    The local layer was invisible here, and this module feeds `enrich_weights`,
+    which is what fills c3's provider and GB columns — so a model a user
+    registered showed a blank provider and no size no matter what its profile
+    said. Curated wins a collision, matching compose_registry's core-wins rule
+    (a local id colliding with core is refused at load anyway, so this is
+    belt-and-braces rather than a live case). A broken/absent local layer is not
+    an error: this must never take the curated listing down.
+    """
     _require_yaml()
     out: dict[str, dict[str, Any]] = {}
-    for path in sorted((PROFILE_ROOT / "models").glob("*.yml")):
-        with path.open("r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
-        model_id = str(data.get("id") or path.stem)
-        out[model_id] = data
+    local_dir = PROFILE_ROOT.parent / "profiles-local" / "models.d"
+    for root in (local_dir, PROFILE_ROOT / "models"):   # core LAST → core wins
+        try:
+            paths = sorted(root.glob("*.yml")) if root.is_dir() else []
+        except OSError:
+            continue
+        for path in paths:
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+            except (OSError, yaml.YAMLError):
+                continue
+            model_id = str(data.get("id") or path.stem)
+            out[model_id] = data
     return out
 
 

@@ -196,7 +196,12 @@ class TestFlagResolverShellCollision:
             '      - "${MAX_MODEL_LEN:-262144}"\n'
         )
         facts = derive_compose_facts(text)
-        assert facts.max_ctx == "${MAX_MODEL_LEN:-262144}"
+        # The value is now RESOLVED to the expansion's default (callers int() it,
+        # and the raw token used to reach that int() as an unhandled ValueError).
+        # What this test guards is unchanged: bash's -c must not win over
+        # --max-model-len, so the one answer that means the bug is back is "|".
+        assert facts.max_ctx == "262144"
+        assert facts.max_ctx != "|"
 
     def test_llama_cpp_short_ctx_flag_still_read(self):
         """The -c alias must keep working when it is genuinely the engine's."""
