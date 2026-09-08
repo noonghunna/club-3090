@@ -7,7 +7,7 @@
 #   Topology:  Dual 3090 PCIe (layer-split -ts 1,1, no NVLink)
 #   Drafter:   ✅ DFlash2 Q4_K_M external (0.70 GB) — ON GPU1, depth n=3
 #              MEASURED 2026-08-29: +18.4% on CODE, −2.0% on prose.
-#              Toggle: SPEC_N=<n> depth (default 3); SPEC_N=0 disables.
+#              Toggle: SPEC_N=<n> depth (default 2); SPEC_N=0 disables.
 #              Placement: DRAFT_DEVICE (default CUDA1) — see Caveats, host is −11%.
 #   KV:        fp16 (llama.cpp default — MLA keeps it compact)
 #   Thinking:  ⛔ cannot be turned off via thinking.type (vendor: errors on this
@@ -103,10 +103,17 @@
 #       ⚠️ This is the OPPOSITE of the DeepSeek sibling's `-devd none`, whose
 #       caveat (GPU drafter ⇒ zero cache hits) did NOT reproduce here: hits held
 #       at 21.7–22.1%. That caveat may be stale; re-test before copying it.
-#     • ⭐ WHY n=3 AND NOT DEEPER — n-sweep on GPU1, code decode:
-#         n=3 → 18.23 ⭐   n=5 → 16.61 (−8.9%)   n=7 → 11.10 (−27.9%)
+#     • ⭐ WHY n=2 — EXTRAPOLATED from the iq3xxs sibling, where n=2 measured
+#       ~+8-10% decode over n=3 (2026-09-04, 2 boots/arm, order reversed).
+#       NOT measured on iq4xs: same topology and mechanism, but this quant's
+#       larger experts change residency, so the optimum could differ.
+#       Superseded the original n-sweep on GPU1, code decode, kept for the
+#       shape of the deeper tail:
+#         n=3 → 18.23     n=5 → 16.61 (−8.9%)   n=7 → 11.10 (−27.9%)
 #       Mean accepted length is INVARIANT at ~3 regardless of the cap; raising
-#       n_max only inflates drafts the CPU-resident target must still verify.
+#       n_max only inflates drafts the CPU-resident target must still verify —
+#       and mean accepted length is what made n=3 look right, because it does
+#       not price the REJECTED tail the CPU-resident experts must verify.
 #       ⚠️ Acceptance RATE falls 53%→33% from n=3→n=7 as a DENOMINATOR effect —
 #       do not read that as worse drafting, and do not tune on it.
 #       ⚠️ SHALLOWER than the DeepSeek sibling's SPEC_N=5. Do not share defaults.
@@ -396,7 +403,7 @@ services:
       - '--spec-type'
       - 'draft-dflash'
       - '--spec-draft-n-max'
-      - '${SPEC_N:-3}'
+      - '${SPEC_N:-2}'
       # Drafter device. Default CUDA1 (GPU1) — MEASURED best 2026-08-29: on GPU
       # +18.4% code vs host, and placement was worth 21 points between arms.
       # ⚠️ Takes a device NAME, not an index: `CUDA1` is valid, `1` is NOT.
