@@ -166,3 +166,33 @@ lines on stderr, later traffic on stdout) asserts: no `--tail` in the
 docker-logs command, the parser's temp log saw `load_tensors` (both streams
 merged), and the rail renders the split. Cockpit suite re-run:
 **1124 passed, 1 skipped.**
+
+
+## On-rig empirical verdict (2026-09-08, `fix/1118-full-bootlog` + `glm53-flash-cu129` image)
+
+Tested the actual GLM-5.3-capable vLLM build (vLLM `0.1.dev20051+g487ecf187`,
+built from PR #53906) on this rig, local dir with config/processor/tokenizer:
+
+- ✅ `glm5_next` arch registered: `Glm5NextForCausalLM`,
+  `Glm5NextForConditionalGeneration`, `Glm5NextMTPModel`
+- ✅ config + processor loaded from the local snapshot dir
+- ❌ engine dies at attention-backend selection, before weights:
+
+```
+ValueError: No valid attention backend found for cuda with
+AttentionSelectorConfig(head_size=512, dtype=torch.bfloat16, ...,
+use_mla=True, use_sparse=True, ...)
+  FLASH_ATTN_MLA:             sparse not supported, compute capability not supported
+  FLASHMLA:                   sparse ... only supported on Hopper and Blackwell DC devices
+  FLASHINFER_MLA:             qk_nope_head_dim must be [64,128,192], got 256
+  TRITON_MLA:                 sparse not supported
+  FLASHINFER_MLA_SPARSE_SM90: requires SM90 + FlashInfer >= 0.6.18
+  FLASH_ATTN_MLA_SPARSE:      compute capability not supported
+  FLASHMLA_SPARSE:            compute capability not supported
+```
+
+**Verdict: GLM-5.3-Flash is not servable by vLLM on this rig at any
+version.** The arch needs the sparse-MLA kernel family, and every
+implementation requires SM90 (Hopper) or newer — our sm_86 Ampere 3090s
+fail below even the sm_89 rejection documented in vllm#54059. moe-cache
+llama.cpp remains the only way to run GLM-5.3-Flash on 2×3090.
