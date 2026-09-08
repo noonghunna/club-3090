@@ -12524,6 +12524,24 @@ class CockpitApp(App):
         }
         if plan.kind in _SYNC_REPOLL_KINDS:
             self.load_estate()
+        # A registry WRITE changes what the CATALOG lists, and nothing re-read
+        # it — so after ⑤ Promote registered a slug, or the local-layer view
+        # removed/renamed one, the table kept showing the OLD registry until the
+        # user pressed [r] themselves (reported on the first real use of the
+        # #1153 remove).  The estate re-poll above is the wrong instrument: the
+        # rig didn't change, the registry did.  Re-read it on the same
+        # successful-write path (a REFUSED write returned above and never
+        # reaches here).  load_catalog is @work(exclusive, group="catalog"), so
+        # this coalesces with any in-flight load rather than racing it, and it
+        # no-ops safely when the pane isn't mounted.
+        _REGISTRY_REPOLL_KINDS = {
+            "promote_catalog",   # ⑤ registers a NEW local entry
+            "local_remove",      # #1153 local-layer management
+            "local_rename",
+            "local_update",
+        }
+        if plan.kind in _REGISTRY_REPOLL_KINDS:
+            self.load_catalog()
         if plan.kind == "serve":
             if live is not None:
                 # Reveal the transient Run boot pane (Fold 2).  Do NOT print the

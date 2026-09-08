@@ -329,6 +329,22 @@ bash scripts/switch.sh --list --all     # everything; yours are tagged “· loc
   single   my-llamacpp/my-model    gguf/base.yml    (NA: 66K) · local
 ```
 
+Or from the cockpit, which manages the layer without dropping to the CLI:
+
+| Key | Where | Does |
+|---|---|---|
+| `ctrl+l` | anywhere in c3 | opens the local layer — every slug you registered, `shadowed` included |
+| `r` | on a row | unregister it |
+| `n` | on a row | rename it (moves the compose tree when the engine changes) |
+| `e` | on a row | edit one field, `KEY=VALUE` |
+| `esc` | | close |
+
+`ctrl+l` is advertised in the footer only while the layer has something in it.
+Every one of those actions is a repo write, so it goes through the same confirm
+gate as a serve — you see the `catalog.sh` command before anything is touched,
+and `Enter` commits it. The catalog re-reads itself afterwards; you do not need
+to refresh. A curated slug is unreachable from this view by construction.
+
 If a later `git pull` ships a curated slug under a name you already used, the
 listing tells you so instead of quietly swallowing it:
 

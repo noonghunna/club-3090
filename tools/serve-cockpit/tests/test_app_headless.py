@@ -8890,6 +8890,98 @@ def _count_load_estate(monkeypatch):
     return calls
 
 
+def _count_load_catalog(monkeypatch):
+    """Wrap CockpitApp.load_catalog so a test can count how many times it fired.
+    Returns the counter dict (``{"n": int}``)."""
+    import club3090_cockpit.app as appmod
+
+    calls = {"n": 0}
+    orig = appmod.CockpitApp.load_catalog
+
+    def counting(self):
+        calls["n"] += 1
+        return orig(self)
+
+    monkeypatch.setattr(appmod.CockpitApp, "load_catalog", counting)
+    return calls
+
+
+class TestRegistryWriteRereadsCatalog:
+    """A registry-mutating write re-reads the CATALOG (not just the estate).
+
+    Regression: removing a slug from the local-layer view left it on screen
+    until the user pressed [r] by hand — the write path re-polled the estate
+    (the rig) but never the registry (what actually changed)."""
+
+    @pytest.mark.asyncio
+    async def test_local_remove_rereads_catalog(self, monkeypatch):
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr)
+        calls = _count_load_catalog(monkeypatch)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            before = calls["n"]
+            plan = app._data.local_amend_plan("remove", "my-engine/my-model")
+            assert plan.kind == "local_remove"
+            app.dispatch_action(plan)
+            await _settle(pilot)
+            assert calls["n"] > before      # the removal re-read the registry
+            assert len(wr.started) == 1     # gate intact — the write went through
+
+    @pytest.mark.asyncio
+    async def test_local_rename_and_update_reread_catalog(self, monkeypatch):
+        for kind, kw in (("rename", {"to": "my-engine/renamed"}),
+                         ("update", {"sets": ["workload=fast-chat"]})):
+            wr = FakeWriteRunner()
+            app, _, _ = make_app(write_runner=wr)
+            calls = _count_load_catalog(monkeypatch)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _settle(pilot)
+                before = calls["n"]
+                plan = app._data.local_amend_plan(kind, "my-engine/my-model", **kw)
+                assert plan.kind == f"local_{kind}"
+                app.dispatch_action(plan)
+                await _settle(pilot)
+                assert calls["n"] > before, kind
+                assert len(wr.started) == 1, kind
+
+    @pytest.mark.asyncio
+    async def test_non_registry_write_does_not_reread_catalog(self, monkeypatch):
+        """NEGATIVE CONTROL — a write that doesn't touch the registry (container
+        rm) must NOT re-read the catalog, or the assertion above would pass for
+        every plan kind and prove nothing."""
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr)
+        calls = _count_load_catalog(monkeypatch)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            before = calls["n"]
+            plan = app._data.container_rm("vllm-qwen36-27b-dual")
+            app.dispatch_action(plan)
+            await _settle(pilot)
+            assert len(wr.started) == 1     # it DID write
+            assert calls["n"] == before     # but the registry didn't change
+
+    @pytest.mark.asyncio
+    async def test_refused_write_does_not_reread_catalog(self, monkeypatch):
+        """NEGATIVE CONTROL — a write REFUSED at the gate never mutated the
+        registry, so it must not re-read it either."""
+        wr = FakeWriteRunner()
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        gpus = [GpuInfo(index=0, mem_used_mib=22000), GpuInfo(index=1, mem_used_mib=1)]
+        app, _, _ = make_app(
+            responses=responses, gpus=gpus, target=ServingTarget(gpus=gpus), write_runner=wr
+        )
+        calls = _count_load_catalog(monkeypatch)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            before = calls["n"]
+            app.dispatch_action(app._data.serve("vllm/dual"))   # not forced → refused
+            await _settle(pilot)
+            assert wr.started == []
+            assert calls["n"] == before
+
+
 class TestBatch2A1RepollAfterEveryWrite:
     """A1 — every SUCCESSFUL GPU-mutating write re-polls the estate; a REFUSED
     write does not."""
