@@ -524,10 +524,17 @@ PY
     fail=0
     clean="$(sed -n 's/.* clean=\([0-9]*\).*/\1/p' <<<"$line")"
     running="$(sed -n 's/.* running=\([^ ]*\).*/\1/p' <<<"$line")"
+    running_max="$(sed -n 's/.* running_max=\([^ ]*\).*/\1/p' <<<"$line")"
+    waiting_max="$(sed -n 's/.* waiting_max=\([^ ]*\).*/\1/p' <<<"$line")"
     [[ "$rc" != "0" || "$clean" != "1" ]] && fail=1
-    if [[ "$running" =~ ^[0-9]+$ && "$running" -lt "$n" ]]; then
+    # Key off the PEAK, not the racy last sample. A rung where every request
+    # completed but whose final metrics sample happened to land after they
+    # finished reads running=0 and used to fail the rung AND early-stop the
+    # ladder — silently truncating the very measurement the sweep exists to
+    # produce. (From @voiceagentscc's #1212.)
+    if [[ "$running_max" =~ ^[0-9]+$ && "$running_max" -lt "$n" ]]; then
       fail=1
-      echo "[sweep] admitted ${running}/${n} — treating as fail for early-stop"
+      echo "[sweep] admitted peak ${running_max}/${n} (waiting ${waiting_max:-?}) — treating as fail for early-stop"
     fi
     if [[ "$fail" == "1" && "$EARLY_STOP" == "1" ]]; then
       ROW_DEAD[$ctx]="$n"
