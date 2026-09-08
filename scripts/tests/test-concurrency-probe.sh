@@ -13,6 +13,43 @@ PROBE="$ROOT_DIR/scripts/concurrency-probe.sh"
 LIB="$ROOT_DIR/scripts/lib/concurrency_probe.py"
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
+# --- hermetic docker layer -----------------------------------------------------
+# Several cases below run the probe for real, and the probe's SWEEP path installs
+# a restore-on-exit trap that calls `switch.sh --force "$SLUG"`. That trap fires at
+# process exit — AFTER the last line of output — so a stdout-only assertion of
+# "no boot happened" goes green while a real `docker compose up` runs behind it.
+#
+# That is not hypothetical: on 2026-09-08 this test booted vllm/minimal (20 GB of
+# VRAM) on the rig and the guard sweep still reported PASS. It also means the
+# suite could tear down whatever was serving at the time.
+#
+# Stubbing `docker` on PATH for the whole file fixes both: the probe and switch.sh
+# run for real, but cannot touch the estate, and any boot attempt is RECORDED so
+# the dry-run case can assert on the side effect instead of on stdout.
+SHIMDIR="$(mktemp -d)"
+trap 'rm -rf "$SHIMDIR"' EXIT
+COMPOSE_UP_LOG="$SHIMDIR/compose-up.log"
+: > "$COMPOSE_UP_LOG"
+cat > "$SHIMDIR/docker" <<SHIM
+#!/usr/bin/env bash
+# Records any \`compose ... up\`; answers everything else with a benign success.
+_c=0
+for a in "\$@"; do
+  [ "\$a" = "compose" ] && _c=1
+  if [ "\$_c" = 1 ] && [ "\$a" = "up" ]; then echo "\$*" >> "$COMPOSE_UP_LOG"; exit 0; fi
+done
+exit 0
+SHIM
+chmod +x "$SHIMDIR/docker"
+export PATH="$SHIMDIR:$PATH"
+
+# Negative control: the stub must actually record a boot, or every assertion that
+# reads COMPOSE_UP_LOG below is vacuous and would pass over a live regression.
+docker compose -f /dev/null up -d >/dev/null 2>&1 || true
+[[ -s "$COMPOSE_UP_LOG" ]] || fail "docker stub does not record 'compose up' — the boot assertions would be vacuous"
+: > "$COMPOSE_UP_LOG"
+echo "  ✓ docker stubbed (estate-safe) + stub self-test"
+
 # 1. syntax
 bash -n "$PROBE" || fail "bash -n: syntax error"
 python3 -m py_compile "$LIB" || fail "py_compile concurrency_probe.py"
@@ -34,7 +71,10 @@ out="$(SWEEP="4 8 12" SLUG=vllm/minimal SWEEP_DRY=1 bash "$PROBE" 2>&1)"
 [[ "$(command grep -c '\[sweep:dry\]' <<<"$out")" == "3" ]] || fail "SWEEP_DRY should print one plan line per N (3)"
 command grep -q '\[sweep\] boot' <<<"$out" && fail "SWEEP_DRY must not boot the server"
 command grep -q "sweep knee" <<<"$out" || fail "SWEEP should always print a knee summary"
-echo "  ✓ SWEEP_DRY plans 3 reboots without booting"
+if [[ -s "$COMPOSE_UP_LOG" ]]; then
+  fail "SWEEP_DRY ran 'docker compose up' — the restore-on-exit trap booted the slug: $(tr '\n' ';' < "$COMPOSE_UP_LOG")"
+fi
+echo "  ✓ SWEEP_DRY plans 3 reboots without booting (asserted at the docker layer)"
 
 # 4. --sweep --dry does NOT need SLUG and must not plan switch.sh reboots.
 out="$(bash "$PROBE" --sweep --dry --n 1,2,4,8 --ctx 1k,4k,16k 2>&1)"

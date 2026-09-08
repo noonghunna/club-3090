@@ -607,7 +607,19 @@ if [[ -n "$SWEEP" ]]; then
   # (experimental/incubating) — switch.sh refuses it without --force, AFTER tearing
   # the old container down. Restore-on-exit trap returns the slug to its default
   # config if a probe dies mid-sweep. (Same fix as spec-sweep, 2026-08-20.)
-  trap 'rm -f "${cells_jsonl:-}"; bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1 || true' EXIT
+  #
+  # ⚠️ The restore trap MUST NOT be installed on a dry run. It fires at process
+  # exit — i.e. AFTER the last [sweep:dry] line is printed — so a stdout assertion
+  # of "no boot happened" passes while the trap boots the slug for real. That is
+  # exactly how SWEEP_DRY=1 left a live vllm/minimal behind on this rig
+  # (2026-09-08): the guard suite ran the dry case, went green, and booted a 20 GB
+  # model. A dry run must touch nothing. spec-sweep.sh avoids this by exiting
+  # before its traps; this branch handles dry inside the loop, so it guards here.
+  if [[ "$SWEEP_DRY" == "1" ]]; then
+    trap 'rm -f "${cells_jsonl:-}"' EXIT
+  else
+    trap 'rm -f "${cells_jsonl:-}"; bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1 || true' EXIT
+  fi
   for N in $SWEEP; do
     if [[ "$SWEEP_DRY" == "1" ]]; then
       echo "[sweep:dry] would: MAX_NUM_SEQS=$N switch.sh $SLUG  ->  wait ready  ->  probe N=$N"
@@ -657,8 +669,15 @@ if [[ -n "$SWEEP" ]]; then
   else
     echo "  no N met the bar — lower the sweep range or the target_ctx, or check the floor."
   fi
-  echo "[sweep] restoring $SLUG default boot config…"
-  bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1 || true
+  # ⚠️ Restore only if we actually changed anything. On SWEEP_DRY the loop above
+  # `continue`s without booting, so there is nothing to restore — and calling
+  # switch.sh here would boot the slug for real at the end of a run whose entire
+  # contract is "print the plan, touch nothing". This is the line that left a live
+  # vllm/minimal on the rig (2026-09-08); the exit trap above was the second one.
+  if [[ "$SWEEP_DRY" != "1" ]]; then
+    echo "[sweep] restoring $SLUG default boot config…"
+    bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1 || true
+  fi
   trap - EXIT
   _cp_emit "$knee" "$knee_tps" "$knee_agg"
   exit 0

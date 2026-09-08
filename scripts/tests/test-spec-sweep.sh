@@ -9,6 +9,39 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SWEEP="$ROOT_DIR/scripts/spec-sweep.sh"
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
+# --- hermetic docker layer -----------------------------------------------------
+# Cases 4 and 5 run spec-sweep.sh for real in SWEEP_DRY mode and assert on stdout.
+# A stdout assertion cannot see a boot that happens in an exit trap or after the
+# last printed line — which is exactly how the sibling tool (concurrency-probe.sh)
+# booted a 20 GB model under a GREEN guard sweep on 2026-09-08. spec-sweep.sh is
+# currently safe (its dry path `exit 0`s before the traps are installed), but
+# nothing proved that, and nothing stopped a future edit from regressing it.
+#
+# Stub `docker` on PATH: the tool and switch.sh still run for real, but cannot
+# touch the estate, and any boot attempt is RECORDED so we assert on the side
+# effect rather than the output.
+SHIMDIR="$(mktemp -d)"
+trap 'rm -rf "$SHIMDIR"' EXIT
+COMPOSE_UP_LOG="$SHIMDIR/compose-up.log"
+: > "$COMPOSE_UP_LOG"
+cat > "$SHIMDIR/docker" <<SHIM
+#!/usr/bin/env bash
+_c=0
+for a in "\$@"; do
+  [ "\$a" = "compose" ] && _c=1
+  if [ "\$_c" = 1 ] && [ "\$a" = "up" ]; then echo "\$*" >> "$COMPOSE_UP_LOG"; exit 0; fi
+done
+exit 0
+SHIM
+chmod +x "$SHIMDIR/docker"
+export PATH="$SHIMDIR:$PATH"
+
+# Negative control: without this, a clean COMPOSE_UP_LOG proves nothing.
+docker compose -f /dev/null up -d >/dev/null 2>&1 || true
+[[ -s "$COMPOSE_UP_LOG" ]] || fail "docker stub does not record 'compose up' — the boot assertion would be vacuous"
+: > "$COMPOSE_UP_LOG"
+echo "  ✓ docker stubbed (estate-safe) + stub self-test"
+
 # 1. syntax
 bash -n "$SWEEP" || fail "bash -n: syntax error"
 echo "  ✓ syntax"
@@ -47,7 +80,11 @@ out="$(SWEEP_N="0 3" SLUG=vllm/dual SWEEP_DRY=1 bash "$SWEEP" 2>&1)"
 grep -q "engine=vllm" <<<"$out" || fail "vllm/dual should resolve engine=vllm"
 grep -q "SPEC_N=0 switch.sh vllm/dual" <<<"$out" || fail "n=0 arm should plan SPEC_N=0"
 grep -q "SPEC_N=3 switch.sh vllm/dual" <<<"$out" || fail "n=3 arm should plan SPEC_N=3"
+if [[ -s "$COMPOSE_UP_LOG" ]]; then
+  fail "SWEEP_DRY ran 'docker compose up' — a dry run must boot nothing: $(tr '\n' ';' < "$COMPOSE_UP_LOG")"
+fi
 echo "  ✓ vLLM SWEEP_DRY plans reboot-per-arm (one knob, SPEC_N=0 baseline)"
+echo "  ✓ SWEEP_DRY booted nothing at the docker layer (both slugs)"
 
 # 6. vLLM without SLUG refused (exit 2) — can't reboot without a target.
 #    (Engine defaults to llamacpp without a slug, so force via a vllm slug
