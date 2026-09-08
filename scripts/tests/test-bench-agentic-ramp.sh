@@ -77,6 +77,21 @@ class H(BaseHTTPRequestHandler):
             if EMIT_TC:
                 delta["tool_calls"] = TC
             ev({"choices": [{"delta": delta}], "usage": USAGE})
+        elif MODE == "reasoning":
+            # THINKING MODEL SHAPE. The server streams `reasoning` deltas for a
+            # long time, THEN a short content tail. If TTFT is taken at the first
+            # CONTENT delta, the whole reasoning phase is charged to prefill and
+            # the decode window collapses below the degenerate threshold — the
+            # turn reports "single-block emission, wall ~2 tok/s", which reads as
+            # a decode COLLAPSE that never happened (2026-09-08; it mimics #1096
+            # closely enough to be mistaken for it).
+            for _ in range(6):
+                ev({"choices": [{"delta": {"reasoning": "thinking... "}}]})
+                time.sleep(0.05)
+            ev({"choices": [{"delta": {"content": "Done."}}]})
+            if EMIT_TC:
+                ev({"choices": [{"delta": {"tool_calls": TC}}]})
+            ev({"choices": [{"delta": {}}], "usage": USAGE})
         else:
             ev({"choices": [{"delta": {"content": "Looking into it."}}]})
             # A real decode window. Without this the mock's own burst-write makes
@@ -154,7 +169,11 @@ echo "── canvas granularity: zero-width decode window must print n/a, never 
 out="$(run_bench 1 canvas QUIET=0)"
 assert_no_absurd_decode "$out" "canvas ramp"
 assert_contains "$out" "n/a"                       # the per-turn column
-assert_contains "$out" "single-block emission"     # ...and WHY it is n/a
+assert_contains "$out" "zero-width decode window"  # ...and WHY it is n/a
+# ⛔ The label was "single-block emission" and the trigger was a
+# window/wall RATIO. Both retired 2026-09-08: the ratio encoded answer
+# length + context size, so a healthy short answer after a long prefill
+# tripped it. The trigger is now "one chunk ⇒ nothing to time".
 assert_contains "$out" "decode-window  unmeasurable"
 assert_contains "$out" "⚠ CANVAS GRANULARITY"
 assert_contains "$out" "HEADLINE number is wall TPS"
@@ -165,7 +184,7 @@ assert_contains "$out" "TTFT growth by accumulated context"
 echo "  ✓ canvas: n/a per turn with a reason, exclusion stated, ramp + TTFT curve intact"
 
 echo "── additivity: an AR run carries none of the canvas machinery ──"
-for unwanted in "CANVAS GRANULARITY" "single-block emission" "decode-window  unmeasurable"; do
+for unwanted in "CANVAS GRANULARITY" "zero-width decode window" "decode-window  unmeasurable"; do
   assert_absent "$ar_out" "$unwanted"
 done
 assert_no_absurd_decode "$ar_out" "AR ramp"
@@ -177,5 +196,22 @@ assert_absent   "$out" "⚠ CANVAS GRANULARITY"
 assert_contains "$out" "n/a"                       # the per-turn guard is NOT overridable
 assert_no_absurd_decode "$out" "canvas ramp, granularity forced to token"
 echo "  ✓ the label is declarable; the zero-width guard is not overridable"
+
+echo "── thinking model: reasoning deltas count as first token ──"
+# A reasoning-parser model streams `reasoning` deltas long before the first
+# `content` delta. Taking TTFT at the content delta charges the ENTIRE reasoning
+# phase to prefill, and the turn reports as a zero-width decode window — i.e. a
+# COLLAPSE that did not happen. Measured 2026-09-08 on a live thinking model at
+# ~21K ctx: first reasoning delta 28.64s, first content delta 34.69s, window
+# 1.25s = 3.5% of wall = flagged. 278 reasoning deltas had streamed normally.
+out="$(run_bench 1 reasoning QUIET=0)"
+assert_absent "$out" "zero-width decode window"
+assert_absent "$out" "decode-window  unmeasurable"
+# and it must still produce a real per-turn decode number, not n/a
+if grep -qE "^\s*[0-9]+\s+[0-9,]+\s+[0-9]+\s+n/a" <<<"$out"; then
+  echo "ASSERT FAIL: a thinking-model turn still reported n/a decode"; echo "$out"; exit 1
+fi
+assert_no_absurd_decode "$out" "reasoning ramp"
+echo "  ✓ reasoning deltas start the decode window — a thinking model is measurable"
 
 echo "test-bench-agentic-ramp: ok"

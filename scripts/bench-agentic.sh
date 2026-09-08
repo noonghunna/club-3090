@@ -166,6 +166,44 @@ import json, os, sys, time, urllib.request, statistics as s, pathlib
 # works is model-specific and an unrecognised one is silently ignored. Returns
 # the payload fragment: the kwargs object plus, when the model uses an effort
 # dial, the OpenAI-standard top-level parameter alongside it.
+def _scrape_engine_metrics(base_url):
+    """vLLM's own counters — the ONLY decode figure immune to the frontend.
+
+    Client-side timing is hostage to the API-server event loop: the Qwen3 tool
+    parser re-scans the whole accumulated argument on every delta, and while it
+    runs, engine outputs queue and get MERGED into a few large SSE chunks. The
+    stream then looks slow when decode was fine. These histograms are recorded
+    inside the engine, before any of that.
+
+      decode TPS = Δrequest_generation_tokens_sum / Δrequest_decode_time_seconds_sum
+      Δnum_preemptions > 0 marks a REAL stall (recompute), not a display artifact.
+
+    Returns {} when /metrics is unavailable — the run degrades to client-side
+    numbers rather than failing.
+    """
+    import urllib.request
+    want = ("vllm:request_generation_tokens_sum",
+            "vllm:request_decode_time_seconds_sum",
+            "vllm:request_prefill_time_seconds_sum",
+            "vllm:num_preemptions_total", "vllm:num_preemptions")
+    out = {}
+    try:
+        with urllib.request.urlopen(base_url.rstrip("/") + "/metrics", timeout=5) as r:
+            for line in r.read().decode("utf-8", "replace").splitlines():
+                if line.startswith("#") or " " not in line:
+                    continue
+                name, _, val = line.partition(" ")
+                base = name.split("{", 1)[0]
+                if base in want:
+                    try:
+                        out[base] = out.get(base, 0.0) + float(val)
+                    except ValueError:
+                        pass
+    except Exception:
+        return {}
+    return out
+
+
 def _think(on=False):
     import os as _o, json as _j
     raw = _o.environ.get("THINK_ON_KW" if on else "THINK_OFF_KW")
@@ -268,7 +306,15 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
         # turn (HTTP 500 on replay). 600 lets the call complete; the _safe_args
         # guard below backstops any residual clip.
         "max_tokens": 600,
-        "temperature": 0.3,
+        # ⚠️ GREEDY + FIXED SEED. At temperature 0.3 each run generated DIFFERENT
+        # text, so per-turn numbers were not comparable ACROSS runs — a turn read
+        # 56.2 TPS in one run and "unmeasurable" in the next purely because the
+        # model happened to emit a long tool argument the second time. Every
+        # cross-run turn-by-turn comparison made on that basis was invalid
+        # (2026-09-08). Boot-to-boot noise remains; generation noise does not.
+        # Override with BENCH_TEMPERATURE / BENCH_SEED to sample deliberately.
+        "temperature": float(os.environ.get("BENCH_TEMPERATURE", "0")),
+        "seed": int(os.environ.get("BENCH_SEED", "1096")),
         "stream": True,
         "stream_options": {"include_usage": True},
         **_think(),
@@ -280,6 +326,7 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
     t_send = time.time()
     ttft = None
     completion_tokens = 0
+    sse_chunks = 0            # chunks carrying `choices` — see chunks_per_token below
     prompt_tokens = 0
     content_parts = []
     tool_calls_acc = {}
@@ -298,8 +345,23 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
                 continue
             choices = chunk.get("choices") or []
             if choices:
+                sse_chunks += 1
                 delta = choices[0].get("delta", {})
-                if ttft is None and (delta.get("content") or delta.get("tool_calls")):
+                # ⚠️ TTFT = FIRST CHUNK CARRYING `choices`, whatever the delta
+                # type. This is exactly what `vllm bench serve` does
+                # (benchmarks/lib/endpoint_request_func.py) and it is the only
+                # rule that cannot be broken by a new delta kind.
+                #
+                # It was "first CONTENT delta", which on a thinking model charged
+                # the ENTIRE reasoning phase to prefill and left a decode window
+                # of a few percent — reported as "single-block emission ... wall
+                # 2.0 tok/s", i.e. a decode COLLAPSE that never happened.
+                # Measured 2026-09-08 on qwen3.8-flash-next-ple @ ~21K ctx:
+                # first reasoning delta 28.64s, first content delta 34.69s;
+                # 278 reasoning deltas had streamed normally throughout.
+                # Narrowing this to content+tool_calls+reasoning would still miss
+                # the next delta kind; taking the chunk is the durable fix.
+                if ttft is None:
                     ttft = time.time() - t_send
                 if delta.get("content"):
                     content_parts.append(delta["content"])
@@ -394,7 +456,31 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
     # so 5% sits ~20x away from any autoregressive turn and cannot fire on one.
     # None means UNMEASURABLE — not slow, not zero.
     decode_s = wall - ttft
-    degenerate = wall <= 0 or decode_s <= 0 or decode_s < DEGEN_WINDOW_FRAC * wall
+    # ⛔ THE WINDOW/WALL RATIO IS RETIRED AS A HEALTH SIGNAL (2026-09-08).
+    # window/wall == decode/(prefill+decode), so it encodes ANSWER LENGTH and
+    # CONTEXT SIZE, not throughput: at 21K prompt (~28s prefill) a perfectly
+    # healthy 60-token tool call decodes in 1.2s = 4% of wall and trips a 5%
+    # threshold. No threshold value fixes that — the metric is measuring the
+    # wrong thing. It is kept ONLY to guard the genuinely zero-width case
+    # (decode_s <= 0), which is arithmetic, not a heuristic.
+    #
+    # What actually produces few-chunk turns here is FRONTEND coalescing: the
+    # Qwen3 tool parser re-scans the whole accumulated argument text on every
+    # delta (3 passes, no structural-char gate), ~3.2 ms/delta at 20K chars
+    # ≈ 8s of API-server CPU for one long tool argument. That runs on the same
+    # event loop as the engine's output handler, so outputs queue and
+    # RequestOutputCollector MERGES them into a few large SSE chunks. That is a
+    # frontend cost, NOT a decode collapse, and it must not be reported as one.
+    #
+    # Healthy streaming is ~1 chunk per engine step (1 token/step without
+    # speculation, 1..n+1 with it). Far fewer chunks than tokens ⇒ the client
+    # saw coalesced output — its OWN category, never "decode collapse".
+    # A single chunk means there is NO OBSERVABLE decode window — you cannot time
+    # an interval from one sample. That is the dLLM/canvas case (#809), and it is
+    # a statement about what was observed, not a threshold on how fast it was.
+    degenerate = wall <= 0 or decode_s <= 0 or sse_chunks <= 1
+    chunks_per_token = (sse_chunks / completion_tokens) if completion_tokens > 0 else 0.0
+    frontend_bound = bool(completion_tokens >= 50 and chunks_per_token < 0.10)
     if completion_tokens <= 0:
         # The genuine silent-empty turn. It has always reported 0 and that
         # discriminator must not regress into an "unmeasurable" n/a.
@@ -410,6 +496,10 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
         "decode_tps": decode_tps,
         "wall_tps": (completion_tokens / wall) if wall > 0 else 0.0,
         "decode_degenerate": bool(degenerate and completion_tokens > 0),
+        "completion_tokens": completion_tokens,
+        "sse_chunks": sse_chunks,
+        "chunks_per_token": chunks_per_token,
+        "frontend_bound": frontend_bound,
         "completion_tokens": completion_tokens,
         "prompt_tokens": prompt_tokens,
         "tool_calls": len(tool_calls_response),
@@ -436,7 +526,23 @@ for session in range(1, SESSIONS + 1):
     for turn_idx in range(TURNS):
         fixture_turn = FIXTURE[turn_idx]
         try:
+            # Bracket the turn with the engine's OWN counters. Client timing can
+            # be distorted by frontend coalescing; these cannot.
+            _em0 = _scrape_engine_metrics(URL)
             m = run_turn(messages, fixture_turn, session, turn_idx)
+            _em1 = _scrape_engine_metrics(URL)
+            if _em0 and _em1:
+                d_tok = _em1.get("vllm:request_generation_tokens_sum", 0.0) - \
+                        _em0.get("vllm:request_generation_tokens_sum", 0.0)
+                d_dec = _em1.get("vllm:request_decode_time_seconds_sum", 0.0) - \
+                        _em0.get("vllm:request_decode_time_seconds_sum", 0.0)
+                d_pre = (_em1.get("vllm:num_preemptions_total",
+                                  _em1.get("vllm:num_preemptions", 0.0)) -
+                         _em0.get("vllm:num_preemptions_total",
+                                  _em0.get("vllm:num_preemptions", 0.0)))
+                m["engine_decode_tps"] = (d_tok / d_dec) if d_dec > 0 else None
+                m["engine_gen_tokens"] = d_tok
+                m["preemptions"] = d_pre
             per_turn_metrics[turn_idx].append(m)
             if m.get("tool_call_missed"):
                 tool_call_misses += 1
@@ -446,10 +552,25 @@ for session in range(1, SESSIONS + 1):
                 # defect (#809). wall_TPS is the honest figure for such a turn.
                 if m["decode_tps"] is None:
                     dcol = f"{'n/a':>11}"
-                    miss = (f"  (decode window 0 — single-block emission; "
-                            f"wall {m['wall_tps']:.1f} tok/s){miss}")
+                    miss = (f"  (zero-width decode window; wall "
+                            f"{m['wall_tps']:.1f} tok/s){miss}")
                 else:
                     dcol = f"{m['decode_tps']:>11.1f}"
+                # FRONTEND-BOUND is its own category and NEVER implies slow
+                # decode: the decode number stands, the client just received it
+                # coalesced into few chunks (parser cost on the API-server loop).
+                # The engine's own decode rate, when /metrics is reachable. This
+                # is the citable number: it is measured inside the engine and is
+                # unaffected by parser cost or SSE coalescing.
+                if m.get("engine_decode_tps"):
+                    miss = (f"  [engine {m['engine_decode_tps']:.1f} tok/s"
+                            + (f", {int(m['preemptions'])} preemption(s)"
+                               if m.get("preemptions") else "") + f"]{miss}")
+                if m.get("frontend_bound"):
+                    miss = (f"  ⚠ frontend-bound: {m['sse_chunks']} chunks for "
+                            f"{m['completion_tokens']} tok "
+                            f"({m['chunks_per_token']:.3f} chunks/tok) — client-side "
+                            f"coalescing, decode itself is unaffected{miss}")
                 print(f"  {turn_idx+1:<5} {m['prompt_tokens']:>10,} {m['ttft_ms']:>9.0f} "
                       f"{dcol} {m['result_chars']:>13,}{miss}", flush=True)
         except Exception as e:
@@ -541,9 +662,13 @@ for turn_idx in contiguous:
 # take a `n/a` column for a broken run or a low figure for a slow model.
 if degen_total:
     print(f"\n  decode-window  unmeasurable on {degen_total}/{turns_total} turn(s) "
-          f"(decode window < {DEGEN_WINDOW_FRAC:.0%} of wall).")
+          f"(zero-width window: the last chunk arrived at TTFT).")
     print("                 Those turns are EXCLUDED from every decode_TPS above; their honest")
     print("                 throughput figure is wall TPS, which INCLUDES prefill.")
+    print("                 NOTE: this is now arithmetic (decode_s <= 0), not a ratio. The old")
+    print("                 'window < 5% of wall' rule was RETIRED — it encoded answer length")
+    print("                 and context size, so a healthy short answer after a long prefill")
+    print("                 tripped it and read as a decode collapse.")
 if gran == "canvas":
     print(f"\n  ⚠ CANVAS GRANULARITY ({gran_why})")
     print("    dLLM: block emission, decode window undefined. decode_TPS is NOT a decode rate")
