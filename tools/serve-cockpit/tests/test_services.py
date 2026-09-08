@@ -141,7 +141,7 @@ def _model_spec():
 
 
 def make_detect(target: ServingTarget):
-    async def _detect() -> ServingTarget:
+    async def _detect(**_kwargs) -> ServingTarget:
         return target
     return _detect
 
@@ -2287,7 +2287,7 @@ class TestReconcileGate:
     @pytest.mark.asyncio
     async def test_detect_failure_is_unsafe(self):
         """If detect raises, we can't prove the cards are free → not safe."""
-        async def boom() -> ServingTarget:
+        async def boom(**_kwargs) -> ServingTarget:
             raise RuntimeError("docker daemon down")
 
         cd = CockpitData(ROOT, runner=full_runner(), detect_endpoint_fn=boom)
@@ -2300,7 +2300,7 @@ class TestReconcileGate:
         """The gate must call detect every time (never a cached snapshot)."""
         calls = {"n": 0}
 
-        async def counting_detect() -> ServingTarget:
+        async def counting_detect(**_kwargs) -> ServingTarget:
             calls["n"] += 1
             return ServingTarget(gpus=[GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)])
 
@@ -2534,7 +2534,7 @@ class TestExecuteActionGated:
         """set_default has requires_reconcile=False → no detect, straight to run."""
         write_runner = FakeWriteRunner()
 
-        async def detect_should_not_be_called() -> ServingTarget:
+        async def detect_should_not_be_called(**_kwargs) -> ServingTarget:
             raise AssertionError("detect must not be called for a non-reconcile action")
 
         cd = CockpitData(
@@ -2576,7 +2576,7 @@ class TestExecuteActionGated:
         the gate is genuinely skipped (detect never called)."""
         write_runner = FakeWriteRunner()
 
-        async def detect_should_not_be_called() -> ServingTarget:
+        async def detect_should_not_be_called(**_kwargs) -> ServingTarget:
             raise AssertionError("gate must be skipped → detect not called")
 
         cd = CockpitData(
@@ -3823,7 +3823,7 @@ class TestPhase4RunValidation:
         """Validation hits the model but does not claim a GPU → no detect call."""
         wr = FakeWriteRunner()
 
-        async def detect_should_not_be_called():
+        async def detect_should_not_be_called(**_kwargs):
             raise AssertionError("validation must not run the reconcile gate")
 
         cd = CockpitData(
@@ -3866,7 +3866,7 @@ class TestPhase4GatedWriteExecution:
         reaches the mocked write runner with the gpu-mode power-cap <W> command."""
         write_runner = FakeWriteRunner()
 
-        async def detect_should_not_be_called():
+        async def detect_should_not_be_called(**_kwargs):
             raise AssertionError("power-cap must not reconcile (no GPU contention)")
 
         cd = CockpitData(

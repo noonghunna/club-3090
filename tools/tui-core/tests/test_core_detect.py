@@ -11,8 +11,11 @@ from club3090_tui_core.detect import (
     ServingTarget,
     GpuInfo,
     PORT_MAP_BROAD_RE,
+    PORT_MAP_ANY_RE,
     _classify_engine,
     _classify_engine_from_container,
+    _registry_claims,
+    detect_endpoint,
     match_target_to_registry,
 )
 from club3090_tui_core.registry import VariantRow
@@ -267,3 +270,146 @@ class TestMatchConfidence:
         result = match_target_to_registry(target, self.VARIANTS)
         assert result.slug == ""
         assert result.match_confidence == ""
+
+
+# ============================================================================
+# #1219 — detection is REGISTRY-FIRST, not container-name-prefix-first
+# ============================================================================
+
+
+def _row(slug, container, port, engine="vllm"):
+    return VariantRow(
+        slug=slug, switch_engine=engine, launch_engine=engine, compose_dir="d",
+        file="f.yml", port=port, model="m", engine=engine, kvcalc_key="k",
+        container=container, compose_path="p", status="production",
+        ctx_label="32K", status_note="",
+    )
+
+
+def _proc(ps_output: str):
+    """Stub for `docker ps --format {{.Names}}|{{.Ports}}`."""
+    mock = AsyncMock()
+    mock.communicate = AsyncMock(return_value=(ps_output.encode(), b""))
+    return mock
+
+
+def _run(coro):
+    """Drive a coroutine without pytest-asyncio.
+
+    ⚠️ pytest-asyncio is NOT installed for this package, so an ``async def`` test
+    is SKIPPED, not run — a green line that proves nothing.  Baseline before these
+    tests was "25 passed", with zero skips; anything that reports skips here is a
+    test that silently did not execute.
+    """
+    return asyncio.run(coro)
+
+
+# A local slug can satisfy NEITHER heuristic by construction: the container is
+# named by whatever the user's compose calls it, and a third-party engine listens
+# on whatever internal port it likes.  Both are true of the bucko recipe that
+# surfaced this (2026-09-08).
+LOCAL_PS = "qwen38-flash-next-ple|0.0.0.0:20272->9000/tcp"
+
+
+class TestRegistryClaims:
+    def test_builds_map_from_variant_rows(self):
+        claims = _registry_claims([_row("x/y", "my-engine", 20272)])
+        assert "my-engine" in claims
+        assert claims["my-engine"][1] == 20272
+
+    def test_normalizes_underscores(self):
+        claims = _registry_claims([_row("x/y", "my_engine", 1)])
+        assert "my-engine" in claims
+
+    def test_ignores_rows_without_a_container(self):
+        assert _registry_claims([_row("x/y", "", 1)]) == {}
+
+    def test_accepts_dict_rows(self):
+        claims = _registry_claims([{"container": "c", "port": 42}])
+        assert claims["c"][1] == 42
+
+    def test_empty_and_none(self):
+        assert _registry_claims(None) == {}
+        assert _registry_claims([]) == {}
+
+
+class TestRegistryFirstDetection:
+    """The bug: a registered container that matches neither heuristic is invisible."""
+
+    def test_local_slug_invisible_without_registry(self):
+        """Baseline — this is the reported failure, and it must stay reproducible."""
+        with patch("asyncio.create_subprocess_exec", return_value=_proc(LOCAL_PS)):
+            target = _run(detect_endpoint())
+        assert target.health == "unreachable"
+        assert not target.url
+
+    def test_local_slug_detected_when_registry_claims_it(self):
+        rows = [_row("bucko-vllm/flash-next", "qwen38-flash-next-ple", 20272)]
+        with patch("asyncio.create_subprocess_exec", return_value=_proc(LOCAL_PS)):
+            target = _run(detect_endpoint(variants=rows))
+        assert target.container == "qwen38-flash-next-ple"
+        assert target.host_port == 20272
+        assert target.internal_port == 9000   # NOT one of the three curated ports
+        # The reported symptom is an EMPTY target.url: with no url, health.sh
+        # falls back to the curated default port and reports "not reachable" over
+        # a plainly loaded model.  Resolving the url is the fix.
+        assert target.url == "http://localhost:20272"
+        # `health` stays "unreachable" here because nothing is actually listening
+        # on 20272 in a unit test — that probe is Step 4 and is not what #1219 is
+        # about.  Asserting on it would be asserting on the stub, not the fix.
+
+    def test_engine_family_comes_from_the_registry_row(self):
+        """Engine identity is lineage (the profile's type), not the container name."""
+        rows = [_row("x/y", "qwen38-flash-next-ple", 20272, engine="vllm")]
+        with patch("asyncio.create_subprocess_exec", return_value=_proc(LOCAL_PS)):
+            target = _run(detect_endpoint(variants=rows))
+        assert target.engine == "vllm"
+
+    def test_unclaimed_non_engine_container_still_ignored(self):
+        """Registry-first must not become 'accept everything'."""
+        ps = "open-webui|0.0.0.0:8080->8080/tcp\nqdrant|0.0.0.0:6333->6333/tcp"
+        with patch("asyncio.create_subprocess_exec", return_value=_proc(ps)):
+            target = _run(detect_endpoint(variants=[_row("x/y", "not-running", 1)]))
+        # open-webui publishes 8080->8080 and so still trips the port heuristic;
+        # what matters is that qdrant (neither prefix nor engine port) never does.
+        assert target.container != "qdrant"
+
+    def test_heuristics_still_work_for_unregistered_containers(self):
+        ps = "vllm-hand-run|0.0.0.0:8000->8000/tcp"
+        with patch("asyncio.create_subprocess_exec", return_value=_proc(ps)):
+            target = _run(detect_endpoint(variants=[]))
+        assert target.container == "vllm-hand-run"
+        assert target.engine == "vllm"
+
+    def test_claimed_container_preferred_over_heuristic_match(self):
+        ps = ("vllm-some-other|0.0.0.0:8000->8000/tcp\n"
+              "qwen38-flash-next-ple|0.0.0.0:20272->9000/tcp")
+        rows = [_row("bucko-vllm/flash-next", "qwen38-flash-next-ple", 20272)]
+        with patch("asyncio.create_subprocess_exec", return_value=_proc(ps)):
+            target = _run(detect_endpoint(variants=rows))
+        assert target.container == "qwen38-flash-next-ple"
+
+    def test_registry_host_port_wins_over_a_second_mapping(self):
+        """An engine that also publishes metrics must resolve to its API port."""
+        ps = "qwen38-flash-next-ple|0.0.0.0:9100->9100/tcp, 0.0.0.0:20272->9000/tcp"
+        rows = [_row("x/y", "qwen38-flash-next-ple", 20272)]
+        with patch("asyncio.create_subprocess_exec", return_value=_proc(ps)):
+            target = _run(detect_endpoint(variants=rows))
+        assert target.host_port == 20272
+
+    def test_omitting_variants_is_unchanged_behaviour(self):
+        ps = "vllm-qwen36-27b-minimal|0.0.0.0:8020->8000/tcp"
+        with patch("asyncio.create_subprocess_exec", return_value=_proc(ps)):
+            a = _run(detect_endpoint())
+            b = _run(detect_endpoint(variants=None))
+        assert a.container == b.container == "vllm-qwen36-27b-minimal"
+
+
+class TestAnyPortRegex:
+    def test_matches_arbitrary_internal_port(self):
+        m = PORT_MAP_ANY_RE.search("0.0.0.0:20272->9000/tcp")
+        assert m and m.group(1) == "20272" and m.group(2) == "9000"
+
+    def test_broad_regex_still_rejects_arbitrary_internal_port(self):
+        """The narrow regex must stay narrow — it gates UNCLAIMED containers."""
+        assert not PORT_MAP_BROAD_RE.search("0.0.0.0:20272->9000/tcp")

@@ -176,7 +176,7 @@ def ok(stdout: str) -> RunResult:
 
 
 def make_detect(target: ServingTarget):
-    async def _detect() -> ServingTarget:
+    async def _detect(**_kwargs) -> ServingTarget:
         return target
     return _detect
 
@@ -5608,7 +5608,7 @@ class TestValidateRunWired:
         gated execute_action — it never claims a GPU."""
         wr = FakeWriteRunner()
 
-        async def detect_should_not_be_called():
+        async def detect_should_not_be_called(**_kwargs):
             raise AssertionError("a validation run must not reconcile")
 
         app, _, _ = make_app(write_runner=wr, surface="producer")
@@ -9639,7 +9639,7 @@ class TestBatch2MustFix3ErrorLabel:
         """Force the services.py detect-failure path → state.error is
         'detect failed: …' and the rail/Containers render THAT, not 'docker
         unreachable'."""
-        async def _boom():
+        async def _boom(**_kwargs):
             raise RuntimeError("endpoint probe blew up")
 
         app, _, _ = make_app()
@@ -14649,7 +14649,7 @@ class TestAdaptiveEstatePoll:
             return ["g0", "g1"]
         cd._get_gpu_info = ok
         assert asyncio.run(cd.gpu_info()) == ["g0", "g1"]
-        async def boom():
+        async def boom(**_kwargs):
             raise RuntimeError("nvidia-smi gone")
         cd._get_gpu_info = boom
         assert asyncio.run(cd.gpu_info()) == []   # degrades, never raises

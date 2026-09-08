@@ -294,7 +294,12 @@ class RealRunner:
 
 
 # Detect seam: async callables matching the core signatures.
-DetectEndpointFn = Callable[[], Awaitable[ServingTarget]]
+# Takes an optional ``variants=`` registry-rows kwarg (#1219: detection is
+# registry-first), so an injected double MUST accept it — swallowing a TypeError
+# here to retry without it would mask a genuine detect failure, and this callable
+# feeds the fail-closed dual-writer gate where "I could not detect" must mean
+# UNSAFE, never "nothing running".
+DetectEndpointFn = Callable[..., Awaitable[ServingTarget]]
 GetGpuInfoFn = Callable[[], Awaitable[list[GpuInfo]]]
 # A7: probe the live engine for its ACTUAL running config (ctx + image).  Takes
 # the detected ServingTarget (for url / container) and returns a ServedProbe.
@@ -2621,9 +2626,15 @@ class CockpitData:
         health.sh Doctor read + gpu-mode scene catalog + estate-planner report."""
         state = EstateState()
 
-        # detect: running engine + GPUs
+        # detect: running engine + GPUs.
+        # Hand the registry rows DOWN into detection (#1219) — a local slug's
+        # container matches neither the engine-name prefix nor the curated
+        # internal-port set, so without them it is never classified as an engine
+        # and the estate reports "not reachable" over a plainly loaded model.
+        # match_target_to_registry below still enriches; this makes detection
+        # itself registry-aware instead of only the labelling after it.
         try:
-            target = await self._detect_endpoint()
+            target = await self._detect_endpoint(variants=variants)
         except Exception as exc:  # pragma: no cover - defensive
             state.error = f"detect failed: {exc}"
             target = ServingTarget()
@@ -3110,8 +3121,11 @@ class CockpitData:
         result = ReconcileResult(safe=True, action=action)
 
         # Fresh detect — never trust a cached snapshot for the gate.
+        # Registry-first (#1219): this gate decides whether the cards are free, so
+        # a container detection cannot classify reads as NO container — i.e. a
+        # registered local slug serving on GPU0 would look like an empty card.
         try:
-            target = await self._detect_endpoint()
+            target = await self._detect_endpoint(variants=variants)
         except Exception as exc:  # pragma: no cover - defensive
             result.note = f"detect failed: {exc}"
             # A failed detect is NOT safe — we can't prove the cards are free.

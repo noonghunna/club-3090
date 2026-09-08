@@ -29,6 +29,34 @@ PORT_MAP_BROAD_RE = re.compile(
     r":(\d+)->(8000|8080|30000)/tcp"
 )
 
+# ANY published tcp mapping.  Used ONLY for containers the registry claims by
+# name: a registered engine may listen on any internal port it likes (#1219), and
+# constraining it to our three curated ports is the same closed-set assumption as
+# the name prefix.  Never used for unclaimed containers, which still have to look
+# like an engine to be considered at all.
+PORT_MAP_ANY_RE = re.compile(r":(\d+)->(\d+)/tcp")
+
+
+def _registry_claims(variants) -> dict:
+    """Map normalized container name -> registry row, for rows that name one.
+
+    The registry already carries the container name and host port for every
+    registered slug, core and local alike.  Detection used to ignore both and
+    re-derive them by pattern-matching ``docker ps`` output, which a local slug
+    can satisfy by neither construction (#1219).
+    """
+    claims: dict = {}
+    for v in variants or []:
+        if hasattr(v, "container"):
+            container, port = v.container, v.port
+        elif isinstance(v, dict):
+            container, port = v.get("container", ""), v.get("port", 0)
+        else:
+            continue
+        if container:
+            claims[(container or "").replace("_", "-")] = (v, port)
+    return claims
+
 
 async def _reap(proc) -> None:
     """Kill and await a subprocess so its transport closes while the loop still lives.
@@ -116,11 +144,19 @@ def _classify_engine_from_container(name: str) -> str:
     return "unknown"
 
 
-async def detect_endpoint(container_name: Optional[str] = None) -> ServingTarget:
+async def detect_endpoint(
+    container_name: Optional[str] = None,
+    variants: Optional[list] = None,
+) -> ServingTarget:
     """Detect the currently-serving model and endpoint.
 
     Args:
         container_name: If set, detect only from this container.
+        variants: Registry rows (VariantRow or dict).  When supplied, any running
+            container the registry claims BY NAME is treated as an engine
+            regardless of its name prefix or internal port, and is preferred over
+            containers matched by the naming heuristics.  Omit it and behaviour is
+            exactly the previous heuristics-only detection.
 
     Returns:
         A ServingTarget with whatever was resolved.
@@ -141,9 +177,22 @@ async def detect_endpoint(container_name: Optional[str] = None) -> ServingTarget
         target.health = "unreachable"
         return target
 
-    # Step 2: find inference containers
-    # Filter to recognized engine prefixes FIRST to exclude Open WebUI and other non-inference containers
+    # Step 2: find inference containers.
+    #
+    # Precedence is REGISTRY FIRST (#1219).  A container the registry claims by
+    # name IS an engine — we registered it — so it is accepted whatever it is
+    # called and whatever port it listens on internally.  The naming heuristics
+    # below then run only for containers no registry row claims, which is what
+    # keeps a hand-run container (never registered) visible.
+    #
+    # The old order asked a container to be NAMED with one of five curated engine
+    # prefixes AND to publish one of three container-side ports.  A local slug can
+    # satisfy neither by construction: the whole point of the local layer (#1202)
+    # is that the user brings an engine we have never heard of.
+    claims = _registry_claims(variants)
+
     candidates: list[tuple[str, int, int, str]] = []  # (name, host_port, internal_port, engine)
+    claimed_names: set[str] = set()
     seen: set[tuple[str, int]] = set()  # dedupe by (container_name, host_port) for dual-stack
 
     for line in lines:
@@ -151,11 +200,21 @@ async def detect_endpoint(container_name: Optional[str] = None) -> ServingTarget
             continue
         name, ports_str = line.split("|", 1)
 
-        # Only consider recognized engine containers
-        if not ENGINE_PREFIXES.match(name):
+        claim = claims.get(name.replace("_", "-"))
+        if claim is None and not ENGINE_PREFIXES.match(name):
+            # Not registered and doesn't look like an engine — Open WebUI, qdrant…
             continue
 
-        for match in PORT_MAP_BROAD_RE.finditer(ports_str):
+        # A claimed container may publish several mappings (an engine port plus
+        # metrics).  Prefer the one whose HOST port the registry recorded.
+        port_re = PORT_MAP_ANY_RE if claim is not None else PORT_MAP_BROAD_RE
+        matches = list(port_re.finditer(ports_str))
+        if claim is not None:
+            registry_port = claim[1]
+            preferred_ports = [m for m in matches if int(m.group(1)) == registry_port]
+            matches = preferred_ports or matches
+
+        for match in matches:
             host_port = int(match.group(1))
             internal_port = int(match.group(2))
 
@@ -165,8 +224,18 @@ async def detect_endpoint(container_name: Optional[str] = None) -> ServingTarget
                 continue
             seen.add(key)
 
-            engine = _classify_engine_from_container(name)
-            if engine == "unknown":
+            if claim is not None:
+                claimed_names.add(name)
+                row = claim[0]
+                engine = (
+                    getattr(row, "engine", "") if hasattr(row, "engine")
+                    else (row.get("engine", "") if isinstance(row, dict) else "")
+                ) or ""
+            else:
+                engine = ""
+            if not engine:
+                engine = _classify_engine_from_container(name)
+            if engine == "unknown" or not engine:
                 engine = _classify_engine(str(internal_port))
             candidates.append((name, host_port, internal_port, engine))
 
@@ -181,8 +250,10 @@ async def detect_endpoint(container_name: Optional[str] = None) -> ServingTarget
             target.health = "unreachable"
             return target
 
-    # Step 3: prefer recognized engine prefix; else first match
-    preferred = [c for c in candidates if ENGINE_PREFIXES.match(c[0])]
+    # Step 3: prefer a registry-claimed container (we know what it is), then one
+    # matching the naming heuristic, else the first match.
+    claimed = [c for c in candidates if c[0] in claimed_names]
+    preferred = claimed or [c for c in candidates if ENGINE_PREFIXES.match(c[0])]
     chosen = preferred[0] if preferred else candidates[0]
 
     name, host_port, internal_port, engine = chosen
