@@ -1,0 +1,51 @@
+schema_version: 1
+id: sglang-stable
+display_name: SGLang stable v0.5.19
+type: sglang
+stability: stable
+install:
+  method: docker_image
+  spec: lmsysorg/sglang:v0.5.19
+min_sm: 8.0
+supported_model_families:
+  - qwen3-next-hybrid   # 🌐 COMMUNITY-EVIDENCED, not rig-validated: club-3090 discussion
+                        # #1178 (@jb-seo) — Qwen3.8-27B TP=2 AutoRound INT4 + native MTP
+                        # head (n=4), flashinfer attention, 97-121 decode TPS on dual
+                        # 3090s; 640K fp8 KV at 0.96 mem-fraction also measured (89-94
+                        # TPS). ⚠️ Measured on v0.5.18 WITH 3 in-container patches, not
+                        # on stock v0.5.19. Nobody has booted this engine on THIS rig.
+                        # Treat as a lead, not a guarantee, until a compose is validated.
+#
+# ⛔ glm5-next is NOT a supported family on this pin. An earlier draft of this file
+#    listed it as "experimental via sideload patch"; that is DISPROVEN. The glm5_next
+#    model/config/MTP support landed in sglang MAIN only (sglang#36507, 2026-09-06) and
+#    is absent from v0.5.18, v0.5.19 and `latest` — their bundled transformers rejects
+#    model_type=glm5_next outright. Per-file sideloading onto a release image was tried
+#    on-rig and FAILED: config registration succeeded, then the model import died on
+#    `is_dsa_prefill_cp_interleave` missing from layers/attention/dsa/utils.py. #36507
+#    touches ~50 files, so per-file backporting is a dead end, not an unfinished job.
+#    A glm5_next-capable SGLang engine needs a MAIN-built image (lmsysorg/sglang:dev-cu12)
+#    declared as its OWN engine profile — and even then the Ampere question is open: see
+#    LEARNINGS.md 2026-09-09 (sparse-MLA/DSA is SM90-gated; SGLang's Triton DSA path is
+#    the only Ampere-plausible route and is UNVALIDATED on sm_86).
+features:
+  native_mtp: true               # Qwen3.8 native MTP head (#1178: n=4). Community-evidenced.
+  flashinfer_attention: true     # #1178 used flashinfer for full attention on Ampere.
+  hybrid_linear_attention: true  # KDA/GDN linear layers via FLA Triton kernels — same
+                                 # class as qwen3-next on this engine.
+supported_kv_formats:
+  - bf16
+  - fp8_e4m3            # #1178: KV fp8_e4m3 on Qwen3.8-27B dual-3090.
+  - fp8_e5m2
+required_overlays: []
+vendored_overlays: []
+required_genesis: false
+notes: >-
+  SGLang stable, REGISTERED BUT NOT YET WIRED: no compose targets this engine and it has
+  never been booted on this rig. It is deliberately absent from arch_patches.yml, so
+  generate_compose/pull-gate will REFUSE an sglang pin ("engine pin has no loads:true
+  match") until a compose is live-validated — that refusal is correct, not a gap to
+  paper over. Add the arch/pin row in the same change as the first working compose.
+  Patch delivery for this engine follows models/<model>/sglang/patches/ (see the README
+  there); it mirrors the vLLM install_script contract rather than the older bare-.py
+  sglang patches under models/qwen3.6-27b/sglang/patches/, which are deprecated (#254).
