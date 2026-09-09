@@ -451,15 +451,25 @@ show_status() {
         m=$(curl -sf -m 2 http://localhost:8013/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
         echo -e "  ${GREEN}▶${NC} 27b-dual-max @ :8013 → ${m:-unknown} (max-tier dual + fp8 + 262K)"
     fi
-    # :8020 = llama.cpp single-card. llamacpp/default + llamacpp/mtp share the
-    # base container llama-cpp-qwen36-27b (same compose, collapsed 2026-05-22);
-    # llamacpp/mtp-vision now defaults to llama-cpp-qwen36-27b-vision (#169).
-    # All still match the llama-cpp-* prefix used for detection below.
+    # :8020 is a multi-slug port (vllm/minimal today; the deprecated
+    # llama.cpp / ik-llama single-card slugs also landed here) and every one of
+    # those slugs serves the same model ids, so :8030's served-name
+    # disambiguation cannot tell them apart. Classify from the REGISTRY instead
+    # — match the container that actually publishes the port against each
+    # variant row's registered container name — never from a name prefix.
     if curl -sf -m 2 "http://localhost:${p_llamacpp}/v1/models" >/dev/null 2>&1; then
         _endpoint_up=1
-        local m
+        local m c8020 fam8020
         m=$(curl -sf -m 2 "http://localhost:${p_llamacpp}/v1/models" | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} llamacpp/single @ :${p_llamacpp} → ${m:-unknown} (llama.cpp single-card)"
+        fam8020="llamacpp"   # legacy fallback when docker/registry lookups fail
+        c8020=$(sudo docker ps --filter "publish=${p_llamacpp}" --format '{{.Names}}' 2>/dev/null | sed -n '1p')
+        if [[ -n "${c8020}" ]] && declare -F registry_lookup_cache_path >/dev/null 2>&1 && registry_lookup_cache_path; then
+            local hit
+            hit=$(REGISTRY_LOOKUP_CACHE="${_registry_lookup_cache}" REGISTRY_LOOKUP_CONTAINER="${c8020}" \
+                  python3 -c "import json,os;rows=json.load(open(os.environ['REGISTRY_LOOKUP_CACHE'],encoding='utf-8')).get('variants',[]);h=[r for r in rows if r.get('container')==os.environ['REGISTRY_LOOKUP_CONTAINER']];print(h[0]['slug'].split('/',1)[0] if h else '')" 2>/dev/null)
+            [[ -n "${hit}" ]] && fam8020="${hit}"
+        fi
+        echo -e "  ${GREEN}▶${NC} ${fam8020}/single @ :${p_llamacpp} → ${m:-unknown} (single-card)"
     fi
     if curl -sf -m 2 http://localhost:8030/v1/models >/dev/null 2>&1; then
         _endpoint_up=1
