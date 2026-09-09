@@ -1084,3 +1084,30 @@ patches:
   - <<: *genesis_env_patch
     id: genesis-pn59-streaming-gdn
     genesis_env: GENESIS_ENABLE_PN59_STREAMING_GDN
+  - id: qwen38-sglang-autoround-w4a8-v0519
+    model: [qwen3.8-27b]
+    status: unverified
+    files:
+      - models/qwen3.8-27b/sglang/patches/sglang-autoround-w4a8-v0.5.19
+    load_bearing_when: []   # the sglang compose is disk-only (not registry-wired) — same as the qwen3.6 sglang archives
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/sglang/patches/sglang-autoround-w4a8-v0.5.19/install.sh
+      mounted_at: /etc/club3090/w4a8
+      invoke: "bash /etc/club3090/w4a8/install.sh"
+      invoked_before: sglang-launch
+      wired_at: [volumes, entrypoint]
+    drift_guard:
+      kind: marker
+      check: "install.sh hard-fails (exit 1) if any of the 3 content markers is missing after apply, or if a partial 1-2/3 state is detected — a re-pinned image that drops a W4A8 hook serves nothing, not a half-wired mix"
+      on_fail: refuse-to-boot
+    capability: sglang-w4a8-dense-gemm
+    upstream:
+      ref: jb-seo/club-3090 (0004-autoround-w4a8.patch, cut against SGLang v0.5.18)
+      status: ours
+      drop_when: "SGLang lands AutoRound W4A8 with the K%128/N%64 shape guard natively in the AutoRoundConfig eligibility gate — then this re-cut + guard is retired (keep the compose, drop the mount)."
