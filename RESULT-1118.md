@@ -196,3 +196,35 @@ version.** The arch needs the sparse-MLA kernel family, and every
 implementation requires SM90 (Hopper) or newer — our sm_86 Ampere 3090s
 fail below even the sm_89 rejection documented in vllm#54059. moe-cache
 llama.cpp remains the only way to run GLM-5.3-Flash on 2×3090.
+
+
+## SGLang route (investigated 2026-09-09) — the promising Ampere path
+
+- sglang main **has glm5_next** (`models/glm5_next.py` + `glm5_next_nextn.py`
+  MTP + `configs/glm5_next.py`, merged 2026-09-06, sglang PR #36507) — with a
+  registered `test_glm5_next_dflash_capture.py` unit test (the DFlash drafter
+  ecosystem is upstream-visible).
+- DSA implementation is **multi-backend**: SM90 JIT CUDA (`sparse_mla_q8kv8_
+  prefill_sm90`), **Triton** (`ops/attention/dsa/triton_sparse_mla.py`,
+  `nsa_triton_decode/`), ROCm/hip (`dsa_topk_coop.cuh`) — upstream CI runs
+  glm52 on **AMD MI355X**. NVIDIA Ampere: unvalidated upstream, but the
+  Triton DSA ops compile per-arch, and the KDA linear layers are
+  Triton/FLA-based (the same class that makes qwen3-next work on Ampere in
+  SGLang — jb-seo measured 97–121 decode TPS on Qwen3.8-27B, dual 3090,
+  club-3090 discussion #1178).
+- **Packaging is the gap**: latest release v0.5.19 (Sep 5) predates the
+  glm5_next support by one day; the `latest` Docker image (sglang 0.5.19,
+  transformers 5.12.1) fails "Transformers does not recognize glm5_next".
+  Main's config stack needs its pinned transformers (mixing
+  transformers-from-source with the 0.5.19 image breaks config
+  registration — "qwen3_asr is already used by a Transformers config").
+- jb-seo's exact engine (v0.5.18 + 3 in-container patches) also predates
+  glm5_next.
+
+**Next step to validate SGLang/Ampere:** build the sglang main image from
+source (their Dockerfile pins the matching transformers), then boot
+glm5_next with `--load-format dummy` on the 3090s — the same probe pattern
+that definitively answered the vLLM question. If the hybrid init (Triton
+DSA + KDA) succeeds on sm_86, a moe-cache-vs-SGLang benchmark becomes
+possible; if the Triton DSA kernels fail on Ampere, SGLang joins vLLM on
+the SM90+ wall.
