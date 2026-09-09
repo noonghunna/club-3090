@@ -16,7 +16,7 @@
 # (repo policy: never `latest` for services we depend on operationally).
 #
 # Override via .env or shell:
-#   SPARK_DASHBOARD_IMAGE   image (default: pinned v0.13.0 — multi-GPU selector UI landed in v0.12.0)
+#   SPARK_DASHBOARD_IMAGE   image (default: pinned v0.14.0 — multi-GPU selector UI landed in v0.12.0)
 #   SPARK_DASHBOARD_PORT    UI/API port on the host (default 3010; host network)
 #   DOCKER_GID              host docker group GID (default 999 = Debian/Ubuntu common, but GIDs vary
 #                           per install — 984/988/999 all seen in the wild, so SET YOURS explicitly:
@@ -24,7 +24,7 @@
 #                           silently disables container-based engine discovery)
 services:
   spark-dashboard:
-    image: ${SPARK_DASHBOARD_IMAGE:-ghcr.io/niklasfrick/spark-dashboard:v0.13.0}
+    image: ${SPARK_DASHBOARD_IMAGE:-ghcr.io/niklasfrick/spark-dashboard:v0.14.0}
     container_name: spark-dashboard
     restart: unless-stopped
 
