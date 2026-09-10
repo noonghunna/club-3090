@@ -217,6 +217,12 @@
 #   per-card terms (compute ~5300, unacc ~900) held constant.
 #   ⚠️ DERIVED, NOT MEASURED, for multi4/multi8 -- this rig has 2 GPUs.
 # CPU-Offload-Draft-Reserve-MiB: 2342
+# CPU-Offload-Draft-Card: 1
+#   The drafter is pinned to CUDA1 by `-devd CUDA1`, so ONLY card 1 pays the
+#   2,342 MiB above. Without this, the resolver charged it to EVERY card and
+#   card 0 came back a bundle short -- ~4.9 GiB of host RAM left on the floor
+#   on a 2-card rig (club-3090#1233). Unset = charge every card (the old
+#   behaviour, still the default for every compose that omits it).
 #   MEASURED on CUDA1 2026-09-06: 655.73 weights + 80.00 KV + 1606.48 compute.
 #   Its own term because the drafter loads AFTER the resolver reads FREE VRAM.
 #   ⤷ ALL-on-CPU worst case. Grounded: this quant is 139.2 GiB of weights (134.37 GiB

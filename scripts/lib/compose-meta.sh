@@ -531,6 +531,14 @@ resolve_offload_residency() {
   # compose that does not declare it. Overridable for A/B via RESIDENCY_DRAFT_MB.
   local draft; draft="$(compose_meta_get "$compose_file" cpu-offload-draft-reserve-mib || true)"
   [[ "$draft" =~ ^[0-9]+$ ]] || draft=0
+  # WHICH card actually pays it (#1233). A drafter pinned with `-devd CUDA<n>` costs
+  # VRAM on THAT card only, but `draft` used to be charged to every card -- so card 0
+  # was reserved for a cost it never incurred and came back a bundle short. Unset =>
+  # -1 => charge EVERY card, i.e. byte-for-byte today's behaviour for every compose
+  # that does not declare it (the #931 calibration points are untouched).
+  local draft_card; draft_card="$(compose_meta_get "$compose_file" cpu-offload-draft-card || true)"
+  [[ "$draft_card" =~ ^[0-9]+$ ]] || draft_card=-1
+  if [[ "${RESIDENCY_DRAFT_CARD:-}" =~ ^-?[0-9]+$ ]]; then draft_card="$RESIDENCY_DRAFT_CARD"; fi
   # ⚠️ plain `if`, NOT `[[ ]] && assign`: the latter returns non-zero when the
   # condition is false, and every caller runs under `set -e` — that aborts the
   # launcher mid-resolve. Same trap documented in preflight.sh.
@@ -545,7 +553,7 @@ resolve_offload_residency() {
   local per_card=$(( layers / n ))
   local i fit rule var applied="" res_i
   for (( i=0; i<n; i++ )); do
-    res_i=$(( reserve + draft + (i == 0 ? extra : 0) ))
+    res_i=$(( reserve + ( (draft_card < 0 || i == draft_card) ? draft : 0 ) + (i == 0 ? extra : 0) ))
     # An explicit OT_G<i> from the user/env ALWAYS WINS and is never clobbered —
     # same contract as THREADS (resolve_offload_threads). This is the supported
     # way to pin more residency than the sizer grants (the grant is deliberately
@@ -625,6 +633,14 @@ offload_residency_grant_mib() {
   # compose that does not declare it. Overridable for A/B via RESIDENCY_DRAFT_MB.
   local draft; draft="$(compose_meta_get "$compose_file" cpu-offload-draft-reserve-mib || true)"
   [[ "$draft" =~ ^[0-9]+$ ]] || draft=0
+  # WHICH card actually pays it (#1233). A drafter pinned with `-devd CUDA<n>` costs
+  # VRAM on THAT card only, but `draft` used to be charged to every card -- so card 0
+  # was reserved for a cost it never incurred and came back a bundle short. Unset =>
+  # -1 => charge EVERY card, i.e. byte-for-byte today's behaviour for every compose
+  # that does not declare it (the #931 calibration points are untouched).
+  local draft_card; draft_card="$(compose_meta_get "$compose_file" cpu-offload-draft-card || true)"
+  [[ "$draft_card" =~ ^[0-9]+$ ]] || draft_card=-1
+  if [[ "${RESIDENCY_DRAFT_CARD:-}" =~ ^-?[0-9]+$ ]]; then draft_card="$RESIDENCY_DRAFT_CARD"; fi
   # ⚠️ plain `if`, NOT `[[ ]] && assign`: the latter returns non-zero when the
   # condition is false, and every caller runs under `set -e` — that aborts the
   # launcher mid-resolve. Same trap documented in preflight.sh.
@@ -641,7 +657,7 @@ offload_residency_grant_mib() {
   local i fit rule total_mib=0 var ucount res_i
   local -a lays
   for (( i=0; i<n; i++ )); do
-    res_i=$(( reserve + draft + (i == 0 ? extra : 0) ))
+    res_i=$(( reserve + ( (draft_card < 0 || i == draft_card) ? draft : 0 ) + (i == 0 ? extra : 0) ))
     # A user-set OT_G<i> is what will ACTUALLY be pinned (the injector never
     # clobbers it) — price ITS layer count, not the auto fit, so the gate and
     # the boot describe the same config. First hit in the wild: a 123 GB box
