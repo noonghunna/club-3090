@@ -124,6 +124,55 @@ weights:
       - UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00004-of-00004.gguf
     verify_glob: "UD-IQ3_XXS/*.gguf"
     manual_note: "🧪 EXPERIMENTAL — smaller sibling of UD-IQ4_XS, 113 GiB vs 146.1. ⭐ Point is RESIDENCY, not size on disk: expert byte-size is the master variable (learnings/moe-cache-engine.md section 2). MEASURED from this GGUF's tensor table per-expert-matrix over expert_count=288 — iq2_s 2,624 KiB x82 (63.6%, dominant), iq3_s 3,520 x41, iq4_xs 4,352 x3, q2_K 2,688 x2, q3_K 3,520 x1; weighted average 2,957 KiB vs IQ4_XS's 3,867 = 24% smaller. ⚠️ Shard 1 is METADATA-ONLY (9.4 MB, tensor_count 0) like the iq4xs sibling — a probe reading shard 1 for tensors finds nothing and that is NOT a broken download. ⚠️ QUALITY AT IQ3 IS UNTESTED; a smaller quant is not free."
+  devquasar-q2k:
+    path: glm-5.3-flash-gguf/devquasar-q2k/Q2_K
+    # ⚠️ local_subdir is the BUCKET; `files:`/`verify_glob` carry the quant-folder
+    # prefix — same trap the unsloth-ud-iq3xxs entry documents (pointing local_subdir
+    # at the quant dir NESTS IT TWICE).
+    local_subdir: glm-5.3-flash-gguf/devquasar-q2k
+    size_gb: 107
+    format: gguf
+    status: experimental
+    hf_repo: DevQuasar/zai-org.GLM-5.3-Flash-GGUF
+    shards: 9
+    files:
+      - Q2_K/zai-org.GLM-5.3-Flash.f16.gguf.Q2_K.gguf-00001-of-00009.gguf
+      - Q2_K/zai-org.GLM-5.3-Flash.f16.gguf.Q2_K.gguf-00002-of-00009.gguf
+      - Q2_K/zai-org.GLM-5.3-Flash.f16.gguf.Q2_K.gguf-00003-of-00009.gguf
+      - Q2_K/zai-org.GLM-5.3-Flash.f16.gguf.Q2_K.gguf-00004-of-00009.gguf
+      - Q2_K/zai-org.GLM-5.3-Flash.f16.gguf.Q2_K.gguf-00005-of-00009.gguf
+      - Q2_K/zai-org.GLM-5.3-Flash.f16.gguf.Q2_K.gguf-00006-of-00009.gguf
+      - Q2_K/zai-org.GLM-5.3-Flash.f16.gguf.Q2_K.gguf-00007-of-00009.gguf
+      - Q2_K/zai-org.GLM-5.3-Flash.f16.gguf.Q2_K.gguf-00008-of-00009.gguf
+      - Q2_K/zai-org.GLM-5.3-Flash.f16.gguf.Q2_K.gguf-00009-of-00009.gguf
+    verify_glob: "Q2_K/*.gguf"
+    manual_note: "🧪 EXPERIMENTAL — TRUE K-quant. ⭐ Expert path is 0.0% i-quant (Q2_K x84 2,688 KiB + Q3_K x42 3,520 KiB over expert_count=288, 102.62 GiB) against the served UD-IQ3_XXS's 97.7% i-quant — GATED from the GGUF tensor table before download, not inferred from the name. Per-expert rows are near byte-matched to UD-IQ3_XXS (2,688 vs 2,624 gate/up; `down` IDENTICAL at 3,520), which makes this the cleanest cost-per-byte pairing on this model. ⚠️⚠️ NOT a quality peer of the UD siblings: DevQuasar quantises ATTENTION to Q2_K/Q3_K and `token_embd` to Q2_K where unsloth UD holds Q6_K/Q8_0 — non-expert side 3.90 GiB vs 7.33, which is also why its pool comes out ~2x larger, so a throughput win is cheap reconstruction PLUS a bigger cache and one arm cannot separate them. ⚠️ NO MTP head (block_count=45, no nextn_predict_layers) — the loader accepts this and the external DFlash2 drafter does not need it (81-86% acceptance measured, fired 20/20). MEASURED 2026-09-09 dual: narrative 30.65 / code 34.83 / prefill@10K 344.8, 7,970 slots, marginal hit 53.3/53.8%. ⚠️ QUALITY UNMEASURED — no 8-pack on this model at ANY quant."
+  devquasar-q3km:
+    path: glm-5.3-flash-gguf/devquasar-q3km/Q3_K_M
+    # ⚠️ local_subdir is the BUCKET; `files:`/`verify_glob` carry the quant-folder
+    # prefix — same trap the unsloth-ud-iq3xxs entry documents (pointing local_subdir
+    # at the quant dir NESTS IT TWICE).
+    local_subdir: glm-5.3-flash-gguf/devquasar-q3km
+    size_gb: 140
+    format: gguf
+    status: experimental
+    hf_repo: DevQuasar/zai-org.GLM-5.3-Flash-GGUF
+    shards: 12
+    files:
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00001-of-00012.gguf
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00002-of-00012.gguf
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00003-of-00012.gguf
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00004-of-00012.gguf
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00005-of-00012.gguf
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00006-of-00012.gguf
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00007-of-00012.gguf
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00008-of-00012.gguf
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00009-of-00012.gguf
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00010-of-00012.gguf
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00011-of-00012.gguf
+      - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00012-of-00012.gguf
+    verify_glob: "Q3_K_M/*.gguf"
+    manual_note: "🧪 EXPERIMENTAL — TRUE K-quant, one tier above devquasar-q2k. ⭐ 0.0% i-quant (Q3_K x84 3,520 KiB + Q4_K x42 4,608 KiB, 134.37 GiB experts), gated from the tensor table. Non-expert side 4.78 GiB — between Q2_K's 3.90 and UD-IQ3_XXS's 7.33 — so its pool lands nearer the served config and it is the LESS confounded K-quant arm, and the plausible serving candidate. MEASURED 2026-09-10 dual: narrative 23.53 (CV 8.0%) / code 27.50 / prefill@10K 310.7, 5,829 slots, marginal hit 43.9/45.8%. ⭐ vs devquasar-q2k: +31% expert bytes gave a decode ratio of 0.768/0.790 against a byte-proportional prediction of 0.764, while prefill fell only to 0.901 — decode tracks bytes, prefill is compute-bound. ⚠️ NO MTP head (block_count=45). ⚠️ ~142 GiB host RSS under --no-mmap (vs Q2_K's ~109) — fits 196 GiB with ~48 GiB spare. ⚠️ QUALITY UNMEASURED. ⚠️⚠️ The K-quant-vs-served-i-quant comparison is NOT established: those arms ran at reasoning_effort=high (effectively thinking-OFF) while every prior BENCHMARKS row ran thinking-MAX. See learnings/glm-5.3-flash.md 2026-09-10."
   dflash2-q4km:
     path: glm-5.3-flash-gguf/dflash2
     # ⚠️ REPO-ROOT artifact (the Anbeeld repo has no subfolder), so it lands FLAT and
@@ -173,4 +222,13 @@ default_weight_variant: unsloth-ud-iq4xs
 setup:
   primary: unsloth-ud-iq4xs
   always_draft: dflash2-q4km
+  # ⚠️ Without these, EVERY non-primary variant — including `unsloth-ud-iq3xxs`,
+  # which is what the dual slug actually SERVES — is reachable only via the
+  # `WEIGHT_KEY=glm-5.3-flash:<variant>` escape hatch, because `WEIGHTS=<name>`
+  # hard-errors on an unregistered alias (setup.sh:417).
+  weights_aliases:
+    iq4xs: unsloth-ud-iq4xs
+    iq3xxs: unsloth-ud-iq3xxs
+    q2k: devquasar-q2k
+    q3km: devquasar-q3km
   vision: mmproj-f16

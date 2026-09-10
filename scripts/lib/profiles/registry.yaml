@@ -2078,6 +2078,204 @@ entries:
     serve_aliases: []
     required_sm: 8.6
     category: frontier
+  llamacpp-club3090/glm53-flash-dual-q2k-moecache:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q2k
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 110
+    chat_template: native
+    tp: 2
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/dual/devquasar-q2k/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8130
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - BOOTED AND BENCHED HERE. ⭐ TRUE K-quant: expert path 0.0% i-quant (Q2_K x84 / Q3_K x42, 102.62 GiB), gated from the GGUF tensor table BEFORE download. Per-expert rows near byte-matched to the served UD-IQ3_XXS (2,688 vs 2,624 gate/up; `down` IDENTICAL at 3,520). ⚠️⚠️ NOT a quality peer of the UD siblings - DevQuasar quantises ATTENTION to Q2_K/Q3_K and `token_embd` to Q2_K where unsloth UD holds Q6_K/Q8_0; non-expert 3.90 GiB vs 7.33, which is ALSO why the pool comes out ~2x larger, so the throughput win is cheap reconstruction PLUS a bigger cache and one arm cannot separate them. Treat as a SPEED EXHIBIT until an 8-pack says otherwise. MEASURED 2026-09-09 (dual, bench.sh canonical, v1.6-rc0 d9cc8af98, SPEC_N=2, -ub 2048): narrative 30.65 (CV 1.8%) / code 34.83 (CV 6.3%) / prefill@10K 344.8; engine-side decode median 30.71; 7,970 pool slots (CUDA0 4,480 + CUDA1 3,490), marginal hit 53.3/53.8%; DFlash2 n=2 acceptance 0.81-0.86, fired 20/20; health counters PASS. Boots in 85 s, coherent. ⚠️ NO MTP head (block_count=45, no nextn_predict_layers) - the loader accepts this and the external DFlash2 drafter does not need it. ⚠️ QUALITY UNMEASURED: no verify-full, no 8-pack, on this model at ANY quant. ⚠️⚠️ The K-quant-vs-served-i-quant claim is NOT established - these arms ran reasoning_effort=high (effectively thinking-OFF) while every prior BENCHMARKS row ran thinking-MAX, because bench's thinking-off attempt sends `none` which this model coerces to `max`. A paired UD-IQ3_XXS arm through this harness is owed. See learnings/glm-5.3-flash.md 2026-09-10."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi4-q2k-moecache:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q2k
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 110
+    chat_template: native
+    tp: 4
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi4/devquasar-q2k/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8131
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - NEVER BOOTED (this rig has 2 GPUs; multi4/multi8 are COMMUNITY-VALIDATED BY DESIGN). Copied from the multi4/unsloth-ud-iq3xxs sibling with only the weights path, service key, container_name and port changed. ⭐ TRUE K-quant: expert path 0.0% i-quant (Q2_K x84 / Q3_K x42, 102.62 GiB), gated from the GGUF tensor table BEFORE download. Per-expert rows near byte-matched to the served UD-IQ3_XXS (2,688 vs 2,624 gate/up; `down` IDENTICAL at 3,520). ⚠️⚠️ NOT a quality peer of the UD siblings - DevQuasar quantises ATTENTION to Q2_K/Q3_K and `token_embd` to Q2_K where unsloth UD holds Q6_K/Q8_0; non-expert 3.90 GiB vs 7.33, which is ALSO why the pool comes out ~2x larger, so the throughput win is cheap reconstruction PLUS a bigger cache and one arm cannot separate them. Treat as a SPEED EXHIBIT until an 8-pack says otherwise. The DUAL sibling of this quant IS measured - MEASURED 2026-09-09 (dual, bench.sh canonical, v1.6-rc0 d9cc8af98, SPEC_N=2, -ub 2048): narrative 30.65 (CV 1.8%) / code 34.83 (CV 6.3%) / prefill@10K 344.8; engine-side decode median 30.71; 7,970 pool slots (CUDA0 4,480 + CUDA1 3,490), marginal hit 53.3/53.8%; DFlash2 n=2 acceptance 0.81-0.86, fired 20/20; health counters PASS. Boots in 85 s, coherent. Those numbers are tp=2 and do NOT transfer to tp=4. ⚠️ NO MTP head (block_count=45, no nextn_predict_layers) - the loader accepts this and the external DFlash2 drafter does not need it. ⚠️ QUALITY UNMEASURED: no verify-full, no 8-pack, on this model at ANY quant. ⚠️⚠️ The K-quant-vs-served-i-quant claim is NOT established - these arms ran reasoning_effort=high (effectively thinking-OFF) while every prior BENCHMARKS row ran thinking-MAX, because bench's thinking-off attempt sends `none` which this model coerces to `max`. A paired UD-IQ3_XXS arm through this harness is owed. See learnings/glm-5.3-flash.md 2026-09-10."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi8-q2k-moecache:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q2k
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 110
+    chat_template: native
+    tp: 8
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi8/devquasar-q2k/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8132
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - NEVER BOOTED (this rig has 2 GPUs; multi4/multi8 are COMMUNITY-VALIDATED BY DESIGN). Copied from the multi8/unsloth-ud-iq3xxs sibling with only the weights path, service key, container_name and port changed. ⭐ TRUE K-quant: expert path 0.0% i-quant (Q2_K x84 / Q3_K x42, 102.62 GiB), gated from the GGUF tensor table BEFORE download. Per-expert rows near byte-matched to the served UD-IQ3_XXS (2,688 vs 2,624 gate/up; `down` IDENTICAL at 3,520). ⚠️⚠️ NOT a quality peer of the UD siblings - DevQuasar quantises ATTENTION to Q2_K/Q3_K and `token_embd` to Q2_K where unsloth UD holds Q6_K/Q8_0; non-expert 3.90 GiB vs 7.33, which is ALSO why the pool comes out ~2x larger, so the throughput win is cheap reconstruction PLUS a bigger cache and one arm cannot separate them. Treat as a SPEED EXHIBIT until an 8-pack says otherwise. The DUAL sibling of this quant IS measured - MEASURED 2026-09-09 (dual, bench.sh canonical, v1.6-rc0 d9cc8af98, SPEC_N=2, -ub 2048): narrative 30.65 (CV 1.8%) / code 34.83 (CV 6.3%) / prefill@10K 344.8; engine-side decode median 30.71; 7,970 pool slots (CUDA0 4,480 + CUDA1 3,490), marginal hit 53.3/53.8%; DFlash2 n=2 acceptance 0.81-0.86, fired 20/20; health counters PASS. Boots in 85 s, coherent. Those numbers are tp=2 and do NOT transfer to tp=8. ⚠️ NO MTP head (block_count=45, no nextn_predict_layers) - the loader accepts this and the external DFlash2 drafter does not need it. ⚠️ QUALITY UNMEASURED: no verify-full, no 8-pack, on this model at ANY quant. ⚠️⚠️ The K-quant-vs-served-i-quant claim is NOT established - these arms ran reasoning_effort=high (effectively thinking-OFF) while every prior BENCHMARKS row ran thinking-MAX, because bench's thinking-off attempt sends `none` which this model coerces to `max`. A paired UD-IQ3_XXS arm through this harness is owed. See learnings/glm-5.3-flash.md 2026-09-10."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-dual-q3km-moecache:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q3km
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 145
+    chat_template: native
+    tp: 2
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/dual/devquasar-q3km/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8133
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - BOOTED AND BENCHED HERE. ⭐ TRUE K-quant one tier up: 0.0% i-quant (Q3_K x84 / Q4_K x42, 134.37 GiB), tensor-table gated. Non-expert 4.78 GiB - between Q2_K's 3.90 and UD-IQ3_XXS's 7.33 - so its pool lands nearer the served config, making this the LESS confounded K-quant arm and the plausible serving candidate. ⭐ vs q2k: +31% expert bytes gave decode ratio 0.768/0.790 against a byte-proportional prediction of 0.764, while prefill fell only to 0.901 - decode tracks bytes, prefill is compute-bound. MEASURED 2026-09-10 (dual, same harness): narrative 23.53 (CV 8.0% - widest of any GLM arm, treat the mean as soft) / code 27.50 (CV 6.0%) / prefill@10K 310.7; engine-side decode median 25.00; 5,829 pool slots (CUDA0 3,282 + CUDA1 2,547), marginal hit 43.9/45.8%; health PASS. Boots in 139 s, coherent. ⚠️ NO MTP head (block_count=45, no nextn_predict_layers) - the loader accepts this and the external DFlash2 drafter does not need it. ⚠️ QUALITY UNMEASURED: no verify-full, no 8-pack, on this model at ANY quant. ⚠️⚠️ The K-quant-vs-served-i-quant claim is NOT established - these arms ran reasoning_effort=high (effectively thinking-OFF) while every prior BENCHMARKS row ran thinking-MAX, because bench's thinking-off attempt sends `none` which this model coerces to `max`. A paired UD-IQ3_XXS arm through this harness is owed. See learnings/glm-5.3-flash.md 2026-09-10."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi4-q3km-moecache:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q3km
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 145
+    chat_template: native
+    tp: 4
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi4/devquasar-q3km/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8134
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - NEVER BOOTED (this rig has 2 GPUs; multi4/multi8 are COMMUNITY-VALIDATED BY DESIGN). Copied from the multi4/unsloth-ud-iq3xxs sibling with only the weights path, service key, container_name and port changed. ⭐ TRUE K-quant one tier up: 0.0% i-quant (Q3_K x84 / Q4_K x42, 134.37 GiB), tensor-table gated. Non-expert 4.78 GiB - between Q2_K's 3.90 and UD-IQ3_XXS's 7.33 - so its pool lands nearer the served config, making this the LESS confounded K-quant arm and the plausible serving candidate. ⭐ vs q2k: +31% expert bytes gave decode ratio 0.768/0.790 against a byte-proportional prediction of 0.764, while prefill fell only to 0.901 - decode tracks bytes, prefill is compute-bound. The DUAL sibling of this quant IS measured - MEASURED 2026-09-10 (dual, same harness): narrative 23.53 (CV 8.0% - widest of any GLM arm, treat the mean as soft) / code 27.50 (CV 6.0%) / prefill@10K 310.7; engine-side decode median 25.00; 5,829 pool slots (CUDA0 3,282 + CUDA1 2,547), marginal hit 43.9/45.8%; health PASS. Boots in 139 s, coherent. Those numbers are tp=2 and do NOT transfer to tp=4. ⚠️ NO MTP head (block_count=45, no nextn_predict_layers) - the loader accepts this and the external DFlash2 drafter does not need it. ⚠️ QUALITY UNMEASURED: no verify-full, no 8-pack, on this model at ANY quant. ⚠️⚠️ The K-quant-vs-served-i-quant claim is NOT established - these arms ran reasoning_effort=high (effectively thinking-OFF) while every prior BENCHMARKS row ran thinking-MAX, because bench's thinking-off attempt sends `none` which this model coerces to `max`. A paired UD-IQ3_XXS arm through this harness is owed. See learnings/glm-5.3-flash.md 2026-09-10."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi8-q3km-moecache:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q3km
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 145
+    chat_template: native
+    tp: 8
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi8/devquasar-q3km/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8135
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - NEVER BOOTED (this rig has 2 GPUs; multi4/multi8 are COMMUNITY-VALIDATED BY DESIGN). Copied from the multi8/unsloth-ud-iq3xxs sibling with only the weights path, service key, container_name and port changed. ⭐ TRUE K-quant one tier up: 0.0% i-quant (Q3_K x84 / Q4_K x42, 134.37 GiB), tensor-table gated. Non-expert 4.78 GiB - between Q2_K's 3.90 and UD-IQ3_XXS's 7.33 - so its pool lands nearer the served config, making this the LESS confounded K-quant arm and the plausible serving candidate. ⭐ vs q2k: +31% expert bytes gave decode ratio 0.768/0.790 against a byte-proportional prediction of 0.764, while prefill fell only to 0.901 - decode tracks bytes, prefill is compute-bound. The DUAL sibling of this quant IS measured - MEASURED 2026-09-10 (dual, same harness): narrative 23.53 (CV 8.0% - widest of any GLM arm, treat the mean as soft) / code 27.50 (CV 6.0%) / prefill@10K 310.7; engine-side decode median 25.00; 5,829 pool slots (CUDA0 3,282 + CUDA1 2,547), marginal hit 43.9/45.8%; health PASS. Boots in 139 s, coherent. Those numbers are tp=2 and do NOT transfer to tp=8. ⚠️ NO MTP head (block_count=45, no nextn_predict_layers) - the loader accepts this and the external DFlash2 drafter does not need it. ⚠️ QUALITY UNMEASURED: no verify-full, no 8-pack, on this model at ANY quant. ⚠️⚠️ The K-quant-vs-served-i-quant claim is NOT established - these arms ran reasoning_effort=high (effectively thinking-OFF) while every prior BENCHMARKS row ran thinking-MAX, because bench's thinking-off attempt sends `none` which this model coerces to `max`. A paired UD-IQ3_XXS arm through this harness is owed. See learnings/glm-5.3-flash.md 2026-09-10."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
   llamacpp-club3090/qwen38-flash-next-dual-q4kxl-moecache:
     model: qwen3.8-flash-next
     weights_variant: unsloth-ud-q4kxl
