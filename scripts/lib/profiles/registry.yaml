@@ -2276,6 +2276,204 @@ entries:
     serve_aliases: []
     required_sm: 8.6
     category: frontier
+  llamacpp-club3090/glm53-flash-dual-q2k-offload:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q2k
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: residency
+    moe_cache: false
+    host_ram_gb: 110
+    chat_template: native
+    tp: 2
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/dual/devquasar-q2k/offload.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8136
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - ⭐ BOOTED AND VALIDATED 2026-09-10 (the only static arm this rig can test). Mechanism confirmed end-to-end: the resolved pinning reached engine argv (blk 3|4|5=CUDA0, 44|43|42|41=CUDA1), `--moe-cache off` built ZERO pool lines, healthy in ~58 s, coherent output, DFlash2 accepting 0.786 (mean len 2.57). VRAM fit predicted card0 17,606 / card1 22,450 MiB vs measured 17,056 / 22,422 - card1 within 28 MiB. ⚠️ HOST RSS 90.7 GiB on the AUTO grant, ~5 GiB WORSE than raw bundle arithmetic predicts - do not size a box from bundle counts alone. ⭐ The auto grant leaves card0 ~7.3 GiB IDLE because draft_reserve is charged to EVERY card while `-devd CUDA1` pins the drafter to one; hand-tuning OT_G0 to 5 bundles rebalances to 22,048/22,412 MiB and drops host RSS to 85.9 GiB (-4.9 GiB). See the compose banner for the rule. STATIC-OFFLOAD tier: the LOW-HOST-RAM sibling of glm53-flash-dual-q2k-moecache. Runs `--moe-cache off` and pins whole expert layers onto the cards via OT_G0..1, sized at launch by resolve_offload_residency() from DETECTED free VRAM; only the layers that do not fit stay on the host. ⭐ THE POINT: host RAM FALLS as card count RISES. With 102.62 GiB of experts, host need is ~86 GB on dual / ~64 GB on multi4 / ~5 GB on multi8 (24 GB cards, resolver-derived), against the moe-cache sibling's ~112 GB - which is what gates 96 GB boxes out. ✅ Fits a 96 GB host (86 GB, the tightest of the q2k arms). ⚠️ Bare `docker compose up` degrades SAFELY to all-experts-on-CPU (the -ot defaults match blk.99999); the launcher is what grants residency. ⚠️ CPU-Offload-First-MoE-Layer is 3, NOT 0 - GLM has 3 leading dense blocks carrying no `*_exps` tensors, and a rule naming one matches nothing. ⚠️ GPU-Reserve is DERIVED from the measured 2-card moecache boot, NOT measured at tp=2; this rig has 2 GPUs. ⚠️ QUALITY UNMEASURED, same as every GLM quant. Mechanism ported from the VALIDATED DeepSeek-V4-Flash-0731 static tier."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi4-q2k-offload:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q2k
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: residency
+    moe_cache: false
+    host_ram_gb: 110
+    chat_template: native
+    tp: 4
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi4/devquasar-q2k/offload.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8137
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - ⛔ NEVER BOOTED. STATIC-OFFLOAD tier: the LOW-HOST-RAM sibling of glm53-flash-multi4-q2k-moecache. Runs `--moe-cache off` and pins whole expert layers onto the cards via OT_G0..3, sized at launch by resolve_offload_residency() from DETECTED free VRAM; only the layers that do not fit stay on the host. ⭐ THE POINT: host RAM FALLS as card count RISES. With 102.62 GiB of experts, host need is ~86 GB on dual / ~64 GB on multi4 / ~5 GB on multi8 (24 GB cards, resolver-derived), against the moe-cache sibling's ~112 GB - which is what gates 96 GB boxes out. ✅ Fits a 96 GB host comfortably (64 GB). ⚠️ Bare `docker compose up` degrades SAFELY to all-experts-on-CPU (the -ot defaults match blk.99999); the launcher is what grants residency. ⚠️ CPU-Offload-First-MoE-Layer is 3, NOT 0 - GLM has 3 leading dense blocks carrying no `*_exps` tensors, and a rule naming one matches nothing. ⚠️ GPU-Reserve is DERIVED from the measured 2-card moecache boot, NOT measured at tp=4; this rig has 2 GPUs. ⚠️ QUALITY UNMEASURED, same as every GLM quant. Mechanism ported from the VALIDATED DeepSeek-V4-Flash-0731 static tier."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi8-q2k-offload:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q2k
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: residency
+    moe_cache: false
+    host_ram_gb: 110
+    chat_template: native
+    tp: 8
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi8/devquasar-q2k/offload.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8138
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - ⛔ NEVER BOOTED. STATIC-OFFLOAD tier: the LOW-HOST-RAM sibling of glm53-flash-multi8-q2k-moecache. Runs `--moe-cache off` and pins whole expert layers onto the cards via OT_G0..7, sized at launch by resolve_offload_residency() from DETECTED free VRAM; only the layers that do not fit stay on the host. ⭐ THE POINT: host RAM FALLS as card count RISES. With 102.62 GiB of experts, host need is ~86 GB on dual / ~64 GB on multi4 / ~5 GB on multi8 (24 GB cards, resolver-derived), against the moe-cache sibling's ~112 GB - which is what gates 96 GB boxes out. ✅ Nearly all experts land on GPU (40 of 42 bundles); host need is trivial. ⚠️ Bare `docker compose up` degrades SAFELY to all-experts-on-CPU (the -ot defaults match blk.99999); the launcher is what grants residency. ⚠️ CPU-Offload-First-MoE-Layer is 3, NOT 0 - GLM has 3 leading dense blocks carrying no `*_exps` tensors, and a rule naming one matches nothing. ⚠️ GPU-Reserve is DERIVED from the measured 2-card moecache boot, NOT measured at tp=8; this rig has 2 GPUs. ⚠️ QUALITY UNMEASURED, same as every GLM quant. Mechanism ported from the VALIDATED DeepSeek-V4-Flash-0731 static tier."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-dual-q3km-offload:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q3km
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: residency
+    moe_cache: false
+    host_ram_gb: 145
+    chat_template: native
+    tp: 2
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/dual/devquasar-q3km/offload.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8139
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - ⛔ NEVER BOOTED. STATIC-OFFLOAD tier: the LOW-HOST-RAM sibling of glm53-flash-dual-q3km-moecache. Runs `--moe-cache off` and pins whole expert layers onto the cards via OT_G0..1, sized at launch by resolve_offload_residency() from DETECTED free VRAM; only the layers that do not fit stay on the host. ⭐ THE POINT: host RAM FALLS as card count RISES. With 134.37 GiB of experts, host need is ~118 GB on dual / ~96 GB on multi4 / ~35 GB on multi8 (24 GB cards, resolver-derived), against the moe-cache sibling's ~148 GB - which is what gates 96 GB boxes out. ⛔ 118 GB - this arm does NOT solve the 96 GB case. Use q3km multi8, or q2k. It ships as the no-pool option for 2-card boxes that HAVE the RAM. ⚠️ Bare `docker compose up` degrades SAFELY to all-experts-on-CPU (the -ot defaults match blk.99999); the launcher is what grants residency. ⚠️ CPU-Offload-First-MoE-Layer is 3, NOT 0 - GLM has 3 leading dense blocks carrying no `*_exps` tensors, and a rule naming one matches nothing. ⚠️ GPU-Reserve is DERIVED from the measured 2-card moecache boot, NOT measured at tp=2; this rig has 2 GPUs. ⚠️ QUALITY UNMEASURED, same as every GLM quant. Mechanism ported from the VALIDATED DeepSeek-V4-Flash-0731 static tier."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi4-q3km-offload:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q3km
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: residency
+    moe_cache: false
+    host_ram_gb: 145
+    chat_template: native
+    tp: 4
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi4/devquasar-q3km/offload.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8140
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - ⛔ NEVER BOOTED. STATIC-OFFLOAD tier: the LOW-HOST-RAM sibling of glm53-flash-multi4-q3km-moecache. Runs `--moe-cache off` and pins whole expert layers onto the cards via OT_G0..3, sized at launch by resolve_offload_residency() from DETECTED free VRAM; only the layers that do not fit stay on the host. ⭐ THE POINT: host RAM FALLS as card count RISES. With 134.37 GiB of experts, host need is ~118 GB on dual / ~96 GB on multi4 / ~35 GB on multi8 (24 GB cards, resolver-derived), against the moe-cache sibling's ~148 GB - which is what gates 96 GB boxes out. ⚠️ ~96 GB - lands ON the line for a 96 GB box, NOT a comfortable fit. The resolver is floor-conservative (12 of 42 bundles at tp=4); treat as borderline and prefer q2k multi4 or q3km multi8. ⚠️ Bare `docker compose up` degrades SAFELY to all-experts-on-CPU (the -ot defaults match blk.99999); the launcher is what grants residency. ⚠️ CPU-Offload-First-MoE-Layer is 3, NOT 0 - GLM has 3 leading dense blocks carrying no `*_exps` tensors, and a rule naming one matches nothing. ⚠️ GPU-Reserve is DERIVED from the measured 2-card moecache boot, NOT measured at tp=4; this rig has 2 GPUs. ⚠️ QUALITY UNMEASURED, same as every GLM quant. Mechanism ported from the VALIDATED DeepSeek-V4-Flash-0731 static tier."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi8-q3km-offload:
+    model: glm-5.3-flash
+    weights_variant: devquasar-q3km
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: residency
+    moe_cache: false
+    host_ram_gb: 145
+    chat_template: native
+    tp: 8
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi8/devquasar-q3km/offload.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8141
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - ⛔ NEVER BOOTED. STATIC-OFFLOAD tier: the LOW-HOST-RAM sibling of glm53-flash-multi8-q3km-moecache. Runs `--moe-cache off` and pins whole expert layers onto the cards via OT_G0..7, sized at launch by resolve_offload_residency() from DETECTED free VRAM; only the layers that do not fit stay on the host. ⭐ THE POINT: host RAM FALLS as card count RISES. With 134.37 GiB of experts, host need is ~118 GB on dual / ~96 GB on multi4 / ~35 GB on multi8 (24 GB cards, resolver-derived), against the moe-cache sibling's ~148 GB - which is what gates 96 GB boxes out. ✅ Fits a 96 GB host (35 GB); 31 of 42 bundles land on GPU. ⚠️ Bare `docker compose up` degrades SAFELY to all-experts-on-CPU (the -ot defaults match blk.99999); the launcher is what grants residency. ⚠️ CPU-Offload-First-MoE-Layer is 3, NOT 0 - GLM has 3 leading dense blocks carrying no `*_exps` tensors, and a rule naming one matches nothing. ⚠️ GPU-Reserve is DERIVED from the measured 2-card moecache boot, NOT measured at tp=8; this rig has 2 GPUs. ⚠️ QUALITY UNMEASURED, same as every GLM quant. Mechanism ported from the VALIDATED DeepSeek-V4-Flash-0731 static tier."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
   llamacpp-club3090/qwen38-flash-next-dual-q4kxl-moecache:
     model: qwen3.8-flash-next
     weights_variant: unsloth-ud-q4kxl
