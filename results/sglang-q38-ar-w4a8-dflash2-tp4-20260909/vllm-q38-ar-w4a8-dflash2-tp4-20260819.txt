@@ -1,0 +1,800 @@
+# bench-ultimate.sh — vllm-q38-ar-w4a8-dflash2-tp4
+# Date: 2026-08-19
+# Host: Ur4nus, 4x RTX 3090 (24GB), NVIDIA driver 610.57.04, vLLM v0.27.1
+# Model: Qwen3.8-27B (AutoRound W4A8, dflash2 speculative decoding, TP=4)
+# Stack: vllm-q38-ar-w4a8-dflash2-tp4 (TP4, max_model_len=262144)
+# Concurrency: 1,2,4,8,16 | Runs: 3 | Warmups: 2 | Prefill sizes: 512..16384 (gen=16, unique markers)
+# GPU power limit: 220W per GPU (all phases ~875W total at load)
+
+=== Ultimate OpenAI-Backend Bench ===
+  URL: http://localhost:8000
+  Model: vLLM
+  Mode: full
+  Containers: vllm-q38-ar-w4a8-dflash2-tp4
+  Concurrency levels (decode): 1,2,4,8,16
+  Prefill sizes (target tokens): 512,1024,2048,4096,8192,16384
+  Runs: decode=3 (warmups 2), prefill=2 (warmups 1)
+  GPU poll interval: 0.5s   JSON out: off
+
+  NVIDIA driver: 610.57.04
+  GPUs (idle snapshot):
+    0, NVIDIA GeForce RTX 3090, 24576, 60, 129.57, 220.00, 1695
+    1, NVIDIA GeForce RTX 3090, 24576, 55, 116.47, 220.00, 1695
+    2, NVIDIA GeForce RTX 3090, 24576, 59, 123.65, 220.00, 1695
+    3, NVIDIA GeForce RTX 3090, 24576, 56, 122.30, 220.00, 1695
+
+  vLLM /version: {"version":"0.27.1"}
+
+  Served model id: vLLM  max_model_len: 262144
+  vLLM /metrics: available (http://localhost:8000/metrics) — will report deltas
+
+========================================================================
+  PREFILL BENCH (concurrency=1, gen=16 tok, unique=True)
+========================================================================
+
+--- Prefill target ~512 tokens ---
+  warm-1: actual_prompt=   553  ttft=    308ms  prefill_TPS=  1793.5
+  run-1: actual_prompt=   551  ttft=    302ms  prefill_TPS=  1821.8  gen_TPS= 75.38  wall=  0.51s
+  run-2: actual_prompt=   553  ttft=    326ms  prefill_TPS=  1694.2  gen_TPS= 57.16  wall=  0.61s
+  GPU during prefill ~512t (1.1s, 8 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    91.0   19.0    22850    22850  164.8  184.8   65.0   66.0     1838
+       1    77.5   23.0    22850    22850  156.2  177.8   58.5   59.0     1912
+       2   100.0   16.0    22850    22850  157.0  179.0   64.5   65.0     1845
+       3    76.5   25.0    22850    22850  163.7  184.4   64.0   65.0     1852
+    total power avg=641.7 W   phase throughput=1013.0 tok/s   efficiency: 1.5786 tok/W  (1578.60 tok/kJ)
+
+  === prefill summary [~512 tok] (n=2) ===
+  TTFT (ms)            mean=  314.43ms   std=  16.94   CV= 5.4%   min=302.45   max=326.41
+  prefill tok/s        mean= 1758.01   std=   90.23   CV= 5.1%   min=1694.21   max=1821.81
+  gen tok/s (c1)       mean=   66.27   std=   12.88   CV=19.4%   min=57.16   max=75.38
+  actual prompt tokens: mean=552 (target 512)
+
+--- Prefill target ~1024 tokens ---
+  warm-1: actual_prompt=  1052  ttft=    561ms  prefill_TPS=  1876.1
+  run-1: actual_prompt=  1053  ttft=    553ms  prefill_TPS=  1903.0  gen_TPS= 72.96  wall=  0.77s
+  run-2: actual_prompt=  1054  ttft=    578ms  prefill_TPS=  1823.4  gen_TPS= 67.07  wall=  0.82s
+  GPU during prefill ~1024t (1.6s, 12 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    92.7   17.3    22850    22850  219.0  220.3   67.0   67.0     1820
+       1    90.7   18.7    22850    22850  217.9  218.1   59.3   60.0     1895
+       2    92.0   18.0    22850    22850  218.6  218.9   67.0   67.0     1800
+       3   100.0   14.0    22850    22850  218.3  219.3   68.0   69.0     1850
+    total power avg=873.7 W   phase throughput=1345.6 tok/s   efficiency: 1.5401 tok/W  (1540.09 tok/kJ)
+
+  === prefill summary [~1024 tok] (n=2) ===
+  TTFT (ms)            mean=  565.68ms   std=  17.47   CV= 3.1%   min=553.33   max=578.04
+  prefill tok/s        mean= 1863.22   std=   56.29   CV= 3.0%   min=1823.41   max=1903.02
+  gen tok/s (c1)       mean=   70.01   std=    4.17   CV= 6.0%   min=67.07   max=72.96
+  actual prompt tokens: mean=1054 (target 1024)
+
+--- Prefill target ~2048 tokens ---
+  warm-1: actual_prompt=  2060  ttft=   1066ms  prefill_TPS=  1932.6
+  run-1: actual_prompt=  2060  ttft=   1070ms  prefill_TPS=  1925.5  gen_TPS= 81.66  wall=  1.27s
+  run-2: actual_prompt=  2061  ttft=   1089ms  prefill_TPS=  1893.3  gen_TPS= 78.28  wall=  1.29s
+  GPU during prefill ~2048t (2.6s, 16 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    91.0   15.8    22850    22850  218.4  218.6   68.0   69.0     1826
+       1    91.8   13.8    22850    22850  216.6  217.1   60.0   60.0     1852
+       2    94.2   17.5    22850    22850  218.8  219.0   68.2   69.0     1811
+       3    94.5   15.2    22850    22850  217.7  219.2   69.8   70.0     1826
+    total power avg=871.5 W   phase throughput=1622.8 tok/s   efficiency: 1.8619 tok/W  (1861.95 tok/kJ)
+
+  === prefill summary [~2048 tok] (n=2) ===
+  TTFT (ms)            mean= 1079.21ms   std=   13.24   CV= 1.2%   min=1069.85   max=1088.58
+  prefill tok/s        mean= 1909.40   std=   22.77   CV= 1.2%   min=1893.30   max=1925.50
+  gen tok/s (c1)       mean=   79.97   std=    2.39   CV= 3.0%   min=78.28   max=81.66
+  actual prompt tokens: mean=2060 (target 2048)
+
+--- Prefill target ~4096 tokens ---
+  warm-1: actual_prompt=  4075  ttft=   2128ms  prefill_TPS=  1915.3
+  run-1: actual_prompt=  4074  ttft=   2124ms  prefill_TPS=  1918.0  gen_TPS=101.69  wall=  2.28s
+  run-2: actual_prompt=  4073  ttft=   2140ms  prefill_TPS=  1903.0  gen_TPS=165.04  wall=  2.24s
+  GPU during prefill ~4096t (4.5s, 28 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    98.3   13.6    22850    22850  219.3  220.2   69.6   70.0     1764
+       1    96.0   15.3    22850    22850  218.4  219.2   61.4   62.0     1875
+       2    95.4   14.6    22850    22850  218.2  219.0   69.7   70.0     1824
+       3    95.0   15.7    22850    22850  219.0  219.4   71.1   72.0     1824
+    total power avg=874.9 W   phase throughput=1809.8 tok/s   efficiency: 2.0685 tok/W  (2068.55 tok/kJ)
+
+  === prefill summary [~4096 tok] (n=2) ===
+  TTFT (ms)            mean= 2132.20ms   std=   11.45   CV= 0.5%   min=2124.11   max=2140.29
+  prefill tok/s        mean= 1910.50   std=   10.59   CV= 0.6%   min=1903.01   max=1917.98
+  gen tok/s (c1)       mean=  133.36   std=   44.80   CV=33.6%   min=101.69   max=165.04
+  actual prompt tokens: mean=4074 (target 4096)
+
+--- Prefill target ~8192 tokens ---
+  warm-1: actual_prompt=  8102  ttft=   4262ms  prefill_TPS=  1901.1
+  run-1: actual_prompt=  8103  ttft=   4263ms  prefill_TPS=  1901.0  gen_TPS=169.34  wall=  4.36s
+  run-2: actual_prompt=  8101  ttft=   4262ms  prefill_TPS=  1900.9  gen_TPS=166.23  wall=  4.36s
+  GPU during prefill ~8192t (8.7s, 56 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0   100.0   12.6    23130    23130  218.3  219.4   70.9   71.0     1775
+       1    98.6   13.5    23130    23130  216.2  218.2   63.1   64.0     1871
+       2    99.6   12.6    23130    23130  217.4  218.4   71.5   72.0     1798
+       3    97.8   14.0    23130    23130  218.0  218.7   72.2   73.0     1806
+    total power avg=869.9 W   phase throughput=1862.8 tok/s   efficiency: 2.1415 tok/W  (2141.53 tok/kJ)
+
+  === prefill summary [~8192 tok] (n=2) ===
+  TTFT (ms)            mean= 4262.14ms   std=    0.53   CV= 0.0%   min=4261.77   max=4262.52
+  prefill tok/s        mean= 1900.92   std=    0.10   CV= 0.0%   min=1900.85   max=1900.99
+  gen tok/s (c1)       mean=  167.79   std=    2.20   CV= 1.3%   min=166.23   max=169.34
+  actual prompt tokens: mean=8102 (target 8192)
+
+--- Prefill target ~16384 tokens ---
+  warm-1: actual_prompt= 16159  ttft=   8635ms  prefill_TPS=  1871.2
+  run-1: actual_prompt= 16160  ttft=   8626ms  prefill_TPS=  1873.4  gen_TPS= 73.68  wall=  8.84s
+  run-2: actual_prompt= 16161  ttft=   8632ms  prefill_TPS=  1872.2  gen_TPS= 82.25  wall=  8.83s
+  GPU during prefill ~16384t (17.7s, 112 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    99.0   12.7    23430    23430  214.9  219.5   71.6   72.0     1729
+       1    99.0   12.6    23430    23430  211.1  217.4   64.9   66.0     1834
+       2    99.4   12.8    23430    23430  215.1  219.1   73.1   74.0     1765
+       3    98.7   12.9    23430    23430  214.5  218.6   72.9   73.0     1774
+    total power avg=855.6 W   phase throughput=1830.9 tok/s   efficiency: 2.1399 tok/W  (2139.94 tok/kJ)
+
+  === prefill summary [~16384 tok] (n=2) ===
+  TTFT (ms)            mean= 8629.05ms   std=    4.39   CV= 0.1%   min=8625.94   max=8632.15
+  prefill tok/s        mean= 1872.80   std=    0.87   CV= 0.0%   min=1872.19   max=1873.42
+  gen tok/s (c1)       mean=   77.96   std=    6.06   CV= 7.8%   min=73.68   max=82.25
+  actual prompt tokens: mean=16160 (target 16384)
+
+========================================================================
+  DECODE SATURATION — NARRATIVE (prompt=65 chars, max_tokens=1000)
+========================================================================
+
+--- Concurrency=1 (simultaneous requests) ---
+  warmups (2):
+    w1-r0      wall=   9.73s  ttft=   198ms  toks=  987  wall_TPS= 101.46  decode_TPS= 103.57  itl_p50= 31.0ms  itl_p95= 35.6ms
+    w2-r0      wall=  10.16s  ttft=    83ms  toks=  992  wall_TPS=  97.59  decode_TPS=  98.39  itl_p50= 31.1ms  itl_p95= 36.0ms
+  GPU during warmup narrative c=1 (19.9s, 136 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    72.3   27.5    23430    23430  218.4  219.3   71.8   72.0     1764
+       1    73.8   27.2    23430    23430  217.5  219.0   65.6   66.0     1853
+       2    75.5   27.7    23430    23430  218.2  218.9   73.6   74.0     1779
+       3    75.6   27.5    23430    23430  218.3  219.2   72.8   73.0     1793
+    r0         wall=   9.54s  ttft=    84ms  toks=  961  wall_TPS= 100.77  decode_TPS= 101.67  itl_p50= 31.2ms  itl_p95= 35.0ms
+  combined   wall_TPS= 100.77  decode_TPS= 101.67  avg_ttft=    84ms  itl_p50= 31.2ms  itl_p95= 35.0ms
+    r0         wall=   9.46s  ttft=    85ms  toks=  978  wall_TPS= 103.34  decode_TPS= 104.28  itl_p50= 31.2ms  itl_p95= 34.9ms
+  combined   wall_TPS= 103.34  decode_TPS= 104.28  avg_ttft=    85ms  itl_p50= 31.2ms  itl_p95= 34.9ms
+    r0         wall=   9.51s  ttft=    84ms  toks=  909  wall_TPS=  95.61  decode_TPS=  96.46  itl_p50= 31.2ms  itl_p95= 35.7ms
+  combined   wall_TPS=  95.61  decode_TPS=  96.46  avg_ttft=    84ms  itl_p50= 31.2ms  itl_p95= 35.7ms
+  GPU during measured narrative c=1 (28.5s, 200 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    73.2   27.5    23430    23430  218.7  219.2   72.2   73.0     1770
+       1    77.3   27.4    23430    23430  218.1  219.1   66.3   67.0     1843
+       2    76.2   27.3    23430    23430  218.6  219.2   74.1   75.0     1755
+       3    71.1   27.3    23430    23430  218.4  219.0   73.0   74.0     1796
+    total power avg=873.8 W   phase throughput=99.9 tok/s   efficiency: 0.1143 tok/W  (114.32 tok/kJ)
+
+  === summary [narrative c=1] (n=3) ===
+  combined wall_TPS    mean=   99.91   std=   3.94   CV= 3.9%   min=95.61   max=103.34
+  combined decode_TPS  mean=  100.80   std=   3.98   CV= 3.9%   min=96.46   max=104.28
+  per-req decode_TPS   mean=  100.80   std=   3.98   CV= 3.9%   min=96.46   max=104.28
+  avg TTFT (ms)        mean=   84.43ms   std=   0.30   CV= 0.4%   min=84.15   max=84.76
+  ITL p50 (ms)         mean=   31.21ms   std=   0.03   CV= 0.1%   min=31.19   max=31.25
+  ITL p95 (ms)         mean=   35.20ms   std=   0.47   CV= 1.3%   min=34.87   max=35.73
+
+--- Concurrency=2 (simultaneous requests) ---
+  warmups (2):
+    w1-r0      wall=  12.51s  ttft=   106ms  toks=  987  wall_TPS=  78.91  decode_TPS=  79.58  itl_p50= 37.6ms  itl_p95= 40.2ms
+    w1-r1      wall=  11.99s  ttft=   106ms  toks=  943  wall_TPS=  78.62  decode_TPS=  79.32  itl_p50= 37.6ms  itl_p95= 40.2ms
+    w2-r0      wall=  11.10s  ttft=   108ms  toks=  911  wall_TPS=  82.05  decode_TPS=  82.86  itl_p50= 37.4ms  itl_p95= 39.9ms
+    w2-r1      wall=  11.40s  ttft=   108ms  toks=  991  wall_TPS=  86.94  decode_TPS=  87.78  itl_p50= 37.3ms  itl_p95= 39.8ms
+  GPU during warmup narrative c=2 (23.9s, 164 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    75.8   24.7    23430    23430  218.5  219.7   72.9   73.0     1763
+       1    78.9   25.0    23430    23430  218.1  219.6   67.0   67.0     1844
+       2    80.2   25.0    23430    23430  218.6  219.6   74.3   75.0     1771
+       3    78.0   25.1    23430    23430  218.5  219.3   73.6   74.0     1801
+    r0         wall=  11.48s  ttft=   108ms  toks= 1000  wall_TPS=  87.10  decode_TPS=  87.92  itl_p50= 37.6ms  itl_p95= 40.4ms
+    r1         wall=  11.45s  ttft=   107ms  toks= 1000  wall_TPS=  87.35  decode_TPS=  88.18  itl_p50= 37.6ms  itl_p95= 40.4ms
+  combined   wall_TPS= 174.19  decode_TPS= 176.10  avg_ttft=   108ms  itl_p50= 37.6ms  itl_p95= 40.4ms
+    r0         wall=  10.68s  ttft=   111ms  toks=  893  wall_TPS=  83.58  decode_TPS=  84.46  itl_p50= 37.4ms  itl_p95= 40.2ms
+    r1         wall=  11.45s  ttft=   111ms  toks=  948  wall_TPS=  82.83  decode_TPS=  83.64  itl_p50= 37.3ms  itl_p95= 40.2ms
+  combined   wall_TPS= 160.85  decode_TPS= 168.10  avg_ttft=   111ms  itl_p50= 37.3ms  itl_p95= 40.2ms
+    r0         wall=  10.56s  ttft=   109ms  toks=  865  wall_TPS=  81.93  decode_TPS=  82.78  itl_p50= 37.3ms  itl_p95= 40.1ms
+    r1         wall=  11.13s  ttft=   109ms  toks= 1000  wall_TPS=  89.87  decode_TPS=  90.76  itl_p50= 37.2ms  itl_p95= 40.1ms
+  combined   wall_TPS= 167.61  decode_TPS= 173.54  avg_ttft=   109ms  itl_p50= 37.3ms  itl_p95= 40.1ms
+  GPU during measured narrative c=2 (34.1s, 236 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    78.4   25.2    23430    23430  218.8  219.6   73.0   73.0     1756
+       1    80.9   25.4    23430    23430  218.7  219.4   67.1   68.0     1842
+       2    80.0   25.3    23430    23430  218.8  219.6   73.5   74.0     1762
+       3    78.3   25.3    23430    23430  218.8  219.6   74.0   74.0     1795
+    total power avg=875.1 W   phase throughput=167.5 tok/s   efficiency: 0.1915 tok/W  (191.46 tok/kJ)
+
+  === summary [narrative c=2] (n=3) ===
+  combined wall_TPS    mean=  167.55   std=   6.67   CV= 4.0%   min=160.85   max=174.19
+  combined decode_TPS  mean=  172.58   std=   4.08   CV= 2.4%   min=168.10   max=176.10
+  per-req decode_TPS   mean=   86.29   std=   2.04   CV= 2.4%   min=84.05   max=88.05
+  avg TTFT (ms)        mean=  109.13ms   std=   1.68   CV= 1.5%   min=107.57   max=110.92
+  ITL p50 (ms)         mean=   37.39ms   std=   0.21   CV= 0.6%   min=37.26   max=37.63
+  ITL p95 (ms)         mean=   40.21ms   std=   0.14   CV= 0.3%   min=40.09   max=40.37
+
+--- Concurrency=4 (simultaneous requests) ---
+  warmups (2):
+    w1-r0      wall=  15.52s  ttft=   124ms  toks=  943  wall_TPS=  60.74  decode_TPS=  61.23  itl_p50= 52.1ms  itl_p95= 54.6ms
+    w1-r1      wall=  15.34s  ttft=   123ms  toks= 1000  wall_TPS=  65.20  decode_TPS=  65.73  itl_p50= 52.1ms  itl_p95= 54.6ms
+    w1-r2      wall=  15.93s  ttft=   123ms  toks=  997  wall_TPS=  62.57  decode_TPS=  63.05  itl_p50= 52.0ms  itl_p95= 54.6ms
+    w1-r3      wall=  15.68s  ttft=   123ms  toks= 1000  wall_TPS=  63.78  decode_TPS=  64.29  itl_p50= 52.1ms  itl_p95= 54.6ms
+    w2-r0      wall=  15.10s  ttft=   111ms  toks=  878  wall_TPS=  58.16  decode_TPS=  58.59  itl_p50= 52.3ms  itl_p95= 54.8ms
+    w2-r1      wall=  16.01s  ttft=   111ms  toks= 1000  wall_TPS=  62.48  decode_TPS=  62.91  itl_p50= 52.2ms  itl_p95= 54.7ms
+    w2-r2      wall=  16.09s  ttft=   110ms  toks=  996  wall_TPS=  61.91  decode_TPS=  62.34  itl_p50= 52.2ms  itl_p95= 54.7ms
+    w2-r3      wall=  16.47s  ttft=   110ms  toks=  982  wall_TPS=  59.62  decode_TPS=  60.02  itl_p50= 52.1ms  itl_p95= 54.7ms
+  GPU during warmup narrative c=4 (32.4s, 220 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    85.8   21.6    23430    23430  219.2  219.6   73.5   74.0     1766
+       1    87.0   21.6    23430    23430  219.2  219.6   67.8   68.0     1847
+       2    88.5   21.5    23430    23430  219.3  219.8   73.1   74.0     1782
+       3    87.2   21.5    23430    23430  219.3  219.7   74.0   75.0     1805
+    r0         wall=  16.40s  ttft=   111ms  toks=  947  wall_TPS=  57.73  decode_TPS=  58.13  itl_p50= 52.5ms  itl_p95= 55.4ms
+    r1         wall=  16.54s  ttft=   111ms  toks= 1000  wall_TPS=  60.45  decode_TPS=  60.86  itl_p50= 52.5ms  itl_p95= 55.4ms
+    r2         wall=  16.45s  ttft=   111ms  toks= 1000  wall_TPS=  60.80  decode_TPS=  61.21  itl_p50= 52.5ms  itl_p95= 55.4ms
+    r3         wall=  16.13s  ttft=   110ms  toks= 1000  wall_TPS=  62.01  decode_TPS=  62.44  itl_p50= 52.6ms  itl_p95= 55.4ms
+  combined   wall_TPS= 238.59  decode_TPS= 242.64  avg_ttft=   111ms  itl_p50= 52.5ms  itl_p95= 55.4ms
+    r0         wall=  15.81s  ttft=   110ms  toks= 1000  wall_TPS=  63.27  decode_TPS=  63.71  itl_p50= 51.8ms  itl_p95= 54.4ms
+    r1         wall=  15.73s  ttft=   110ms  toks= 1000  wall_TPS=  63.57  decode_TPS=  64.02  itl_p50= 51.8ms  itl_p95= 54.5ms
+    r2         wall=  14.49s  ttft=   110ms  toks=  889  wall_TPS=  61.35  decode_TPS=  61.82  itl_p50= 52.0ms  itl_p95= 54.6ms
+    r3         wall=  15.84s  ttft=   110ms  toks=  966  wall_TPS=  60.98  decode_TPS=  61.40  itl_p50= 51.8ms  itl_p95= 54.5ms
+  combined   wall_TPS= 243.34  decode_TPS= 250.95  avg_ttft=   110ms  itl_p50= 51.9ms  itl_p95= 54.5ms
+    r0         wall=  15.29s  ttft=   112ms  toks=  902  wall_TPS=  58.98  decode_TPS=  59.41  itl_p50= 52.3ms  itl_p95= 54.6ms
+    r1         wall=  15.21s  ttft=   112ms  toks=  910  wall_TPS=  59.82  decode_TPS=  60.26  itl_p50= 52.3ms  itl_p95= 54.6ms
+    r2         wall=  14.57s  ttft=   112ms  toks=  828  wall_TPS=  56.83  decode_TPS=  57.27  itl_p50= 52.3ms  itl_p95= 54.6ms
+    r3         wall=  15.59s  ttft=   111ms  toks=  979  wall_TPS=  62.81  decode_TPS=  63.26  itl_p50= 52.2ms  itl_p95= 54.6ms
+  combined   wall_TPS= 232.18  decode_TPS= 240.20  avg_ttft=   112ms  itl_p50= 52.3ms  itl_p95= 54.6ms
+  GPU during measured narrative c=4 (48.0s, 328 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    86.7   21.8    23430    23430  219.3  219.6   73.4   74.0     1772
+       1    87.9   21.7    23430    23430  219.2  219.8   67.9   68.0     1852
+       2    88.6   21.4    23430    23430  219.3  219.7   73.0   73.0     1776
+       3    86.6   21.5    23430    23430  219.2  219.6   74.0   75.0     1801
+    total power avg=876.9 W   phase throughput=238.0 tok/s   efficiency: 0.2715 tok/W  (271.46 tok/kJ)
+
+  === summary [narrative c=4] (n=3) ===
+  combined wall_TPS    mean=  238.04   std=   5.60   CV= 2.4%   min=232.18   max=243.34
+  combined decode_TPS  mean=  244.60   std=   5.64   CV= 2.3%   min=240.20   max=250.95
+  per-req decode_TPS   mean=   61.15   std=   1.41   CV= 2.3%   min=60.05   max=62.74
+  avg TTFT (ms)        mean=  110.94ms   std=   0.72   CV= 0.7%   min=110.20   max=111.65
+  ITL p50 (ms)         mean=   52.23ms   std=   0.34   CV= 0.7%   min=51.86   max=52.54
+  ITL p95 (ms)         mean=   54.85ms   std=   0.51   CV= 0.9%   min=54.52   max=55.44
+
+--- Concurrency=8 (simultaneous requests) ---
+  warmups (2):
+    w1-r0      wall=  26.50s  ttft=   177ms  toks=  940  wall_TPS=  35.47  decode_TPS=  35.70  itl_p50= 86.7ms  itl_p95= 89.6ms
+    w1-r1      wall=  24.15s  ttft=   177ms  toks=  876  wall_TPS=  36.28  decode_TPS=  36.54  itl_p50= 87.0ms  itl_p95= 89.7ms
+    w1-r2      wall=  25.73s  ttft=   177ms  toks=  955  wall_TPS=  37.11  decode_TPS=  37.37  itl_p50= 86.8ms  itl_p95= 89.6ms
+    w1-r3      wall=  26.36s  ttft=   176ms  toks=  943  wall_TPS=  35.77  decode_TPS=  36.01  itl_p50= 86.7ms  itl_p95= 89.6ms
+    w1-r4      wall=  26.62s  ttft=   176ms  toks=  998  wall_TPS=  37.49  decode_TPS=  37.74  itl_p50= 86.7ms  itl_p95= 89.5ms
+    w1-r5      wall=  26.69s  ttft=   176ms  toks= 1000  wall_TPS=  37.46  decode_TPS=  37.71  itl_p50= 86.7ms  itl_p95= 89.5ms
+    w1-r6      wall=  26.09s  ttft=   176ms  toks=  906  wall_TPS=  34.73  decode_TPS=  34.96  itl_p50= 86.7ms  itl_p95= 89.6ms
+    w1-r7      wall=  25.95s  ttft=   175ms  toks=  948  wall_TPS=  36.53  decode_TPS=  36.78  itl_p50= 86.7ms  itl_p95= 89.6ms
+    w2-r0      wall=  27.86s  ttft=   242ms  toks= 1000  wall_TPS=  35.90  decode_TPS=  36.21  itl_p50= 86.6ms  itl_p95= 89.2ms
+    w2-r1      wall=  26.61s  ttft=    63ms  toks=  972  wall_TPS=  36.53  decode_TPS=  36.62  itl_p50= 86.7ms  itl_p95= 89.4ms
+    w2-r2      wall=  27.29s  ttft=   242ms  toks= 1000  wall_TPS=  36.65  decode_TPS=  36.98  itl_p50= 86.7ms  itl_p95= 89.3ms
+    w2-r3      wall=  27.76s  ttft=   242ms  toks= 1000  wall_TPS=  36.02  decode_TPS=  36.34  itl_p50= 86.7ms  itl_p95= 89.1ms
+    w2-r4      wall=  27.38s  ttft=   241ms  toks=  989  wall_TPS=  36.12  decode_TPS=  36.44  itl_p50= 86.7ms  itl_p95= 89.3ms
+    w2-r5      wall=  27.22s  ttft=   241ms  toks= 1000  wall_TPS=  36.73  decode_TPS=  37.06  itl_p50= 86.7ms  itl_p95= 89.4ms
+    w2-r6      wall=  26.97s  ttft=   241ms  toks=  952  wall_TPS=  35.30  decode_TPS=  35.61  itl_p50= 86.7ms  itl_p95= 89.3ms
+    w2-r7      wall=  26.44s  ttft=   240ms  toks=  944  wall_TPS=  35.70  decode_TPS=  36.03  itl_p50= 86.8ms  itl_p95= 89.2ms
+  GPU during warmup narrative c=8 (54.6s, 372 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    94.0   17.4    23430    23430  219.4  219.9   74.0   74.0     1784
+       1    94.7   17.3    23430    23430  219.2  219.7   68.0   68.0     1868
+       2    94.3   17.4    23430    23430  219.3  219.7   73.0   73.0     1803
+       3    94.3   17.3    23430    23430  219.2  219.7   74.3   75.0     1820
+    r0         wall=  25.54s  ttft=    70ms  toks=  928  wall_TPS=  36.33  decode_TPS=  36.43  itl_p50= 86.7ms  itl_p95= 89.4ms
+    r1         wall=  27.30s  ttft=   234ms  toks=  973  wall_TPS=  35.64  decode_TPS=  35.94  itl_p50= 86.5ms  itl_p95= 89.5ms
+    r2         wall=  26.84s  ttft=   234ms  toks= 1000  wall_TPS=  37.26  decode_TPS=  37.59  itl_p50= 86.7ms  itl_p95= 89.4ms
+    r3         wall=  26.35s  ttft=   233ms  toks=  983  wall_TPS=  37.31  decode_TPS=  37.64  itl_p50= 86.7ms  itl_p95= 89.5ms
+    r4         wall=  26.75s  ttft=   233ms  toks=  988  wall_TPS=  36.93  decode_TPS=  37.25  itl_p50= 86.7ms  itl_p95= 89.4ms
+    r5         wall=  25.04s  ttft=   233ms  toks=  858  wall_TPS=  34.26  decode_TPS=  34.59  itl_p50= 86.8ms  itl_p95= 89.5ms
+    r6         wall=  24.95s  ttft=   232ms  toks=  912  wall_TPS=  36.55  decode_TPS=  36.89  itl_p50= 86.8ms  itl_p95= 89.5ms
+    r7         wall=  26.57s  ttft=   232ms  toks= 1000  wall_TPS=  37.63  decode_TPS=  37.96  itl_p50= 86.7ms  itl_p95= 89.3ms
+  combined   wall_TPS= 279.89  decode_TPS= 294.30  avg_ttft=   213ms  itl_p50= 86.7ms  itl_p95= 89.4ms
+    r0         wall=  24.59s  ttft=   160ms  toks=  903  wall_TPS=  36.73  decode_TPS=  36.97  itl_p50= 87.0ms  itl_p95= 89.5ms
+    r1         wall=  24.91s  ttft=   160ms  toks=  905  wall_TPS=  36.33  decode_TPS=  36.56  itl_p50= 87.0ms  itl_p95= 89.4ms
+    r2         wall=  26.26s  ttft=   160ms  toks=  992  wall_TPS=  37.78  decode_TPS=  38.01  itl_p50= 86.8ms  itl_p95= 89.5ms
+    r3         wall=  26.57s  ttft=   160ms  toks=  980  wall_TPS=  36.89  decode_TPS=  37.11  itl_p50= 86.9ms  itl_p95= 89.6ms
+    r4         wall=  25.63s  ttft=   159ms  toks=  923  wall_TPS=  36.01  decode_TPS=  36.23  itl_p50= 87.0ms  itl_p95= 89.4ms
+    r5         wall=  26.42s  ttft=   159ms  toks=  939  wall_TPS=  35.54  decode_TPS=  35.76  itl_p50= 86.9ms  itl_p95= 89.5ms
+    r6         wall=  26.47s  ttft=   159ms  toks=  976  wall_TPS=  36.88  decode_TPS=  37.10  itl_p50= 86.9ms  itl_p95= 89.5ms
+    r7         wall=  26.37s  ttft=   158ms  toks= 1000  wall_TPS=  37.92  decode_TPS=  38.15  itl_p50= 86.9ms  itl_p95= 89.4ms
+  combined   wall_TPS= 286.74  decode_TPS= 295.90  avg_ttft=   159ms  itl_p50= 86.9ms  itl_p95= 89.5ms
+    r0         wall=  26.38s  ttft=   164ms  toks=  967  wall_TPS=  36.66  decode_TPS=  36.89  itl_p50= 86.6ms  itl_p95= 89.4ms
+    r1         wall=  25.14s  ttft=   164ms  toks=  956  wall_TPS=  38.03  decode_TPS=  38.28  itl_p50= 86.8ms  itl_p95= 89.6ms
+    r2         wall=  25.57s  ttft=   164ms  toks=  997  wall_TPS=  38.99  decode_TPS=  39.24  itl_p50= 86.8ms  itl_p95= 89.3ms
+    r3         wall=  26.90s  ttft=   164ms  toks=  994  wall_TPS=  36.95  decode_TPS=  37.18  itl_p50= 86.6ms  itl_p95= 89.2ms
+    r4         wall=  26.38s  ttft=   163ms  toks=  977  wall_TPS=  37.04  decode_TPS=  37.27  itl_p50= 86.6ms  itl_p95= 89.4ms
+    r5         wall=  26.00s  ttft=   163ms  toks=  948  wall_TPS=  36.46  decode_TPS=  36.69  itl_p50= 86.7ms  itl_p95= 89.3ms
+    r6         wall=  26.50s  ttft=   163ms  toks= 1000  wall_TPS=  37.73  decode_TPS=  37.96  itl_p50= 86.7ms  itl_p95= 89.5ms
+    r7         wall=  24.89s  ttft=   163ms  toks=  921  wall_TPS=  37.00  decode_TPS=  37.24  itl_p50= 86.8ms  itl_p95= 89.6ms
+  combined   wall_TPS= 288.48  decode_TPS= 300.74  avg_ttft=   163ms  itl_p50= 86.7ms  itl_p95= 89.4ms
+  GPU during measured narrative c=8 (80.8s, 548 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    93.8   17.5    23430    23430  219.4  219.8   73.6   74.0     1784
+       1    94.6   17.5    23430    23430  219.3  219.8   67.7   68.0     1863
+       2    94.4   17.4    23430    23430  219.3  220.1   72.9   73.0     1802
+       3    94.2   17.5    23430    23430  219.3  219.8   74.0   75.0     1819
+    total power avg=877.3 W   phase throughput=285.0 tok/s   efficiency: 0.3248 tok/W  (324.83 tok/kJ)
+
+  === summary [narrative c=8] (n=3) ===
+  combined wall_TPS    mean=  285.04   std=   4.54   CV= 1.6%   min=279.89   max=288.48
+  combined decode_TPS  mean=  296.98   std=   3.36   CV= 1.1%   min=294.30   max=300.74
+  per-req decode_TPS   mean=   37.12   std=   0.42   CV= 1.1%   min=36.79   max=37.59
+  avg TTFT (ms)        mean=  178.38ms   std=  29.64   CV=16.6%   min=159.21   max=212.52
+  ITL p50 (ms)         mean=   86.76ms   std=   0.12   CV= 0.1%   min=86.69   max=86.90
+  ITL p95 (ms)         mean=   89.45ms   std=   0.03   CV= 0.0%   min=89.43   max=89.49
+
+--- Concurrency=16 (simultaneous requests) ---
+  warmups (2):
+    w1-r0      wall=  31.67s  ttft=   186ms  toks= 1000  wall_TPS=  31.58  decode_TPS=  31.76  itl_p50=102.2ms  itl_p95=104.5ms
+    w1-r1      wall=  30.81s  ttft=   186ms  toks=  949  wall_TPS=  30.80  decode_TPS=  30.99  itl_p50=102.3ms  itl_p95=104.5ms
+    w1-r2      wall=  30.90s  ttft=   185ms  toks=  951  wall_TPS=  30.78  decode_TPS=  30.96  itl_p50=102.2ms  itl_p95=104.5ms
+    w1-r3      wall=  31.23s  ttft=   185ms  toks=  956  wall_TPS=  30.61  decode_TPS=  30.79  itl_p50=102.3ms  itl_p95=104.8ms
+    w1-r4      wall=  31.13s  ttft=   185ms  toks=  920  wall_TPS=  29.56  decode_TPS=  29.73  itl_p50=102.1ms  itl_p95=104.8ms
+    w1-r5      wall=  30.15s  ttft=   184ms  toks=  892  wall_TPS=  29.58  decode_TPS=  29.76  itl_p50=102.3ms  itl_p95=104.5ms
+    w1-r6      wall=  32.14s  ttft=   184ms  toks=  971  wall_TPS=  30.21  decode_TPS=  30.39  itl_p50=102.1ms  itl_p95=104.6ms
+    w1-r7      wall=  32.05s  ttft=   184ms  toks=  982  wall_TPS=  30.64  decode_TPS=  30.81  itl_p50=102.1ms  itl_p95=104.6ms
+    w1-r8      wall=  32.00s  ttft=   183ms  toks= 1000  wall_TPS=  31.25  decode_TPS=  31.43  itl_p50=102.1ms  itl_p95=104.8ms
+    w1-r9      wall=  31.23s  ttft=   468ms  toks= 1000  wall_TPS=  32.02  decode_TPS=  32.51  itl_p50=102.2ms  itl_p95=104.7ms
+    w1-r10     wall=  32.24s  ttft=   469ms  toks= 1000  wall_TPS=  31.01  decode_TPS=  31.47  itl_p50=102.1ms  itl_p95=104.5ms
+    w1-r11     wall=  31.01s  ttft=   468ms  toks= 1000  wall_TPS=  32.24  decode_TPS=  32.74  itl_p50=102.1ms  itl_p95=104.5ms
+    w1-r12     wall=  29.94s  ttft=   468ms  toks= 1000  wall_TPS=  33.40  decode_TPS=  33.93  itl_p50=102.2ms  itl_p95=104.3ms
+    w1-r13     wall=  31.66s  ttft=   467ms  toks=  920  wall_TPS=  29.05  decode_TPS=  29.49  itl_p50=102.2ms  itl_p95=104.5ms
+    w1-r14     wall=  30.43s  ttft=   468ms  toks=  946  wall_TPS=  31.08  decode_TPS=  31.57  itl_p50=102.2ms  itl_p95=104.4ms
+    w1-r15     wall=  29.13s  ttft=   467ms  toks=  894  wall_TPS=  30.69  decode_TPS=  31.19  itl_p50=102.2ms  itl_p95=104.4ms
+    w2-r0      wall=  28.95s  ttft=    74ms  toks=  942  wall_TPS=  32.54  decode_TPS=  32.63  itl_p50=102.3ms  itl_p95=104.4ms
+    w2-r1      wall=  32.02s  ttft=   362ms  toks= 1000  wall_TPS=  31.23  decode_TPS=  31.59  itl_p50=102.2ms  itl_p95=104.4ms
+    w2-r2      wall=  32.02s  ttft=   361ms  toks=  961  wall_TPS=  30.02  decode_TPS=  30.36  itl_p50=102.2ms  itl_p95=104.5ms
+    w2-r3      wall=  30.06s  ttft=   361ms  toks=  924  wall_TPS=  30.74  decode_TPS=  31.12  itl_p50=102.3ms  itl_p95=104.3ms
+    w2-r4      wall=  31.22s  ttft=   361ms  toks=  980  wall_TPS=  31.39  decode_TPS=  31.76  itl_p50=102.3ms  itl_p95=104.4ms
+    w2-r5      wall=  31.12s  ttft=   360ms  toks=  965  wall_TPS=  31.01  decode_TPS=  31.37  itl_p50=102.2ms  itl_p95=104.4ms
+    w2-r6      wall=  32.21s  ttft=   360ms  toks=  950  wall_TPS=  29.49  decode_TPS=  29.83  itl_p50=102.2ms  itl_p95=104.5ms
+    w2-r7      wall=  31.22s  ttft=   360ms  toks=  947  wall_TPS=  30.33  decode_TPS=  30.69  itl_p50=102.2ms  itl_p95=104.3ms
+    w2-r8      wall=  32.74s  ttft=   359ms  toks=  949  wall_TPS=  28.99  decode_TPS=  29.31  itl_p50=102.2ms  itl_p95=104.4ms
+    w2-r9      wall=  31.62s  ttft=   359ms  toks=  973  wall_TPS=  30.77  decode_TPS=  31.13  itl_p50=102.3ms  itl_p95=104.6ms
+    w2-r10     wall=  31.51s  ttft=   359ms  toks=  893  wall_TPS=  28.34  decode_TPS=  28.66  itl_p50=102.2ms  itl_p95=104.4ms
+    w2-r11     wall=  31.22s  ttft=   358ms  toks= 1000  wall_TPS=  32.03  decode_TPS=  32.40  itl_p50=102.2ms  itl_p95=104.5ms
+    w2-r12     wall=  31.12s  ttft=   358ms  toks=  895  wall_TPS=  28.76  decode_TPS=  29.09  itl_p50=102.2ms  itl_p95=104.3ms
+    w2-r13     wall=  32.37s  ttft=   357ms  toks=  997  wall_TPS=  30.80  decode_TPS=  31.14  itl_p50=102.2ms  itl_p95=104.4ms
+    w2-r14     wall=  31.86s  ttft=   357ms  toks=  990  wall_TPS=  31.07  decode_TPS=  31.42  itl_p50=102.2ms  itl_p95=104.4ms
+    w2-r15     wall=  31.94s  ttft=   357ms  toks= 1000  wall_TPS=  31.31  decode_TPS=  31.66  itl_p50=102.2ms  itl_p95=104.3ms
+  GPU during warmup narrative c=16 (65.0s, 444 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    94.6   22.1    23430    23430  219.5  220.1   73.0   73.0     1696
+       1    95.2   22.0    23430    23430  219.3  220.1   67.0   67.0     1791
+       2    95.1   22.0    23430    23430  219.4  220.0   72.9   73.0     1710
+       3    95.0   22.1    23430    23430  219.4  220.0   74.0   74.0     1728
+    r0         wall=  32.47s  ttft=   162ms  toks= 1000  wall_TPS=  30.79  decode_TPS=  30.95  itl_p50=102.0ms  itl_p95=104.8ms
+    r1         wall=  32.58s  ttft=   162ms  toks=  984  wall_TPS=  30.21  decode_TPS=  30.36  itl_p50=102.0ms  itl_p95=104.7ms
+    r2         wall=  32.21s  ttft=   162ms  toks=  985  wall_TPS=  30.58  decode_TPS=  30.74  itl_p50=102.1ms  itl_p95=104.7ms
+    r3         wall=  28.58s  ttft=   162ms  toks=  913  wall_TPS=  31.95  decode_TPS=  32.13  itl_p50=102.0ms  itl_p95=104.5ms
+    r4         wall=  30.91s  ttft=   161ms  toks=  930  wall_TPS=  30.09  decode_TPS=  30.25  itl_p50=102.1ms  itl_p95=104.6ms
+    r5         wall=  28.37s  ttft=   161ms  toks=  868  wall_TPS=  30.60  decode_TPS=  30.77  itl_p50=102.2ms  itl_p95=104.4ms
+    r6         wall=  32.12s  ttft=   160ms  toks=  974  wall_TPS=  30.32  decode_TPS=  30.47  itl_p50=102.1ms  itl_p95=104.6ms
+    r7         wall=  30.24s  ttft=   161ms  toks=  959  wall_TPS=  31.72  decode_TPS=  31.89  itl_p50=102.0ms  itl_p95=104.6ms
+    r8         wall=  32.52s  ttft=   253ms  toks=  990  wall_TPS=  30.44  decode_TPS=  30.68  itl_p50=102.0ms  itl_p95=104.8ms
+    r9         wall=  32.72s  ttft=   424ms  toks= 1000  wall_TPS=  30.56  decode_TPS=  30.96  itl_p50=102.0ms  itl_p95=104.7ms
+    r10        wall=  30.14s  ttft=   423ms  toks=  948  wall_TPS=  31.45  decode_TPS=  31.90  itl_p50=102.0ms  itl_p95=104.5ms
+    r11        wall=  31.36s  ttft=   422ms  toks=  925  wall_TPS=  29.49  decode_TPS=  29.90  itl_p50=102.0ms  itl_p95=104.6ms
+    r12        wall=  32.21s  ttft=   422ms  toks=  987  wall_TPS=  30.65  decode_TPS=  31.05  itl_p50=102.0ms  itl_p95=104.7ms
+    r13        wall=  32.62s  ttft=   422ms  toks= 1000  wall_TPS=  30.66  decode_TPS=  31.06  itl_p50=102.1ms  itl_p95=104.6ms
+    r14        wall=  30.69s  ttft=   422ms  toks=  960  wall_TPS=  31.28  decode_TPS=  31.71  itl_p50=102.1ms  itl_p95=104.4ms
+    r15        wall=  31.58s  ttft=   421ms  toks=  981  wall_TPS=  31.07  decode_TPS=  31.49  itl_p50=102.0ms  itl_p95=104.8ms
+  combined   wall_TPS= 470.73  decode_TPS= 496.30  avg_ttft=   281ms  itl_p50=102.0ms  itl_p95=104.6ms
+    r0         wall=  31.77s  ttft=    78ms  toks=  972  wall_TPS=  30.59  decode_TPS=  30.67  itl_p50=102.2ms  itl_p95=105.3ms
+    r1         wall=  32.25s  ttft=   344ms  toks=  973  wall_TPS=  30.17  decode_TPS=  30.50  itl_p50=102.2ms  itl_p95=105.0ms
+    r2         wall=  30.56s  ttft=   344ms  toks=  936  wall_TPS=  30.63  decode_TPS=  30.98  itl_p50=102.2ms  itl_p95=105.0ms
+    r3         wall=  32.05s  ttft=   343ms  toks=  894  wall_TPS=  27.89  decode_TPS=  28.19  itl_p50=102.2ms  itl_p95=105.4ms
+    r4         wall=  32.05s  ttft=   344ms  toks=  989  wall_TPS=  30.86  decode_TPS=  31.19  itl_p50=102.2ms  itl_p95=104.8ms
+    r5         wall=  31.92s  ttft=   343ms  toks=  992  wall_TPS=  31.08  decode_TPS=  31.41  itl_p50=102.2ms  itl_p95=104.9ms
+    r6         wall=  31.06s  ttft=   343ms  toks=  936  wall_TPS=  30.14  decode_TPS=  30.47  itl_p50=102.3ms  itl_p95=105.1ms
+    r7         wall=  30.36s  ttft=   342ms  toks= 1000  wall_TPS=  32.93  decode_TPS=  33.31  itl_p50=102.2ms  itl_p95=105.0ms
+    r8         wall=  31.45s  ttft=   342ms  toks=  959  wall_TPS=  30.49  decode_TPS=  30.83  itl_p50=102.2ms  itl_p95=105.1ms
+    r9         wall=  32.47s  ttft=   342ms  toks=  959  wall_TPS=  29.54  decode_TPS=  29.85  itl_p50=102.1ms  itl_p95=104.9ms
+    r10        wall=  30.56s  ttft=   341ms  toks=  942  wall_TPS=  30.83  decode_TPS=  31.17  itl_p50=102.2ms  itl_p95=105.0ms
+    r11        wall=  30.74s  ttft=   341ms  toks=  923  wall_TPS=  30.02  decode_TPS=  30.36  itl_p50=102.3ms  itl_p95=104.7ms
+    r12        wall=  31.17s  ttft=   341ms  toks=  955  wall_TPS=  30.64  decode_TPS=  30.98  itl_p50=102.2ms  itl_p95=105.1ms
+    r13        wall=  29.35s  ttft=   341ms  toks=  921  wall_TPS=  31.38  decode_TPS=  31.75  itl_p50=102.3ms  itl_p95=104.9ms
+    r14        wall=  32.36s  ttft=   341ms  toks=  979  wall_TPS=  30.25  decode_TPS=  30.57  itl_p50=102.3ms  itl_p95=105.1ms
+    r15        wall=  30.74s  ttft=   340ms  toks= 1000  wall_TPS=  32.53  decode_TPS=  32.89  itl_p50=102.2ms  itl_p95=105.0ms
+  combined   wall_TPS= 472.19  decode_TPS= 495.13  avg_ttft=   325ms  itl_p50=102.2ms  itl_p95=105.1ms
+    r0         wall=  30.38s  ttft=   160ms  toks=  956  wall_TPS=  31.47  decode_TPS=  31.63  itl_p50=102.3ms  itl_p95=104.8ms
+    r1         wall=  32.10s  ttft=   160ms  toks= 1000  wall_TPS=  31.15  decode_TPS=  31.31  itl_p50=102.2ms  itl_p95=104.5ms
+    r2         wall=  31.89s  ttft=   160ms  toks=  939  wall_TPS=  29.44  decode_TPS=  29.59  itl_p50=102.2ms  itl_p95=104.6ms
+    r3         wall=  31.89s  ttft=   160ms  toks= 1000  wall_TPS=  31.35  decode_TPS=  31.51  itl_p50=102.2ms  itl_p95=104.6ms
+    r4         wall=  32.18s  ttft=   160ms  toks=  972  wall_TPS=  30.21  decode_TPS=  30.36  itl_p50=102.2ms  itl_p95=104.7ms
+    r5         wall=  31.89s  ttft=   159ms  toks= 1000  wall_TPS=  31.35  decode_TPS=  31.51  itl_p50=102.2ms  itl_p95=104.6ms
+    r6         wall=  31.52s  ttft=   159ms  toks=  965  wall_TPS=  30.62  decode_TPS=  30.77  itl_p50=102.2ms  itl_p95=104.8ms
+    r7         wall=  30.76s  ttft=   283ms  toks=  943  wall_TPS=  30.66  decode_TPS=  30.94  itl_p50=102.2ms  itl_p95=104.4ms
+    r8         wall=  29.98s  ttft=   481ms  toks=  929  wall_TPS=  30.98  decode_TPS=  31.49  itl_p50=102.3ms  itl_p95=104.6ms
+    r9         wall=  29.48s  ttft=   480ms  toks=  934  wall_TPS=  31.69  decode_TPS=  32.21  itl_p50=102.3ms  itl_p95=104.5ms
+    r10        wall=  31.52s  ttft=   480ms  toks=  959  wall_TPS=  30.43  decode_TPS=  30.90  itl_p50=102.2ms  itl_p95=104.6ms
+    r11        wall=  31.03s  ttft=   479ms  toks=  881  wall_TPS=  28.39  decode_TPS=  28.84  itl_p50=102.2ms  itl_p95=104.4ms
+    r12        wall=  31.03s  ttft=   480ms  toks=  918  wall_TPS=  29.58  decode_TPS=  30.05  itl_p50=102.2ms  itl_p95=104.4ms
+    r13        wall=  31.03s  ttft=   479ms  toks=  948  wall_TPS=  30.55  decode_TPS=  31.03  itl_p50=102.3ms  itl_p95=104.6ms
+    r14        wall=  32.53s  ttft=   480ms  toks= 1000  wall_TPS=  30.74  decode_TPS=  31.20  itl_p50=102.1ms  itl_p95=104.5ms
+    r15        wall=  31.32s  ttft=   479ms  toks=  929  wall_TPS=  29.66  decode_TPS=  30.12  itl_p50=102.2ms  itl_p95=104.5ms
+  combined   wall_TPS= 469.51  decode_TPS= 493.46  avg_ttft=   328ms  itl_p50=102.2ms  itl_p95=104.6ms
+  GPU during measured narrative c=16 (97.7s, 668 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    94.6   22.0    23430    23430  219.5  220.2   73.1   74.0     1695
+       1    95.2   22.0    23430    23430  219.3  220.0   67.0   67.0     1789
+       2    95.2   21.9    23430    23430  219.5  220.0   73.0   73.0     1710
+       3    95.1   22.0    23430    23430  219.4  220.0   74.0   74.0     1725
+    total power avg=877.7 W   phase throughput=470.7 tok/s   efficiency: 0.5363 tok/W  (536.27 tok/kJ)
+
+  === summary [narrative c=16] (n=3) ===
+  combined wall_TPS    mean=  470.81   std=   1.34   CV= 0.3%   min=469.51   max=472.19
+  combined decode_TPS  mean=  494.96   std=   1.43   CV= 0.3%   min=493.46   max=496.30
+  per-req decode_TPS   mean=   30.93   std=   0.09   CV= 0.3%   min=30.84   max=31.02
+  avg TTFT (ms)        mean=  311.42ms   std=  26.14   CV= 8.4%   min=281.26   max=327.53
+  ITL p50 (ms)         mean=  102.16ms   std=   0.10   CV= 0.1%   min=102.05   max=102.22
+  ITL p95 (ms)         mean=  104.76ms   std=   0.27   CV= 0.3%   min=104.58   max=105.06
+
+  === vLLM log metrics (last 15 entries, narrative) ===
+  PP tok/s             mean=   10.67tok/s   std=  18.31   CV=171.7%   min=0.00   max=40.00
+  GP tok/s             mean=  474.65tok/s   std=  39.84   CV= 8.4%   min=399.70   max=519.80
+  E2E ms               n/a (log scrape unavailable)
+  queue ms             n/a (log scrape unavailable)
+  inference ms         n/a (log scrape unavailable)
+
+========================================================================
+  DECODE SATURATION — CODE (prompt=78 chars, max_tokens=800)
+========================================================================
+
+--- Concurrency=1 (simultaneous requests) ---
+  warmups (2):
+    w1-r0      wall=   3.89s  ttft=    60ms  toks=  712  wall_TPS= 182.97  decode_TPS= 185.82  itl_p50= 31.2ms  itl_p95= 35.3ms
+    w2-r0      wall=   4.53s  ttft=    81ms  toks=  800  wall_TPS= 176.69  decode_TPS= 179.91  itl_p50= 31.2ms  itl_p95= 34.2ms
+  GPU during warmup code c=1 (8.4s, 60 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    72.3   27.7    23430    23430  218.5  219.1   73.0   73.0     1742
+       1    77.5   27.9    23430    23430  218.3  218.9   67.0   67.0     1820
+       2    76.4   28.1    23430    23430  218.4  219.4   73.0   73.0     1745
+       3    74.9   27.8    23430    23430  218.5  219.2   73.1   74.0     1785
+    r0         wall=   3.07s  ttft=    59ms  toks=  614  wall_TPS= 199.70  decode_TPS= 203.60  itl_p50= 31.6ms  itl_p95= 36.1ms
+  combined   wall_TPS= 199.70  decode_TPS= 203.60  avg_ttft=    59ms  itl_p50= 31.6ms  itl_p95= 36.1ms
+    r0         wall=   4.46s  ttft=    86ms  toks=  800  wall_TPS= 179.23  decode_TPS= 182.76  itl_p50= 31.0ms  itl_p95= 34.3ms
+  combined   wall_TPS= 179.23  decode_TPS= 182.76  avg_ttft=    86ms  itl_p50= 31.0ms  itl_p95= 34.3ms
+    r0         wall=   4.83s  ttft=    88ms  toks=  800  wall_TPS= 165.59  decode_TPS= 168.67  itl_p50= 31.3ms  itl_p95= 34.9ms
+  combined   wall_TPS= 165.59  decode_TPS= 168.67  avg_ttft=    88ms  itl_p50= 31.3ms  itl_p95= 34.9ms
+  GPU during measured code c=1 (12.4s, 84 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    73.9   27.5    23430    23430  218.7  219.5   73.0   73.0     1744
+       1    77.0   28.0    23430    23430  218.5  219.1   67.0   67.0     1823
+       2    77.1   27.8    23430    23430  218.8  219.4   72.9   73.0     1756
+       3    72.3   27.8    23430    23430  218.6  219.2   73.0   73.0     1792
+    total power avg=874.6 W   phase throughput=179.0 tok/s   efficiency: 0.2046 tok/W  (204.62 tok/kJ)
+
+  === summary [code c=1] (n=3) ===
+  combined wall_TPS    mean=  181.50   std=  17.17   CV= 9.5%   min=165.59   max=199.70
+  combined decode_TPS  mean=  185.01   std=  17.57   CV= 9.5%   min=168.67   max=203.60
+  per-req decode_TPS   mean=  185.01   std=  17.57   CV= 9.5%   min=168.67   max=203.60
+  avg TTFT (ms)        mean=   77.78ms   std=  16.38   CV=21.1%   min=58.90   max=88.17
+  ITL p50 (ms)         mean=   31.30ms   std=   0.32   CV= 1.0%   min=30.97   max=31.61
+  ITL p95 (ms)         mean=   35.09ms   std=   0.91   CV= 2.6%   min=34.31   max=36.09
+
+--- Concurrency=2 (simultaneous requests) ---
+  warmups (2):
+    w1-r0      wall=   4.48s  ttft=   105ms  toks=  630  wall_TPS= 140.54  decode_TPS= 143.90  itl_p50= 37.0ms  itl_p95= 39.3ms
+    w1-r1      wall=   5.22s  ttft=   105ms  toks=  800  wall_TPS= 153.25  decode_TPS= 156.38  itl_p50= 36.9ms  itl_p95= 39.3ms
+    w2-r0      wall=   5.22s  ttft=    59ms  toks=  800  wall_TPS= 153.14  decode_TPS= 154.89  itl_p50= 37.1ms  itl_p95= 40.1ms
+    w2-r1      wall=   5.60s  ttft=   160ms  toks=  800  wall_TPS= 142.93  decode_TPS= 147.14  itl_p50= 37.0ms  itl_p95= 39.7ms
+  GPU during warmup code c=2 (10.8s, 76 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    78.0   25.7    23430    23430  219.0  219.5   73.0   73.0     1762
+       1    78.8   25.6    23430    23430  218.5  219.4   67.0   67.0     1847
+       2    80.1   25.4    23430    23430  218.9  219.3   73.0   73.0     1763
+       3    78.3   25.8    23430    23430  218.8  219.4   73.4   74.0     1797
+    r0         wall=   5.46s  ttft=   107ms  toks=  800  wall_TPS= 146.61  decode_TPS= 149.54  itl_p50= 36.9ms  itl_p95= 40.0ms
+    r1         wall=   4.40s  ttft=   107ms  toks=  633  wall_TPS= 143.74  decode_TPS= 147.30  itl_p50= 37.3ms  itl_p95= 40.1ms
+  combined   wall_TPS= 262.62  decode_TPS= 296.84  avg_ttft=   107ms  itl_p50= 37.1ms  itl_p95= 40.0ms
+    r0         wall=   4.64s  ttft=   105ms  toks=  706  wall_TPS= 152.14  decode_TPS= 155.65  itl_p50= 37.3ms  itl_p95= 40.7ms
+    r1         wall=   5.59s  ttft=   104ms  toks=  800  wall_TPS= 142.99  decode_TPS= 145.71  itl_p50= 37.0ms  itl_p95= 40.4ms
+  combined   wall_TPS= 269.18  decode_TPS= 301.36  avg_ttft=   105ms  itl_p50= 37.2ms  itl_p95= 40.7ms
+    r0         wall=   4.50s  ttft=   110ms  toks=  700  wall_TPS= 155.47  decode_TPS= 159.35  itl_p50= 37.6ms  itl_p95= 40.2ms
+    r1         wall=   4.72s  ttft=   109ms  toks=  701  wall_TPS= 148.52  decode_TPS= 152.04  itl_p50= 37.5ms  itl_p95= 40.2ms
+  combined   wall_TPS= 296.83  decode_TPS= 311.39  avg_ttft=   109ms  itl_p50= 37.5ms  itl_p95= 40.2ms
+  GPU during measured code c=2 (15.8s, 108 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    77.0   25.2    23430    23430  218.9  219.7   73.0   73.0     1756
+       1    80.0   25.1    23430    23430  218.6  219.5   67.0   67.0     1838
+       2    80.1   25.4    23430    23430  218.9  219.4   73.0   73.0     1768
+       3    79.8   25.7    23430    23430  218.9  219.6   73.5   74.0     1781
+    total power avg=875.3 W   phase throughput=275.1 tok/s   efficiency: 0.3143 tok/W  (314.32 tok/kJ)
+
+  === summary [code c=2] (n=3) ===
+  combined wall_TPS    mean=  276.21   std=  18.16   CV= 6.6%   min=262.62   max=296.83
+  combined decode_TPS  mean=  303.19   std=   7.45   CV= 2.5%   min=296.84   max=311.39
+  per-req decode_TPS   mean=  151.60   std=   3.72   CV= 2.5%   min=148.42   max=155.69
+  avg TTFT (ms)        mean=  106.87ms   std=   2.40   CV= 2.2%   min=104.60   max=109.39
+  ITL p50 (ms)         mean=   37.26ms   std=   0.24   CV= 0.6%   min=37.09   max=37.54
+  ITL p95 (ms)         mean=   40.28ms   std=   0.33   CV= 0.8%   min=40.02   max=40.66
+
+--- Concurrency=4 (simultaneous requests) ---
+  warmups (2):
+    w1-r0      wall=   3.63s  ttft=   115ms  toks=  446  wall_TPS= 122.88  decode_TPS= 126.91  itl_p50= 52.2ms  itl_p95= 54.7ms
+    w1-r1      wall=   6.26s  ttft=   115ms  toks=  800  wall_TPS= 127.71  decode_TPS= 130.10  itl_p50= 46.1ms  itl_p95= 54.1ms
+    w1-r2      wall=   4.50s  ttft=   115ms  toks=  436  wall_TPS=  96.98  decode_TPS=  99.52  itl_p50= 51.7ms  itl_p95= 54.5ms
+    w1-r3      wall=   4.58s  ttft=   115ms  toks=  443  wall_TPS=  96.75  decode_TPS=  99.23  itl_p50= 51.6ms  itl_p95= 54.6ms
+    w2-r0      wall=   7.40s  ttft=    63ms  toks=  800  wall_TPS= 108.15  decode_TPS= 109.09  itl_p50= 52.0ms  itl_p95= 54.5ms
+    w2-r1      wall=   7.13s  ttft=   221ms  toks=  800  wall_TPS= 112.21  decode_TPS= 115.80  itl_p50= 52.1ms  itl_p95= 54.5ms
+    w2-r2      wall=   7.94s  ttft=   221ms  toks=  800  wall_TPS= 100.80  decode_TPS= 103.69  itl_p50= 51.8ms  itl_p95= 54.3ms
+    w2-r3      wall=   6.26s  ttft=   221ms  toks=  637  wall_TPS= 101.74  decode_TPS= 105.46  itl_p50= 52.3ms  itl_p95= 54.5ms
+  GPU during warmup code c=4 (14.2s, 100 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    82.8   22.3    23430    23430  219.0  219.5   73.0   73.0     1776
+       1    85.9   22.7    23430    23430  219.0  219.8   67.0   67.0     1853
+       2    86.2   22.9    23430    23430  219.1  219.7   73.0   73.0     1775
+       3    83.4   23.1    23430    23430  219.1  219.5   73.8   74.0     1804
+    r0         wall=   4.09s  ttft=   112ms  toks=  402  wall_TPS=  98.24  decode_TPS= 101.02  itl_p50= 51.8ms  itl_p95= 54.3ms
+    r1         wall=   6.36s  ttft=   112ms  toks=  800  wall_TPS= 125.75  decode_TPS= 128.00  itl_p50= 45.1ms  itl_p95= 53.6ms
+    r2         wall=   4.74s  ttft=   112ms  toks=  468  wall_TPS=  98.83  decode_TPS= 101.22  itl_p50= 51.5ms  itl_p95= 54.0ms
+    r3         wall=   3.21s  ttft=   112ms  toks=  336  wall_TPS= 104.81  decode_TPS= 108.60  itl_p50= 52.1ms  itl_p95= 55.1ms
+  combined   wall_TPS= 315.32  decode_TPS= 438.83  avg_ttft=   112ms  itl_p50= 51.5ms  itl_p95= 54.1ms
+    r0         wall=   3.37s  ttft=   117ms  toks=  344  wall_TPS= 102.06  decode_TPS= 105.74  itl_p50= 52.3ms  itl_p95= 54.1ms
+    r1         wall=   5.33s  ttft=   117ms  toks=  619  wall_TPS= 116.05  decode_TPS= 118.66  itl_p50= 51.5ms  itl_p95= 53.9ms
+    r2         wall=   6.46s  ttft=   117ms  toks=  800  wall_TPS= 123.88  decode_TPS= 126.17  itl_p50= 47.1ms  itl_p95= 53.7ms
+    r3         wall=   6.71s  ttft=   117ms  toks=  800  wall_TPS= 119.28  decode_TPS= 121.40  itl_p50= 46.4ms  itl_p95= 53.7ms
+  combined   wall_TPS= 382.14  decode_TPS= 471.97  avg_ttft=   117ms  itl_p50= 51.4ms  itl_p95= 53.9ms
+    r0         wall=   3.36s  ttft=   111ms  toks=  364  wall_TPS= 108.43  decode_TPS= 112.13  itl_p50= 52.0ms  itl_p95= 54.7ms
+    r1         wall=   6.46s  ttft=   111ms  toks=  759  wall_TPS= 117.42  decode_TPS= 119.46  itl_p50= 48.7ms  itl_p95= 54.5ms
+    r2         wall=   7.00s  ttft=   110ms  toks=  800  wall_TPS= 114.31  decode_TPS= 116.14  itl_p50= 46.9ms  itl_p95= 54.2ms
+    r3         wall=   7.07s  ttft=   110ms  toks=  800  wall_TPS= 113.19  decode_TPS= 114.99  itl_p50= 46.8ms  itl_p95= 54.2ms
+  combined   wall_TPS= 385.27  decode_TPS= 462.72  avg_ttft=   111ms  itl_p50= 50.9ms  itl_p95= 54.6ms
+  GPU during measured code c=4 (20.1s, 136 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    83.2   22.8    23430    23430  219.1  219.7   73.0   73.0     1764
+       1    85.9   22.7    23430    23430  219.0  219.7   67.0   68.0     1851
+       2    85.5   23.4    23430    23430  219.2  219.6   73.1   74.0     1765
+       3    84.4   22.6    23430    23430  219.1  219.9   73.9   74.0     1796
+    total power avg=876.4 W   phase throughput=362.1 tok/s   efficiency: 0.4131 tok/W  (413.11 tok/kJ)
+
+  === summary [code c=4] (n=3) ===
+  combined wall_TPS    mean=  360.91   std=  39.52   CV=10.9%   min=315.32   max=385.27
+  combined decode_TPS  mean=  457.84   std=  17.10   CV= 3.7%   min=438.83   max=471.97
+  per-req decode_TPS   mean=  114.46   std=   4.27   CV= 3.7%   min=109.71   max=117.99
+  avg TTFT (ms)        mean=  113.24ms   std=   3.50   CV= 3.1%   min=110.54   max=117.20
+  ITL p50 (ms)         mean=   51.27ms   std=   0.34   CV= 0.7%   min=50.87   max=51.49
+  ITL p95 (ms)         mean=   54.21ms   std=   0.34   CV= 0.6%   min=53.94   max=54.59
+
+--- Concurrency=8 (simultaneous requests) ---
+  warmups (2):
+    w1-r0      wall=  10.25s  ttft=   163ms  toks=  800  wall_TPS=  78.02  decode_TPS=  79.28  itl_p50= 72.1ms  itl_p95= 87.4ms
+    w1-r1      wall=   3.54s  ttft=   163ms  toks=  248  wall_TPS=  69.96  decode_TPS=  73.33  itl_p50= 86.5ms  itl_p95= 88.5ms
+    w1-r2      wall=   8.84s  ttft=   162ms  toks=  631  wall_TPS=  71.37  decode_TPS=  72.71  itl_p50= 78.9ms  itl_p95= 87.5ms
+    w1-r3      wall=   5.69s  ttft=   162ms  toks=  383  wall_TPS=  67.27  decode_TPS=  69.24  itl_p50= 86.0ms  itl_p95= 88.0ms
+    w1-r4      wall=   8.22s  ttft=   162ms  toks=  580  wall_TPS=  70.60  decode_TPS=  72.01  itl_p50= 79.5ms  itl_p95= 87.8ms
+    w1-r5      wall=  10.52s  ttft=   161ms  toks=  800  wall_TPS=  76.04  decode_TPS=  77.22  itl_p50= 70.9ms  itl_p95= 87.5ms
+    w1-r6      wall=   9.38s  ttft=   161ms  toks=  673  wall_TPS=  71.77  decode_TPS=  73.02  itl_p50= 78.4ms  itl_p95= 87.7ms
+    w1-r7      wall=  10.68s  ttft=   161ms  toks=  800  wall_TPS=  74.90  decode_TPS=  76.05  itl_p50= 70.4ms  itl_p95= 87.4ms
+    w2-r0      wall=   7.59s  ttft=   165ms  toks=  476  wall_TPS=  62.71  decode_TPS=  64.10  itl_p50= 86.6ms  itl_p95= 88.7ms
+    w2-r1      wall=   8.77s  ttft=   165ms  toks=  634  wall_TPS=  72.29  decode_TPS=  73.68  itl_p50= 86.2ms  itl_p95= 88.3ms
+    w2-r2      wall=   9.04s  ttft=   164ms  toks=  659  wall_TPS=  72.88  decode_TPS=  74.23  itl_p50= 86.0ms  itl_p95= 88.2ms
+    w2-r3      wall=   9.95s  ttft=   164ms  toks=  741  wall_TPS=  74.50  decode_TPS=  75.75  itl_p50= 85.3ms  itl_p95= 88.3ms
+    w2-r4      wall=   6.95s  ttft=   164ms  toks=  451  wall_TPS=  64.85  decode_TPS=  66.41  itl_p50= 86.7ms  itl_p95= 88.6ms
+    w2-r5      wall=  10.33s  ttft=   164ms  toks=  800  wall_TPS=  77.42  decode_TPS=  78.66  itl_p50= 80.5ms  itl_p95= 88.0ms
+    w2-r6      wall=  10.33s  ttft=   163ms  toks=  800  wall_TPS=  77.42  decode_TPS=  78.66  itl_p50= 80.7ms  itl_p95= 88.2ms
+    w2-r7      wall=   5.91s  ttft=   163ms  toks=  375  wall_TPS=  63.50  decode_TPS=  65.30  itl_p50= 87.0ms  itl_p95= 88.6ms
+  GPU during warmup code c=8 (21.0s, 144 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    91.3   18.7    23430    23430  219.2  219.8   73.2   74.0     1780
+       1    91.3   18.8    23430    23430  219.2  219.9   67.1   68.0     1860
+       2    92.8   18.9    23430    23430  219.3  219.9   73.2   74.0     1794
+       3    92.6   18.6    23430    23430  219.3  219.8   74.0   74.0     1805
+    r0         wall=   9.86s  ttft=   167ms  toks=  718  wall_TPS=  72.86  decode_TPS=  74.11  itl_p50= 79.7ms  itl_p95= 87.8ms
+    r1         wall=   4.08s  ttft=   167ms  toks=  279  wall_TPS=  68.42  decode_TPS=  71.34  itl_p50= 86.8ms  itl_p95= 88.5ms
+    r2         wall=  10.39s  ttft=   166ms  toks=  728  wall_TPS=  70.08  decode_TPS=  71.23  itl_p50= 79.6ms  itl_p95= 87.8ms
+    r3         wall=   8.67s  ttft=   166ms  toks=  616  wall_TPS=  71.07  decode_TPS=  72.46  itl_p50= 80.7ms  itl_p95= 88.1ms
+    r4         wall=  10.44s  ttft=   166ms  toks=  795  wall_TPS=  76.14  decode_TPS=  77.38  itl_p50= 79.5ms  itl_p95= 87.7ms
+    r5         wall=  10.98s  ttft=   166ms  toks=  800  wall_TPS=  72.86  decode_TPS=  73.97  itl_p50= 79.0ms  itl_p95= 87.7ms
+    r6         wall=  10.17s  ttft=   165ms  toks=  681  wall_TPS=  66.98  decode_TPS=  68.09  itl_p50= 79.7ms  itl_p95= 87.8ms
+    r7         wall=  10.63s  ttft=   166ms  toks=  800  wall_TPS=  75.24  decode_TPS=  76.43  itl_p50= 79.5ms  itl_p95= 87.7ms
+  combined   wall_TPS= 493.32  decode_TPS= 585.01  avg_ttft=   166ms  itl_p50= 79.7ms  itl_p95= 87.9ms
+    r0         wall=  10.27s  ttft=   166ms  toks=  717  wall_TPS=  69.79  decode_TPS=  70.93  itl_p50= 85.7ms  itl_p95= 88.5ms
+    r1         wall=   6.43s  ttft=   165ms  toks=  422  wall_TPS=  65.66  decode_TPS=  67.39  itl_p50= 87.0ms  itl_p95= 88.9ms
+    r2         wall=  11.26s  ttft=   165ms  toks=  789  wall_TPS=  70.10  decode_TPS=  71.14  itl_p50= 84.7ms  itl_p95= 88.4ms
+    r3         wall=  11.09s  ttft=   165ms  toks=  800  wall_TPS=  72.15  decode_TPS=  73.24  itl_p50= 85.1ms  itl_p95= 88.5ms
+    r4         wall=  11.49s  ttft=   165ms  toks=  800  wall_TPS=  69.62  decode_TPS=  70.63  itl_p50= 72.9ms  itl_p95= 88.1ms
+    r5         wall=   6.34s  ttft=   164ms  toks=  363  wall_TPS=  57.26  decode_TPS=  58.78  itl_p50= 86.8ms  itl_p95= 89.3ms
+    r6         wall=  11.49s  ttft=   163ms  toks=  800  wall_TPS=  69.62  decode_TPS=  70.63  itl_p50= 73.0ms  itl_p95= 88.3ms
+    r7         wall=  11.53s  ttft=   163ms  toks=  800  wall_TPS=  69.36  decode_TPS=  70.36  itl_p50= 71.8ms  itl_p95= 88.2ms
+  combined   wall_TPS= 476.08  decode_TPS= 553.10  avg_ttft=   164ms  itl_p50= 85.8ms  itl_p95= 88.4ms
+    r0         wall=  11.04s  ttft=   164ms  toks=  800  wall_TPS=  72.46  decode_TPS=  73.55  itl_p50= 82.8ms  itl_p95= 88.5ms
+    r1         wall=  10.10s  ttft=   164ms  toks=  739  wall_TPS=  73.13  decode_TPS=  74.34  itl_p50= 85.9ms  itl_p95= 89.1ms
+    r2         wall=  10.47s  ttft=   164ms  toks=  800  wall_TPS=  76.39  decode_TPS=  77.60  itl_p50= 85.6ms  itl_p95= 88.9ms
+    r3         wall=   6.85s  ttft=   163ms  toks=  416  wall_TPS=  60.72  decode_TPS=  62.21  itl_p50= 86.9ms  itl_p95= 89.6ms
+    r4         wall=  10.38s  ttft=   163ms  toks=  800  wall_TPS=  77.10  decode_TPS=  78.33  itl_p50= 85.7ms  itl_p95= 88.9ms
+    r5         wall=   9.17s  ttft=   162ms  toks=  603  wall_TPS=  65.78  decode_TPS=  66.96  itl_p50= 86.2ms  itl_p95= 89.3ms
+    r6         wall=  11.20s  ttft=   162ms  toks=  800  wall_TPS=  71.44  decode_TPS=  72.49  itl_p50= 79.1ms  itl_p95= 88.7ms
+    r7         wall=   6.44s  ttft=   162ms  toks=  420  wall_TPS=  65.18  decode_TPS=  66.86  itl_p50= 87.2ms  itl_p95= 89.7ms
+  combined   wall_TPS= 480.24  decode_TPS= 572.34  avg_ttft=   163ms  itl_p50= 86.0ms  itl_p95= 89.3ms
+  GPU during measured code c=8 (33.7s, 228 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    91.8   18.2    23430    23430  219.4  219.9   73.3   74.0     1777
+       1    93.3   18.5    23430    23430  219.3  219.7   67.1   68.0     1856
+       2    93.3   18.1    23430    23430  219.4  219.8   73.0   74.0     1793
+       3    93.1   18.3    23430    23430  219.4  219.7   74.0   75.0     1810
+    total power avg=877.4 W   phase throughput=482.9 tok/s   efficiency: 0.5504 tok/W  (550.41 tok/kJ)
+
+  === summary [code c=8] (n=3) ===
+  combined wall_TPS    mean=  483.21   std=   9.00   CV= 1.9%   min=476.08   max=493.32
+  combined decode_TPS  mean=  570.15   std=  16.07   CV= 2.8%   min=553.10   max=585.01
+  per-req decode_TPS   mean=   71.27   std=   2.01   CV= 2.8%   min=69.14   max=73.13
+  avg TTFT (ms)        mean=  164.53ms   std=   1.53   CV= 0.9%   min=163.08   max=166.13
+  ITL p50 (ms)         mean=   83.86ms   std=   3.59   CV= 4.3%   min=79.71   max=86.03
+  ITL p95 (ms)         mean=   88.53ms   std=   0.72   CV= 0.8%   min=87.89   max=89.31
+
+--- Concurrency=16 (simultaneous requests) ---
+  warmups (2):
+    w1-r0      wall=   4.63s  ttft=   150ms  toks=  273  wall_TPS=  58.91  decode_TPS=  60.88  itl_p50=101.7ms  itl_p95=104.6ms
+    w1-r1      wall=  10.26s  ttft=   150ms  toks=  534  wall_TPS=  52.05  decode_TPS=  52.82  itl_p50=101.7ms  itl_p95=116.3ms
+    w1-r2      wall=  12.33s  ttft=   150ms  toks=  727  wall_TPS=  58.97  decode_TPS=  59.70  itl_p50=101.2ms  itl_p95=114.1ms
+    w1-r3      wall=  12.55s  ttft=   150ms  toks=  800  wall_TPS=  63.74  decode_TPS=  64.51  itl_p50=101.1ms  itl_p95=113.9ms
+    w1-r4      wall=  12.99s  ttft=   150ms  toks=  800  wall_TPS=  61.59  decode_TPS=  62.31  itl_p50=101.0ms  itl_p95=112.9ms
+    w1-r5      wall=   9.01s  ttft=   149ms  toks=  465  wall_TPS=  51.62  decode_TPS=  52.49  itl_p50=101.8ms  itl_p95=118.3ms
+    w1-r6      wall=   5.04s  ttft=   265ms  toks=  279  wall_TPS=  55.40  decode_TPS=  58.47  itl_p50=101.7ms  itl_p95=103.8ms
+    w1-r7      wall=   5.51s  ttft=   453ms  toks=  305  wall_TPS=  55.39  decode_TPS=  60.36  itl_p50=101.8ms  itl_p95=103.3ms
+    w1-r8      wall=  13.95s  ttft=   454ms  toks=  800  wall_TPS=  57.35  decode_TPS=  59.28  itl_p50= 92.1ms  itl_p95=111.9ms
+    w1-r9      wall=  13.88s  ttft=   453ms  toks=  800  wall_TPS=  57.64  decode_TPS=  59.59  itl_p50= 92.4ms  itl_p95=112.1ms
+    w1-r10     wall=  13.57s  ttft=   454ms  toks=  800  wall_TPS=  58.94  decode_TPS=  60.98  itl_p50= 96.4ms  itl_p95=112.0ms
+    w1-r11     wall=  13.71s  ttft=   453ms  toks=  800  wall_TPS=  58.33  decode_TPS=  60.32  itl_p50= 93.5ms  itl_p95=112.0ms
+    w1-r12     wall=   9.63s  ttft=   453ms  toks=  542  wall_TPS=  56.26  decode_TPS=  59.04  itl_p50=101.8ms  itl_p95=113.4ms
+    w1-r13     wall=   5.03s  ttft=   452ms  toks=  273  wall_TPS=  54.22  decode_TPS=  59.57  itl_p50=101.7ms  itl_p95=103.6ms
+    w1-r14     wall=   6.76s  ttft=   452ms  toks=  367  wall_TPS=  54.26  decode_TPS=  58.14  itl_p50=101.4ms  itl_p95=103.2ms
+    w1-r15     wall=   7.21s  ttft=   452ms  toks=  364  wall_TPS=  50.45  decode_TPS=  53.82  itl_p50=101.4ms  itl_p95=104.3ms
+    w2-r0      wall=   8.92s  ttft=   206ms  toks=  463  wall_TPS=  51.93  decode_TPS=  53.16  itl_p50=101.8ms  itl_p95=105.2ms
+    w2-r1      wall=  13.97s  ttft=   206ms  toks=  800  wall_TPS=  57.26  decode_TPS=  58.11  itl_p50=101.2ms  itl_p95=110.0ms
+    w2-r2      wall=   5.88s  ttft=   206ms  toks=  314  wall_TPS=  53.36  decode_TPS=  55.29  itl_p50=102.3ms  itl_p95=105.5ms
+    w2-r3      wall=  13.49s  ttft=   206ms  toks=  711  wall_TPS=  52.72  decode_TPS=  53.54  itl_p50=101.2ms  itl_p95=110.1ms
+    w2-r4      wall=  12.60s  ttft=   205ms  toks=  764  wall_TPS=  60.63  decode_TPS=  61.64  itl_p50=101.5ms  itl_p95=110.5ms
+    w2-r5      wall=  14.13s  ttft=   205ms  toks=  800  wall_TPS=  56.62  decode_TPS=  57.46  itl_p50=100.9ms  itl_p95=110.2ms
+    w2-r6      wall=  13.49s  ttft=   205ms  toks=  749  wall_TPS=  55.54  decode_TPS=  56.39  itl_p50=101.5ms  itl_p95=110.3ms
+    w2-r7      wall=  14.17s  ttft=   205ms  toks=  800  wall_TPS=  56.47  decode_TPS=  57.30  itl_p50=101.0ms  itl_p95=109.6ms
+    w2-r8      wall=  10.98s  ttft=   204ms  toks=  594  wall_TPS=  54.08  decode_TPS=  55.11  itl_p50=101.8ms  itl_p95=110.3ms
+    w2-r9      wall=   9.01s  ttft=   204ms  toks=  483  wall_TPS=  53.61  decode_TPS=  54.85  itl_p50=101.8ms  itl_p95=104.8ms
+    w2-r10     wall=  13.41s  ttft=   203ms  toks=  800  wall_TPS=  59.68  decode_TPS=  60.60  itl_p50=101.4ms  itl_p95=110.2ms
+    w2-r11     wall=  13.87s  ttft=   309ms  toks=  800  wall_TPS=  57.66  decode_TPS=  58.98  itl_p50=101.3ms  itl_p95=110.4ms
+    w2-r12     wall=  11.19s  ttft=   462ms  toks=  592  wall_TPS=  52.88  decode_TPS=  55.16  itl_p50=101.7ms  itl_p95=110.4ms
+    w2-r13     wall=  10.00s  ttft=   461ms  toks=  535  wall_TPS=  53.48  decode_TPS=  56.06  itl_p50=101.6ms  itl_p95=104.0ms
+    w2-r14     wall=  10.00s  ttft=   461ms  toks=  547  wall_TPS=  54.68  decode_TPS=  57.31  itl_p50=101.7ms  itl_p95=104.7ms
+    w2-r15     wall=   8.81s  ttft=   461ms  toks=  438  wall_TPS=  49.72  decode_TPS=  52.46  itl_p50=101.8ms  itl_p95=104.8ms
+  GPU during warmup code c=16 (28.1s, 192 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    93.5   21.4    23430    23430  219.4  219.9   73.0   74.0     1718
+       1    94.1   21.4    23430    23430  219.3  220.0   67.0   68.0     1814
+       2    94.4   21.5    23430    23430  219.4  219.8   73.0   73.0     1730
+       3    94.4   21.4    23430    23430  219.4  219.8   74.0   74.0     1753
+    r0         wall=  14.65s  ttft=   163ms  toks=  800  wall_TPS=  54.60  decode_TPS=  55.22  itl_p50=101.7ms  itl_p95=121.1ms
+    r1         wall=  14.59s  ttft=   163ms  toks=  800  wall_TPS=  54.83  decode_TPS=  55.45  itl_p50=101.5ms  itl_p95=121.2ms
+    r2         wall=  13.27s  ttft=   163ms  toks=  666  wall_TPS=  50.20  decode_TPS=  50.83  itl_p50=102.0ms  itl_p95=121.1ms
+    r3         wall=   9.75s  ttft=   163ms  toks=  573  wall_TPS=  58.78  decode_TPS=  59.78  itl_p50=101.3ms  itl_p95=103.8ms
+    r4         wall=  14.21s  ttft=   162ms  toks=  800  wall_TPS=  56.29  decode_TPS=  56.94  itl_p50=101.8ms  itl_p95=121.1ms
+    r5         wall=  15.08s  ttft=   162ms  toks=  800  wall_TPS=  53.05  decode_TPS=  53.62  itl_p50=101.4ms  itl_p95=120.9ms
+    r6         wall=  10.81s  ttft=   162ms  toks=  639  wall_TPS=  59.12  decode_TPS=  60.02  itl_p50=101.4ms  itl_p95=121.7ms
+    r7         wall=  15.31s  ttft=   161ms  toks=  800  wall_TPS=  52.26  decode_TPS=  52.82  itl_p50=101.2ms  itl_p95=121.0ms
+    r8         wall=  14.89s  ttft=   256ms  toks=  800  wall_TPS=  53.74  decode_TPS=  54.68  itl_p50=101.7ms  itl_p95=120.9ms
+    r9         wall=  13.96s  ttft=   425ms  toks=  800  wall_TPS=  57.29  decode_TPS=  59.09  itl_p50=101.9ms  itl_p95=120.7ms
+    r10        wall=   6.75s  ttft=   425ms  toks=  350  wall_TPS=  51.88  decode_TPS=  55.37  itl_p50=101.8ms  itl_p95=103.9ms
+    r11        wall=  13.69s  ttft=   425ms  toks=  722  wall_TPS=  52.75  decode_TPS=  54.44  itl_p50=102.0ms  itl_p95=120.9ms
+    r12        wall=   5.84s  ttft=   425ms  toks=  308  wall_TPS=  52.76  decode_TPS=  56.90  itl_p50=102.2ms  itl_p95=103.9ms
+    r13        wall=   8.39s  ttft=   424ms  toks=  451  wall_TPS=  53.74  decode_TPS=  56.61  itl_p50=101.5ms  itl_p95=103.6ms
+    r14        wall=  14.13s  ttft=   424ms  toks=  789  wall_TPS=  55.84  decode_TPS=  57.57  itl_p50=101.8ms  itl_p95=120.9ms
+    r15        wall=   8.49s  ttft=   424ms  toks=  391  wall_TPS=  46.06  decode_TPS=  48.48  itl_p50=101.6ms  itl_p95=103.3ms
+  combined   wall_TPS= 685.22  decode_TPS= 887.81  avg_ttft=   283ms  itl_p50=101.7ms  itl_p95=120.5ms
+    r0         wall=  14.48s  ttft=   119ms  toks=  800  wall_TPS=  55.26  decode_TPS=  55.72  itl_p50=101.6ms  itl_p95=121.7ms
+    r1         wall=  12.82s  ttft=   119ms  toks=  663  wall_TPS=  51.72  decode_TPS=  52.20  itl_p50=102.0ms  itl_p95=121.9ms
+    r2         wall=  14.59s  ttft=   118ms  toks=  800  wall_TPS=  54.84  decode_TPS=  55.29  itl_p50=101.7ms  itl_p95=121.6ms
+    r3         wall=  12.70s  ttft=   118ms  toks=  681  wall_TPS=  53.62  decode_TPS=  54.13  itl_p50=102.1ms  itl_p95=121.9ms
+    r4         wall=  12.70s  ttft=   118ms  toks=  724  wall_TPS=  57.01  decode_TPS=  57.55  itl_p50=102.0ms  itl_p95=122.1ms
+    r5         wall=   9.88s  ttft=   226ms  toks=  473  wall_TPS=  47.87  decode_TPS=  48.99  itl_p50=101.8ms  itl_p95=104.3ms
+    r6         wall=  14.38s  ttft=   439ms  toks=  800  wall_TPS=  55.64  decode_TPS=  57.40  itl_p50=101.7ms  itl_p95=121.5ms
+    r7         wall=  14.88s  ttft=   438ms  toks=  800  wall_TPS=  53.76  decode_TPS=  55.40  itl_p50=101.5ms  itl_p95=121.5ms
+    r8         wall=   9.78s  ttft=   438ms  toks=  538  wall_TPS=  54.98  decode_TPS=  57.56  itl_p50=101.8ms  itl_p95=104.0ms
+    r9         wall=  14.27s  ttft=   438ms  toks=  800  wall_TPS=  56.07  decode_TPS=  57.85  itl_p50=101.7ms  itl_p95=121.4ms
+    r10        wall=   8.62s  ttft=   437ms  toks=  433  wall_TPS=  50.26  decode_TPS=  52.95  itl_p50=102.0ms  itl_p95=104.4ms
+    r11        wall=  10.42s  ttft=   437ms  toks=  550  wall_TPS=  52.77  decode_TPS=  55.08  itl_p50=101.7ms  itl_p95=104.7ms
+    r12        wall=  13.36s  ttft=   437ms  toks=  699  wall_TPS=  52.32  decode_TPS=  54.09  itl_p50=102.0ms  itl_p95=121.9ms
+    r13        wall=  13.58s  ttft=   436ms  toks=  791  wall_TPS=  58.23  decode_TPS=  60.16  itl_p50=101.8ms  itl_p95=121.5ms
+    r14        wall=   8.51s  ttft=   435ms  toks=  437  wall_TPS=  51.35  decode_TPS=  54.12  itl_p50=101.9ms  itl_p95=104.4ms
+    r15        wall=  13.36s  ttft=   435ms  toks=  690  wall_TPS=  51.65  decode_TPS=  53.39  itl_p50=102.0ms  itl_p95=121.6ms
+  combined   wall_TPS= 717.69  decode_TPS= 881.87  avg_ttft=   324ms  itl_p50=101.8ms  itl_p95=121.5ms
+    r0         wall=   7.50s  ttft=   350ms  toks=  374  wall_TPS=  49.89  decode_TPS=  52.33  itl_p50=101.9ms  itl_p95=105.1ms
+    r1         wall=  13.88s  ttft=    81ms  toks=  800  wall_TPS=  57.62  decode_TPS=  57.96  itl_p50=101.6ms  itl_p95=118.0ms
+    r2         wall=   7.20s  ttft=   350ms  toks=  406  wall_TPS=  56.42  decode_TPS=  59.31  itl_p50=102.0ms  itl_p95=104.4ms
+    r3         wall=  13.38s  ttft=   349ms  toks=  800  wall_TPS=  59.77  decode_TPS=  61.37  itl_p50=101.9ms  itl_p95=115.8ms
+    r4         wall=  13.95s  ttft=   349ms  toks=  754  wall_TPS=  54.04  decode_TPS=  55.43  itl_p50=101.6ms  itl_p95=112.3ms
+    r5         wall=   9.85s  ttft=   348ms  toks=  531  wall_TPS=  53.93  decode_TPS=  55.91  itl_p50=101.7ms  itl_p95=120.5ms
+    r6         wall=   9.03s  ttft=   349ms  toks=  435  wall_TPS=  48.18  decode_TPS=  50.12  itl_p50=101.7ms  itl_p95=104.1ms
+    r7         wall=   8.76s  ttft=   348ms  toks=  449  wall_TPS=  51.27  decode_TPS=  53.40  itl_p50=101.6ms  itl_p95=104.1ms
+    r8         wall=  10.08s  ttft=   348ms  toks=  483  wall_TPS=  47.92  decode_TPS=  49.64  itl_p50=101.7ms  itl_p95=120.9ms
+    r9         wall=  13.54s  ttft=   347ms  toks=  709  wall_TPS=  52.38  decode_TPS=  53.76  itl_p50=101.7ms  itl_p95=115.1ms
+    r10        wall=  13.38s  ttft=   347ms  toks=  660  wall_TPS=  49.32  decode_TPS=  50.63  itl_p50=101.7ms  itl_p95=116.4ms
+    r11        wall=  12.15s  ttft=   347ms  toks=  675  wall_TPS=  55.56  decode_TPS=  57.19  itl_p50=102.0ms  itl_p95=119.8ms
+    r12        wall=  13.32s  ttft=   347ms  toks=  800  wall_TPS=  60.06  decode_TPS=  61.67  itl_p50=101.8ms  itl_p95=116.5ms
+    r13        wall=  12.68s  ttft=   347ms  toks=  649  wall_TPS=  51.18  decode_TPS=  52.62  itl_p50=102.1ms  itl_p95=119.8ms
+    r14        wall=  12.51s  ttft=   346ms  toks=  602  wall_TPS=  48.11  decode_TPS=  49.48  itl_p50=101.9ms  itl_p95=119.7ms
+    r15        wall=   8.66s  ttft=   346ms  toks=  427  wall_TPS=  49.32  decode_TPS=  51.37  itl_p50=101.6ms  itl_p95=104.2ms
+  combined   wall_TPS= 684.75  decode_TPS= 872.18  avg_ttft=   331ms  itl_p50=101.8ms  itl_p95=110.8ms
+  GPU during measured code c=16 (44.2s, 300 samples):
+     GPU   util%  VRAM%  MiB avg  MiB max  W avg  W max  C avg  C max  MHz avg
+       0    94.4   21.7    23430    23430  219.4  220.2   73.1   74.0     1717
+       1    94.8   21.8    23430    23430  219.4  220.0   67.0   68.0     1808
+       2    94.7   21.8    23430    23430  219.4  219.8   73.0   73.0     1726
+       3    94.5   21.7    23430    23430  219.4  219.9   74.0   74.0     1745
+    total power avg=877.6 W   phase throughput=695.8 tok/s   efficiency: 0.7928 tok/W  (792.84 tok/kJ)
+
+  === summary [code c=16] (n=3) ===
+  combined wall_TPS    mean=  695.89   std=  18.88   CV= 2.7%   min=684.75   max=717.69
+  combined decode_TPS  mean=  880.62   std=   7.89   CV= 0.9%   min=872.18   max=887.81
+  per-req decode_TPS   mean=   55.04   std=   0.49   CV= 0.9%   min=54.51   max=55.49
+  avg TTFT (ms)        mean=  312.85ms   std=  26.06   CV= 8.3%   min=283.03   max=331.23
+  ITL p50 (ms)         mean=  101.76ms   std=   0.08   CV= 0.1%   min=101.67   max=101.83
+  ITL p95 (ms)         mean=  117.62ms   std=   5.90   CV= 5.0%   min=110.83   max=121.49
+
+  === vLLM log metrics (last 15 entries, code) ===
+  PP tok/s             mean=   22.00tok/s   std=  12.72   CV=57.8%   min=0.00   max=40.00
+  GP tok/s             mean=  560.00tok/s   std= 143.50   CV=25.6%   min=338.20   max=813.60
+  E2E ms               n/a (log scrape unavailable)
+  queue ms             n/a (log scrape unavailable)
+  inference ms         n/a (log scrape unavailable)
+
+  === vLLM server metrics (deltas, full bench) ===
+    prompt tokens processed:   103755
+    generation tokens emitted: 248595
+    server-side avg TTFT:           367 ms
+    server-side avg E2E:          16900 ms
+    spec-decode: draft=453859  accepted=183867  acceptance=40.5%  mean_accept_len=5.56 (log)
+    vllm:num_requests_running: 0.000
+    vllm:num_requests_waiting: 0.000
+
+========================================================================
+  FINAL SUMMARY
+========================================================================
+  Prefill (c=1, gen=16):
+      target   actual   ttft_ms  prefill_t/s
+         512      552       314       1758.0
+        1024     1054       566       1863.2
+        2048     2060      1079       1909.4
+        4096     4074      2132       1910.5
+        8192     8102      4262       1900.9
+       16384    16160      8629       1872.8
+
+  Decode saturation — narrative:
+       c  comb_dtps  req_dtps  ttft_ms  itl50_ms  itl95_ms   tok/W
+       1     100.80    100.80       84      31.2      35.2  0.1143
+       2     172.58     86.29      109      37.4      40.2  0.1915
+       4     244.60     61.15      111      52.2      54.9  0.2715
+       8     296.98     37.12      178      86.8      89.5  0.3248
+      16     494.96     30.93      311     102.2     104.8  0.5363
+
+  Decode saturation — code:
+       c  comb_dtps  req_dtps  ttft_ms  itl50_ms  itl95_ms   tok/W
+       1     185.01    185.01       78      31.3      35.1  0.2046
+       2     303.19    151.60      107      37.3      40.3  0.3143
+       4     457.84    114.46      113      51.3      54.2  0.4131
+       8     570.15     71.27      165      83.9      88.5  0.5504
+      16     880.62     55.04      313     101.8     117.6  0.7928
+
+=== Peak GPU temperature (whole run, 5092 samples) ===
+    GPU 0: peak 74.0 C
+    GPU 1: peak 68.0 C
+    GPU 2: peak 75.0 C
+    GPU 3: peak 75.0 C
+
+=== GPU state (post-test) ===
+0, 73, 27, 23430, 24576, 219.12, 220.00, 73, 1800
+1, 32, 13, 23430, 24576, 215.54, 220.00, 67, 1920
+2, 84, 28, 23430, 24576, 219.02, 220.00, 73, 1785
+3, 83, 23, 23430, 24576, 219.54, 220.00, 74, 1785
+
+=== Last 5 SpecDecoding metrics (per container) ===
+  --- vllm-q38-ar-w4a8-dflash2-tp4 ---
+(APIServer pid=1) INFO 08-19 12:29:36 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 5.65, Accepted throughput: 548.59 tokens/s, Drafted throughput: 826.68 tokens/s, Accepted: 5486 tokens, Drafted: 8267 tokens, Per-position acceptance rate: 0.917, 0.800, 0.717, 0.640, 0.585, 0.520, 0.466, Avg Draft acceptance rate: 66.4%
+(APIServer pid=1) INFO 08-19 12:29:46 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 5.55, Accepted throughput: 666.79 tokens/s, Drafted throughput: 1026.03 tokens/s, Accepted: 6669 tokens, Drafted: 10262 tokens, Per-position acceptance rate: 0.916, 0.813, 0.717, 0.634, 0.560, 0.484, 0.426, Avg Draft acceptance rate: 65.0%
+(APIServer pid=1) INFO 08-19 12:29:56 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 5.46, Accepted throughput: 508.49 tokens/s, Drafted throughput: 798.53 tokens/s, Accepted: 5086 tokens, Drafted: 7987 tokens, Per-position acceptance rate: 0.906, 0.798, 0.693, 0.613, 0.554, 0.479, 0.413, Avg Draft acceptance rate: 63.7%
+(APIServer pid=1) INFO 08-19 12:30:06 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 5.74, Accepted throughput: 559.45 tokens/s, Drafted throughput: 826.63 tokens/s, Accepted: 5595 tokens, Drafted: 8267 tokens, Per-position acceptance rate: 0.925, 0.834, 0.741, 0.664, 0.588, 0.517, 0.467, Avg Draft acceptance rate: 67.7%
+(APIServer pid=1) INFO 08-19 12:30:16 [metrics.py:120] SpecDecoding metrics: Mean acceptance length: 5.38, Accepted throughput: 627.05 tokens/s, Drafted throughput: 1002.32 tokens/s, Accepted: 6271 tokens, Drafted: 10024 tokens, Per-position acceptance rate: 0.896, 0.784, 0.690, 0.607, 0.541, 0.457, 0.404, Avg Draft acceptance rate: 62.6%

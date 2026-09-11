@@ -1084,3 +1084,64 @@ patches:
   - <<: *genesis_env_patch
     id: genesis-pn59-streaming-gdn
     genesis_env: GENESIS_ENABLE_PN59_STREAMING_GDN
+  - id: qwen38-sglang-autoround-w4a8-v0519
+    model: [qwen3.8-27b]
+    status: unverified
+    files:
+      - models/qwen3.8-27b/sglang/patches/sglang-autoround-w4a8-v0.5.19
+    load_bearing_when:
+      - composes:
+          - sgl/qwen38-27b-dual-fast
+          - sgl/qwen38-27b-dual-superfast
+          - sgl/qwen38-27b-dual-max
+          - sgl/qwen38-27b-multi4-fast
+          - sgl/qwen38-27b-multi4-superfast
+          - sgl/qwen38-27b-multi4-max
+          - sgl/qwen38-27b-multi4-supermax
+          - sgl/qwen38-27b-multi8-fast
+          - sgl/qwen38-27b-multi8-superfast
+          - sgl/qwen38-27b-multi8-max
+          - sgl/qwen38-27b-multi8-supermax
+        reason: >-
+          Enables the serve-time W4A8 toggle (W4A8=1 -> int8 activations on the int4 weights) on every
+          registry-wired sgl/ slug. Unlike vLLM, SGLang has NO env-gated W4A8 path, so here APPLYING THE
+          PATCH IS THE ACTIVATION: each compose mounts this dir at /etc/club3090/w4a8 and the entrypoint
+          runs install.sh + install.sh --verify before launch. The patch is a re-cut of @jb-seo's
+          0004-autoround-w4a8.patch (cut against v0.5.19's predecessor v0.5.18) onto v0.5.19 by @A1RM4X
+          (club-3090#1226); its substantive addition is the per-shard K%128==0 / N%64==0 shape guard that
+          jb-seo's eligibility gate omitted -- without it Qwen3.8-27B's merged GDN in_proj_ba (N=96 ->
+          48/rank at TP=4) crashes in gptq_marlin_repack with 'size_n=48 is not divisible by 64'; the
+          guard routes non-conformant shards to standard Marlin W4A16 instead. DORMANT AT THE DEFAULT:
+          W4A8=0 ships, the installer is never invoked, and the composes serve stock W4A16 -- so this is
+          load-bearing only for the W4A8=1 path, and the toggle hard-fails rather than silently serving
+          W4A16 if the mount does not resolve. Measured on the reference 2x3090 PCIe rig: dual-fast
+          prefill@10K 1183 -> 1710 (+44.5%, n=3 CV 0.8%) and @90K 953 -> 1276 (+33.9%) for -11.1% code
+          decode; dual-superfast prefill@10K 1234 -> 1779 (+44.1%, n=3 CV 0.4%) and @90K 973 -> 1345
+          (+38.3%), decode ~flat, MTP accept unchanged 3.71 -> 3.72. A trade, not a free win. NOT load-
+          bearing for the two unregistered composes (dual/autoround-int4/dflash2-bf16.yml,
+          dual/fp8/dflash2.yml), which carry the same toggle but have no slug.
+        evidence: >-
+          models/qwen3.8-27b/sglang/patches/sglang-autoround-w4a8-v0.5.19/README.md; club-3090#1226
+          (@A1RM4X's re-cut + shape guard, cherry-picked with authorship preserved); BENCHMARKS.md 'Quad-
+          card (4x RTX 3090, TP=4) - SGLang' row (@A1RM4X's own 4-card numbers)
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/sglang/patches/sglang-autoround-w4a8-v0.5.19/install.sh
+      mounted_at: /etc/club3090/w4a8
+      invoke: "bash /etc/club3090/w4a8/install.sh"
+      invoked_before: sglang-launch
+      wired_at: [volumes, entrypoint]
+    drift_guard:
+      kind: marker
+      check: "install.sh hard-fails (exit 1) if any of the 3 content markers is missing after apply, or if a partial 1-2/3 state is detected — a re-pinned image that drops a W4A8 hook serves nothing, not a half-wired mix"
+      on_fail: refuse-to-boot
+    capability: sglang-w4a8-dense-gemm
+    upstream:
+      ref: jb-seo/club-3090 (0004-autoround-w4a8.patch, cut against SGLang v0.5.18)
+      status: ours
+      drop_when: "SGLang lands AutoRound W4A8 with the K%128/N%64 shape guard natively in the AutoRoundConfig eligibility gate — then this re-cut + guard is retired (keep the compose, drop the mount)."
