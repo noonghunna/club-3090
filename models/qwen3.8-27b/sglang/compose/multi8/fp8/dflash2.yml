@@ -333,7 +333,22 @@ services:
         if [ "$$_n" = "0" ]; then
           echo "[spec] drafter OFF (SPEC_N=0)" >&2
         else
-          [ -d "$$D" ] || { echo "[spec] drafter not found at $$D" >&2; exit 1; }
+          if [ ! -d "$$D" ]; then
+            echo "[spec] drafter not found at $$D" >&2
+            echo "[spec]" >&2
+            echo "[spec] Fetch it with:" >&2
+            echo "[spec]   WEIGHT_KEY=qwen3.8-27b:dflash2-zlab bash scripts/setup.sh qwen3.8-27b" >&2
+            echo "[spec]" >&2
+            echo "[spec] ⚠️ WITH_DFLASH_DRAFT=1 fetches the WRONG drafter for this engine." >&2
+            echo "[spec] It resolves to syvai/Qwen3.8-27B-DFlash2-W4A16 (compressed-tensors)," >&2
+            echo "[spec] which the vLLM tiers use. On SGLang that checkpoint SILENTLY drafts" >&2
+            echo "[spec] garbage - accept len ~1.03 vs ~5.3, decode ~38 vs ~171 tok/s, with no" >&2
+            echo "[spec] error and a fully passing test suite (sglang#39087). These slugs need" >&2
+            echo "[spec] the UNQUANTIZED z-lab release, ~3.6 GiB." >&2
+            echo "[spec]" >&2
+            echo "[spec] Or run without the drafter: SPEC_N=0" >&2
+            exit 1
+          fi
           # ⚠️⚠️ --speculative-draft-model-quantization IS LOAD-BEARING: without
           # it SGLang inherits the TARGET's `auto-round` for a compressed-tensors
           # drafter (serving_hook.py:629).

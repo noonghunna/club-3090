@@ -759,7 +759,14 @@ fi
 if command -v docker >/dev/null 2>&1 && docker inspect "${CONTAINER}" >/dev/null 2>&1; then
   echo ""
   echo "=== Last 3 SpecDecoding metrics ==="
-  docker logs "${CONTAINER}" 2>&1 | grep "SpecDecoding metrics" | tail -3 || true
+  # vLLM tags these "SpecDecoding metrics"; SGLang writes "accept len: N, accept rate: N"
+  # on its decode-batch line and llama.cpp writes "draft acceptance = N". Grepping only
+  # the vLLM string printed an EMPTY block on the other two — which reads as "spec-dec
+  # produced nothing" rather than "I only know one engine's wording". Seen in the wild on
+  # club-3090#1251 (2x 5090, sgl/qwen38-27b-dual-fast): the section came back blank while
+  # the drafter was running fine.
+  docker logs "${CONTAINER}" 2>&1 \
+    | grep -E "SpecDecoding metrics|accept len:|draft acceptance" | tail -3 || true
 fi
 
 # --- per-rig #249 record: the agentic TTFT/decode-by-turn curve (no canonical

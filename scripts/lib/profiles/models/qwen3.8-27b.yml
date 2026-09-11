@@ -167,6 +167,14 @@ weights:
     format: bf16
     local_subdir: qwen3.8-27b-dflash2-zlab-bf16
     hf_repo: z-lab/Qwen3.8-27B-DFlash2
+    # MEASURED on disk 2026-09-11: 3,849,114,690 bytes = 3.85 GB decimal (3.58 GiB).
+    # The setup.sh disk gate wants the DECIMAL figure. This was ABSENT, so setup.sh
+    # could not size the download — and this is the drafter EVERY sgl/ super* slug
+    # needs. Its sibling `dflash2` (syvai W4A16, 1.2 GB) is what setup.dflash points
+    # at, i.e. what WITH_DFLASH_DRAFT=1 fetches: correct for the vLLM tiers, and on
+    # SGLang it silently drafts garbage (sglang#39087). Fetch this one explicitly:
+    #   WEIGHT_KEY=qwen3.8-27b:dflash2-zlab bash scripts/setup.sh qwen3.8-27b
+    size_gb: 3.85
   # F16 multimodal projector — the mmproj companion of the VISION slug
   # (llamacpp/qwen38-27b-single-iq4xs-vision). Quant-INDEPENDENT: one F16 tower
   # for every llama.cpp GGUF quant of this model, so it lands at the SHARED gguf
