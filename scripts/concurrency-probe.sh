@@ -202,14 +202,24 @@ _container_cmd() { docker inspect "$CONTAINER" --format '{{join .Config.Cmd " "}
 _served_seqs()   { _container_cmd | command grep -oE 'max-num-seqs [0-9]+'  | command grep -oE '[0-9]+' | head -1; }
 _served_np()     { _container_cmd | command grep -oE '\-np +[0-9]+'         | command grep -oE '[0-9]+' | head -1; }
 _served_ctx()    { _container_cmd | command grep -oE 'max-model-len [0-9]+' | command grep -oE '[0-9]+' | head -1; }
+# SGLang names the same knob --max-running-requests. Without this the detector fell
+# through vLLM's --max-num-seqs, llama.cpp's -np and /props (none of which SGLang has)
+# and hit the #818 FATAL — so concurrency-probe could not run against ANY sgl/ slug.
+_served_max_running() { _container_cmd | command grep -oE 'max-running-requests [0-9]+' | command grep -oE '[0-9]+' | head -1; }
 # llama.cpp-family servers report the slot count as total_slots on /props.
 _props_slots()   { curl -s -m 3 "${URL}/props" 2>/dev/null \
   | python3 -c 'import json,sys; v=json.load(sys.stdin).get("total_slots",""); print(v if isinstance(v,int) else "")' 2>/dev/null; }
+# SGLang exposes it on /get_server_info (flat, top-level). Used when the compose set
+# it via env rather than a literal flag in the container cmd.
+_sgl_max_running() { curl -s -m 3 "${URL}/get_server_info" 2>/dev/null \
+  | python3 -c 'import json,sys; v=json.load(sys.stdin).get("max_running_requests",""); print(v if isinstance(v,int) else "")' 2>/dev/null; }
 
 _detect_slots() {
   local n
   n="$(_served_seqs || true)"; [[ -n "$n" ]] && { echo "$n"; return; }
   n="$(_served_np || true)";   [[ -n "$n" ]] && { echo "$n"; return; }
+  n="$(_served_max_running || true)"; [[ -n "$n" ]] && { echo "$n"; return; }
+  n="$(_sgl_max_running || true)";    [[ -n "$n" ]] && { echo "$n"; return; }
   n="$(_props_slots || true)"; [[ -n "$n" ]] && { echo "$n"; return; }
   echo ""
 }
@@ -305,7 +315,9 @@ if [[ -n "$SWEEP" || "$MATRIX" == "1" ]]; then
 elif [[ -z "${CONCURRENCY:-}" ]]; then
   _conc_src="container max-num-seqs"; CONCURRENCY="$(_served_seqs || true)"
   if [[ -z "$CONCURRENCY" ]]; then _conc_src="container -np";          CONCURRENCY="$(_served_np || true)"; fi
+  if [[ -z "$CONCURRENCY" ]]; then _conc_src="container max-running-requests"; CONCURRENCY="$(_served_max_running || true)"; fi
   if [[ -z "$CONCURRENCY" ]]; then _conc_src="server /props total_slots"; CONCURRENCY="$(_props_slots || true)"; fi
+  if [[ -z "$CONCURRENCY" ]]; then _conc_src="server /get_server_info max_running_requests"; CONCURRENCY="$(_sgl_max_running || true)"; fi
   if [[ -z "$CONCURRENCY" ]]; then
     echo "[concurrency-probe] FATAL: cannot detect the served slot count" \
          "(container cmd and ${URL}/props both failed) — pass CONCURRENCY=N explicitly" >&2

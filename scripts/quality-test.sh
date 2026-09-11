@@ -723,6 +723,23 @@ sys.exit(0 if walk(obj) else 1)
      && docker inspect "$CONTAINER" >/dev/null 2>&1; then
     docker inspect "$CONTAINER" 2>/dev/null \
       | grep -Eq -- '(--reasoning[= ]+on|"--reasoning"[[:space:]]*,[[:space:]]*"on")' && return 0
+    # SGLang spells it --reasoning-parser <name>; vLLM spells it --reasoning-parser too.
+    docker inspect "$CONTAINER" 2>/dev/null \
+      | grep -Eq -- '--reasoning-parser' && return 0
+  fi
+  # SGLang has no /props, so the probe above cannot see it. /get_model_info carries
+  # reasoning_parser; a non-null value means the server splits <think> into
+  # reasoning_content, i.e. reasoning parsing IS on. Without this the mismatch warning
+  # never fired on SGLang — and an unforced leg silently inherits the pack defaults,
+  # which is the "no-thinking leg is really a second thinking leg" trap.
+  if curl -sf -m 3 "${URL}/get_model_info" 2>/dev/null | python3 -c '
+import json, sys
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+rp = d.get("reasoning_parser")
+sys.exit(0 if rp else 1)
+' >/dev/null 2>&1; then
+    return 0
   fi
   return 1
 }
