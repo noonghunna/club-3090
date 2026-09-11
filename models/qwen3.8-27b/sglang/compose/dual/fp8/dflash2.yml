@@ -342,6 +342,23 @@ services:
         else
           echo "[w4a8] off (W4A8=1 to enable; ~+44% prefill, ~-11% code decode)" >&2
         fi
+        # ⚠️ CLIENT COMPATIBILITY — three OpenAI-extension fields that work on our vLLM
+        # slugs are REFUSED by SGLang when stream=true (serving_chat.py, an explicit
+        # guard, not a bug):
+        #     return_token_ids · return_prompt_token_ids · return_meta_info
+        # e.g. "return_token_ids is not supported with streaming on /v1/chat/completions.
+        # Please set stream=false when using return_token_ids=true."
+        # vLLM streams return_token_ids fine and llama.cpp has no such restriction, so an
+        # client that works against vllm/qwen38-27b-* can fail here at REQUEST time — after
+        # you have already committed to the slug. No workaround short of stream=false.
+        # Reported by @Naelith (Discord), hit via pi and opencode behind an API-switching
+        # proxy — which is the worst shape of this: the proxy makes the backends look
+        # interchangeable right up until a field one of them refuses.
+        # ✅ The 8-pack is NOT affected: benchlocal-cli and the HermesAgent sandbox set none
+        # of these fields and do not stream, so quality runs against sgl/ slugs are fine.
+        # ⓘ return_meta_info being non-streaming-only is also the ONLY clean way to read
+        # per-request spec_accept_length out of this engine — see the accept-len A/B in
+        # learnings/sglang-engine.md, which had to run non-streaming for exactly this reason.
         # --- sampler row + thinking default, mirroring the vLLM tiers (#1014) ---
         # The model card publishes TWO sampler rows; ENABLE_THINKING selects one.
         # Values verified against Qwen/Qwen3.8-27B's card 2026-09-11, and re-checked
