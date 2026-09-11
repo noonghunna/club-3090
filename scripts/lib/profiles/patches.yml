@@ -1145,8 +1145,8 @@ patches:
       on_fail: tool-calls-silently-dead
     capability: glm53-tool-calling
     upstream:
-      ref: ggml-org/llama.cpp (minja numeric dotted attribute access)
-      status: ours
+      ref: https://github.com/ggml-org/llama.cpp/issues/28786
+      status: reported
       drop_when: >-
         minja implements `x.0` as `x[0]`, or the caps probe degrades gracefully instead of
         inferring nothing when a probe throws. Closest prior art: ggml-org/llama.cpp#28509
