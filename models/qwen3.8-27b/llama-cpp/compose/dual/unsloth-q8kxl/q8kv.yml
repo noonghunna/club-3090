@@ -245,6 +245,29 @@ services:
     #   made exactly that inference and shipped `Drafter: none`. Only the tensor table is evidence.
     #   n=2 matches the qwen3.6-27b and deckard llama.cpp composes; UNMEASURED for this model.
     #   MTP_DRAFT_N_MAX=0 disables it; sweep it once there is a bench.
+    # ⭐ THIS IS THE ONLY ENGINE OF THE THREE THAT DELIVERS THE WHOLE CARD ROW.
+    # llama-server seeds every request from the CLI sampler params — server-task.cpp
+    # params_from_json_cmpl(): `defaults.sampling = params_base.sampling`, then each
+    # field is `json_value(data, "<key>", defaults.sampling.<field>)`, e.g.
+    # `json_value(data, "presence_penalty", defaults.sampling.penalty_present)`. No
+    # allowlist, no hard-coded request-side default — so presence_penalty 0.0/1.5 DOES
+    # land here. vLLM and SGLang both drop it: their get_diff_sampling_param() /
+    # get_default_sampling_params() allowlists carry no penalties, and both chat adapters
+    # declare presence_penalty with a hard 0.0 default that always wins, making it a
+    # client-side parameter there. (Read at llama.cpp 0d227ec; the pin is newer, b10236,
+    # but this path is longstanding.)
+    #
+    # ⚠️ THE INSTRUCT=1 / THINKING=1 FLIP RIDES ON A DEPRECATED SPELLING. It appends a
+    # second copy of the flags and lets the last one win. b10236 warns on exactly that:
+    #     DEPRECATED: argument '--temp' specified multiple times, use comma-separated
+    #     values instead (only last value will be used)
+    # Last-wins is CONFIRMED on the pin (the warning says so), so the flip is correct
+    # today, and a DEFAULT boot is clean — every sampler flag below appears exactly once
+    # (verified by rendering: default 1x each; INSTRUCT=1 duplicates 4; THINKING=1
+    # duplicates 4 with identical values). But "comma-separated" is multi-VALUE syntax:
+    # if repeats ever come to mean "append" instead of "replace", INSTRUCT=1 breaks
+    # silently. The fix is to resolve the row once in the entrypoint shell, the way this
+    # model's vLLM and SGLang composes do — that needs a boot to land safely.
     # ⚠️ Comments CANNOT live inside the `command: >-` folded scalar below — every line there is
     #   part of one command string, and a `#` line becomes literal argv text
     #   ('invalid command line string' at compose parse). Keep notes above this key.

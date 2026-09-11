@@ -388,6 +388,20 @@ services:
         # branches. top_k / min_p / repetition_penalty are identical across the
         # rows and stay mode-independent.
         _temp="$${TEMP:-$${TEMPERATURE:-}}"
+        # ⚠️ presence_penalty IS SILENTLY DROPPED — it is in the JSON below for
+        # intent, but vLLM never applies it. get_diff_sampling_param()
+        # (config/model.py) filters --override-generation-config through a fixed
+        # allowlist — repetition_penalty, temperature, top_k, top_p, min_p,
+        # max_new_tokens — with no penalties in it, and ChatCompletionRequest
+        # declares `presence_penalty: float | None = 0.0`, a hard default that is
+        # always present in the request and therefore always wins. So the instruct
+        # row's presence_penalty=1.5 resolves to 0.0 server-side. SGLang has the
+        # identical gap (same allowlist, same hard default): presence_penalty is a
+        # CLIENT-SIDE parameter on BOTH engines. That is what the model card's own
+        # non-thinking example does, and what its "support for sampling parameters
+        # varies according to inference frameworks" note is warning about.
+        # Everything else in the row DOES land — verified 2026-09-11 by resolving a
+        # bare request through to_sampling_params() inside the pinned image.
         if [ "$${ENABLE_THINKING:-true}" = "true" ]; then
           : "$${_temp:=1.0}" "$${TOP_P:=0.95}" "$${PRESENCE_PENALTY:=0.0}"
           echo "[sampler] thinking row (ENABLE_THINKING=true): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
