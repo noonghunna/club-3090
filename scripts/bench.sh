@@ -1604,7 +1604,19 @@ if (( CAP_ENABLED )); then
         }'
       fi
     else
-      echo "  no drafter output in the log (spec-dec off, or the engine does not log acceptance)"
+      # ⚠ THREE DIFFERENT STATES USED TO PRINT THIS ONE LINE. Until 2026-09-11 the
+      # parser knew only vLLM's "draft acceptance rate =" wording, so every SGLang
+      # run landed here — including a DEAD DFlash2 drafter (accept len ~1.0,
+      # sglang#39087), which is slow but never wrong and passes every functional
+      # test. "Nothing to report" and "I cannot read this engine" must not look the
+      # same. Recognised wordings: vLLM `draft acceptance rate = X`; SGLang
+      # `accept len: X, accept rate: Y`.
+      echo "  no acceptance data in the measured window. Either spec-dec is OFF for this"
+      echo "  run, or this engine words its acceptance line differently and the parser"
+      echo "  (scripts/lib/capture.sh, mode=acceptance) has not been taught it."
+      echo "  ⚠ Do NOT read this as 'the drafter is fine' — verify it fired:"
+      echo "      docker logs <container> 2>&1 | grep -oE 'accept len: [0-9.]+' | tail"
+      echo "      healthy is 2-5; ~1.0 means the drafter is drafting garbage"
     fi
   fi
 
