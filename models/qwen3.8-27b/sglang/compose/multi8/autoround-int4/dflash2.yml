@@ -259,6 +259,14 @@ services:
       - MAX_RUNNING_REQUESTS
       - MAMBA_SSM_DTYPE
       - W4A8
+      - ENABLE_THINKING
+      - TEMP
+      - TOP_P
+      - TOP_K
+      - MIN_P
+      - PRESENCE_PENALTY
+      - REPEAT_PENALTY
+      - REASONING_EFFORT
       - CHUNKED_PREFILL_SIZE
       - DRAFTER_DIR
       - DRAFT_QUANT
@@ -323,6 +331,75 @@ services:
         else
           echo "[w4a8] off (W4A8=1 to enable; ~+44% prefill, ~-11% code decode)" >&2
         fi
+        # --- sampler row + thinking default, mirroring the vLLM tiers (#1014) ---
+        # The model card publishes TWO sampler rows; ENABLE_THINKING selects one.
+        # Values verified against Qwen/Qwen3.8-27B's card 2026-09-11, and re-checked
+        # on every provider we serve: the official FP8 and unsloth GGUF cards restate
+        # both rows verbatim; Frozenlock / RadixArk / syvai / z-lab add no sampling
+        # guidance of their own, so the base card governs for those checkpoints too.
+        #
+        # ⚠️⚠️ ONLY THE THINKING ROW ACTUALLY LANDS HERE — AND NOT BECAUSE OF THE
+        # --preferred-sampling-params FLAG BELOW. Three mechanisms, two of which bite:
+        #   1. --default-chat-template-kwargs IS enforced (applied to every request
+        #      unless the request overrides it) -> the thinking MODE is real, and so
+        #      is reasoning_effort.
+        #   2. --sampling-defaults model (pinned below) makes the engine read the
+        #      checkpoint's generation_config.json, which ships temperature 1.0 /
+        #      top_k 20 / top_p 0.95 — EXACTLY the card's thinking row. THAT is what
+        #      serves the thinking row: Qwen's file, not our flag. The file is
+        #      byte-identical across our int4 and fp8 checkpoints, and there is no
+        #      instruct row anywhere in any of them.
+        #   3. --preferred-sampling-params is INERT on /v1/chat/completions. It IS
+        #      merged (tokenizer_manager.py:1353, `{**preferred, **request}`), but the
+        #      chat adapter's to_sampling_params resolves EVERY key eagerly through
+        #      get_param() — user -> generation_config.json -> OpenAI default — so the
+        #      request dict is always fully populated and always wins the merge. The
+        #      merged result is byte-identical to the unmerged one. It bites only on
+        #      the native /generate endpoint. (SGLang's own Responses-API path,
+        #      protocol.py:1793, omits unset keys SPECIFICALLY so they fall through to
+        #      this flag; the chat path does not — filed upstream.)
+        # ⇒ ENABLE_THINKING=false genuinely turns thinking OFF, but the SAMPLER STAYS
+        #   ON THE THINKING ROW. A client wanting the instruct row must send
+        #   temperature/top_p/presence_penalty itself — which is exactly what the
+        #   model card's own non-thinking example does, and what bench.sh does.
+        # ⇒ presence_penalty cannot be pinned server-side on EITHER engine: vLLM's
+        #   get_diff_sampling_param() and SGLang's get_default_sampling_params() share
+        #   the same allowlist (repetition_penalty, temperature, top_k, top_p, min_p),
+        #   and both chat adapters declare presence_penalty with a hard 0.0 default, so
+        #   it is always present in the request and always wins. The card anticipates
+        #   this: "support for sampling parameters varies according to inference
+        #   frameworks." It is a client-side parameter, full stop.
+        # We keep the flag because /get_model_info then advertises the correct row to
+        # clients that introspect it — the one thing it genuinely does.
+        _think="${ENABLE_THINKING:-true}"
+        _temp="${TEMP:-}"
+        if [ "$$_think" = "true" ]; then
+          : "$${_temp:=1.0}" "$${TOP_P:=0.95}" "$${PRESENCE_PENALTY:=0.0}"
+          echo "[sampler] thinking row (ENABLE_THINKING=true): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+          echo "[sampler]   temp/top_p/top_k served via generation_config.json (--sampling-defaults model)" >&2
+        else
+          : "$${_temp:=0.7}" "$${TOP_P:=0.80}" "$${PRESENCE_PENALTY:=1.5}"
+          echo "[sampler] instruct row (ENABLE_THINKING=false): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+          echo "[sampler]   ⚠️ thinking is OFF but the SAMPLER IS NOT: the engine still serves the" >&2
+          echo "[sampler]   ⚠️ thinking row from generation_config.json. Send temperature/top_p/" >&2
+          echo "[sampler]   ⚠️ presence_penalty per-request to get the instruct row." >&2
+        fi
+        echo "[sampler] ⚠️ presence_penalty is CLIENT-SIDE on both engines (engine allowlists drop it)" >&2
+        # ⚠️⚠️ reasoning_effort MUST travel with enable_thinking. This checkpoint's
+        # BUILT-IN template does `reasoning_effort|default('xhigh')` — the SLOWEST,
+        # longest rung — so leaving it unset serves xhigh on EVERY request. The
+        # vLLM tiers for this same model pin `low` (2026-08-16), so an unset value
+        # here would make the two engines serve DIFFERENT reasoning depth by
+        # default and stop being comparable at all.
+        # ⚠️ Ladder is low / medium / xhigh — there is NO `high` rung. The vLLM
+        # tiers mount a patched template that maps high -> xhigh; we use the
+        # checkpoint's built-in template, which has no such mapping.
+        _reff="${REASONING_EFFORT:-low}"
+        case "$$_reff" in low|medium|xhigh) : ;; *) echo "[sampler] REASONING_EFFORT='$$_reff' must be low|medium|xhigh" >&2; exit 1 ;; esac
+        echo "[sampler] reasoning_effort=$$_reff (template default would be xhigh)" >&2
+        SAMPLER=(--default-chat-template-kwargs "{\"enable_thinking\": $$_think, \"reasoning_effort\": \"$$_reff\"}"
+                 --sampling-defaults model
+                 --preferred-sampling-params "{\"temperature\": $$_temp, \"top_p\": $${TOP_P}, \"top_k\": $${TOP_K:-20}, \"min_p\": $${MIN_P:-0.0}, \"presence_penalty\": $${PRESENCE_PENALTY}, \"repetition_penalty\": $${REPEAT_PENALTY:-1.0}}")
         exec python3 -m sglang.launch_server \
           --model-path "$$M" \
           --tp-size 8 \
@@ -334,8 +411,10 @@ services:
           --attention-backend "${ATTENTION_BACKEND:-flashinfer}" \
           --context-length "${CONTEXT_LENGTH:-262144}" \
           --mem-fraction-static "${MEM_FRACTION:-0.82}" \
-          --max-running-requests "${MAX_RUNNING_REQUESTS:-1}" \
+          --max-running-requests "${MAX_RUNNING_REQUESTS:-2}" \
           --trust-remote-code \
+          --enable-metrics \
+          "$${SAMPLER[@]}" \
           --reasoning-parser "${REASONING_PARSER:-qwen3}" \
           --tool-call-parser "${TOOL_CALL_PARSER:-qwen3_coder}" \
           --host 0.0.0.0 --port 30000 \
