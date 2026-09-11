@@ -460,6 +460,21 @@ services:
       # normal case here (REASONING_EFFORT=max => long thinking traces); the
       # multi* siblings keep 4096 because long-context prefill dominates there.
       # For bulk long-document prefill on this compose, override UBATCH=4096.
+      # ⚠️⚠️ -ub 2048 CAN CRASH ON LONG PREFILL — KNOWN UPSTREAM, NOT FIXED.
+      # ggml-org/llama.cpp#28282: CUDA "illegal memory access" during prefill on
+      # GLM-5.3-Flash (glm5next) at -ub 2048, around the 2nd-3rd context
+      # checkpoint on a 7k+ prompt. THREE independent reports: sm_120 Blackwell
+      # (upstream), and two dual-3090s (club-3090#1238 + @Pix13 upstream), so it
+      # is NOT arch-specific. Independent of the DFlash2 drafter and of
+      # --cache-reuse.
+      #   WORKAROUND: UBATCH=512 (or 128). Confirmed full fix by two reporters.
+      # ⭐ 2048 IS KEPT AS THE DEFAULT DELIBERATELY (maintainer call 2026-09-11):
+      # it is worth ~+24% decode on the i-quant arm (BENCHMARKS row 8 vs 9,
+      # 14.58 -> 18.12 narrative), and the crash needs a long prompt to trigger.
+      # Short- and mid-context work is unaffected. Set UBATCH=512 if you do bulk
+      # long-document prefill, until #28282 lands.
+      # ⚠️ Whether K-quant experts dodge this is UNTESTED — all three reports so
+      # far are i-quant. If you hit it on a DevQuasar arm, say so on #28282.
       - '-ub'
       - '${UBATCH:-2048}'
       - '-b'
