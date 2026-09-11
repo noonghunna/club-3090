@@ -29,7 +29,7 @@
 #              warning — all three tiers log it, and all three see. The only sound
 #              test is whether DIFFERENT images produce DIFFERENT output.
 #   Template:  native + club-3090 alias — the model's own chat_template.jinja
-#              with `high` remapped to `medium` (patches/qwen38-reasoning-effort-template)
+#              with `high` remapped to `xhigh` (patches/qwen38-reasoning-effort-template)
 #              ⚠️ This is a deliberate break from the qwen3.6-27b composes; see
 #              "Chat template" below. The 3.8 template is a DIFFERENT program.
 #   Max ctx:   262144 — the architectural ceiling (text_config.max_position_embeddings).
@@ -241,7 +241,7 @@
 #     - it no longer splits `<think>` out of `content` as a fallback.
 #   Mounting the 3.6/froggeric template here would silently delete all of that.
 #   ⭐ WHAT IS MOUNTED is that same native template plus SEVEN lines: `high` is
-#   mapped onto `medium` immediately before the validation. The standard OpenAI/
+#   mapped onto `xhigh` immediately before the validation. The standard OpenAI/
 #   Anthropic ladder tops out at `high` and Qwen3.8 has no such rung, so
 #   against the stock file a Claude-API client on /v1/messages — which turns
 #   thinking ON and sends `high` — gets a Jinja TemplateError as HTTP 500 on
@@ -257,8 +257,10 @@
 #   </thinking> hallucination, unclosed think before a tool call, no-user-query
 #   crash, developer role, …). If those symptoms show up, that audit — not a
 #   blind froggeric mount — is the next step.
-#   Note the stack-wide `enable_thinking: true` default below ALSO suppresses
-#   the xhigh reasoning-effort preamble, since the template gates it on thinking.
+#   Note the stack-wide `enable_thinking: true` default below ALSO ENABLES the
+#   xhigh reasoning-effort preamble: the template gates the whole reasoning-effort
+#   block on thinking being on (`chat_template.jinja:46`), so thinking ON turns the
+#   preamble ON. Thinking OFF is what suppresses it.
 #
 # Dependencies:
 #   - 2x RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — fine; auto-detected
@@ -293,8 +295,8 @@
 #                     presence_penalty 0.0, repetition_penalty 1.0
 #     Instruct mode:  temp 0.7, top_p 0.80, top_k 20, min_p 0.0,
 #                     presence_penalty 1.5, repetition_penalty 1.0
-#   This compose ships thinking OFF (the stack-wide default), so its DEFAULT is
-#   the INSTRUCT row — but the sampler now FOLLOWS the reasoning flag: the
+#   This compose ships thinking ON (the stack-wide default), so its DEFAULT is
+#   the THINKING row — but the sampler now FOLLOWS the reasoning flag: the
 #   entrypoint derives the card row from ENABLE_THINKING at boot (#1014), so the
 #   mode and the sampler can no longer mismatch silently.
 #
@@ -359,7 +361,7 @@ services:
       # NVLink auto-detection — runs inside the container at boot.
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       # Chat template: the model's OWN, plus seven lines mapping the standard
-      # OpenAI/Anthropic rung `high` onto `medium`. Qwen3.8's ladder is
+      # OpenAI/Anthropic rung `high` onto `xhigh`. Qwen3.8's ladder is
       # low/medium/xhigh with NO `high`, and the stock template
       # raise_exception()s on anything else, so a client sending the standard top
       # rung gets HTTP 500 while /v1/models still returns 200. Observed live via
@@ -579,7 +581,7 @@ services:
       - --trust-remote-code
       - --reasoning-parser
       - qwen3
-      # Stack-wide default: thinking OFF. On this model that ALSO suppresses the
+      # Stack-wide default: thinking ON. On this model that ALSO ENABLES the
       # template's xhigh reasoning-effort preamble (it is gated on thinking).
       # Callers opt in per-request; the server default below is "low", so send
       # "reasoning_effort":"medium" (un-nudged) or "xhigh" (deliberate) to override.
@@ -603,7 +605,7 @@ services:
       # which is what makes it slow and timeout-prone. REASONING_EFFORT=medium if
       # you want the model un-nudged rather than pushed toward brevity.
       # ⚠️ Valid values are xhigh | medium | low, plus `high`, which THIS REPO
-      # maps onto MEDIUM via the patched chat template mounted above. Upstream
+      # maps onto XHIGH via the patched chat template mounted above. Upstream
       # Qwen has no `high` rung and its stock template RAISES on it; the mapping
       # is the whole point of that mount. medium is the UN-NUDGED baseline (no
       # branch, no injected preamble), deliberately NOT xhigh — a client sending
