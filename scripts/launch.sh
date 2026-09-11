@@ -1203,17 +1203,49 @@ export_variant_engine_pin() {
       BEELLAMA_IMAGE) export BEELLAMA_IMAGE="$value" ;;
       # #246 arch-aware env (pilot slugs; hardware-profile balanced default)
       KV_CACHE_DTYPE)
-        export KV_CACHE_DTYPE="$value"
-        echo "[launch] arch-aware KV dtype: ${value} (hardware-profile default for detected GPUs — #246)" ;;
+        # #246 arch-aware default — but a value the USER set WINS, matching the .env
+        # precedence rule earlier in this script. An unconditional export silently
+        # clobbered an explicit `KV_CACHE_DTYPE=… scripts/launch.sh …` with no override path
+        # (reported on Discord for MAX_NUM_SEQS, 2026-09-11).
+        if [[ -n "${KV_CACHE_DTYPE:-}" ]]; then
+          echo "[launch] KV_CACHE_DTYPE: keeping your value ${KV_CACHE_DTYPE} (hardware profile suggested ${value})" >&2
+        else
+          export KV_CACHE_DTYPE="$value"
+          echo "[launch] arch-aware KV dtype: ${value} (hardware-profile default for detected GPUs — #246)"
+        fi ;;
       MAX_NUM_SEQS)
-        export MAX_NUM_SEQS="$value"
-        echo "[launch] memory-envelope concurrency: MAX_NUM_SEQS=${value} (measured for this card class — #246 Phase 2)" ;;
+        # #246 arch-aware default — but a value the USER set WINS, matching the .env
+        # precedence rule earlier in this script. An unconditional export silently
+        # clobbered an explicit `MAX_NUM_SEQS=… scripts/launch.sh …` with no override path
+        # (reported on Discord for MAX_NUM_SEQS, 2026-09-11).
+        if [[ -n "${MAX_NUM_SEQS:-}" ]]; then
+          echo "[launch] MAX_NUM_SEQS: keeping your value ${MAX_NUM_SEQS} (hardware profile suggested ${value})" >&2
+        else
+          export MAX_NUM_SEQS="$value"
+          echo "[launch] memory-envelope concurrency: MAX_NUM_SEQS=${value} (measured for this card class — #246 Phase 2)"
+        fi ;;
       GPU_MEMORY_UTILIZATION)
-        export GPU_MEMORY_UTILIZATION="$value"
-        echo "[launch] memory-fraction floor: GPU_MEMORY_UTILIZATION=${value} (unified-memory card can't safely give the default — #246 Phase 2)" ;;
+        # #246 arch-aware default — but a value the USER set WINS, matching the .env
+        # precedence rule earlier in this script. An unconditional export silently
+        # clobbered an explicit `GPU_MEMORY_UTILIZATION=… scripts/launch.sh …` with no override path
+        # (reported on Discord for MAX_NUM_SEQS, 2026-09-11).
+        if [[ -n "${GPU_MEMORY_UTILIZATION:-}" ]]; then
+          echo "[launch] GPU_MEMORY_UTILIZATION: keeping your value ${GPU_MEMORY_UTILIZATION} (hardware profile suggested ${value})" >&2
+        else
+          export GPU_MEMORY_UTILIZATION="$value"
+          echo "[launch] memory-fraction floor: GPU_MEMORY_UTILIZATION=${value} (unified-memory card can't safely give the default — #246 Phase 2)"
+        fi ;;
       VLLM_USE_DEEP_GEMM)
-        export VLLM_USE_DEEP_GEMM="$value"
-        echo "[launch] fp8 weights: VLLM_USE_DEEP_GEMM=${value} (consumer card has no DeepGEMM recipe — disc #571)" ;;
+        # #246 arch-aware default — but a value the USER set WINS, matching the .env
+        # precedence rule earlier in this script. An unconditional export silently
+        # clobbered an explicit `VLLM_USE_DEEP_GEMM=… scripts/launch.sh …` with no override path
+        # (reported on Discord for MAX_NUM_SEQS, 2026-09-11).
+        if [[ -n "${VLLM_USE_DEEP_GEMM:-}" ]]; then
+          echo "[launch] VLLM_USE_DEEP_GEMM: keeping your value ${VLLM_USE_DEEP_GEMM} (hardware profile suggested ${value})" >&2
+        else
+          export VLLM_USE_DEEP_GEMM="$value"
+          echo "[launch] fp8 weights: VLLM_USE_DEEP_GEMM=${value} (consumer card has no DeepGEMM recipe — disc #571)"
+        fi ;;
       VLLM_ATTENTION_BACKEND) export VLLM_ATTENTION_BACKEND="$value" ;;
       # #809 — the model's declared decode class. A block-diffusion (dLLM)
       # model has no measurable decode window on a single-canvas response,
