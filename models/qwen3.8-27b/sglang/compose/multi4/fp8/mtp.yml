@@ -397,7 +397,7 @@ services:
         #      merged result is byte-identical to the unmerged one. It bites only on
         #      the native /generate endpoint. (SGLang's own Responses-API path,
         #      protocol.py:1793, omits unset keys SPECIFICALLY so they fall through to
-        #      this flag; the chat path does not — filed upstream.)
+        #      this flag; the chat path does not — sglang#39096.)
         # ⇒ ENABLE_THINKING=false genuinely turns thinking OFF, but the SAMPLER STAYS
         #   ON THE THINKING ROW. A client wanting the instruct row must send
         #   temperature/top_p/presence_penalty itself — which is exactly what the
