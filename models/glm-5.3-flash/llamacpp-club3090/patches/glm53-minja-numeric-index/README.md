@@ -92,11 +92,18 @@ two-call sort path, reasoning_content, typed content and list-of-outputs tool co
 
 ## Upstream
 
-Not fixed upstream as of 2026-09-11. The right fix is in minja — either implement `x.0` as
-`x[0]` per Jinja2, or have the caps probe degrade gracefully instead of inferring nothing when a
-probe throws. Closest prior art is
-[#28509](https://github.com/ggml-org/llama.cpp/issues/28509) (Gemma 4 misclassified
-`supports_typed_content`), same subsystem, closed as completed.
+**Filed 2026-09-11: [ggml-org/llama.cpp#28786](https://github.com/ggml-org/llama.cpp/issues/28786)**
+(by the maintainer — ggml-org's `AGENTS.md` bars agent-filed contributions).
 
-⚠️ ggml-org's `AGENTS.md` bars autonomous agent contributions — this is reported upstream by the
-maintainer, not from here.
+The right fix is in minja — either implement `x.0` as `x[0]` per Jinja2, or have `caps_get`
+degrade gracefully instead of discarding everything the successful probes inferred when one
+throws. The second is the more valuable of the two: it stops *any* single unsupported construct
+silently disabling every capability.
+
+Closest prior art is [#28509](https://github.com/ggml-org/llama.cpp/issues/28509) (Gemma 4
+misclassified `supports_typed_content`), same subsystem, closed as completed. The same symptom
+was also reported unanswered on [#27754](https://github.com/ggml-org/llama.cpp/pull/27754)
+(2026-09-07).
+
+**Drop this override when** upstream lands either fix — then re-vendor the vendor template
+unmodified and confirm with `llama-template-analysis` that the caps still read true.
