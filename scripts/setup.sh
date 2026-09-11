@@ -961,6 +961,23 @@ if [[ "${WITH_DFLASH_DRAFT:-0}" == "1" ]] && [[ "${SKIP_MODEL:-0}" != "1" ]]; th
   fi
   echo "[dflash]  WITH_DFLASH_DRAFT=1 — downloading ${DFLASH_KEY} ..."
   download_weight_key "${DFLASH_KEY}"
+  # setup.dflash is ONE key, but the engines need DIFFERENT drafters. For
+  # qwen3.8-27b it resolves to `dflash2` (syvai W4A16) — correct for the vLLM
+  # super*/ultra* tiers. The SGLang sgl/…-super* slugs need the UNQUANTIZED z-lab
+  # release, and pointing them at the quantized one does NOT fail loudly: it drafts
+  # garbage at accept len ~1.03 vs ~5.3 (decode ~38 vs ~171 tok/s) with no error and
+  # a passing test suite (sglang#39087). Surfaced by a user hitting the
+  # missing-drafter path on 2x 5090 (club-3090#1251).
+  case "${DFLASH_KEY}" in
+    qwen3.8-27b:dflash2)
+      echo ""
+      echo "[dflash]  NOTE: that is the vLLM drafter. To serve an SGLang"
+      echo "[dflash]        sgl/qwen38-27b-*-super* slug, ALSO fetch the z-lab BF16 one:"
+      echo "[dflash]          WEIGHT_KEY=qwen3.8-27b:dflash2-zlab bash scripts/setup.sh qwen3.8-27b"
+      echo "[dflash]        (~3.85 GB. The quantized drafter silently collapses"
+      echo "[dflash]         acceptance on SGLang - sglang#39087.)"
+      ;;
+  esac
   echo ""
 else
   echo "[dflash]  Skipping DFlash draft model. Set WITH_DFLASH_DRAFT=1 to fetch it when a matching compose requires it."
