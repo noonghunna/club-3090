@@ -633,7 +633,45 @@ check_mtp_acceptance() {
   # generalized harness).
   case "$ENGINE_KIND" in
     llamacpp) skip "llama.cpp engine — MTP acceptance check is vLLM-log-format-specific (run engine-side verification separately)"; return 0 ;;
-    sglang)   skip "SGLang engine — MTP acceptance check is vLLM-log-format-specific";   return 0 ;;
+    sglang)
+      # ⚠ THIS USED TO `skip`, AND THAT IS HOW A DEAD DRAFTER PASSED verify-full.
+      # sglang#39087: a compressed-tensors DFlash2 drafter drafts garbage — accept
+      # len 1.03 vs 3.71 for identical BF16 weights, decode ~38 vs ~171 tok/s — with
+      # no error and no warning, because speculative decoding REJECTS bad drafts:
+      # the output stays correct, it is just slow. This check was the only gate that
+      # could have caught it, and it was skipping on the one engine where it happened.
+      # SGLang's wording is `accept len: N.NN, accept rate: N.NN` (scheduler
+      # metrics_reporter.py) — parseable, just not vLLM's.
+      if ! container_is_real; then
+        skip "container '${CONTAINER}' not found (CONTAINER=none for host endpoints)"
+        return 0
+      fi
+      curl -sf -m 60 "${URL}/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -d "{
+          \"model\": \"${MODEL}\",
+          \"messages\": [{\"role\": \"user\", \"content\": \"Count from 1 to 80, one number per line.\"}],
+          \"max_tokens\": 500,
+          \"temperature\": 0.0,
+          ${THINK_OFF_STD}\"chat_template_kwargs\": ${THINK_OFF_KW}
+        }" >/dev/null 2>&1 || { fail "metrics-trigger request failed" "Check docker logs"; return 1; }
+      sleep 3
+      local sgl_al
+      sgl_al="$(docker logs --tail 400 "${CONTAINER}" 2>&1 \
+                | grep -oE 'accept len: [0-9]+\.[0-9]+' | tail -5 \
+                | grep -oE '[0-9]+\.[0-9]+' \
+                | awk '{s+=$1; n++} END{if(n) printf "%.3f", s/n}')"
+      if [[ -z "$sgl_al" ]]; then
+        skip "no 'accept len' in the last 400 log lines (spec-dec off for this compose?)"
+        return 0
+      fi
+      if awk -v a="$sgl_al" -v m="${MTP_ACCEPT_MIN:-2.0}" 'BEGIN{exit !(a+0 >= m+0)}'; then
+        pass "acceptance length ${sgl_al} >= ${MTP_ACCEPT_MIN:-2.0} (SGLang)"
+      else
+        fail "acceptance length ${sgl_al} < ${MTP_ACCEPT_MIN:-2.0} (SGLang)" \
+             "A drafter near 1.0 is drafting garbage and being rejected — output stays correct but decode collapses (sglang#39087). Check the drafter checkpoint is UNQUANTIZED and that --speculative-draft-model-quantization is 'unquant'."
+      fi
+      return 0 ;;
   esac
   if ! command -v docker >/dev/null 2>&1; then
     skip "docker not in PATH (host engine build? — see #87 for generalized harness work)"

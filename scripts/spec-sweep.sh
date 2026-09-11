@@ -201,7 +201,25 @@ _measure_vllm_arm() {
   if [[ "$n" != "0" ]]; then
     local cn
     cn="$(docker ps --format '{{.Names}}' | grep -m1 -E 'vllm' || true)"
-    [[ -n "$cn" ]] && acc="$(docker logs "$cn" 2>&1 | grep 'SpecDecoding metrics' | tail -1 | grep -oE 'acceptance rate: [0-9.]+%' | tail -1 | grep -oE '[0-9.]+' || echo '—')"
+    # Two engines word this differently. vLLM: "SpecDecoding metrics: ... acceptance
+    # rate: 85.0%". SGLang: "accept len: 5.66, accept rate: 0.67" (a RATE in [0,1],
+    # so scale to % to keep the column comparable). Until 2026-09-11 only the vLLM
+    # wording was read and SGLang rows printed '—' — an honest blank, but it meant the
+    # sweep could not find an acceptance knee on the engine at all.
+    if [[ -n "$cn" ]]; then
+      acc="$(docker logs "$cn" 2>&1 | grep 'SpecDecoding metrics' | tail -1 | grep -oE 'acceptance rate: [0-9.]+%' | tail -1 | grep -oE '[0-9.]+' || true)"
+      if [[ -z "$acc" ]]; then
+        acc="$(docker logs "$cn" 2>&1 | grep -oE 'accept rate: [0-9.]+' | tail -1 | grep -oE '[0-9.]+' \
+               | awk '{printf "%.1f", $1*100}' || true)"
+      fi
+      # ⚠ NOT carried here: SGLang also reports accept LENGTH (tok/step), which is the
+      # more diagnostic quantity for a block drafter — a dead one reads ~1.0
+      # (sglang#39087) while its RATE can still look unremarkable. This sweep's
+      # RESULTS record is a fixed 3 fields ("$n|$med|$acc") that downstream does
+      # arithmetic on, so adding a fourth here would change its shape. The length is
+      # asserted in verify-full.sh and reported by bench.sh instead.
+      [[ -z "$acc" ]] && acc='—'
+    fi
     [[ "$acc" != "—" && -n "$acc" ]] && acc="$(awk -v p="$acc" 'BEGIN{printf "%.2f", p/100}')"
   fi
   RESULTS+=("$n|$med|$acc")

@@ -26,6 +26,17 @@ status: experimental
 # ⛔⛔ ON SGLANG THE QUANTIZED ONE SILENTLY DRAFTS GARBAGE:
 #     syvai (compressed-tensors)  accept len 1.03, accept rate 0.004  (n=422)
 #     z-lab (bf16, this profile)  accept len 3.71 @262K / 5.27 @32K   (n=100)
+# ⚠️ THOSE TWO FIGURES HAVE NO RECORDED reasoning_effort, AND EFFORT IS WORTH ~28%.
+# Measured 2026-09-11 (A,B,A,B over 4 boots, per-request meta_info.spec_accept_length,
+# n=12/arm, ~2.6K ctx, thinking ON): REASONING_EFFORT=low 5.362 (CV 2.9%) vs xhigh
+# 3.872 (CV 4.7%) = -27.8%, against ~2.8% boot-to-boot noise. The run above predates
+# #1244, when the composes did not pin reasoning_effort and the template default
+# ('xhigh') applied — so 3.71/5.27 are almost certainly xhigh numbers, while the
+# SHIPPED config is now low. Context depth ALSO moves this by a similar amount, and
+# nothing separates the two: xhigh@32K read 5.27 there but xhigh@2.6K reads 3.87 here,
+# which depth alone cannot explain. ⇒ Do not treat 3.71 as the shipped baseline, and
+# do not "correct" it to 5.36 — different context, different regime. A 262K ×
+# {low,xhigh} run is what would make any of these comparable.
 # Decode on the shipped recipe: ~38 tok/s vs ~171-175. Nothing errors, nothing warns,
 # and verify-full returns "All checks passed" for BOTH (bad drafts are REJECTED, so a
 # dead drafter is slow, never wrong — and verify-full's acceptance check SKIPS on SGLang

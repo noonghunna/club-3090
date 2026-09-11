@@ -496,23 +496,53 @@ elif mode == "acceptance":
     # Acceptance WITHOUT a fire rate is a deception: measured 2026-08-01, a drafter
     # reported 0.992 acceptance while firing on 5 of ~20 requests (zero on novel
     # content). Report how OFTEN it fired alongside how WELL it did when it fired.
-    acc, drafted, accepted = [], 0, 0
+    # TWO ENGINES, TWO WORDINGS, AND THEY DO NOT LOG THE SAME QUANTITY.
+    #   vLLM    : "draft acceptance rate = 0.85"        -> a RATE in [0,1]
+    #   SGLang  : "accept len: 5.66, accept rate: 0.67" -> a LENGTH (tok/step) AND a rate
+    # Until 2026-09-11 only the vLLM wording was matched, so on SGLang this parser
+    # failed outright and bench printed "no drafter output in the log (spec-dec off,
+    # or the engine does not log acceptance)" -- collapsing THREE different states
+    # (drafter off / drafter DEAD / wording not recognised) into one benign-looking
+    # line. A dead DFlash2 drafter (accept len ~1.0, sglang#39087) read identically
+    # to a healthy SGLang run. Keep the two quantities in SEPARATE lists: averaging a
+    # length into a rate silently produces a number that is neither.
+    acc, alen, drafted, accepted = [], [], 0, 0
     for ln in lines:
         m = re.search(r"draft acceptance(?: rate)?\s*=\s*([0-9.]+)", ln)
         if m:
             acc.append(float(m.group(1)))
+        m_sgl_rate = re.search(r"accept rate:\s*([0-9.]+)", ln)
+        if m_sgl_rate:
+            acc.append(float(m_sgl_rate.group(1)))
+        m_sgl_len = re.search(r"accept len:\s*([0-9.]+)", ln)
+        if m_sgl_len:
+            alen.append(float(m_sgl_len.group(1)))
         m2 = re.search(r"\(\s*(\d+)\s*accepted\s*/\s*(\d+)\s*(?:generated|drafted)", ln)
         if m2:
             accepted += int(m2.group(1))
             drafted += int(m2.group(2))
-    if not acc:
+    if not acc and not alen:
         sys.exit(1)
+    # SGLang emits a length but the caller's summary line is rate-shaped; surface the
+    # length explicitly rather than letting it vanish. accept len ~1.0 means the
+    # drafter is drafting garbage and being rejected -- slow, never wrong, and
+    # invisible to every functional test (sglang#39087).
+    if alen:
+        _al = f" accept_len_mean={sum(alen)/len(alen):.3f} accept_len_last={alen[-1]:.3f}"
+        _al += f" accept_len_min={min(alen):.3f} accept_len_max={max(alen):.3f}"
+        if sum(alen)/len(alen) < 1.5:
+            _al += " ⚠DRAFTER-LOOKS-DEAD(accept_len<1.5)"
+    else:
+        _al = ""
+    if not acc:
+        print(f"fired={len(alen)}{_al}")
+        sys.exit(0)
     # `last` is the final acceptance the log carries. It exists because the sweep's
     # TSV `accept` column has always meant exactly that — a per-arm boot ends with
     # its own last value — and swapping in the mean would silently redefine every
     # historical row. bench.sh quotes the mean; the sweep quotes last. Same scrape.
     print(f"fired={len(acc)} last={acc[-1]:.3f} mean={sum(acc)/len(acc):.3f} "
-          f"min={min(acc):.3f} max={max(acc):.3f} accepted={accepted} drafted={drafted}")
+          f"min={min(acc):.3f} max={max(acc):.3f} accepted={accepted} drafted={drafted}{_al}")
 
 elif mode == "timings":
     # llama.cpp per-request print_timing. `prompt eval time` is PREFILL; the bare
