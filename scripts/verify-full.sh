@@ -357,8 +357,23 @@ except Exception as e:
     print(f'__PARSE_ERROR__: {e}')
 " 2>&1)"
   if echo "$tool_calls" | grep -q "__INLINED__"; then
-    fail "model emitted <tool_call> as inline text (tool_calls[] empty)" \
-         "Known issue: MTP × TurboQuant incompat. Use docker-compose.tools.yml or .tools-text.yml. See README Known issues."
+    # This hint was hardcoded to the Qwen3.6/vLLM cause and printed on EVERY engine.
+    # A GLM-on-llama.cpp reporter was told "MTP x TurboQuant incompat, use
+    # docker-compose.tools.yml" — a file that does not exist for that model, naming a
+    # mechanism absent from their stack (club-3090#1250). A hint that confidently names
+    # the WRONG cause is worse than no hint: it sends the reporter to fix something that
+    # was never broken, and they cannot tell it is wrong without knowing the codebase.
+    case "$ENGINE_KIND" in
+      llamacpp)
+        fail "model emitted <tool_call> as inline text (tool_calls[] empty)" \
+             "llama.cpp builds its tool parser by statically walking the chat template. If the template uses constructs minja cannot evaluate, parser generation FAILS and the tags stay in content. Re-send a request WITH tools and look for HTTP 400 'Unable to generate parser for this template' — if present this is template/minja, not the model or the quant (GLM-5.3-Flash hits it at _args.items(): club-3090#1250). Otherwise check --jinja and --chat-template-file." ;;
+      sglang)
+        fail "model emitted <tool_call> as inline text (tool_calls[] empty)" \
+             "Check --tool-call-parser matches the model family (qwen3_coder on the Qwen3.x composes) and that the chat template emits the format that parser expects." ;;
+      *)
+        fail "model emitted <tool_call> as inline text (tool_calls[] empty)" \
+             "On the Qwen3.6 vLLM tiers this is the MTP x TurboQuant incompat - use docker-compose.tools.yml or .tools-text.yml (README Known issues). On other stacks check --tool-call-parser and the chat template first." ;;
+    esac
   elif echo "$tool_calls" | grep -qi "get_weather"; then
     pass "tool_calls[] populated with get_weather"
   else
