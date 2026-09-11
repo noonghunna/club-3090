@@ -1,0 +1,325 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
+#              OFFICIAL Qwen/Qwen3.8-27B-FP8 — block-quantised e4m3, ~29 GB.
+#   Engine:    SGLang STOCK v0.5.19 (`lmsysorg/sglang:v0.5.19`) — NO PATCHES.
+#   Topology:  8x GPU (TP=8) — NOT the reference rig
+#   Drafter:   DFlash2 EXTERNAL block-drafter (syv-ai W4A16, compressed-tensors,
+#              5 layers, `DFlash2DraftModel`) — NOT the in-checkpoint MTP head.
+#   KV:        fp8_e4m3 — same as the MTP sibling; full 262K fits because fp8 KV
+#              is half the bytes of bf16.
+#   Vision:    ✅ tower present. The MTP sibling scored verify-full 4/4 on vision
+#              2026-09-10; untested on this tier.
+#   Max ctx:   262144 (full arch max, as the fp8 MTP sibling which MEASURED a
+#              409,552-token pool at this setting).
+#   Genesis:   N/A — Genesis is a vLLM construct.
+#   Status:    🧪 Experimental — drafter FIXED 2026-09-10 (was 👁️ Preview while the
+#              syvai compressed-tensors drafter silently drafted garbage; the
+#              z-lab BF16 drafter restored acceptance to 3.71 and verify-full
+#              ALL PASS). Not yet soaked or 8-packed.
+
+#   Best for:  the SUPERFAST rung of the SGLang tier ladder — mirrors
+#              vllm/qwen38-27b-dual-superfast on the drafter+KV axis only.
+# ---------------------------------------------------------------------------
+#   Provenance: engine mechanics copied VERBATIM from the VALIDATED sibling
+#              sglang/compose/dual/autoround-int4/mtp.yml (booted, benched,
+#              verify-full PASS 2026-09-10) — same bash -c shape, same port
+#              mapping, same parsers, same --mamba-ssm-dtype/--chunked-prefill
+#              plumbing. Tier definition from vllm/qwen38-27b-dual-superfast.
+#              Nothing authored from first principles.
+#
+#   ⚠️⚠️ PARSERS ARE NOT OPTIONAL ON A THINKING MODEL — without
+#   `--reasoning-parser` the chain-of-thought lands INLINE in `content` with a
+#   bare `</think>` and `reasoning_tokens` reports 0, which silently corrupts
+#   any benchmark (bench.sh takes TTFT from the first `content` delta, so it
+#   would fire on the first THINKING token). Observed on the MTP sibling's first
+#   boot 2026-09-10. Values match vllm/qwen38-27b-dual-fast exactly.
+#
+#   ⭐ `--mamba-ssm-dtype bfloat16` carried from the MTP sibling. It does NOT
+#   free VRAM — the mamba pool is auto-fit, so it buys ~2x the slots instead.
+#   Full mechanism + measured table: learnings/sglang-engine.md 2026-09-10.
+#
+#   ⛔ `--linear-attn-backend` IS NOT A LEVER on this rig: for a GDN model at
+#   sm_86 every alternative to Triton either hard-errors or falls back to Triton
+#   for prefill by construction. Do not re-explore it here.
+# ---------------------------------------------------------------------------
+#   ⛔⛔ MEASURED 2026-09-10: DFLASH2 DRAFTS ARE REJECTED ~100% OF THE TIME.
+#
+#     | leg              | sglang MTP n=4 | sglang DFlash2 blk=8 |      Δ |
+#     |------------------|---------------:|---------------------:|-------:|
+#     | narrative decode |          89.24 |            **38.57** |   -57% |
+#     | code decode      |         112.50 |            **38.88** |   -65% |
+#     | prefill @10K     |        1183.41 |              1171.94 |    -1% |
+#     | prefill @90K     |         952.92 |               965.70 |   +1.3%|
+#     | accept len       |           2.86 |             **1.03** |   dead |
+#     | accept rate      |          0.465 |            **0.004** |   dead |
+#     accept len never exceeded 1.12 across 422 decode batches. At block=8 a
+#     working drafter reads 2-5.
+#
+#   ⚠️⚠️ AND verify-full REPORTED "All checks passed". THAT IS NOT A BUG IN THE
+#   MODEL — it is a gate blind spot, and it is the important lesson here:
+#     - speculative decoding REJECTS bad drafts, so correctness is preserved by
+#       construction. A 0%-acceptance drafter is SLOW, never WRONG. Every
+#       output-shaped check therefore passes.
+#     - verify-full step 9 (`MTP acceptance length threshold`) SKIPS on SGLang:
+#       it greps for vLLM's `SpecDecoding metrics` line, which SGLang does not
+#       emit. So the ONE check that would have caught this is inert here.
+#   ⇒ On SGLang the only drafter-health signal is the engine's own
+#     `accept len:` / `accept rate:` decode-batch lines. READ THEM. A green
+#     verify-full says nothing about whether your drafter is alive.
+#
+#   ⚠️ NOT an architecture-mapping failure — ruled out: SGLang has a
+#   first-class `DFlash2DraftModel` (models/dflash.py:1066) and lists it in
+#   `spec_aux_hidden_state.py`. The weights loaded into the intended class
+#   (`Load weight end. type=DFlash2DraftModel, quant=compressed-tensors`).
+#   Leading hypothesis, UNTESTED: the syv-ai drafter was trained against
+#   vLLM's DFlash2 implementation (vllm#52816), and SGLang's port is "adapted
+#   from the DFlash reference implementation (HF)" — if the aux hidden-state
+#   capture convention differs, the drafter receives well-formed but WRONG
+#   hidden states and emits confident garbage. Nothing was logged about the
+#   target capture layers either way.
+#   Other untried leads: `--speculative-attention-mode` (default `prefill`),
+#   and whether the compressed-tensors draft path dequantises correctly.
+#
+#   ⭐ CONTRAST: the SAME drafter WORKS on vLLM — `vllm/qwen38-27b-dual-superfast`
+#   measures ~74 narrative / ~139 code (vs its MTP sibling's 73/100, i.e. +39%
+#   on code). So this is an ENGINE-side integration gap, not a bad drafter.
+# ---------------------------------------------------------------------------
+#   ⚠️⚠️ `--mem-fraction-static` IS 0.85 HERE, NOT the MTP sibling's 0.90 —
+#   MEASURED REASON, 2026-09-10: at 0.90 this compose OOMs in the prefill
+#   cudagraph capture, ~4.5 min in, at `avail_mem=0.01 GB` on the last size,
+#   surfacing as a PyTorch internal assert (`num_active_captures_ > 0 ...
+#   markCaptureEnd called with no captures in progress`) rather than a clean
+#   CUDA OOM. That assert is the tell for capture-time OOM — do not chase it as
+#   a torch bug. The external drafter costs ~2.1 GB/rank over the MTP sibling:
+#     drafter weights            +1.16 GB  (DFlash2DraftModel, compressed-tensors)
+#     draft KV     0.20 -> 0.96  +0.76 GB  (block drafter needs its own pool)
+#     mamba interm 0.35 -> 0.56  +0.21 GB  (D=5 -> 8 sizes it; see the VRAM note)
+#   ...which left `Memory pool end avail=2.40 GB` against a ~1.26 GB prefill
+#   graph capture, and it did not fit. 0.85 gives that back; KV drops from
+#   403,876 tokens to well above the 262,144 ctx, so nothing is lost.
+# ---------------------------------------------------------------------------
+#   ⚠️⚠️ THE vLLM TIER NAMES CARRY OVER, THE vLLM MECHANISM DOES NOT.
+#
+#   On vLLM, superfast-vs-ultrafast is forced by a BACKEND COUPLING: the DFlash2
+#   drafter's block attention is non-causal, FLASH_ATTN handles it, and fp8 KV
+#   cannot use FLASH_ATTN on Ampere -> it falls to FlashInfer at a ~40% decode
+#   cost. That is why the vLLM ultrafast tier MUST run bf16 KV, and why it pays
+#   for it with a reduced context ceiling.
+#
+#   ⭐ THAT COUPLING IS NOT KNOWN TO EXIST HERE. SGLang gives the draft worker
+#   its OWN attention backend, resolved separately from the target's
+#   (`_resolve_dflash_draft_attention_backend`, arg_groups/speculative_hook.py:541).
+#   Its supported set is (flashinfer, fa3, fa4, triton, trtllm_mha, ascend) and
+#   the CUDA fallback is flashinfer — so nothing observed so far forces the
+#   target's KV dtype to drive the drafter's kernel. There is also a separate
+#   `--speculative-draft-kv-cache-dtype` knob.
+#
+#   ⇒ So this fp8-vs-bf16 split is a HYPOTHESIS INHERITED FROM ANOTHER ENGINE,
+#     not an established SGLang property. Both tiers exist so the split can be
+#     MEASURED here. If bf16 buys nothing on SGLang, ultrafast should be
+#     retired rather than kept for symmetry with vLLM.
+#
+#   ⚠️ AND THESE ARE NOT ACTIVATION-EQUIVALENT TO THEIR vLLM NAMESAKES. The vLLM
+#   superfast tier serves W4A8 (int8 activations) through vendored Marlin
+#   patches. We run STOCK SGLang with NO patches, so both tiers here are W4A16.
+#   Do not compare a number from these against a vLLM W4A8 number and call the
+#   delta an engine difference.
+# ---------------------------------------------------------------------------
+#   ⭐⭐ DFLASH WIRING — four things that are NOT obvious, all verified against
+#   the v0.5.19 image on 2026-09-10:
+#
+#   1. ⚠️⚠️ `--speculative-draft-model-quantization compressed-tensors` IS
+#      MANDATORY AND IS THE TRAP. serving_hook.py:629 defaults the DRAFT
+#      quantization to the TARGET's when unset — our target is `auto-round`,
+#      our drafter is `compressed-tensors` (pack-quantized). Omit the flag and
+#      SGLang tries to load a compressed-tensors checkpoint with the auto-round
+#      loader. Harmless on the MTP sibling (target IS the draft), fatal here.
+#   2. DFLASH IGNORES the EAGLE knobs: speculative_hook.py FORCES
+#      `speculative_num_steps=1` and `speculative_eagle_topk=1`, logging an
+#      override if you pass anything else. Do NOT reuse mtp.yml's EAGLE block.
+#   3. BLOCK SIZE IS INFERRED from the drafter config when unset
+#      (`parse_dflash_draft_config`). Ours declares `dflash_config.block_size=8`.
+#      ⭐ That is the SAME effective depth as the vLLM tier's
+#      `num_speculative_tokens: 7` — SGLang counts the bonus token, vLLM does
+#      not (identical convention to MTP n=4 -> num_draft_tokens=5). Leave it
+#      inferred so the two engines stay matched.
+#      ⚠️ SPEC_N HERE IS BLOCK SIZE, i.e. vLLM's n PLUS ONE. A user copying
+#      SPEC_N=7 across from the vLLM tier would silently run one shallower.
+#   4. Draft/target layer wiring checks out: the drafter declares
+#      `num_target_layers: 64` with explicit `target_layer_ids`, and the target
+#      has `num_hidden_layers: 64`. `models/qwen3_5.py` implements
+#      `set_dflash_layers_to_capture`, so the hidden-state capture hook this
+#      needs EXISTS for this family on this pin.
+#
+#   ⚠️ VRAM: `speculative_num_draft_tokens` also sizes the mamba
+#   `intermediate_ssm_state_cache` (kv_cache_configurator.py:
+#   `per_req * (capped_reqs+1) * D`). Going D=5 (MTP) -> D=8 (DFlash block)
+#   grows it ~1.6x — on the measured bf16 sibling that is ~0.35 -> ~0.56 GB per
+#   rank. Budget for it before blaming a KV-pool shortfall.
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+#   ⭐⭐ WHY AN FP8 TIER ON AMPERE AT ALL — read this before "optimising" it.
+#
+#   This is the FIDELITY series, and on sm_86 it is DELIBERATELY SLOWER than the
+#   int4 speed series. Ampere has NO native FP8 compute, so the weights are
+#   served weight-only through Marlin with activations upcast. On vLLM the same
+#   trade measures dual-max 87 code TPS vs dual-fast 100. Expect the same shape
+#   here. You are buying the OFFICIAL Qwen weights (no community quantisation
+#   damage), not throughput. Do not "fix" it by reaching for the int4 tier —
+#   that is a different product.
+#
+#   ⭐ THE AMPERE PATH IS REAL AND AUTOMATIC, verified in source 2026-09-10:
+#     fp8_utils.py::can_auto_enable_marlin_fp8() -> `80 <= sm < 89`, so sm_86
+#     auto-enables Marlin FP8 with no flag.
+#   ⚠️ AND IT SURVIVES BLOCK QUANT: this checkpoint is BLOCK-quantised
+#     (`weight_block_size: [128, 128]`, DeepSeek-style), not per-tensor. That is
+#     the combination that usually has no Ampere path — but fp8.py:960-962 sets
+#     `layer.weight_block_size` and calls
+#     `prepare_fp8_layer_for_marlin(layer, not self.block_quant)`, i.e. Marlin
+#     handles the block case explicitly. If a future pin drops that, this tier
+#     dies silently-or-loudly at load; check those lines first.
+#
+#   ⚠️ VRAM IS THE BINDING CONSTRAINT, NOT CONTEXT. FP8 weights are ~29 GB
+#   (~14.5 GB/rank at TP=2) against int4's ~9.1 — and SGLang additionally
+#   carries a multi-GB auto-fit MAMBA pool that vLLM does not size the same way.
+#   MEM_FRACTION and CONTEXT_LENGTH here are STARTING POINTS pending a boot, not
+#   measured ceilings. Read `KV Cache is allocated ... #tokens:` and compare it
+#   against CONTEXT_LENGTH before believing the header.
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+#   ⛔⛔ 8-CARD IS COMMUNITY-VALIDATED BY DESIGN, AND THAT IS PERMANENT.
+#   The maintainer rig has exactly TWO 3090s, so TP=8 can NEVER boot here and
+#   must NEVER be filed as pending work. NOTHING on this slug has booted.
+#   The first community boot on 8 cards IS the validation — report via the
+#   `numbers-from-your-rig` issue template.
+#
+#   ⭐ THE ON-RIG PROXY IS REAL AND MEASURED, unlike most multi-card slugs:
+#   models/qwen3.8-27b/sglang/compose/dual/fp8/mtp.yml BOOTED on 2x3090
+#   2026-09-10 — verify-full ALL PASS, fp8 Marlin path confirmed in the engine
+#   log, bench 67.33 narrative / 75.58 code decode TPS, prefill 1120.80 @10K /
+#   906.70 @90K, MTP accept len 2.92 (n=147). ⚠️ Those transfer on TOPOLOGY
+#   ONLY — not on pool size, context, or concurrency.
+#
+#   ⚠️⚠️ WHY THIS TIER EXISTS AT 8 CARDS AND NOT AT 2 — the dual is VRAM-bound,
+#   MEASURED: at TP=2 the fp8 weights take 14.75 GB/rank and the MTP head another
+#   2.67, so ~18.3 GB is committed before KV, and the pool lands at just
+#   **92,507 tokens against a 262,144 context**. It is not tunable to 262K — the
+#   full context needs ~4.02 GB/rank of KV and only ~3.4 GB is free, before
+#   cudagraph capture. Sharding the weights is what fixes it, which is why the
+#   fidelity series belongs on 4 and 8 cards.
+#
+#   ⭐ PROJECTED per card at TP=8 (arithmetic from the MEASURED TP=2 figures,
+#   NOT a boot): weights ~3.7 GB, MTP head ~0.70 GB, KV ~4.02 GB at 262144
+#   with bf16. Comfortable on a 24 GB card. Expect the pool to CLEAR the full
+#   context here, which the dual cannot.
+#
+#   ⚠️⚠️ TP=8 IS NOT THE SAME SHARD SHAPE AS TP=4. This model has
+#   num_kv_heads=4, which divides cleanly by 4 but **NOT by 8**. At TP=8 the KV
+#   heads REPLICATE across rank pairs rather than splitting, so per-card KV
+#   stays at roughly the TP=4 figure — only the WEIGHTS take the full 8-way
+#   split. The 8-card gain over 4 is weight headroom only, bought with more
+#   all-reduce on a PCIe bus. Expect flat-or-worse decode vs TP=4; expect
+#   nothing quantitative until measured.
+#
+#   ⚠️ KV DELIBERATELY DIVERGES FROM THE DUAL: this runs **bf16** where
+#   dual/fp8 runs fp8_e4m3. Only TP>=4 has the per-card headroom, and on a
+#   FIDELITY tier the less-lossy KV is the point. Do NOT "restore lockstep" by
+#   reverting it, and do NOT propagate it back to the dual. ⚠️ This is also NOT
+#   the reasoning that was rejected for a bf16-KV `ultrafast` tier: there, bf16
+#   was proposed to unlock a FLASH_ATTN kernel that does not exist on SGLang;
+#   here it is bought for accuracy with headroom that genuinely exists.
+# ---------------------------------------------------------------------------
+# ===========================================================================
+services:
+  sglang-qwen38-27b-supermax-multi8:
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.19}
+    container_name: ${ESTATE_CONTAINER:-sglang-qwen38-27b-supermax-multi8}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8150}}:30000"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    ipc: host
+    shm_size: "16gb"
+    environment:
+      - SPEC_N
+      - CONTEXT_LENGTH
+      - MEM_FRACTION
+      - KV_CACHE_DTYPE
+      - ATTENTION_BACKEND
+      - MAX_RUNNING_REQUESTS
+      - MAMBA_SSM_DTYPE
+      - CHUNKED_PREFILL_SIZE
+      - QUANTIZATION
+      - DRAFTER_DIR
+      - DRAFT_QUANT
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-0,1,2,3,4,5,6,7}']
+              capabilities: [gpu]
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        M=/models/qwen3.8-27b-fp8
+        # ⚠️ SPEC_N=0 removes the speculative flags entirely rather than passing
+        # a zero — the same rule the MTP sibling and the GLM composes use, so a
+        # typo can never masquerade as "drafter off".
+        # ⚠️ SPEC_N here is the DFLASH BLOCK SIZE (= vLLM's n + 1), NOT EAGLE
+        # steps. Leave it EMPTY to let SGLang infer it from the drafter config
+        # (block_size=8, which matches the vLLM tier's num_speculative_tokens=7).
+        # ⚠️ DRAFT_QUANT is load-bearing in BOTH directions: serving_hook.py:629
+        # defaults it to the TARGET's quantization when unset, so a BF16 drafter
+        # would silently inherit `auto-round`. `unquant` is the documented escape
+        # (serving_hook.py:648 resolves it to None).
+        D="${DRAFTER_DIR:-/models/qwen3.8-27b-dflash2-zlab-bf16}"
+        _n="${SPEC_N-}"
+        # Empty = infer from the drafter config. Anything else must be all digits.
+        case "$$_n" in *[!0-9]*) echo "[spec] SPEC_N='$$_n' is not a non-negative integer (leave EMPTY to infer)" >&2; exit 1 ;; esac
+        SPEC=()
+        if [ "$$_n" = "0" ]; then
+          echo "[spec] drafter OFF (SPEC_N=0)" >&2
+        else
+          [ -d "$$D" ] || { echo "[spec] drafter not found at $$D" >&2; exit 1; }
+          # ⚠️⚠️ --speculative-draft-model-quantization IS LOAD-BEARING: without
+          # it SGLang inherits the TARGET's `auto-round` for a compressed-tensors
+          # drafter (serving_hook.py:629).
+          SPEC=(--speculative-algorithm DFLASH
+                --speculative-draft-model-path "$$D"
+                --speculative-draft-model-quantization "${DRAFT_QUANT:-unquant}")
+          if [ -n "$$_n" ]; then
+            SPEC+=(--speculative-dflash-block-size "$$_n")
+            echo "[spec] DFlash2 EXTERNAL drafter ON - block_size=$$_n (explicit)" >&2
+          else
+            echo "[spec] DFlash2 EXTERNAL drafter ON - block_size INFERRED from $$D (expect 8)" >&2
+          fi
+        fi
+        exec python3 -m sglang.launch_server \
+          --model-path "$$M" \
+          --tp-size 8 \
+          --disable-custom-all-reduce \
+          --quantization "${QUANTIZATION:-fp8}" \
+          --kv-cache-dtype "${KV_CACHE_DTYPE:-auto}" \
+          --mamba-ssm-dtype "${MAMBA_SSM_DTYPE:-bfloat16}" \
+          --chunked-prefill-size "${CHUNKED_PREFILL_SIZE:-2048}" \
+          --attention-backend "${ATTENTION_BACKEND:-flashinfer}" \
+          --context-length "${CONTEXT_LENGTH:-262144}" \
+          --mem-fraction-static "${MEM_FRACTION:-0.84}" \
+          --max-running-requests "${MAX_RUNNING_REQUESTS:-1}" \
+          --trust-remote-code \
+          --reasoning-parser "${REASONING_PARSER:-qwen3}" \
+          --tool-call-parser "${TOOL_CALL_PARSER:-qwen3_coder}" \
+          --host 0.0.0.0 --port 30000 \
+          --served-model-name qwen3.8-27b \
+          "$${SPEC[@]}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:30000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 60
+      start_period: 900s
