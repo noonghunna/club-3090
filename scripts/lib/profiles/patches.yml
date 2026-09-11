@@ -1084,6 +1084,73 @@ patches:
   - <<: *genesis_env_patch
     id: genesis-pn59-streaming-gdn
     genesis_env: GENESIS_ENABLE_PN59_STREAMING_GDN
+  - id: glm53-minja-numeric-index
+    model: [glm-5.3-flash]
+    status: unverified
+    files:
+      - models/glm-5.3-flash/llamacpp-club3090/patches/glm53-minja-numeric-index
+    load_bearing_when:
+      - composes: null
+        reason: >-
+          Without it EVERY request carrying `tools` returns HTTP 400 ("Unable to generate
+          parser for this template") and /props reports supports_tools:false — so the tool
+          path is dead on all 18 GLM composes, which is why this is load-bearing for tool
+          traffic on every one of them rather than an optimisation. minja does not implement
+          numeric dotted attribute access (`x.0`); Jinja2 defines it as `x[0]`. The GGUF's
+          embedded template uses it in 4 places, so the jinja caps probe throws, infers
+          NOTHING, and leaves every capability false — including supports_object_arguments,
+          which gates the JSON-string -> object conversion of tool arguments in chat.cpp.
+          Arguments then stay a string and the autoparser dies on `.items()`. The `.items()`
+          line named in the error is the CRASH SITE, not the cause — GLM-4.7-Flash.jinja
+          carries the identical construct and passes upstream. Override = vendor template
+          with `.0.` -> `[0].` in 4 places + a null-tool guard; wire format unchanged.
+        evidence: >-
+          models/glm-5.3-flash/llamacpp-club3090/patches/glm53-minja-numeric-index/README.md;
+          club-3090#1250 (@paulp83); ggml-org/llama.cpp#27754 (same symptom reported upstream
+          2026-09-07, unanswered); verified with llama.cpp's own llama-template-analysis —
+          all four capabilities flip false -> true
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: false
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: chat_template
+    delivery_spec:
+      jinja: models/glm-5.3-flash/llamacpp-club3090/patches/glm53-minja-numeric-index/chat_template.jinja
+      mounted_at: /etc/glm53-chat-template.jinja
+      mount_mode: ro
+      invoke: --chat-template-file /etc/glm53-chat-template.jinja
+      wired_at: [volumes, command]
+      note: >-
+        The vendor template (zai-org/GLM-5.3-Flash, as embedded in the GGUFs) with `.0.` ->
+        `[0].` in 4 places plus a null-tool guard on the tools loop. Semantics-identical under
+        Jinja2, which defines `x.0` as `x[0]`; the WIRE FORMAT is untouched. Mounted read-only
+        and selected with --chat-template-file; `use_jinja` defaults to true in this engine
+        build so no --jinja flag is required.
+    drift_guard:
+      kind: behavioral
+      check: >-
+        The override must contain NO `.0.` numeric dotted access — re-vendoring a fresh vendor
+        template without re-applying the fix silently returns every jinja capability to false
+        and makes tool calls 400, while boot and /health stay green. Assert positively rather
+        than by absence: llama-template-analysis --template-file <this> must report
+        supports_tools / supports_tool_calls / supports_parallel_tool_calls /
+        supports_string_content ALL true, and GET /props on a booted server must agree. Then a
+        tool-call smoke (auto tool choice, one get_weather-class call) must return
+        finish_reason=tool_calls with valid JSON arguments, and a 3-turn tool loop must replay
+        without 400s. Any behavioral/TPS comparison the guard performs MUST use the
+        SELF-CONTAINED symmetric restart+settle protocol: identical docker restart on BOTH
+        arms -> healthy -> fixed 60s settle -> >=3 bench.sh runs/arm -> compare the grand mean,
+        never a single run (boot-to-boot noise on this rig is ~2.8%, run-to-run ~0.2%).
+      on_fail: tool-calls-silently-dead
+    capability: glm53-tool-calling
+    upstream:
+      ref: ggml-org/llama.cpp (minja numeric dotted attribute access)
+      status: ours
+      drop_when: >-
+        minja implements `x.0` as `x[0]`, or the caps probe degrades gracefully instead of
+        inferring nothing when a probe throws. Closest prior art: ggml-org/llama.cpp#28509
+        (Gemma 4 misclassified supports_typed_content), same subsystem, closed completed.
   - id: qwen38-sglang-autoround-w4a8-v0519
     model: [qwen3.8-27b]
     status: unverified
