@@ -1,0 +1,20 @@
+39c39
+< {% for tool in tools %}
+---
+> {% for tool in tools if tool %}
+81c81
+< {%- elif m.content and m.content is not mapping and m.content.0.type == "tool_reference" -%}
+---
+> {%- elif m.content and m.content is not mapping and m.content[0].type == "tool_reference" -%}
+85c85
+<         {%- if tr.output is iterable and tr.output is not string and tr.output is not mapping and tr.output and tr.output.0.type == "tool_reference" -%}
+---
+>         {%- if tr.output is iterable and tr.output is not string and tr.output is not mapping and tr.output and tr.output[0].type == "tool_reference" -%}
+103c103
+<     {%- if m.content and m.content.0.output is defined -%}1{%- endif -%}
+---
+>     {%- if m.content and m.content[0].output is defined -%}1{%- endif -%}
+230c230
+<                             {%- if entry.output is iterable and entry.output is not string and entry.output is not mapping and entry.output and entry.output.0.type == "tool_reference" -%}
+---
+>                             {%- if entry.output is iterable and entry.output is not string and entry.output is not mapping and entry.output and entry.output[0].type == "tool_reference" -%}

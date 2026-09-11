@@ -155,26 +155,34 @@
 #                been run on GLM-5.3-Flash. Stays 🧪.
 #   Best for:  long-context MoE serving experiments on the moe-cache engine
 #   Caveats:
-#     • ⛔ TOOL CALLING IS BROKEN ON THIS ENGINE — template/minja, not the quant.
-#       Any request carrying `tools` returns HTTP 400 "Unable to generate parser for
-#       this template. Automatic parser generation failed: While executing
-#       CallExpression at line 163, column 57". llama.cpp builds a tool parser by
-#       statically walking the chat template; column 57 of line 163 is the `(` of
-#       `_args.items()`, which minja cannot evaluate during that pass. It fails at
-#       template-COMPILE time, so it is deterministic on every tools request, and the
-#       downstream symptom is `<tool_call>` left inline in content with `tool_calls[]`
-#       empty. Reported club-3090#1250 (@paulp83).
+#     • ✅ TOOL CALLING WORKS — via the vendored template override wired below.
+#       ⚠️ It does NOT work on the GGUF's own embedded template: every request carrying
+#       `tools` returns HTTP 400 "Unable to generate parser for this template …
+#       CallExpression at line 163, column 57", and /props reports supports_tools:false.
+#       Reported club-3090#1250 (@paulp83) and upstream ggml-org/llama.cpp#27754.
+#       ⛔⛔ THE LINE IN THAT ERROR IS THE CRASH SITE, NOT THE CAUSE. Two earlier readings
+#       of this bug were WRONG and are recorded so nobody re-derives them:
+#         ❌ "minja cannot evaluate .items()" — GLM-4.7-Flash.jinja has the identical
+#            construct, is exercised by llama.cpp's own autoparser tests, and passes.
+#         ❌ "the caps probe under-detects supports_object_arguments because the template
+#            iterates instead of indexing" — adding a named access changes nothing; the
+#            probe never gets that far.
+#       ⭐ ACTUAL CAUSE: minja does not implement NUMERIC DOTTED ATTRIBUTE ACCESS (`x.0`).
+#       Jinja2 defines `x.0` as `x[0]`; minja parses it as a non-computed member whose
+#       property is a number literal and throws. The GGUF template uses it in 4 places, so
+#       the caps probe throws, infers NOTHING, and leaves every capability false —
+#       including supports_object_arguments, which gates the JSON-string -> object
+#       conversion of tool arguments (chat.cpp). Arguments therefore stay a string, and
+#       the autoparser then dies on `.items()` at line 163. That is why supports_string_content
+#       is false too, which no tools-only explanation accounts for.
+#       ⇒ The override is the vendor template with `.0.` -> `[0].` in 4 places plus a
+#       null-tool guard. Wire format UNCHANGED. Verified with llama.cpp's own
+#       llama-template-analysis: all four capabilities flip false -> true.
 #       ⚠️ NOT club-3090#1195 — that is an INTERMITTENT 500 parsing the model's OUTPUT
 #       ("Failed to parse tool call arguments as JSON", 2/25 turns, payload-dependent).
 #       Same subsystem, opposite end. Do not merge the two.
-#       ⚠️ The vendor's CURRENT template does NOT fix it: zai-org/GLM-5.3-Flash
-#       chat_template.jinja (last modified 2026-09-07) still carries `_args.items()`
-#       at line 163, byte-identical. It DOES fix other things (null-safe content,
-#       `~` concat, break guards in the sort loops), so vendoring it is worth doing —
-#       just not as a fix for this.
-#       ⇒ Everything NOT passing `tools` is unaffected (completion, streaming,
-#       reasoning, long-context all pass). Use SKIP_TOOLS=1 with verify-full to get
-#       the rest of the run without the tool checks dominating it.
+#       ⚠️ NOT live-booted: verified by static analysis + the engine's own autoparser, not
+#       by serving 140 GiB end-to-end. Detail: patches/glm53-minja-numeric-index/README.md
 #     • ⚠️ ATTRIBUTION: the MoE expert cache is **leloch's** work
 #       (github.com/leloch/llama.cpp, RFC ggml-org#24528). This slug packages
 #       it; it does not originate it.
@@ -299,6 +307,9 @@ services:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8134}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+      # minja-compatible chat template — WITHOUT this every tools request 400s and
+      # /props reports supports_tools:false. See patches/glm53-minja-numeric-index/README.md
+      - ../../../patches/glm53-minja-numeric-index/chat_template.jinja:/etc/glm53-chat-template.jinja:ro
     environment:
       # Drafter toggle - docker forwards only what is declared here.
       - SPEC_N=${SPEC_N:-}
@@ -617,6 +628,14 @@ services:
       - '--reasoning-effort'
       - '${REASONING_EFFORT:-max}'
       # Route thoughts to message.reasoning_content (never inline in content).
+      # ⭐ minja cannot parse `x.0` (numeric dotted attribute access); the GGUF's own
+      # template uses it in 4 places, which makes the jinja caps probe throw and report
+      # EVERY capability false — so tool arguments are never converted from JSON string
+      # to object and the autoparser dies. This override is the vendor template with
+      # `.0.` -> `[0].` (semantics-identical in Jinja2) + a null-tool guard. Wire format
+      # unchanged. club-3090#1250.
+      - '--chat-template-file'
+      - '/etc/glm53-chat-template.jinja'
       - '--reasoning-format'
       - '${REASONING_FORMAT:-deepseek}'
       # ✅ What DOES work is not paying for it twice. This GGUF's template sets
