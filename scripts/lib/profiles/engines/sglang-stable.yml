@@ -3,18 +3,61 @@ id: sglang-stable
 display_name: SGLang stable v0.5.19
 type: sglang
 stability: stable
+# ⚠️⚠️ IMAGE PINNING ON THIS ENGINE DOES NOT WORK THE WAY IT DOES FOR vLLM.
+# `scripts/launch.sh::export_variant_engine_pin` early-returns unless the slug is
+# `vllm/*` or `beellama/*`, so NOTHING injects SGLANG_IMAGE. The EFFECTIVE image is
+# therefore the compose's own `${SGLANG_IMAGE:-...}` default, NOT the `install.spec`
+# below — the inverse of the engine-pin contract this stack follows for vLLM.
+# ⇒ WHEN BUMPING THIS PIN YOU MUST EDIT BOTH: `install.spec` here AND the
+#   `image: ${SGLANG_IMAGE:-...}` line in EVERY sglang compose. Changing only this
+#   file is a NO-OP and the old image keeps serving, silently.
+# `scripts/tests/test-sglang-image-pin-parity.sh` asserts the two agree so the drift
+# cannot ship. Verified consistent 2026-09-10 (both lmsysorg/sglang:v0.5.19).
+#
+# ⚠️ The #246 arch-aware injection (KV_CACHE_DTYPE / MAX_NUM_SEQS /
+# GPU_MEMORY_UTILIZATION) is likewise inert here, and that is DELIBERATE, not an
+# oversight to "fix" by widening the gate: only KV_CACHE_DTYPE shares a name with
+# what the sglang composes read. `MAX_NUM_SEQS` vs `--max-running-requests` and
+# `GPU_MEMORY_UTILIZATION` vs `--mem-fraction-static` are NOT the same quantities —
+# vLLM's utilisation is the fraction of total VRAM it may use; sglang's
+# mem-fraction-static is the STATIC (weights+KV) share, with cudagraph capture taken
+# from the remainder. Injecting a vLLM-tuned value into it would be a CORRECTNESS
+# bug, not a naming inconvenience. Widening the gate without a per-engine
+# translation layer would silently apply one knob and mis-apply another.
 install:
   method: docker_image
   spec: lmsysorg/sglang:v0.5.19
 min_sm: 8.0
+supported_drafters:            # ⚠️ keys on spec_method, NOT drafter id.
+  - mtp                       # ⭐ native in-checkpoint MTP head — RIG-VALIDATED
+                              # 2026-09-10, accept len 2.86 (sgl/…-dual-fast).
+  - dflash                    # ⭐ DFlash2 external block drafter — RIG-VALIDATED
+                              # 2026-09-10, accept len 3.71 (sgl/…-dual-superfast).
+                              # ⚠️ REQUIRES an UNQUANTIZED drafter: the
+                              # compressed-tensors variant silently collapses to
+                              # ~0% acceptance. See drafters/zlab-qwen38-dflash2.yml.
+supported_weight_formats:     # Only formats booted on this engine on this rig.
+  - autoround                 # ⭐ Frozenlock AutoRound INT4 — the speed series.
+  - fp8                       # ⭐ Official Qwen FP8, block-quantised [128,128].
+                              # On sm_86 this serves weight-only via Marlin upcast
+                              # (fp8_utils.py::can_auto_enable_marlin_fp8 -> 80<=sm<89).
 supported_model_families:
+  - qwen35-dense              # ⭐ the family Qwen3.8-27B declares. RIG-VALIDATED
+                              # 2026-09-10 across 3 booted slugs.
   - qwen3-next-hybrid   # 🌐 COMMUNITY-EVIDENCED, not rig-validated: club-3090 discussion
                         # #1178 (@jb-seo) — Qwen3.8-27B TP=2 AutoRound INT4 + native MTP
                         # head (n=4), flashinfer attention, 97-121 decode TPS on dual
                         # 3090s; 640K fp8 KV at 0.96 mem-fraction also measured (89-94
                         # TPS). ⚠️ Measured on v0.5.18 WITH 3 in-container patches, not
-                        # on stock v0.5.19. Nobody has booted this engine on THIS rig.
-                        # Treat as a lead, not a guarantee, until a compose is validated.
+                        # on stock v0.5.19.
+                        # ⭐ SUPERSEDED 2026-09-10 — RIG-VALIDATED ON STOCK v0.5.19, zero patches:
+                        #   sgl/qwen38-27b-dual-fast (native MTP n=4) — verify-full ALL PASS,
+                        #   89.24 narrative / 112.50 code decode TPS, prefill 1183.41 @10K,
+                        #   accept len 2.86, vision 4/4, KV pool 409,552.
+                        #   sgl/qwen38-27b-dual-superfast (DFlash2 block drafter) — 115.08 / 171.16
+                        #   median decode, prefill 1234.38 @10K, accept len 3.71.
+                        # jb-seo's three patches are a concurrency/multi-window story, inert at
+                        # --max-running-requests 1, and are NOT vendored.
 #
 # ⛔ glm5-next is NOT a supported family on this pin. An earlier draft of this file
 #    listed it as "experimental via sideload patch"; that is DISPROVEN. The glm5_next
@@ -29,7 +72,25 @@ supported_model_families:
 #    LEARNINGS.md 2026-09-09 (sparse-MLA/DSA is SM90-gated; SGLang's Triton DSA path is
 #    the only Ampere-plausible route and is UNVALIDATED on sm_86).
 features:
-  native_mtp: true               # Qwen3.8 native MTP head (#1178: n=4). Community-evidenced.
+  native_mtp: true               # Qwen3.8 native MTP head (n=4). ⭐ RIG-VALIDATED
+                                 # 2026-09-10 on stock v0.5.19; accept len 2.86.
+  external_dflash_drafter: true  # DFlash2 block drafter (--speculative-algorithm DFLASH).
+                                 # ⚠️ REQUIRES AN UNQUANTIZED DRAFTER — the
+                                 # compressed-tensors variant silently collapses to ~0%
+                                 # acceptance. See drafters/zlab-qwen38-dflash2.yml.
+  w4a8_activations: false        # ⛔ No W4A8 path for a dense auto-round 4-bit checkpoint
+                                 # on this pin: auto-round supports only half/bfloat16
+                                 # activations, w4afp8 is fp8-acts + min_capability 90,
+                                 # and the w4a8 modelslim/quark schemes are MoE-only.
+                                 # A W4A8 patch exists: jb-seo's original
+                                 # (club-3090#1178, cut against v0.5.18) and @A1RM4X's
+                                 # v0.5.19 RE-CUT WITH A SHAPE GUARD (club-3090#1226).
+                                 # ⭐ Take #1226 — jb-seo's gate omits the per-shard
+                                 # K%128==0/N%64==0 constraint that prepare_w4a8 asserts,
+                                 # and crashes on the GDN merged in_proj_ba tensor.
+                                 # ⚠️ Applying the patch IS the activation on SGLang
+                                 # (it flips experimental_w4a8 unconditionally) — there is
+                                 # no VLLM_MARLIN_INPUT_DTYPE-style gate. Not applied here.
   flashinfer_attention: true     # #1178 used flashinfer for full attention on Ampere.
   hybrid_linear_attention: true  # KDA/GDN linear layers via FLA Triton kernels — same
                                  # class as qwen3-next on this engine.

@@ -21,6 +21,7 @@ schema: 1
 
 entries:
   vllm/minimal:
+    origin: core
     model: qwen3.6-27b
     weights_variant: autoround-int4
     workload: fast-chat
@@ -50,6 +51,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/dual:
+    origin: core
     model: qwen3.6-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -79,6 +81,7 @@ entries:
     gateway: true
     serve_aliases: []
   vllm/qwen-27b-dual-fast:
+    origin: core
     model: qwen3.6-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -108,6 +111,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/qwen-27b-dual-max:
+    origin: core
     model: qwen3.6-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -137,6 +141,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/qwen-27b-dual-lmcache:
+    origin: core
     model: qwen3.6-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -166,6 +171,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/qwen-27b-dual-balanced:
+    origin: core
     model: qwen3.6-27b
     weights_variant: awq-bf16-int4
     workload: long-ctx-single
@@ -195,6 +201,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/qwen-27b-multi-fast:
+    origin: core
     model: qwen3.6-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -224,6 +231,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/qwen-27b-multi-max:
+    origin: core
     model: qwen3.6-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -253,6 +261,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/qwen-27b-single-nvfp4:
+    origin: core
     model: qwen3.6-27b
     weights_variant: nvfp4
     workload: long-ctx-single
@@ -284,6 +293,7 @@ entries:
     required_sm: 9.0
     fallback_sm: 7.5
   vllm/qwen-27b-dual-nvfp4:
+    origin: core
     model: qwen3.6-27b
     weights_variant: nvfp4
     workload: long-ctx-single
@@ -315,6 +325,7 @@ entries:
     required_sm: 9.0
     fallback_sm: 7.5
   llamacpp/default:
+    origin: core
     model: qwen3.6-27b
     weights_variant: unsloth-q4km
     workload: fast-chat
@@ -344,6 +355,7 @@ entries:
     gateway: false
     serve_aliases: []
   llamacpp/mtp:
+    origin: core
     model: qwen3.6-27b
     weights_variant: unsloth-q4km
     workload: fast-chat
@@ -373,6 +385,7 @@ entries:
     gateway: false
     serve_aliases: []
   llamacpp/bounded-thinking:
+    origin: core
     model: qwen3.6-27b
     weights_variant: unsloth-q4km
     workload: tool-heavy
@@ -402,6 +415,7 @@ entries:
     gateway: false
     serve_aliases: []
   llamacpp/mtp-vision:
+    origin: core
     model: qwen3.6-27b
     weights_variant: unsloth-q4km
     workload: vision-coding
@@ -432,6 +446,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/iq4ks-mtp:
+    origin: core
     model: qwen3.6-27b
     weights_variant: ubergarm-iq4ks
     workload: fast-chat
@@ -461,6 +476,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/iq4ks-mtp-vision:
+    origin: core
     model: qwen3.6-27b
     weights_variant: ubergarm-iq4ks
     workload: vision-coding
@@ -491,6 +507,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/iq4ks-two-stage:
+    origin: core
     model: qwen3.6-27b
     weights_variant: ubergarm-iq4ks
     workload: fast-chat
@@ -520,6 +537,7 @@ entries:
     gateway: false
     serve_aliases: []
   beellama/dflash:
+    origin: core
     model: qwen3.6-27b
     weights_variant: beellama-q5ks-dflash
     workload: fast-chat
@@ -552,6 +570,7 @@ entries:
     default_arch_allow:
       - "8.6"
   beellama/qwopus-coder:
+    origin: core
     model: qwen3.6-27b
     weights_variant: qwopus-coder-mtp-q5km
     workload: fast-chat
@@ -581,6 +600,7 @@ entries:
     gateway: false
     serve_aliases: []
   beellama/carnice-v2-single-q5km-mtp:
+    origin: core
     model: qwen3.6-27b
     weights_variant: carnice-v2-q5km
     workload: fast-chat
@@ -610,6 +630,7 @@ entries:
     gateway: false
     serve_aliases: []
   beellama/carnice-v2-dual-q8-mtp:
+    origin: core
     model: qwen3.6-27b
     weights_variant: carnice-v2-q8
     workload: fast-chat
@@ -639,6 +660,7 @@ entries:
     gateway: false
     serve_aliases: []
   llamacpp/qwen27b-pi-reasoning-single:
+    origin: core
     model: qwen3.6-27b
     weights_variant: pi-reasoning-q4km
     workload: fast-chat
@@ -668,6 +690,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/prism-pro-dq-mtp:
+    origin: core
     model: qwen3.6-27b
     weights_variant: ex0bit-prism-pro-dq
     workload: fast-chat
@@ -697,6 +720,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/prism-pro-dq-long:
+    origin: core
     model: qwen3.6-27b
     weights_variant: ex0bit-prism-pro-dq
     workload: long-ctx-single
@@ -726,6 +750,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/prism-pro-dq-two-stage:
+    origin: core
     model: qwen3.6-27b
     weights_variant: ex0bit-prism-pro-dq
     workload: tool-heavy
@@ -755,6 +780,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/prism-pro-dq-dual:
+    origin: core
     model: qwen3.6-27b
     weights_variant: ex0bit-prism-pro-dq
     workload: tool-heavy
@@ -784,6 +810,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/prism-pro-dq-dual-vision:
+    origin: core
     model: qwen3.6-27b
     weights_variant: ex0bit-prism-pro-dq
     workload: vision-coding
@@ -814,6 +841,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/apex-mtp-compact:
+    origin: core
     model: qwen3.6-35b-a3b
     weights_variant: mudler-apex-compact
     workload: fast-chat
@@ -843,6 +871,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/byteshape-iq4xs-mtp:
+    origin: core
     model: qwen3.6-35b-a3b
     weights_variant: byteshape-iq4xs
     workload: fast-chat
@@ -872,6 +901,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/apex-mtp-compact-long:
+    origin: core
     model: qwen3.6-35b-a3b
     weights_variant: mudler-apex-compact
     workload: long-ctx-single
@@ -901,6 +931,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/apex-fit-q8q5:
+    origin: core
     model: qwen3.6-35b-a3b
     weights_variant: mudler-apex-compact
     workload: fast-chat
@@ -930,6 +961,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/apex-mtp-quality-dual:
+    origin: core
     model: qwen3.6-35b-a3b
     weights_variant: mudler-apex-quality
     workload: long-ctx-single
@@ -959,6 +991,7 @@ entries:
     gateway: false
     serve_aliases: []
   llamacpp/hauhaucs-35ba3b-dual:
+    origin: core
     model: qwen3.6-35b-a3b
     weights_variant: morikomorizz-q6kp
     workload: fast-chat
@@ -988,6 +1021,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/gemma-mtp-tp1:
+    origin: core
     model: gemma-4-31b
     weights_variant: autoround-int4
     workload: fast-chat
@@ -1018,6 +1052,7 @@ entries:
     serve_aliases: []
     required_sm: 9.0
   vllm/gemma-bf16-mtp:
+    origin: core
     model: gemma-4-31b
     weights_variant: autoround-int4
     workload: fast-chat
@@ -1047,6 +1082,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/gemma-int8-mtp:
+    origin: core
     model: gemma-4-31b
     weights_variant: autoround-int4
     workload: multi-stream-tenant
@@ -1077,6 +1113,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/gemma-31b-dual:
+    origin: core
     model: gemma-4-31b
     weights_variant: qat-awq-int4
     workload: multi-stream-tenant
@@ -1107,6 +1144,7 @@ entries:
     serve_aliases:
       - gemma-4-31b-autoround
   vllm/gemma-31b-multi-google-qat-w4a16:
+    origin: core
     model: gemma-4-31b
     weights_variant: google-qat-w4a16
     workload: long-ctx-single
@@ -1136,6 +1174,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/gemma-31b-qat-w4a16-dual:
+    origin: core
     model: gemma-4-31b
     weights_variant: qat-w4a16
     workload: multi-stream-tenant
@@ -1166,6 +1205,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/gemma-12b-dual-bf16-mtp:
+    origin: core
     model: gemma-4-12b
     weights_variant: bf16
     workload: fast-chat
@@ -1195,6 +1235,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/gemma-12b-single-int8-mtp:
+    origin: core
     model: gemma-4-12b
     weights_variant: autoround-int8
     workload: fast-chat
@@ -1224,6 +1265,7 @@ entries:
     gateway: true
     serve_aliases: []
   vllm/gemma-12b-qat-w4a16-single:
+    origin: core
     model: gemma-4-12b
     weights_variant: qat-w4a16
     workload: fast-chat
@@ -1253,6 +1295,7 @@ entries:
     gateway: false
     serve_aliases: []
   beellama/gemma-12b-single-q8kxl:
+    origin: core
     model: gemma-4-12b
     weights_variant: beellama-q8kxl
     workload: fast-chat
@@ -1282,6 +1325,7 @@ entries:
     gateway: false
     serve_aliases: []
   llamacpp/gemma-12b-single-q8kxl:
+    origin: core
     model: gemma-4-12b
     weights_variant: unsloth-q8kxl
     workload: fast-chat
@@ -1311,6 +1355,7 @@ entries:
     gateway: false
     serve_aliases: []
   beellama/gemma-dflash:
+    origin: core
     model: gemma-4-31b
     weights_variant: beellama-q4ks-dflash
     workload: fast-chat
@@ -1343,6 +1388,7 @@ entries:
     default_arch_allow:
       - "8.6"
   beellama/gemma-dflash-dual:
+    origin: core
     model: gemma-4-31b
     weights_variant: beellama-q4ks-dflash
     workload: fast-chat
@@ -1373,6 +1419,7 @@ entries:
     gateway: false
     serve_aliases: []
   beellama/qwen-mtp-dual:
+    origin: core
     model: qwen3.6-27b
     weights_variant: beellama-q8kxl-mtp
     workload: fast-chat
@@ -1402,6 +1449,7 @@ entries:
     gateway: false
     serve_aliases: []
   beellama/qwen-dflash-dual:
+    origin: core
     model: qwen3.6-27b
     weights_variant: beellama-q8kxl-dflash
     workload: fast-chat
@@ -1432,6 +1480,7 @@ entries:
     gateway: false
     serve_aliases: []
   beellama/gemma-q8-dflash-dual:
+    origin: core
     model: gemma-4-31b
     weights_variant: beellama-q8kxl-dflash
     workload: fast-chat
@@ -1462,6 +1511,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/gemma-26ba4b-single:
+    origin: core
     model: gemma-4-26b-a4b
     weights_variant: awq
     workload: fast-chat
@@ -1491,6 +1541,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/gemma-26ba4b-dual:
+    origin: core
     model: gemma-4-26b-a4b
     weights_variant: awq
     workload: fast-chat
@@ -1520,6 +1571,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/diffusiongemma-dual:
+    origin: core
     model: diffusiongemma-26b-a4b
     weights_variant: fp8
     workload: fast-chat
@@ -1549,6 +1601,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/qwen-a3b-preview-single:
+    origin: core
     model: qwen3.6-35b-a3b
     weights_variant: autoround-int4
     workload: fast-chat
@@ -1578,6 +1631,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/qwen-35b-a3b-dual:
+    origin: core
     model: qwen3.6-35b-a3b
     weights_variant: autoround-int4
     workload: fast-chat
@@ -1607,6 +1661,7 @@ entries:
     gateway: true
     serve_aliases: []
   vllm/qwen-35b-a3b-single-nvfp4:
+    origin: core
     model: qwen3.6-35b-a3b
     weights_variant: nvfp4
     workload: fast-chat
@@ -1638,6 +1693,7 @@ entries:
     required_sm: 9.0
     fallback_sm: 7.5
   vllm/qwen-35b-a3b-dual-nvfp4:
+    origin: core
     model: qwen3.6-35b-a3b
     weights_variant: nvfp4
     workload: fast-chat
@@ -1669,6 +1725,7 @@ entries:
     required_sm: 9.0
     fallback_sm: 7.5
   vllm/qwen-35b-a3b-dual-nvfp4-fast:
+    origin: core
     model: qwen3.6-35b-a3b
     weights_variant: nvfp4-fast
     workload: fast-chat
@@ -1700,6 +1757,7 @@ entries:
     required_sm: 9.0
     fallback_sm: 7.5
   vllm/qwen-agentworld-35b-a3b-dual-awq-int4:
+    origin: core
     model: qwen-agentworld-35b-a3b
     weights_variant: cyankiwi-awq-int4
     workload: multi-stream-tenant
@@ -1729,6 +1787,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/agents-a1-dual:
+    origin: core
     model: agents-a1
     weights_variant: fp8-dynamic
     workload: long-ctx-single
@@ -1758,6 +1817,7 @@ entries:
     gateway: false
     serve_aliases: []
   llamacpp/deckard40B-dual-mtp:
+    origin: core
     model: qwen3.6-40b-deckard
     weights_variant: piehsoft-q6k
     workload: fast-chat
@@ -1788,6 +1848,7 @@ entries:
     serve_aliases: []
     category: uncensored
   llamacpp-club3090/inkling-small-dual-iq4xs-moecache:
+    origin: core
     model: inkling-small
     weights_variant: unsloth-ud-iq4xs
     workload: long-ctx-single
@@ -1819,6 +1880,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/inkling-small-dual-iq4xs-residency:
+    origin: core
     model: inkling-small
     weights_variant: unsloth-ud-iq4xs
     workload: long-ctx-single
@@ -1850,6 +1912,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/inkling-small-multi4-iq4xs-moecache:
+    origin: core
     model: inkling-small
     weights_variant: unsloth-ud-iq4xs
     workload: long-ctx-single
@@ -1881,6 +1944,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-dual-iq4xs-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: unsloth-ud-iq4xs
     workload: long-ctx-single
@@ -1914,6 +1978,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi4-iq4xs-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: unsloth-ud-iq4xs
     workload: long-ctx-single
@@ -1947,6 +2012,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi8-iq4xs-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: unsloth-ud-iq4xs
     workload: long-ctx-single
@@ -1980,6 +2046,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-dual-iq3xxs-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: unsloth-ud-iq3xxs
     workload: long-ctx-single
@@ -2013,6 +2080,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi4-iq3xxs-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: unsloth-ud-iq3xxs
     workload: long-ctx-single
@@ -2046,6 +2114,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi8-iq3xxs-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: unsloth-ud-iq3xxs
     workload: long-ctx-single
@@ -2079,6 +2148,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-dual-q2k-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q2k
     workload: long-ctx-single
@@ -2112,6 +2182,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi4-q2k-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q2k
     workload: long-ctx-single
@@ -2145,6 +2216,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi8-q2k-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q2k
     workload: long-ctx-single
@@ -2178,6 +2250,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-dual-q3km-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q3km
     workload: long-ctx-single
@@ -2211,6 +2284,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi4-q3km-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q3km
     workload: long-ctx-single
@@ -2244,6 +2318,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi8-q3km-moecache:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q3km
     workload: long-ctx-single
@@ -2277,6 +2352,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-dual-q2k-offload:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q2k
     workload: long-ctx-single
@@ -2310,6 +2386,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi4-q2k-offload:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q2k
     workload: long-ctx-single
@@ -2343,6 +2420,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi8-q2k-offload:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q2k
     workload: long-ctx-single
@@ -2376,6 +2454,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-dual-q3km-offload:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q3km
     workload: long-ctx-single
@@ -2409,6 +2488,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi4-q3km-offload:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q3km
     workload: long-ctx-single
@@ -2442,6 +2522,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/glm53-flash-multi8-q3km-offload:
+    origin: core
     model: glm-5.3-flash
     weights_variant: devquasar-q3km
     workload: long-ctx-single
@@ -2475,6 +2556,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/qwen38-flash-next-dual-q4kxl-moecache:
+    origin: core
     model: qwen3.8-flash-next
     weights_variant: unsloth-ud-q4kxl
     workload: long-ctx-single
@@ -2523,6 +2605,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: instruct
   llamacpp-club3090/qwen38-flash-next-multi4-q4kxl-moecache:
+    origin: core
     model: qwen3.8-flash-next
     weights_variant: unsloth-ud-q4kxl
     workload: long-ctx-single
@@ -2571,6 +2654,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: instruct
   llamacpp-club3090/qwen38-flash-next-multi8-q4kxl-moecache:
+    origin: core
     model: qwen3.8-flash-next
     weights_variant: unsloth-ud-q4kxl
     workload: long-ctx-single
@@ -2619,6 +2703,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: instruct
   llamacpp-club3090/deepseek-flash-multi4-q8-moecache:
+    origin: core
     model: deepseek-v4-flash-0731
     weights_variant: unsloth-q8-kxl
     workload: long-ctx-single
@@ -2651,6 +2736,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/deepseek-flash-vision-dual-q8-moecache:
+    origin: core
     model: deepseek-v4-flash-vision-exp
     weights_variant: unsloth-ud-q8kxl
     workload: long-ctx-single
@@ -2682,6 +2768,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/deepseek-flash-vision-multi4-q8-moecache:
+    origin: core
     model: deepseek-v4-flash-vision-exp
     weights_variant: unsloth-ud-q8kxl
     workload: long-ctx-single
@@ -2713,6 +2800,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp-club3090/deepseek-flash-dual-q8-moecache:
+    origin: core
     model: deepseek-v4-flash-0731
     weights_variant: unsloth-q8-kxl
     workload: long-ctx-single
@@ -2745,6 +2833,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp/deepseek-flash-dual-q8:
+    origin: core
     model: deepseek-v4-flash-0731
     weights_variant: unsloth-q8-kxl
     workload: long-ctx-single
@@ -2777,6 +2866,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp/deepseek-flash-dual-iq2:
+    origin: core
     model: deepseek-v4-flash-0731
     weights_variant: unsloth-iq2-xxs
     workload: long-ctx-single
@@ -2809,6 +2899,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp/deepseek-flash-multi4-q8:
+    origin: core
     model: deepseek-v4-flash-0731
     weights_variant: unsloth-q8-kxl
     workload: long-ctx-single
@@ -2841,6 +2932,7 @@ entries:
     required_sm: 8.6
     category: frontier
   llamacpp/tess-dual-mtp:
+    origin: core
     model: tess-4-27b
     weights_variant: migtissera-q4km
     workload: fast-chat
@@ -2870,6 +2962,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/tess-dual-nvfp4:
+    origin: core
     model: tess-4-27b
     weights_variant: nvfp4
     workload: fast-chat
@@ -2901,6 +2994,7 @@ entries:
     required_sm: 9.0
     fallback_sm: 7.5
   vllm/tess-dual-w4a16:
+    origin: core
     model: tess-4-27b
     weights_variant: leaderboard-w4a16
     workload: fast-chat
@@ -2931,6 +3025,7 @@ entries:
     serve_aliases: []
     fallback_sm: 7.5
   vllm/thinkingcap-dual-w4a8:
+    origin: core
     model: thinkingcap-27b
     weights_variant: w4a16
     workload: fast-chat
@@ -2961,6 +3056,7 @@ entries:
     serve_aliases: []
     fallback_sm: 7.5
   vllm/nemotron-75b-multi-mtp:
+    origin: core
     model: nemotron-3-puzzle-75b
     weights_variant: nvfp4
     workload: fast-chat
@@ -2992,6 +3088,7 @@ entries:
     required_sm: 9.0
     fallback_sm: 7.5
   vllm/nemotron-75b-dual-w4a16:
+    origin: core
     model: nemotron-3-puzzle-75b
     weights_variant: w4a16
     workload: fast-chat
@@ -3023,6 +3120,7 @@ entries:
     required_sm: 7.5
     fallback_sm: 7.5
   ik-llama/ornith9b-single:
+    origin: core
     model: ornith-1.0-9b
     weights_variant: deepreinforce-q4km
     workload: fast-chat
@@ -3052,6 +3150,7 @@ entries:
     gateway: false
     serve_aliases: []
   ik-llama/ornith35b-dual:
+    origin: core
     model: ornith-1.0-35b
     weights_variant: deepreinforce-q8
     workload: fast-chat
@@ -3081,6 +3180,7 @@ entries:
     gateway: false
     serve_aliases: []
   vllm/vibethinker-3b-single:
+    origin: core
     model: vibethinker-3b
     weights_variant: bf16
     workload: long-ctx-single
@@ -3110,6 +3210,7 @@ entries:
     gateway: false
     serve_aliases: []
   llamacpp/vibethinker-3b-single:
+    origin: core
     model: vibethinker-3b
     weights_variant: prithivmlmods-q8
     workload: long-ctx-single
@@ -3139,6 +3240,7 @@ entries:
     gateway: false
     serve_aliases: []
   llamacpp/qwen38-27b-single-iq4xs:
+    origin: core
     model: qwen3.8-27b
     weights_variant: unsloth-iq4xs
     workload: vision-coding
@@ -3185,6 +3287,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   llamacpp/qwen38-27b-dual-q8kxl:
+    origin: core
     model: qwen3.8-27b
     weights_variant: unsloth-q8kxl
     workload: long-ctx-single
@@ -3229,7 +3332,338 @@ entries:
         presence_penalty: 0.0
         repetition_penalty: 1.0
     sampler_default_mode: thinking
+  sgl/qwen38-27b-dual-max:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: fp8
+    workload: long-ctx-single
+    engine: sglang-stable
+    drafter: qwen-mtp-builtin
+    spec_method: null
+    kv_format: fp8_e4m3
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: null
+    tp: 2
+    max_ctx: 131072
+    max_num_seqs: 1
+    mem_util: 0.92
+    compose_path: models/qwen3.8-27b/sglang/compose/dual/fp8/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8145
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "Qwen3.8-27B FIDELITY tier on stock SGLang v0.5.19 (zero patches), dual 3090 TP=2, OFFICIAL Qwen/Qwen3.8-27B-FP8 block-quantised e4m3 weights, native in-checkpoint MTP head, KV fp8_e4m3. ⭐ MEASURED ON THE REFERENCE RIG 2026-09-10: verify-full ALL PASS (8 scored; Genesis N/A and the MTP-acceptance check SKIPPED — it greps for vLLM's SpecDecoding metrics line, which SGLang never emits, so read the engine's own accept len: counter instead), bench 67.33 narrative / 75.58 code decode TPS (code median 76.56 — run 5 returned 465 tok; this model self-terminates under the canonical prompt, so set FORCE_TOKENS before differencing any decode number), prefill 1120.80 @10K / 906.70 @90K, MTP accept len 2.92 (n=147), vision 4/4. ⚠️⚠️ max_ctx IS 131072, NOT THE 262144 ARCHITECTURAL CEILING, AND THAT IS MEASURED NOT ASSUMED: at TP=2 the fp8 weights take 14.75 GB/rank and the MTP head another 2.67, committing ~18.3 GB before KV. mem_util 0.86 yields a 92,507-token pool; 0.92 yields 157,875 and is the practical ceiling (above it the prefill cudagraph capture OOMs, surfacing as a PyTorch num_active_captures_ assert rather than a clean CUDA OOM). A full 262,144 context needs ~4.02 GB/rank of KV at ~15.3 KB/token and there is nowhere near that much left, so 131072 is what the pool covers with ~27K tokens of radix headroom. ⚠️ On Ampere this tier is DELIBERATELY SLOWER than the int4 series — sm_86 has no native FP8 compute so weights serve weight-only through Marlin with activations upcast (sglang auto-enables it: fp8_utils.py::can_auto_enable_marlin_fp8 -> 80 <= sm < 89; the checkpoint is BLOCK-quantised, weight_block_size [128,128], and Marlin handles that explicitly at fp8.py:960-962 — check those lines first if a future pin breaks loading). ON A >=Ada/Hopper HOST THE FP8 PATH IS NATIVE AND THIS CAVEAT DOES NOT APPLY. ⭐ WHY IT SHIPS DESPITE BEING SLOWER AND SHORTER (maintainer decision 2026-09-10, taken with these numbers in hand): (1) it is the ONLY sglang tier on OFFICIAL Qwen weights — every other sgl/ slug is community AutoRound INT4 — which makes it the on-rig QUALITY REFERENCE for A/Bs against the int4 tiers, a role independent of throughput; (2) it is the MEASURED on-rig proxy for the four never-bootable sgl/qwen38-27b-multi{4,8}-{max,supermax} slugs, which cite these numbers. ⚠️ For raw throughput at 2x24GB use sgl/qwen38-27b-dual-fast or -dual-superfast (int4): 89.24/112.50 and 115.08/171.16 decode at 409,552 / 279,595 pool. No soak, no 8-pack, no BENCHMARKS row yet. Detail: learnings/sglang-engine.md 2026-09-10."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+  sgl/qwen38-27b-multi4-max:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: fp8
+    workload: long-ctx-single
+    engine: sglang-stable
+    drafter: qwen-mtp-builtin
+    spec_method: null
+    kv_format: bf16
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: null
+    tp: 4
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: 0.86
+    compose_path: models/qwen3.8-27b/sglang/compose/multi4/fp8/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8147
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "Qwen3.8-27B FIDELITY tier on stock SGLang v0.5.19, 4-card (TP=4), OFFICIAL Qwen/Qwen3.8-27B-FP8 block-quantised e4m3 weights, bf16 KV, 262144. Native in-checkpoint MTP head. ⚠️⚠️ WHY THE FIDELITY SERIES IS MULTI-CARD-ONLY ON THIS ENGINE, MEASURED: at TP=2 the fp8 weights take 14.75 GB/rank and the MTP head another 2.67, committing ~18.3 GB before KV, and the pool lands at just 92,507 tokens against a 262,144 context. It is NOT tunable to 262K — the full context needs ~4.02 GB/rank of KV and only ~3.4 GB is free before cudagraph capture. Sharding the weights is the fix, which is why this tier is registered at 4 and 8 cards and NOT at 2. For 2x24GB use sgl/qwen38-27b-dual-fast or -dual-superfast (int4), which reach 409,552 and 279,595 tokens respectively. On-rig proxy: the dual/fp8 sibling BOOTED on 2x3090 2026-09-10 — verify-full ALL PASS, fp8 Marlin weight-only path confirmed in the engine log, bench 67.33 narrative / 75.58 code decode TPS, prefill 1120.80 @10K / 906.70 @90K, MTP accept len 2.92 (n=147). Transfers on TOPOLOGY ONLY, not on pool size, context or concurrency. ⚠️ On Ampere this tier is DELIBERATELY SLOWER than the int4 series — no native FP8 compute, so weights serve weight-only through Marlin with activations upcast (sglang auto-enables it: fp8_utils.py::can_auto_enable_marlin_fp8 -> 80 <= sm < 89). The checkpoint is BLOCK-quantised (weight_block_size [128,128]); Marlin handles that case explicitly at fp8.py:960-962 — check those lines first if a future pin breaks loading. On a >=Ada/Hopper host the fp8 path is native and this caveat does not apply. ⚠️ KV DELIBERATELY DIVERGES from the dual/fp8 compose: bf16 here vs fp8_e4m3 there. Only TP>=4 has the per-card headroom and on a FIDELITY tier the less-lossy KV is the point. Do not restore lockstep and do not propagate it to a dual. ⛔ COMMUNITY-VALIDATED BY DESIGN and PERMANENT: the maintainer rig has exactly two 3090s, so this topology can never boot here and must never be filed as pending work. NOTHING on this slug has booted; the first community boot IS the validation (numbers-from-your-rig template). ⚠️ Max ctx 262144 is ARITHMETIC from the measured TP=2 figures, not a measured fill. ⚠️ Custom all-reduce stays disabled (PCIe, no NVLink assumed). No soak, no 8-pack, no BENCHMARKS row. Detail: learnings/sglang-engine.md 2026-09-10."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+  sgl/qwen38-27b-multi8-max:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: fp8
+    workload: long-ctx-single
+    engine: sglang-stable
+    drafter: qwen-mtp-builtin
+    spec_method: null
+    kv_format: bf16
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: null
+    tp: 8
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: 0.86
+    compose_path: models/qwen3.8-27b/sglang/compose/multi8/fp8/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8149
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "Qwen3.8-27B FIDELITY tier on stock SGLang v0.5.19, 8-card (TP=8), OFFICIAL Qwen/Qwen3.8-27B-FP8 block-quantised e4m3 weights, bf16 KV, 262144. Native in-checkpoint MTP head. ⚠️⚠️ WHY THE FIDELITY SERIES IS MULTI-CARD-ONLY ON THIS ENGINE, MEASURED: at TP=2 the fp8 weights take 14.75 GB/rank and the MTP head another 2.67, committing ~18.3 GB before KV, and the pool lands at just 92,507 tokens against a 262,144 context. It is NOT tunable to 262K — the full context needs ~4.02 GB/rank of KV and only ~3.4 GB is free before cudagraph capture. Sharding the weights is the fix, which is why this tier is registered at 4 and 8 cards and NOT at 2. For 2x24GB use sgl/qwen38-27b-dual-fast or -dual-superfast (int4), which reach 409,552 and 279,595 tokens respectively. On-rig proxy: the dual/fp8 sibling BOOTED on 2x3090 2026-09-10 — verify-full ALL PASS, fp8 Marlin weight-only path confirmed in the engine log, bench 67.33 narrative / 75.58 code decode TPS, prefill 1120.80 @10K / 906.70 @90K, MTP accept len 2.92 (n=147). Transfers on TOPOLOGY ONLY, not on pool size, context or concurrency. ⚠️ On Ampere this tier is DELIBERATELY SLOWER than the int4 series — no native FP8 compute, so weights serve weight-only through Marlin with activations upcast (sglang auto-enables it: fp8_utils.py::can_auto_enable_marlin_fp8 -> 80 <= sm < 89). The checkpoint is BLOCK-quantised (weight_block_size [128,128]); Marlin handles that case explicitly at fp8.py:960-962 — check those lines first if a future pin breaks loading. On a >=Ada/Hopper host the fp8 path is native and this caveat does not apply. ⚠️ KV DELIBERATELY DIVERGES from the dual/fp8 compose: bf16 here vs fp8_e4m3 there. Only TP>=4 has the per-card headroom and on a FIDELITY tier the less-lossy KV is the point. Do not restore lockstep and do not propagate it to a dual. ⚠️⚠️ TP=8 IS NOT THE SAME SHARD SHAPE AS TP=4: num_kv_heads=4 divides cleanly by 4 but NOT by 8, so at TP=8 the KV heads REPLICATE across rank pairs and per-card KV stays at roughly the TP=4 figure — only the WEIGHTS take the full 8-way split. The gain over 4 cards is weight headroom only, bought with more all-reduce on PCIe. Expect flat-or-worse decode than TP=4. ⛔ COMMUNITY-VALIDATED BY DESIGN and PERMANENT: the maintainer rig has exactly two 3090s, so this topology can never boot here and must never be filed as pending work. NOTHING on this slug has booted; the first community boot IS the validation (numbers-from-your-rig template). ⚠️ Max ctx 262144 is ARITHMETIC from the measured TP=2 figures, not a measured fill. ⚠️ Custom all-reduce stays disabled (PCIe, no NVLink assumed). No soak, no 8-pack, no BENCHMARKS row. Detail: learnings/sglang-engine.md 2026-09-10."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+  sgl/qwen38-27b-multi4-supermax:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: fp8
+    workload: long-ctx-single
+    engine: sglang-stable
+    drafter: zlab-qwen38-dflash2
+    spec_method: null
+    kv_format: bf16
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: null
+    tp: 4
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: 0.84
+    compose_path: models/qwen3.8-27b/sglang/compose/multi4/fp8/dflash2.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8148
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "Qwen3.8-27B FIDELITY tier on stock SGLang v0.5.19, 4-card (TP=4), OFFICIAL Qwen/Qwen3.8-27B-FP8 block-quantised e4m3 weights, bf16 KV, 262144. DFlash2 EXTERNAL block-drafter (block_size 8). ⛔⛔ THE DRAFTER MUST BE zlab-qwen38-dflash2 (BF16): the syvai compressed-tensors drafter is the SAME WEIGHTS quantized and on SGLang it silently collapses to accept len 1.03 / rate 0.004 with NO error and verify-full still passing. --speculative-draft-model-quantization unquant is MANDATORY (sglang defaults draft quant to the TARGET's). It costs 2.22 GB/rank. ⚠️⚠️ WHY THE FIDELITY SERIES IS MULTI-CARD-ONLY ON THIS ENGINE, MEASURED: at TP=2 the fp8 weights take 14.75 GB/rank and the MTP head another 2.67, committing ~18.3 GB before KV, and the pool lands at just 92,507 tokens against a 262,144 context. It is NOT tunable to 262K — the full context needs ~4.02 GB/rank of KV and only ~3.4 GB is free before cudagraph capture. Sharding the weights is the fix, which is why this tier is registered at 4 and 8 cards and NOT at 2. For 2x24GB use sgl/qwen38-27b-dual-fast or -dual-superfast (int4), which reach 409,552 and 279,595 tokens respectively. On-rig proxy: the dual/fp8 sibling BOOTED on 2x3090 2026-09-10 — verify-full ALL PASS, fp8 Marlin weight-only path confirmed in the engine log, bench 67.33 narrative / 75.58 code decode TPS, prefill 1120.80 @10K / 906.70 @90K, MTP accept len 2.92 (n=147). Transfers on TOPOLOGY ONLY, not on pool size, context or concurrency. ⚠️ On Ampere this tier is DELIBERATELY SLOWER than the int4 series — no native FP8 compute, so weights serve weight-only through Marlin with activations upcast (sglang auto-enables it: fp8_utils.py::can_auto_enable_marlin_fp8 -> 80 <= sm < 89). The checkpoint is BLOCK-quantised (weight_block_size [128,128]); Marlin handles that case explicitly at fp8.py:960-962 — check those lines first if a future pin breaks loading. On a >=Ada/Hopper host the fp8 path is native and this caveat does not apply. ⚠️ KV DELIBERATELY DIVERGES from the dual/fp8 compose: bf16 here vs fp8_e4m3 there. Only TP>=4 has the per-card headroom and on a FIDELITY tier the less-lossy KV is the point. Do not restore lockstep and do not propagate it to a dual. ⛔ COMMUNITY-VALIDATED BY DESIGN and PERMANENT: the maintainer rig has exactly two 3090s, so this topology can never boot here and must never be filed as pending work. NOTHING on this slug has booted; the first community boot IS the validation (numbers-from-your-rig template). ⚠️ Max ctx 262144 is ARITHMETIC from the measured TP=2 figures, not a measured fill. ⚠️ Custom all-reduce stays disabled (PCIe, no NVLink assumed). No soak, no 8-pack, no BENCHMARKS row. Detail: learnings/sglang-engine.md 2026-09-10."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+  sgl/qwen38-27b-multi8-supermax:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: fp8
+    workload: long-ctx-single
+    engine: sglang-stable
+    drafter: zlab-qwen38-dflash2
+    spec_method: null
+    kv_format: bf16
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: null
+    tp: 8
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: 0.84
+    compose_path: models/qwen3.8-27b/sglang/compose/multi8/fp8/dflash2.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8150
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "Qwen3.8-27B FIDELITY tier on stock SGLang v0.5.19, 8-card (TP=8), OFFICIAL Qwen/Qwen3.8-27B-FP8 block-quantised e4m3 weights, bf16 KV, 262144. DFlash2 EXTERNAL block-drafter (block_size 8). ⛔⛔ THE DRAFTER MUST BE zlab-qwen38-dflash2 (BF16): the syvai compressed-tensors drafter is the SAME WEIGHTS quantized and on SGLang it silently collapses to accept len 1.03 / rate 0.004 with NO error and verify-full still passing. --speculative-draft-model-quantization unquant is MANDATORY (sglang defaults draft quant to the TARGET's). It costs 2.22 GB/rank. ⚠️⚠️ WHY THE FIDELITY SERIES IS MULTI-CARD-ONLY ON THIS ENGINE, MEASURED: at TP=2 the fp8 weights take 14.75 GB/rank and the MTP head another 2.67, committing ~18.3 GB before KV, and the pool lands at just 92,507 tokens against a 262,144 context. It is NOT tunable to 262K — the full context needs ~4.02 GB/rank of KV and only ~3.4 GB is free before cudagraph capture. Sharding the weights is the fix, which is why this tier is registered at 4 and 8 cards and NOT at 2. For 2x24GB use sgl/qwen38-27b-dual-fast or -dual-superfast (int4), which reach 409,552 and 279,595 tokens respectively. On-rig proxy: the dual/fp8 sibling BOOTED on 2x3090 2026-09-10 — verify-full ALL PASS, fp8 Marlin weight-only path confirmed in the engine log, bench 67.33 narrative / 75.58 code decode TPS, prefill 1120.80 @10K / 906.70 @90K, MTP accept len 2.92 (n=147). Transfers on TOPOLOGY ONLY, not on pool size, context or concurrency. ⚠️ On Ampere this tier is DELIBERATELY SLOWER than the int4 series — no native FP8 compute, so weights serve weight-only through Marlin with activations upcast (sglang auto-enables it: fp8_utils.py::can_auto_enable_marlin_fp8 -> 80 <= sm < 89). The checkpoint is BLOCK-quantised (weight_block_size [128,128]); Marlin handles that case explicitly at fp8.py:960-962 — check those lines first if a future pin breaks loading. On a >=Ada/Hopper host the fp8 path is native and this caveat does not apply. ⚠️ KV DELIBERATELY DIVERGES from the dual/fp8 compose: bf16 here vs fp8_e4m3 there. Only TP>=4 has the per-card headroom and on a FIDELITY tier the less-lossy KV is the point. Do not restore lockstep and do not propagate it to a dual. ⚠️⚠️ TP=8 IS NOT THE SAME SHARD SHAPE AS TP=4: num_kv_heads=4 divides cleanly by 4 but NOT by 8, so at TP=8 the KV heads REPLICATE across rank pairs and per-card KV stays at roughly the TP=4 figure — only the WEIGHTS take the full 8-way split. The gain over 4 cards is weight headroom only, bought with more all-reduce on PCIe. Expect flat-or-worse decode than TP=4. ⛔ COMMUNITY-VALIDATED BY DESIGN and PERMANENT: the maintainer rig has exactly two 3090s, so this topology can never boot here and must never be filed as pending work. NOTHING on this slug has booted; the first community boot IS the validation (numbers-from-your-rig template). ⚠️ Max ctx 262144 is ARITHMETIC from the measured TP=2 figures, not a measured fill. ⚠️ Custom all-reduce stays disabled (PCIe, no NVLink assumed). No soak, no 8-pack, no BENCHMARKS row. Detail: learnings/sglang-engine.md 2026-09-10."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+  sgl/qwen38-27b-dual-fast:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: autoround-int4
+    workload: long-ctx-single
+    engine: sglang-stable
+    drafter: qwen-mtp-builtin
+    spec_method: null
+    kv_format: fp8_e4m3
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: null
+    tp: 2
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: 0.9
+    compose_path: models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8142
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "Qwen3.8-27B on STOCK SGLang v0.5.19 (zero patches), dual 3090 TP=2, Frozenlock AutoRound INT4, native in-checkpoint MTP head n=4, KV fp8_e4m3, flashinfer full attention, 262144. ⭐ MEASURED ON THE REFERENCE RIG 2026-09-10: verify-full ALL PASS (8 scored; Genesis N/A and the MTP-acceptance check SKIPPED — see the caveat below), bench narrative 89.24 / code 112.50 decode TPS (n=5 each, CV 3.2%/4.3%), prefill 1183.41 @10K (CV 0.1%) / 952.92 @90K, MTP accept len 2.86 / rate 0.465 over n=131, KV pool 409,552 tokens, vision 4/4 on ground truth. ⭐ `--mamba-ssm-dtype bfloat16` is set deliberately: it does NOT free VRAM (the mamba pool is auto-fit, so halving the SSM dtype buys ~2x the slots — 26 to 55 — at 0.24 GB LESS total) but it returned the intermediate cache to KV. ⭐ ESTABLISHED 2026-09-11 by A,B,A,B repeat-boot with FORCE_TOKENS=800: code decode +8.0% (111.92 -> 120.82; every bf16 boot beat every fp32 boot), narrative a null (-2.7%, arms overlap). ⛔ The earlier single-boot '+2.5% prefill' is RETRACTED and FLIPS SIGN — bf16 is ~1.3% SLOWER on prefill, measured at within-arm spread 0.5%/1.7%. Independent check: the same fp32 config drifted 1154.28 -> 1208.77 prefill@10K day-to-day (~4.7%), larger than the delta that single boot claimed. bf16 stays default on the memory effect (2x mamba slots at 0.24 GB less) plus code decode, NOT on prefill. ⚠️⚠️ DO NOT COMPARE THESE NUMBERS TO vllm/qwen38-27b-dual-fast AND CALL THE DELTA AN ENGINE DIFFERENCE: that tier ships W4A8 (int8 activations via our vendored Marlin negscale fold) and stock SGLang has NO W4A8 path for a dense auto-round 4-bit checkpoint (auto-round declares get_supported_act_dtypes -> [half, bfloat16]; w4afp8 is fp8-activations and min_capability 90; the w4a8 modelslim/quark schemes are MoE-only). Like-for-like against vLLM W4A16 (1219.51 prefill@10K) this is roughly -3%, not the -33% a naive W4A8-vs-W4A16 comparison suggests. A W4A8 patch for SGLang exists and is worth ~+47% prefill: jb-seo's original (club-3090#1178, cut against v0.5.18) and @A1RM4X's v0.5.19 re-cut WITH a shape guard (club-3090#1226) — take the latter, jb-seo's gate omits the per-shard K%128==0/N%64==0 constraint that prepare_w4a8 hard-asserts and crashes on the GDN merged in_proj_ba tensor. NOT applied here either way — this slug is deliberately the zero-patch reference. ⚠️ `--chunked-prefill-size` stays 2048: 4096 was tested and REGRESSED prefill at both depths (-1.6% @10K, -1.0% @90K) while tripling decode variance. ⛔ `--linear-attn-backend` is NOT a lever on sm_86 — for a GDN model every alternative to Triton either hard-errors (helion/intel_xpu, KDA-only backends) or falls back to Triton for prefill by construction (cutedsl needs SM100+, flashinfer GDN is SM90+). ⚠️⚠️ THE ACCEPTANCE CHECK IS BLIND ON THIS ENGINE: verify-full step 9 greps for vLLM's `SpecDecoding metrics` log line, which SGLang does not emit, so it SKIPS — and because speculative decoding rejects bad drafts, a 0%-acceptance drafter is slow but never wrong and every output-shaped check still passes. Read the engine's own `accept len:` decode-batch counter; a green verify-full says nothing about drafter health (this exact blind spot hid a dead drafter on the superfast sibling for a full bench cycle). No soak, no 8-pack, no BENCHMARKS row yet. Detail: learnings/sglang-engine.md 2026-09-10."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+  sgl/qwen38-27b-multi4-fast:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: autoround-int4
+    workload: long-ctx-single
+    engine: sglang-stable
+    drafter: qwen-mtp-builtin
+    spec_method: null
+    kv_format: fp8_e4m3
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: null
+    tp: 4
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: 0.9
+    compose_path: models/qwen3.8-27b/sglang/compose/multi4/autoround-int4/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8151
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "Qwen3.8-27B SPEED tier on stock SGLang v0.5.19 (zero patches), 4-card (TP=4), Frozenlock AutoRound INT4, native in-checkpoint MTP head n=4, KV fp8_e4m3, 262144. On-rig proxy sgl/qwen38-27b-dual-fast (same config at TP=2) is FULLY MEASURED 2026-09-10: verify-full ALL PASS, bench 89.24 narrative / 112.50 code decode TPS, prefill 1183.41 @10K / 952.92 @90K, MTP accept len 2.86 (n=131), KV pool 409,552 tokens, vision 4/4. Transfers on TOPOLOGY ONLY. ⛔ COMMUNITY-VALIDATED BY DESIGN and PERMANENT: the maintainer rig has exactly two 3090s, so this topology can never boot here and must never be filed as pending work. NOTHING on this slug has booted; the first community boot IS the validation (numbers-from-your-rig template). ⭐ What extra cards buy here is HEADROOM, NOT CONTEXT — 262144 is already the architectural ceiling and the dual sibling already reaches it; sharding the ~18.2 GB of int4 weights from ~9.1 GB/rank converts weight VRAM into pool and concurrency headroom. On the qwen3.6-27b equivalent single-stream decode was ~FLAT from 2 to 4 cards and the POOL is what grew; expect that shape, expect nothing quantitative. ⚠️ mem_util is inherited from the MEASURED dual value and is therefore CONSERVATIVE at this topology — raising it is a reasonable first tuning step once a real boot reports the pool size; it is not a ceiling. ⚠️ KV stays fp8_e4m3 (this is the SPEED series); the bf16-KV divergence belongs to the fidelity series (sgl/qwen38-27b-multi4-max/-supermax). ⚠️ PCIe/no-NVLink assumed: custom all-reduce stays disabled. No soak, no 8-pack, no BENCHMARKS row. Detail: learnings/sglang-engine.md 2026-09-10."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+  sgl/qwen38-27b-multi8-fast:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: autoround-int4
+    workload: long-ctx-single
+    engine: sglang-stable
+    drafter: qwen-mtp-builtin
+    spec_method: null
+    kv_format: fp8_e4m3
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: null
+    tp: 8
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: 0.9
+    compose_path: models/qwen3.8-27b/sglang/compose/multi8/autoround-int4/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8153
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "Qwen3.8-27B SPEED tier on stock SGLang v0.5.19 (zero patches), 8-card (TP=8), Frozenlock AutoRound INT4, native in-checkpoint MTP head n=4, KV fp8_e4m3, 262144. On-rig proxy sgl/qwen38-27b-dual-fast (same config at TP=2) is FULLY MEASURED 2026-09-10: verify-full ALL PASS, bench 89.24 narrative / 112.50 code decode TPS, prefill 1183.41 @10K / 952.92 @90K, MTP accept len 2.86 (n=131), KV pool 409,552 tokens, vision 4/4. Transfers on TOPOLOGY ONLY. ⚠️⚠️ TP=8 IS NOT THE SAME SHARD SHAPE AS TP=4: num_kv_heads=4 divides cleanly by 4 but NOT by 8, so KV heads REPLICATE across rank pairs and per-card KV stays at roughly the TP=4 figure — only the WEIGHTS take the full 8-way split. The gain over 4 cards is weight headroom bought with more all-reduce on PCIe. Expect flat-or-worse decode than TP=4. ⛔ COMMUNITY-VALIDATED BY DESIGN and PERMANENT: the maintainer rig has exactly two 3090s, so this topology can never boot here and must never be filed as pending work. NOTHING on this slug has booted; the first community boot IS the validation (numbers-from-your-rig template). ⭐ What extra cards buy here is HEADROOM, NOT CONTEXT — 262144 is already the architectural ceiling and the dual sibling already reaches it; sharding the ~18.2 GB of int4 weights from ~9.1 GB/rank converts weight VRAM into pool and concurrency headroom. On the qwen3.6-27b equivalent single-stream decode was ~FLAT from 2 to 4 cards and the POOL is what grew; expect that shape, expect nothing quantitative. ⚠️ mem_util is inherited from the MEASURED dual value and is therefore CONSERVATIVE at this topology — raising it is a reasonable first tuning step once a real boot reports the pool size; it is not a ceiling. ⚠️ KV stays fp8_e4m3 (this is the SPEED series); the bf16-KV divergence belongs to the fidelity series (sgl/qwen38-27b-multi8-max/-supermax). ⚠️ PCIe/no-NVLink assumed: custom all-reduce stays disabled. No soak, no 8-pack, no BENCHMARKS row. Detail: learnings/sglang-engine.md 2026-09-10."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+  sgl/qwen38-27b-dual-superfast:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: autoround-int4
+    workload: long-ctx-single
+    engine: sglang-stable
+    drafter: zlab-qwen38-dflash2
+    spec_method: null
+    kv_format: fp8_e4m3
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: null
+    tp: 2
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: 0.82
+    compose_path: models/qwen3.8-27b/sglang/compose/dual/autoround-int4/dflash2.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8143
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "Qwen3.8-27B on STOCK SGLang v0.5.19, dual 3090 TP=2, DFlash2 EXTERNAL block-drafter (block_size 8 == the vLLM tier's num_speculative_tokens 7 — SGLang counts the bonus token), KV fp8_e4m3, 262144. ⭐ MEASURED 2026-09-10 vs the MTP sibling sgl/qwen38-27b-dual-fast: narrative 125.32 mean / 115.08 MEDIAN (CV 20% — one flyer at 169.92 against ~111-118, READ THE MEDIAN), code 175.16 mean / 171.16 median (CV 9.9%), prefill 1234.38 @10K (CV 0.3%) and 972.73 @90K — i.e. roughly +29% narrative and +52% code on medians, and prefill is UP not down. DFlash2 accept len 3.71 @262K (n=100), 5.27 at 32K, matching the depth decay sglang#36118 reports for this drafter (4.49@10K -> 3.61@60K). ⚠️ The code leg's run 1 returned 658 tokens not 800 (this model self-terminates under the canonical prompt), so set FORCE_TOKENS before treating either decode figure as citable; the prefill legs are length-clean. ⛔⛔ THE DRAFTER CHOICE IS LOAD-BEARING AND FAILS SILENTLY IF WRONG: this slug MUST use zlab-qwen38-dflash2 (z-lab BF16). The syvai compressed-tensors drafter that the vLLM super*/ultra* slugs use is THE SAME WEIGHTS quantized — identical param count 1,924,404,480, identical dflash_config, identical tensor names — and on SGLang it silently collapses to accept len 1.03 / rate 0.004, dropping decode to ~38 TPS (SLOWER than no drafter at all) with NO error, NO warning, and verify-full still reporting All checks passed. There is no upstream issue for this; the closest is sglang#36599 (same class, NEXTN/modelopt_fp4) which crashes loudly instead. ⚠️ --speculative-draft-model-quantization unquant is MANDATORY: sglang defaults draft quantization to the TARGET's (serving_hook.py:629 -> auto-round), and applying that to bf16 weights reproduces the identical silent failure. ⚠️ mem_util is 0.82 not 0.90: the BF16 drafter costs 2.22 GB/rank (vs 1.16 quantized) and at 0.90 this OOMs ~4.5 min into prefill cudagraph capture, surfacing as a PyTorch internal assert (num_active_captures_ > 0 / markCaptureEnd) rather than a clean CUDA OOM — that assert is the tell for capture-time OOM, do not chase it as a torch bug. At 0.80 the KV pool lands at 260,132 tokens, SHORT of the advertised 262,144; 0.82 is the smallest value that clears it. ⚠️ Same W4A8 caveat as the fast sibling — these are W4A16 and are NOT activation-equivalent to vllm/qwen38-27b-dual-superfast. No soak, no 8-pack, no BENCHMARKS row yet. Detail: learnings/sglang-engine.md 2026-09-10."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+  sgl/qwen38-27b-multi4-superfast:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: autoround-int4
+    workload: long-ctx-single
+    engine: sglang-stable
+    drafter: zlab-qwen38-dflash2
+    spec_method: null
+    kv_format: fp8_e4m3
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: null
+    tp: 4
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: 0.82
+    compose_path: models/qwen3.8-27b/sglang/compose/multi4/autoround-int4/dflash2.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8152
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "Qwen3.8-27B SPEED tier on stock SGLang v0.5.19, 4-card (TP=4), Frozenlock AutoRound INT4, DFlash2 EXTERNAL block-drafter (block_size 8 == the vLLM tier's num_speculative_tokens 7), KV fp8_e4m3, 262144. On-rig proxy sgl/qwen38-27b-dual-superfast (same config at TP=2) is FULLY MEASURED 2026-09-10: verify-full ALL PASS, bench 115.08 median narrative / 171.16 median code decode TPS, prefill 1234.38 @10K / 972.73 @90K, DFlash2 accept len 3.71 (n=100), KV pool 279,595 tokens. Transfers on TOPOLOGY ONLY. ⚠️ The code-leg figures are MEDIANS: this model self-terminates under the canonical prompt, so set FORCE_TOKENS and check the toks= column before differencing any decode number. ⛔⛔ THE DRAFTER MUST BE zlab-qwen38-dflash2 (BF16). The syvai compressed-tensors drafter is THE SAME WEIGHTS quantized and on SGLang it silently collapses to accept len 1.03 / rate 0.004 — decode drops to ~38 TPS, SLOWER than no drafter — with NO error, NO warning, and verify-full still reporting All checks passed (its acceptance check SKIPS on SGLang). --speculative-draft-model-quantization unquant is MANDATORY: sglang defaults draft quant to the TARGET's (auto-round), which reproduces the same silent failure. Costs 2.22 GB/rank. ⛔ COMMUNITY-VALIDATED BY DESIGN and PERMANENT: the maintainer rig has exactly two 3090s, so this topology can never boot here and must never be filed as pending work. NOTHING on this slug has booted; the first community boot IS the validation (numbers-from-your-rig template). ⭐ What extra cards buy here is HEADROOM, NOT CONTEXT — 262144 is already the architectural ceiling and the dual sibling already reaches it; sharding the ~18.2 GB of int4 weights from ~9.1 GB/rank converts weight VRAM into pool and concurrency headroom. On the qwen3.6-27b equivalent single-stream decode was ~FLAT from 2 to 4 cards and the POOL is what grew; expect that shape, expect nothing quantitative. ⚠️ mem_util is inherited from the MEASURED dual value and is therefore CONSERVATIVE at this topology — raising it is a reasonable first tuning step once a real boot reports the pool size; it is not a ceiling. ⚠️ KV stays fp8_e4m3 (this is the SPEED series); the bf16-KV divergence belongs to the fidelity series (sgl/qwen38-27b-multi4-max/-supermax). ⚠️ PCIe/no-NVLink assumed: custom all-reduce stays disabled. No soak, no 8-pack, no BENCHMARKS row. Detail: learnings/sglang-engine.md 2026-09-10."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+  sgl/qwen38-27b-multi8-superfast:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: autoround-int4
+    workload: long-ctx-single
+    engine: sglang-stable
+    drafter: zlab-qwen38-dflash2
+    spec_method: null
+    kv_format: fp8_e4m3
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: null
+    tp: 8
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: 0.82
+    compose_path: models/qwen3.8-27b/sglang/compose/multi8/autoround-int4/dflash2.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8154
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "Qwen3.8-27B SPEED tier on stock SGLang v0.5.19, 8-card (TP=8), Frozenlock AutoRound INT4, DFlash2 EXTERNAL block-drafter (block_size 8 == the vLLM tier's num_speculative_tokens 7), KV fp8_e4m3, 262144. On-rig proxy sgl/qwen38-27b-dual-superfast (same config at TP=2) is FULLY MEASURED 2026-09-10: verify-full ALL PASS, bench 115.08 median narrative / 171.16 median code decode TPS, prefill 1234.38 @10K / 972.73 @90K, DFlash2 accept len 3.71 (n=100), KV pool 279,595 tokens. Transfers on TOPOLOGY ONLY. ⚠️ The code-leg figures are MEDIANS: this model self-terminates under the canonical prompt, so set FORCE_TOKENS and check the toks= column before differencing any decode number. ⛔⛔ THE DRAFTER MUST BE zlab-qwen38-dflash2 (BF16). The syvai compressed-tensors drafter is THE SAME WEIGHTS quantized and on SGLang it silently collapses to accept len 1.03 / rate 0.004 — decode drops to ~38 TPS, SLOWER than no drafter — with NO error, NO warning, and verify-full still reporting All checks passed (its acceptance check SKIPS on SGLang). --speculative-draft-model-quantization unquant is MANDATORY: sglang defaults draft quant to the TARGET's (auto-round), which reproduces the same silent failure. Costs 2.22 GB/rank. ⚠️⚠️ TP=8 IS NOT THE SAME SHARD SHAPE AS TP=4: num_kv_heads=4 divides cleanly by 4 but NOT by 8, so KV heads REPLICATE across rank pairs and per-card KV stays at roughly the TP=4 figure — only the WEIGHTS take the full 8-way split. The gain over 4 cards is weight headroom bought with more all-reduce on PCIe. Expect flat-or-worse decode than TP=4. ⛔ COMMUNITY-VALIDATED BY DESIGN and PERMANENT: the maintainer rig has exactly two 3090s, so this topology can never boot here and must never be filed as pending work. NOTHING on this slug has booted; the first community boot IS the validation (numbers-from-your-rig template). ⭐ What extra cards buy here is HEADROOM, NOT CONTEXT — 262144 is already the architectural ceiling and the dual sibling already reaches it; sharding the ~18.2 GB of int4 weights from ~9.1 GB/rank converts weight VRAM into pool and concurrency headroom. On the qwen3.6-27b equivalent single-stream decode was ~FLAT from 2 to 4 cards and the POOL is what grew; expect that shape, expect nothing quantitative. ⚠️ mem_util is inherited from the MEASURED dual value and is therefore CONSERVATIVE at this topology — raising it is a reasonable first tuning step once a real boot reports the pool size; it is not a ceiling. ⚠️ KV stays fp8_e4m3 (this is the SPEED series); the bf16-KV divergence belongs to the fidelity series (sgl/qwen38-27b-multi8-max/-supermax). ⚠️ PCIe/no-NVLink assumed: custom all-reduce stays disabled. No soak, no 8-pack, no BENCHMARKS row. Detail: learnings/sglang-engine.md 2026-09-10."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
   vllm/qwen38-27b-dual-max:
+    origin: core
     model: qwen3.8-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -3275,6 +3709,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-max:
+    origin: core
     model: qwen3.8-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -3320,6 +3755,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-max:
+    origin: core
     model: qwen3.8-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -3365,6 +3801,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-dual-supermax:
+    origin: core
     model: qwen3.8-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -3410,6 +3847,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-supermax:
+    origin: core
     model: qwen3.8-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -3455,6 +3893,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-supermax:
+    origin: core
     model: qwen3.8-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -3500,6 +3939,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-dual-ultramax:
+    origin: core
     model: qwen3.8-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -3545,6 +3985,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-ultramax:
+    origin: core
     model: qwen3.8-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -3590,6 +4031,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-ultramax:
+    origin: core
     model: qwen3.8-27b
     weights_variant: fp8
     workload: long-ctx-single
@@ -3635,6 +4077,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-dual-fast:
+    origin: core
     model: qwen3.8-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -3680,6 +4123,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-fast:
+    origin: core
     model: qwen3.8-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -3725,6 +4169,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-fast:
+    origin: core
     model: qwen3.8-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -3770,6 +4215,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-dual-superfast:
+    origin: core
     model: qwen3.8-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -3815,6 +4261,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-superfast:
+    origin: core
     model: qwen3.8-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -3860,6 +4307,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-superfast:
+    origin: core
     model: qwen3.8-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -3905,6 +4353,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-dual-ultrafast:
+    origin: core
     model: qwen3.8-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -3950,6 +4399,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-ultrafast:
+    origin: core
     model: qwen3.8-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -3995,6 +4445,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-ultrafast:
+    origin: core
     model: qwen3.8-27b
     weights_variant: autoround-int4
     workload: long-ctx-single
@@ -4040,6 +4491,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-single-nvfp4:
+    origin: core
     model: qwen3.8-27b
     weights_variant: nvfp4
     workload: long-ctx-single
@@ -4085,6 +4537,7 @@ entries:
         repetition_penalty: 1.0
     sampler_default_mode: thinking
   vllm/qwen38-27b-dual-nvfp4:
+    origin: core
     model: qwen3.8-27b
     weights_variant: nvfp4
     workload: long-ctx-single

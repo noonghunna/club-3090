@@ -1,0 +1,376 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
+#              OFFICIAL Qwen/Qwen3.8-27B-FP8 — block-quantised e4m3
+#              (weight_block_size [128,128], activation_scheme dynamic), ~29 GB.
+#   Engine:    SGLang STOCK v0.5.19 (`lmsysorg/sglang:v0.5.19`) — engine profile
+#              `sglang-stable`. ⚠️ NO PATCHES. That is the POINT of this compose.
+#   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
+#   Drafter:   native MTP head, in-checkpoint (29 `mtp.*` tensors,
+#              text_config.mtp_num_hidden_layers=1) — NOT an external drafter.
+#   KV:        fp8_e4m3 — half the bytes of bf16, which is what keeps the full context in pool.
+#   Vision:    ✅ tower present — verify-full scored 4/4 on ground truth here 2026-09-10.
+#   Max ctx:   131072 — ⚠️ NOT the 262144 architectural ceiling. VRAM-bound and
+#              MEASURED: the pool holds 157,875 tokens at mem-fraction 0.92.
+#   Genesis:   N/A — Genesis is a vLLM construct.
+#   Status:    🧪 Experimental — BOOTED + benched + verify-full PASS 2026-09-10.
+#   Best for:  fidelity reference — OFFICIAL Qwen weights, for quality A/Bs against the int4 tiers
+# ---------------------------------------------------------------------------
+# ⭐⭐ WHY THIS COMPOSE EXISTS: to find out what STOCK v0.5.19 does.
+#
+#   The evidence we are chasing is @jb-seo's club-3090 discussion #1178: 97.4
+#   narrative / 121.2 code decode TPS on 2x3090, TP=2, this quant, native MTP
+#   n=4, flashinfer full attention, KV fp8_e4m3. Against our vLLM MTP tier that
+#   would be a large win.
+#
+#   ⚠️⚠️ BUT HIS NUMBERS ARE v0.5.18 + THREE IN-CONTAINER PATCHES, NOT STOCK:
+#     1. backport of sgl-project/sglang#34623 (UNMERGED upstream) — concurrent
+#        chunked prefill, i.e. `--long-prefill-token-threshold`
+#     2. attention-backend logging (auto-selection fell back to triton silently)
+#     3. `--decode-passes-per-prefill` (FORK-LOCAL) — stock gives every
+#        scheduling pass to prefill while one exists, so a 114K prompt at 4096
+#        chunks stops ALL generation for ~28 passes: "one window compacts, every
+#        other window freezes"
+#   He states the pin is load-bearing: v0.5.19 is 794 commits later and rewrites
+#   all four files the patches touch, and patch 1 does not apply.
+#
+#   ⭐ VERIFIED HERE 2026-09-10 against the real image — both flags his patches
+#   add are ABSENT from stock v0.5.19:
+#       --long-prefill-token-threshold   ABSENT
+#       --decode-passes-per-prefill      ABSENT
+#   Everything else this compose uses IS present.
+#
+#   ⇒ So this compose deliberately measures STOCK FIRST. If single-stream decode
+#     lands near his numbers, the patches are a concurrency/multi-window story
+#     and not needed for the shipped `--max-running-requests 1`. If it does not,
+#     we rebase his patches into our own tree and say why. Do NOT vendor them
+#     before that measurement exists.
+#
+# ⚠️ HIS OWN OPEN CAVEATS, carried so nobody re-discovers them:
+#   - ~2x vLLM wall time on prefill-heavy MULTI-SESSION work. He self-corrected
+#     this to a W4A16 issue that improved with W4A8. Unverified hypothesis: most
+#     layers are GDN on Triton, `--attention-backend` only moves the 16 full-
+#     attention layers, and flashinfer's GDN kernels are SM90+ — so on sm_86
+#     there is nothing else to select.
+#   - TTFT at 90K is ~96 seconds. That, not decode TPS, shapes the experience.
+#   - Both scheduling flags are inert at `--max-running-requests 1`. He developed
+#     at 4 against a ~440K KV pool; at full context that pool cannot hold two
+#     sessions, so 4 was "a testing value this hardware can't honestly ship".
+# ---------------------------------------------------------------------------
+#   ⛔⛔ AN EARLIER REVISION OF THIS HEADER CARRIED AN --mamba-ssm-dtype BENCH
+#   TABLE. Those numbers were from the **INT4** sibling and never belonged on an
+#   FP8 compose. Removed 2026-09-11. The A,B,A,B repeat-boot that superseded
+#   them (int4, 2026-09-11) gives code decode +8.0% and prefill **-1.3%** — the
+#   old "+2.5% prefill" flipped sign. Effect on an FP8 target is UNMEASURED.
+#
+#   ⛔ DO NOT CITE the `decode tok/s @ Nk depth` rows bench.sh prints in the
+#     prefill probe (+33%/+47% here). That probe runs `max_tokens=16`, so it
+#     times a ~0.15 s decode window after a 95 s prefill at n=3 / n=1. The
+#     citable decode numbers are the narrative/code legs — those are
+#     fixed-length. (instrument_sampler_and_length_confounds, re-earned.)
+#
+#   ⚠️⚠️ VS OUR vLLM TIER — READ THE QUANT BEFORE THE DELTA. Raw numbers vs
+#     `vllm/qwen38-27b-dual-fast` are narrative +22%, code +2%, prefill −33% at
+#     10K. ⛔ THOSE ARE QUANT-CONFOUNDED AND MUST NOT BE QUOTED AS ENGINE
+#     DELTAS: that tier ships **W4A8** (int8 activations, our vendored Marlin
+#     negscale fold), while stock SGLang serves this checkpoint at **W4A16** and
+#     offers no activation knob — `auto-round` declares
+#     `get_supported_act_dtypes() -> [half, bfloat16]`. Against vLLM W4A16
+#     (1219.51 @10K) our 1183.41 is ≈ −3%; correcting decode for W4A8's ~8% tax
+#     puts us near +13% / +3%. ⭐ W4A8 IS reachable on SGLang — @jb-seo patched
+#     it (club-3090#1178, commit 5f48455e) for prefill 1200 -> 1770 (+47.5%).
+#     Porting that is the top lever for this tier.
+#   ⛔ `--linear-attn-backend` IS STILL NOT THE FIX — checked in source 2026-09-10: on a GDN model at sm_86, helion and
+#     intel_xpu hard-error, flashkda/nvidia_kda/ptx_kda are KDA-only and are
+#     not in the GDN branch at all, flashinfer GDN is SM90+, and cutedsl's
+#     prefill kernel requires SM100+ and SILENTLY FALLS BACK TO TRITON below
+#     it. Triton is the ONLY viable GDN backend on Ampere. ⚠️ But note GDN is
+#     Triton-only on sm_86 in BOTH engines, so dispatch was never what separated
+#     them — this closes the flag, NOT the prefill question. Grep the boot log for
+#     `GDN kernel dispatcher:` — that line shows what was SELECTED; the
+#     `server_args=` dump only shows what was REQUESTED.
+#
+#   ⭐ VISION WORKS on SGLang for this model — verify-full [10] scored 4/4 on
+#     ground truth. First time measured on this engine.
+#
+#   ⏭️ DFlash2 is deliberately NOT here. It belongs to a future sglang
+#     `dual-superfast` slug, mirroring the vLLM tier split (maintainer
+#     decision 2026-09-10). The drafter `syvai/Qwen3.8-27B-DFlash2-W4A16` is
+#     already on disk and SGLang exposes `--speculative-algorithm DFLASH`.
+#
+# ---------------------------------------------------------------------------
+#   ⭐ `--mamba-ssm-dtype bfloat16` — this BUYS SLOTS, it does NOT free VRAM.
+#
+#   The GDN recurrent state defaults to **float32**: sglang's resolution order is
+#   default fp32 -> config `mamba_ssm_dtype` -> `SGLANG_MAMBA_SSM_DTYPE`
+#   (configs/mamba_utils.py::mamba2_state_dtype), and this checkpoint's config
+#   declares no `mamba_ssm_dtype`. So stock = fp32 state.
+#
+#   ⚠️ The obvious expectation — "halve the state dtype, get the bytes back" —
+#   is WRONG here, because the mamba pool is AUTO-FIT, not fixed. With
+#   `--max-mamba-cache-size` unset, kv_cache_configurator.py solves
+#       K = (budget - per_req*(1+D)) // (per_req * (1 + D/ratio))
+#   for a budget that is a fixed share of free memory. `per_req` is
+#   `conv_numel*conv.itemsize + ssm_numel*temporal.itemsize` per layer, so
+#   halving the SSM dtype halves `per_req` and the solver simply BUYS TWICE THE
+#   SLOTS at the same budget.
+#
+#   ⭐ MEASURED on this rig, 2026-09-10, same boot recipe, TP=2 (per rank):
+#
+#     | boot line                       | fp32 (stock) | bf16 (this) |
+#     |---------------------------------|-------------:|------------:|
+#     | max_mamba_cache_size            |           26 |      **55** |
+#     | conv_state                      |      0.04 GB |     0.08 GB |
+#     | ssm_state                       |      1.90 GB |     1.97 GB |
+#     | intermediate_ssm_state_cache    |      0.70 GB |     0.35 GB |
+#     | intermediate_conv_window_cache  |      0.01 GB |     0.01 GB |
+#     | mamba total                     |  **2.65 GB** | **2.41 GB** |
+#     | KV pool #tokens                 |      394,661 | **409,552** |
+#     | `Memory pool end` avail mem     |      2.38 GB |     2.42 GB |
+#
+#   Per-slot SSM bytes halved exactly (0.0731 -> 0.0358 GB); the solver spent the
+#   saving on slots. The only bytes actually RETURNED are the intermediate cache
+#   (0.70 -> 0.35 GB, sized by `max_running_requests`, not by K), and they went
+#   to KV (+14,891 tokens).
+#
+#   ⭐ WHY MORE SLOTS IS THE POINT: the pool is not just per-request scratch —
+#   `uses_mamba_radix_cache: True` and the Unified Radix Cache carries
+#   `ComponentType.MAMBA`, so surplus slots hold the GDN recurrent state of
+#   CACHED PREFIXES. On a hybrid model prefix reuse is gated by the KV pool AND
+#   the mamba pool; at 26 slots the mamba side was the tighter of the two. This
+#   is the same axis as the vLLM `mamba-cache-mode=align` win (club-3090 #1093,
+#   between-turn TTFT -15-38%) — ⚠️ but that TTFT gain is NOT measured here yet.
+#
+#   ⚠️ PRECISION CAVEAT, deliberately accepted, not measured away: bf16 keeps
+#   fp32's exponent range but drops the mantissa 24 -> 8 bits, and the recurrent
+#   state is ACCUMULATED across the whole sequence. sglang's own source says fp32
+#   "keeps the SSM checkpoint bit-exact" and warns a narrower state "may drift
+#   over long sequences" (arg_groups/attention_hook.py). We serve 262K. The
+#   stochastic-rounding mitigation (`--enable-mamba-cache-stochastic-rounding`)
+#   is fp16-only AND SM100-only, so it is not available to us. Set
+#   `MAMBA_SSM_DTYPE=float32` to revert; a long-context quality leg is OPEN.
+#
+#   ⚠️ NOT COPIED from the RTX PRO 6000 recipes that suggested this flag:
+#   `--mamba-full-memory-ratio 5.61/6.08`. Solving their formula backwards those
+#   imply a target request length of ~4.3-4.7K tokens (short-request serving at
+#   high concurrency). Our derived ratio at 262K is 0.143 — BELOW the 0.9 default
+#   we already ship — so copying theirs would over-allocate mamba state ~40x and
+#   eat the KV pool for a workload we do not run.
+#
+# ---------------------------------------------------------------------------
+#   ⚠️⚠️ PARSERS ARE NOT OPTIONAL ON A THINKING MODEL. Without `--reasoning-parser`
+#   the chain-of-thought lands INLINE in `content` with a bare `</think>`, and
+#   `reasoning_tokens` reports 0 — observed on the first boot here 2026-09-10.
+#   That silently corrupts any benchmark: bench.sh takes TTFT from the first
+#   `content` delta, so it would fire on the first THINKING token instead of the
+#   first answer token. That is the mirror image of the #1096 harness bug (which
+#   charged reasoning time to prefill), and it would make these numbers
+#   non-comparable to the vLLM tier. Values match vllm/qwen38-27b-dual-fast
+#   exactly: reasoning `qwen3`, tools `qwen3_coder`.
+#
+#   Provenance: engine mechanics copied from the VALIDATED sglang sibling
+#              models/qwen3.6-27b/sglang/compose/dual/autoround-int4/
+#              eagle3-experimental.yml (bash -c + sglang.launch_server shape,
+#              port 30000, --disable-custom-all-reduce). Model specifics from
+#              vllm/qwen38-27b-dual-fast. Nothing authored from first principles.
+# ---------------------------------------------------------------------------
+#   ⭐⭐ MEASURED ON THIS COMPOSE, 2× RTX 3090, 2026-09-10 — and the context
+#   ceiling is the headline, not the throughput.
+#
+#     verify-full         ALL CHECKS PASSED (8 scored; Genesis N/A + the
+#                         MTP-acceptance check SKIPPED — it greps for vLLM's
+#                         `SpecDecoding metrics` line, which SGLang never emits)
+#     bench (ENABLE_THINKING=1, n=5/5/3/1)
+#       narrative decode  67.33 TPS  (CV 3.8%)
+#       code decode       75.58 TPS  (CV 7.0%; median 76.56 — run 5 returned
+#                                     465 tok, this model self-terminates)
+#       prefill @10K      1120.80 tok/s (CV 0.8%)
+#       prefill @90K       906.70 tok/s
+#     MTP accept len      2.92 (n=147)
+#     vision              4/4 on ground truth
+#
+#   ⚠️⚠️ THE POOL IS THE CONSTRAINT, AND IT IS NOT TUNABLE TO 262K:
+#     mem-fraction 0.86 -> KV pool  92,507 tokens (3.43 GB left idle)
+#     mem-fraction 0.92 -> KV pool 157,875 tokens (1.96 GB left, graphs OK)
+#   Per rank at 0.92: weights 14.75 GB + MTP head 2.67 + mamba 0.84 = ~18.3 GB
+#   committed before KV. At ~15.3 KB/token a full 262,144 context needs ~4.02 GB
+#   of KV and there is nowhere near that much left. 0.92 is the practical
+#   ceiling — above it the prefill cudagraph capture OOMs. Hence CONTEXT_LENGTH
+#   ships at 131072, which the pool covers with ~27K tokens of radix headroom.
+#
+#   ⭐ WHY THIS TIER IS STILL WORTH SHIPPING AT HALF THE CONTEXT (maintainer
+#   decision 2026-09-10, taken with the numbers above in hand):
+#     1. It is the ONLY sglang tier on OFFICIAL Qwen weights. Every other slug
+#        in the sgl/ matrix is community AutoRound INT4. That makes this the
+#        on-rig QUALITY REFERENCE for A/Bs against the int4 tiers — a role
+#        nothing else can fill, and one that does not depend on throughput.
+#     2. It is the MEASURED proxy for four never-bootable multi-card slugs
+#        (sgl/qwen38-27b-multi{4,8}-{max,supermax}), which cite these numbers.
+#   ⚠️ For raw throughput at 2×24GB use sgl/qwen38-27b-dual-{fast,superfast}
+#   (int4): 89.24/112.50 and 115.08/171.16 decode, at 409,552 / 279,595 pool.
+#   This tier is SLOWER and SHORTER by construction. That is the trade, not a bug.
+# ---------------------------------------------------------------------------
+#   ⭐⭐ WHY AN FP8 TIER ON AMPERE AT ALL — read this before "optimising" it.
+#
+#   This is the FIDELITY series, and on sm_86 it is DELIBERATELY SLOWER than the
+#   int4 speed series. Ampere has NO native FP8 compute, so the weights are
+#   served weight-only through Marlin with activations upcast. On vLLM the same
+#   trade measures dual-max 87 code TPS vs dual-fast 100. Expect the same shape
+#   here. You are buying the OFFICIAL Qwen weights (no community quantisation
+#   damage), not throughput. Do not "fix" it by reaching for the int4 tier —
+#   that is a different product.
+#
+#   ⭐ THE AMPERE PATH IS REAL AND AUTOMATIC, verified in source 2026-09-10:
+#     fp8_utils.py::can_auto_enable_marlin_fp8() -> `80 <= sm < 89`, so sm_86
+#     auto-enables Marlin FP8 with no flag.
+#   ⚠️ AND IT SURVIVES BLOCK QUANT: this checkpoint is BLOCK-quantised
+#     (`weight_block_size: [128, 128]`, DeepSeek-style), not per-tensor. That is
+#     the combination that usually has no Ampere path — but fp8.py:960-962 sets
+#     `layer.weight_block_size` and calls
+#     `prepare_fp8_layer_for_marlin(layer, not self.block_quant)`, i.e. Marlin
+#     handles the block case explicitly. If a future pin drops that, this tier
+#     dies silently-or-loudly at load; check those lines first.
+#
+#   ⚠️ VRAM IS THE BINDING CONSTRAINT, NOT CONTEXT. FP8 weights are ~29 GB
+#   (~14.5 GB/rank at TP=2) against int4's ~9.1 — and SGLang additionally
+#   carries a multi-GB auto-fit MAMBA pool that vLLM does not size the same way.
+#   MEM_FRACTION and CONTEXT_LENGTH here are STARTING POINTS pending a boot, not
+#   measured ceilings. Read `KV Cache is allocated ... #tokens:` and compare it
+#   against CONTEXT_LENGTH before believing the header.
+# ---------------------------------------------------------------------------
+#   ---------------------------------------------------------------------------
+#   ⭐ W4A8 (int8 activations) — OPT-IN, and the patch is NOT VENDORED HERE.
+#
+#   Set `W4A8=1` to serve int8 activations through @A1RM4X's re-cut of jb-seo's
+#   AutoRound W4A8 patch (club-3090#1226). We deliberately do NOT carry a copy:
+#   jb-seo's original (club-3090#1178) is cut against v0.5.18 and its eligibility
+#   gate omits the per-shard `K%128==0 / N%64==0` constraint that `prepare_w4a8`
+#   hard-asserts, so it crashes on the GDN merged `in_proj_ba` tensor. #1226 is
+#   cut against v0.5.19 (our pin) AND adds the shape guard.
+#
+#   ⚠️ Until #1226 merges, `W4A8=1` HARD-FAILS with a pointer rather than
+#   silently serving W4A16 — a silent fallback here would be indistinguishable
+#   from the feature working.
+#
+#   ⭐ MEASURED on this rig 2026-09-11 with #1226 applied (Frozenlock @ TP=2 —
+#   a different checkpoint and topology from his Avuja @ TP=4):
+#     | tier      | prefill@10K         | prefill@90K        | code decode | accept |
+#     |-----------|---------------------|--------------------|-------------|--------|
+#     | fast      | 1183 -> 1710 +44.5% | 953 -> 1276 +33.9% |   -11.1%    | 2.86 = |
+#     | superfast | 1234 -> 1779 +44.1% | 973 -> 1345 +38.3% |   ~flat     | 3.72 = |
+#   Numerically clean (greedy 17*23=391, verify-full ALL PASS, vision 4/4), and
+#   the drafter is untouched on both tiers. ⭐ The quantized-MTP-head case passes:
+#   520 layers W4A8-prepared, no shape-guard fallback, acceptance unchanged.
+#
+#   ⚠️ IT IS A TRADE, NOT A FREE WIN: ~+44% prefill for ~-11% code decode on the
+#   MTP tier. Prefill-heavy and agentic work wants it; long-generation chat does
+#   not. Same shape the vLLM tiers encode with their own W4A8 toggle.
+#
+#   ⚠️ SGLang ACTIVATION DIFFERS FROM vLLM: there is no
+#   `VLLM_MARLIN_INPUT_DTYPE`-style runtime gate — the patch flips
+#   `experimental_w4a8 = True` unconditionally, so APPLYING it IS the activation.
+#   That is why this toggle gates the INSTALL, not a runtime env var.
+#
+#   ⚠️ DEBUGGING A W4A8 FAILURE: this compose ships
+#   `restart: ${CLUB3090_RESTART:-unless-stopped}`, so a hard-fail RESTART-LOOPS
+#   and `docker ps` reports "Restarting" rather than "Exited". Set
+#   `CLUB3090_RESTART=no` to make the failure sit still and be readable.
+#   ---------------------------------------------------------------------------
+# ===========================================================================
+services:
+  sglang-qwen38-27b-max-dual:
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.19}
+    container_name: ${ESTATE_CONTAINER:-sglang-qwen38-27b-max-dual}
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    init: true
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8145}}:30000"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+      - "${W4A8_PATCH_DIR:-../../../patches/sglang-autoround-w4a8-v0.5.19}:/etc/club3090/w4a8:ro"
+    ipc: host
+    shm_size: "16gb"
+    environment:
+      - SPEC_N
+      - CONTEXT_LENGTH
+      - MEM_FRACTION
+      - KV_CACHE_DTYPE
+      - ATTENTION_BACKEND
+      - MAX_RUNNING_REQUESTS
+      - MAMBA_SSM_DTYPE
+      - W4A8
+      - QUANTIZATION
+      - CHUNKED_PREFILL_SIZE
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-0,1}']
+              capabilities: [gpu]
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        M=/models/qwen3.8-27b-fp8
+        # ⚠️ SPEC_N=0 removes the speculative flags entirely rather than passing
+        # n=0 — the same rule the GLM composes use, so a typo can never
+        # masquerade as "drafter off".
+        _n="${SPEC_N:-4}"
+        case "$$_n" in ""|*[!0-9]*) echo "[spec] SPEC_N='$$_n' is not a non-negative integer" >&2; exit 1 ;; esac
+        SPEC=()
+        if [ "$$_n" -gt 0 ]; then
+          # Native MTP: the draft path is the SAME checkpoint. sglang rewrites
+          # Qwen3_5ForConditionalGeneration -> Qwen3_5ForCausalLMMTP when
+          # is_draft_model (model_config.py:751), which loads the in-checkpoint
+          # mtp.* tensors. There is no separate drafter file to download.
+          SPEC=(--speculative-algorithm EAGLE
+                --speculative-draft-model-path "$$M"
+                --speculative-num-steps "$$_n"
+                --speculative-eagle-topk 1
+                --speculative-num-draft-tokens $$(( _n + 1 )))
+          echo "[spec] native MTP ON (n=$$_n)" >&2
+        else
+          echo "[spec] drafter OFF (SPEC_N=0)" >&2
+        fi
+        # --- W4A8 opt-in (patch from club-3090#1226; not vendored here) ---
+        _w4a8="${W4A8:-0}"
+        case "$$_w4a8" in 0|1) : ;; *) echo "[w4a8] W4A8='$$_w4a8' must be 0 or 1" >&2; exit 1 ;; esac
+        if [ "$$_w4a8" = "1" ]; then
+          _p=/etc/club3090/w4a8
+          if [ ! -f "$$_p/install.sh" ]; then
+            echo "[w4a8] W4A8=1 but the patch is not mounted at $$_p." >&2
+            echo "[w4a8] This compose does NOT vendor it. Land club-3090#1226 (or mount its" >&2
+            echo "[w4a8] patch dir there yourself), then retry. Refusing to serve W4A16 silently." >&2
+            exit 1
+          fi
+          bash "$$_p/install.sh" || { echo "[w4a8] install FAILED" >&2; exit 1; }
+          bash "$$_p/install.sh" --verify || { echo "[w4a8] post-install verify FAILED" >&2; exit 1; }
+          echo "[w4a8] ON - int8 activations via club-3090#1226" >&2
+        else
+          echo "[w4a8] off (W4A8=1 to enable; ~+44% prefill, ~-11% code decode)" >&2
+        fi
+        exec python3 -m sglang.launch_server \
+          --model-path "$$M" \
+          --tp-size 2 \
+          --disable-custom-all-reduce \
+          --quantization "${QUANTIZATION:-fp8}" \
+          --kv-cache-dtype "${KV_CACHE_DTYPE:-fp8_e4m3}" \
+          --mamba-ssm-dtype "${MAMBA_SSM_DTYPE:-bfloat16}" \
+          --chunked-prefill-size "${CHUNKED_PREFILL_SIZE:-2048}" \
+          --attention-backend "${ATTENTION_BACKEND:-flashinfer}" \
+          --context-length "${CONTEXT_LENGTH:-131072}" \
+          --mem-fraction-static "${MEM_FRACTION:-0.92}" \
+          --max-running-requests "${MAX_RUNNING_REQUESTS:-1}" \
+          --trust-remote-code \
+          --reasoning-parser "${REASONING_PARSER:-qwen3}" \
+          --tool-call-parser "${TOOL_CALL_PARSER:-qwen3_coder}" \
+          --host 0.0.0.0 --port 30000 \
+          --served-model-name qwen3.8-27b \
+          "$${SPEC[@]}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:30000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 60
+      start_period: 900s
