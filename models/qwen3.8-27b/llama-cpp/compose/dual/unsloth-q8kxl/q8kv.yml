@@ -205,6 +205,19 @@ services:
       # Drafter toggle - docker forwards only what is declared here.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
+      # ⚠️⚠️ THE ROW VARS MUST BE DECLARED HERE OR THE FLIP SILENTLY DOES NOTHING.
+      # They used to be read by docker-compose INTERPOLATION in `command:`
+      # (${INSTRUCT:+...}), which resolves HOST-side and needs no declaration.
+      # The entrypoint evaluates them INSIDE the container, where docker forwards
+      # ONLY what is listed here. Omitting them boots clean, logs the THINKING row,
+      # and ignores INSTRUCT=1. Bare form: `- VAR=${VAR:-}` sets it empty-but-present.
+      - INSTRUCT
+      - THINKING
+      - REASONING
+      - TEMP
+      - TEMPERATURE
+      - TOP_P
+      - PRESENCE_PENALTY
       # ⭐ Default reasoning effort = low when thinking is on (2026-08-16),
       # matching the vLLM composes. NOW ACTIVE on every request: thinking became
       # the default 2026-09-01. It goes INERT only under INSTRUCT=1, because the
@@ -257,17 +270,16 @@ services:
     # client-side parameter there. (Read at llama.cpp 0d227ec; the pin is newer, b10236,
     # but this path is longstanding.)
     #
-    # ⚠️ THE INSTRUCT=1 / THINKING=1 FLIP RIDES ON A DEPRECATED SPELLING. It appends a
-    # second copy of the flags and lets the last one win. b10236 warns on exactly that:
-    #     DEPRECATED: argument '--temp' specified multiple times, use comma-separated
-    #     values instead (only last value will be used)
-    # Last-wins is CONFIRMED on the pin (the warning says so), so the flip is correct
-    # today, and a DEFAULT boot is clean — every sampler flag below appears exactly once
-    # (verified by rendering: default 1x each; INSTRUCT=1 duplicates 4; THINKING=1
-    # duplicates 4 with identical values). But "comma-separated" is multi-VALUE syntax:
-    # if repeats ever come to mean "append" instead of "replace", INSTRUCT=1 breaks
-    # silently. The fix is to resolve the row once in the entrypoint shell, the way this
-    # model's vLLM and SGLang composes do — that needs a boot to land safely.
+    # ✅ THE INSTRUCT=1 / THINKING=1 FLIP NO LONGER RIDES A DEPRECATED SPELLING.
+    # The entrypoint resolves the row ONCE and emits each flag exactly once, so the
+    # b10236 'specified multiple times' warning cannot fire and a future change of
+    # that semantics (append vs replace) cannot silently blend the two rows.
+    # MEASURED on the single-card sibling (2 boots, llamacpp/qwen38-27b-single-iq4xs):
+    #   default     -> THINKING row 1.0/0.95/0.0 reasoning=on,  0 warnings, reasoning present
+    #   INSTRUCT=1  -> INSTRUCT row 0.7/0.80/1.5 reasoning=off, 0 warnings, reasoning absent
+    # (both emitted 4 warnings before.) THIS dual compose is structurally identical but
+    # was NOT booted - 2x q8_0 weights; the single-card arm is the evidence.
+    # ⚠️ The row vars are declared in `environment:` FOR THIS REASON - see the note there.
     # ⚠️ Comments CANNOT live inside the `command: >-` folded scalar below — every line there is
     #   part of one command string, and a `#` line becomes literal argv text
     #   ('invalid command line string' at compose parse). Keep notes above this key.
@@ -326,12 +338,13 @@ services:
     #   ⇒ No separate instruct slug is needed, and no reboot: a caller opts out per request. That
     #   is why this compose ships one mode rather than a sibling `instruct.yml`.
     # ⭐ ONE-KNOB INSTRUCT MODE:  INSTRUCT=1  flips reasoning AND the whole sampler back together.
-    #   Without it you get the card's THINKING row (the flags above). With it, the trailing
-    #   ${INSTRUCT:+...} line appends the card's INSTRUCT row, and llama.cpp takes the LAST value
-    #   of a repeated flag — so `INSTRUCT=1` alone is sufficient and correct. top_k/min_p/
-    #   repeat-penalty are identical across both modes, so they are not repeated.
+    #   Without it you get the card's THINKING row. The ENTRYPOINT picks ONE row and emits
+    #   each flag exactly once — it no longer appends a second copy and leans on llama.cpp
+    #   taking the LAST value of a repeated flag (b10236 marks that spelling DEPRECATED).
+    #   top_k/min_p/repeat-penalty are identical across both modes and stay in `command:`.
     #   THINKING=1 is kept as a back-compat NO-OP — it re-asserts what is now already default.
-    #   ⚠️ Do not set both: INSTRUCT is appended last, so INSTRUCT=1 wins over THINKING=1.
+    #   ⚠️ Do not set both: the entrypoint tests INSTRUCT first, so INSTRUCT=1 still wins over
+    #   THINKING=1 — the same precedence as the old append order, deliberately preserved.
     #
     #   Precedence is preserved: an explicit TEMP/TOP_P/PRESENCE_PENALTY survives INSTRUCT,
     #   because the appended values are themselves ${VAR:-default}. Verified 2026-09-01:
@@ -358,6 +371,25 @@ services:
       - /bin/bash
       - -c
       - |
+        # -- Reasoning row: resolved ONCE, appended ONCE ------------------------
+        # Replaces the old "append a second copy and let the last one win" form,
+        # which b10236 warns about:
+        #   DEPRECATED: argument '--temp' specified multiple times, use
+        #   comma-separated values instead (only last value will be used)
+        # "comma-separated" is MULTI-VALUE syntax, so if repeats ever came to mean
+        # "append" rather than "replace", INSTRUCT=1 would serve a BLEND of both rows
+        # - a wrong sampler with a clean boot and no error. Resolving here emits each
+        # flag exactly once. INSTRUCT wins when both are set (the old last-wins order).
+        if [ -n "$${INSTRUCT:-}" ]; then
+          _r="$${REASONING:-off}"; _t="$${TEMP:-$${TEMPERATURE:-0.7}}"
+          _p="$${TOP_P:-0.80}";    _pp="$${PRESENCE_PENALTY:-1.5}"
+          echo "[sampler] INSTRUCT row: reasoning=$$_r temp=$$_t top_p=$$_p presence=$$_pp" >&2
+        else
+          _r="$${REASONING:-on}";  _t="$${TEMP:-$${TEMPERATURE:-1.0}}"
+          _p="$${TOP_P:-0.95}";    _pp="$${PRESENCE_PENALTY:-0.0}"
+          echo "[sampler] THINKING row (default): reasoning=$$_r temp=$$_t top_p=$$_p presence=$$_pp" >&2
+        fi
+        ROW=(--reasoning "$$_r" --temp "$$_t" --top-p "$$_p" --presence-penalty "$$_pp")
         # -- Drafter toggle: the same contract on every club-3090 compose --------
         #   SPEC_N=<n>  drafter depth; SPEC_N=0 disables
         #   SPEC=off    back-compat alias for SPEC_N=0
@@ -376,7 +408,7 @@ services:
         esac
         if [ "$$_spec_n" -gt 0 ]; then
           echo "[spec] drafter ON (SPEC_N=$$_spec_n)" >&2
-          exec /app/llama-server "$$@"
+          exec /app/llama-server "$$@" "$${ROW[@]}"
         fi
         ARGS=(); _skip=0
         for _a in "$$@"; do
@@ -387,7 +419,7 @@ services:
           ARGS+=("$$_a")
         done
         echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - drafter flags removed" >&2
-        exec /app/llama-server "$${ARGS[@]}"
+        exec /app/llama-server "$${ARGS[@]}" "$${ROW[@]}"
       - --
     command: >-
       --host 0.0.0.0
@@ -407,16 +439,10 @@ services:
       --spec-type draft-mtp
       --spec-draft-n-max ${SPEC_N:-${MTP_DRAFT_N_MAX:-2}}
       --jinja
-      --reasoning ${REASONING:-on}
       --reasoning-format ${REASONING_FORMAT:-deepseek}
-      --temp ${TEMP:-${TEMPERATURE:-1.0}}
-      --top-p ${TOP_P:-0.95}
       --top-k ${TOP_K:-20}
       --min-p ${MIN_P:-0.0}
-      --presence-penalty ${PRESENCE_PENALTY:-0.0}
       --repeat-penalty ${REPEAT_PENALTY:-1.0}
-      ${THINKING:+--reasoning ${REASONING:-on} --temp ${TEMP:-${TEMPERATURE:-1.0}} --top-p ${TOP_P:-0.95} --presence-penalty ${PRESENCE_PENALTY:-0.0}}
-      ${INSTRUCT:+--reasoning ${REASONING:-off} --temp ${TEMP:-${TEMPERATURE:-0.7}} --top-p ${TOP_P:-0.80} --presence-penalty ${PRESENCE_PENALTY:-1.5}}
     deploy:
       resources:
         reservations:

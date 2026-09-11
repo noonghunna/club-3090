@@ -142,6 +142,20 @@ services:
       # Drafter toggle - docker forwards only what is declared here.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
+      # ⚠️⚠️ THE ROW VARS MUST BE DECLARED HERE OR THE FLIP SILENTLY DOES NOTHING.
+      # They used to be read by docker-compose INTERPOLATION in `command:`
+      # (${INSTRUCT:+...}), which resolves HOST-side at render time and needs no
+      # declaration. Resolving the row in the entrypoint instead moves evaluation
+      # INSIDE the container, where docker forwards ONLY what is listed here.
+      # Omitting them boots clean, logs the THINKING row, and ignores INSTRUCT=1.
+      # Bare form on purpose: `- VAR=${VAR:-}` sets the var EMPTY-but-present.
+      - INSTRUCT
+      - THINKING
+      - REASONING
+      - TEMP
+      - TEMPERATURE
+      - TOP_P
+      - PRESENCE_PENALTY
       # Default reasoning effort = low; ACTIVE on every request since the 2026-09-01
       # thinking flip. INERT only under INSTRUCT=1 (which passes enable_thinking:false).
       # (See the q8_0 sibling header for the full `high`->xhigh template trap on this engine.)
@@ -169,23 +183,49 @@ services:
     # client-side parameter there. (Read at llama.cpp 0d227ec; the pin is newer, b10236,
     # but this path is longstanding.)
     #
-    # ⚠️ THE INSTRUCT=1 / THINKING=1 FLIP RIDES ON A DEPRECATED SPELLING. It appends a
-    # second copy of the flags and lets the last one win. b10236 warns on exactly that:
-    #     DEPRECATED: argument '--temp' specified multiple times, use comma-separated
-    #     values instead (only last value will be used)
-    # Last-wins is CONFIRMED on the pin (the warning says so), so the flip is correct
-    # today, and a DEFAULT boot is clean — every sampler flag below appears exactly once
-    # (verified by rendering: default 1x each; INSTRUCT=1 duplicates 4; THINKING=1
-    # duplicates 4 with identical values). But "comma-separated" is multi-VALUE syntax:
-    # if repeats ever come to mean "append" instead of "replace", INSTRUCT=1 breaks
-    # silently. The fix is to resolve the row once in the entrypoint shell, the way this
-    # model's vLLM and SGLang composes do — that needs a boot to land safely.
-    # ⚠️ Comments CANNOT live inside the `command: >-` folded scalar — keep notes above this key.
-    # The image ENTRYPOINT is ["/app/llama-server"]; this wrapper adds the drafter toggle.
+    # ✅ THE INSTRUCT=1 / THINKING=1 FLIP NO LONGER RIDES A DEPRECATED SPELLING.
+    # It used to append a SECOND copy of --reasoning/--temp/--top-p/--presence-penalty
+    # and rely on llama.cpp taking the last value, which b10236 warns about:
+    #   DEPRECATED: argument '--temp' specified multiple times, use comma-separated
+    #   values instead (only last value will be used)
+    # "comma-separated" is MULTI-VALUE syntax, so had repeats ever come to mean
+    # "append" rather than "replace", INSTRUCT=1 would have served a BLEND of both
+    # rows - a wrong sampler with a clean boot and no error. The entrypoint now
+    # resolves the row ONCE and emits each flag exactly once.
+    # MEASURED on this rig (2 boots, llamacpp/qwen38-27b-single-iq4xs):
+    #   default     -> THINKING row 1.0/0.95/0.0 reasoning=on,  0 warnings, reasoning_content present
+    #   INSTRUCT=1  -> INSTRUCT row 0.7/0.80/1.5 reasoning=off, 0 warnings, reasoning_content absent
+    # (both were 4 warnings before.)
+    # ⚠️ The row vars are declared in `environment:` FOR THIS REASON: the entrypoint
+    # evaluates them INSIDE the container, unlike the old ${INSTRUCT:+...} form which
+    # docker-compose resolved host-side. Drop them from environment: and INSTRUCT=1
+    # silently does nothing - clean boot, healthy endpoint, wrong sampler.
     entrypoint:
       - /bin/bash
       - -c
       - |
+        # -- Reasoning row: resolved ONCE, appended ONCE ------------------------
+        # This used to APPEND a second copy of --reasoning/--temp/--top-p/
+        # --presence-penalty in the `command:` block and rely on llama.cpp taking the
+        # LAST value. That works on b10236, but the engine warns on exactly that:
+        #   DEPRECATED: argument '--temp' specified multiple times, use
+        #   comma-separated values instead (only last value will be used)
+        # "comma-separated" is MULTI-VALUE syntax, so if repeats ever come to mean
+        # "append" rather than "replace", INSTRUCT=1 would silently serve a BLEND of
+        # both rows - a wrong sampler with a clean boot and no error. Resolving here
+        # emits each flag exactly once, so the deprecation cannot bite.
+        # INSTRUCT wins when both INSTRUCT and THINKING are set, matching the old
+        # last-wins order (the INSTRUCT line came second).
+        if [ -n "$${INSTRUCT:-}" ]; then
+          _r="$${REASONING:-off}"; _t="$${TEMP:-$${TEMPERATURE:-0.7}}"
+          _p="$${TOP_P:-0.80}";    _pp="$${PRESENCE_PENALTY:-1.5}"
+          echo "[sampler] INSTRUCT row: reasoning=$$_r temp=$$_t top_p=$$_p presence=$$_pp" >&2
+        else
+          _r="$${REASONING:-on}";  _t="$${TEMP:-$${TEMPERATURE:-1.0}}"
+          _p="$${TOP_P:-0.95}";    _pp="$${PRESENCE_PENALTY:-0.0}"
+          echo "[sampler] THINKING row (default): reasoning=$$_r temp=$$_t top_p=$$_p presence=$$_pp" >&2
+        fi
+        ROW=(--reasoning "$$_r" --temp "$$_t" --top-p "$$_p" --presence-penalty "$$_pp")
         # -- Drafter toggle: SPEC_N=<n> depth; SPEC_N=0 (or SPEC=off) disables ----
         # Disabling REMOVES the drafter flags (n-max=0 leaves the draft context
         # allocated). A non-numeric SPEC_N is a hard error, never a silent off.
@@ -198,7 +238,7 @@ services:
         esac
         if [ "$$_spec_n" -gt 0 ]; then
           echo "[spec] drafter ON (SPEC_N=$$_spec_n)" >&2
-          exec /app/llama-server "$$@"
+          exec /app/llama-server "$$@" "$${ROW[@]}"
         fi
         ARGS=(); _skip=0
         for _a in "$$@"; do
@@ -209,7 +249,7 @@ services:
           ARGS+=("$$_a")
         done
         echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - drafter flags removed" >&2
-        exec /app/llama-server "$${ARGS[@]}"
+        exec /app/llama-server "$${ARGS[@]}" "$${ROW[@]}"
       - --
     command: >-
       --host 0.0.0.0
@@ -228,17 +268,11 @@ services:
       --spec-type draft-mtp
       --spec-draft-n-max ${SPEC_N:-${MTP_DRAFT_N_MAX:-2}}
       --jinja
-      --reasoning ${REASONING:-on}
       --reasoning-format ${REASONING_FORMAT:-deepseek}
-      --temp ${TEMP:-${TEMPERATURE:-1.0}}
-      --top-p ${TOP_P:-0.95}
       --top-k ${TOP_K:-20}
       --min-p ${MIN_P:-0.0}
-      --presence-penalty ${PRESENCE_PENALTY:-0.0}
       --repeat-penalty ${REPEAT_PENALTY:-1.0}
       ${IMAGE_MIN_TOKENS:+--image-min-tokens ${IMAGE_MIN_TOKENS}}
-      ${THINKING:+--reasoning ${REASONING:-on} --temp ${TEMP:-${TEMPERATURE:-1.0}} --top-p ${TOP_P:-0.95} --presence-penalty ${PRESENCE_PENALTY:-0.0}}
-      ${INSTRUCT:+--reasoning ${REASONING:-off} --temp ${TEMP:-${TEMPERATURE:-0.7}} --top-p ${TOP_P:-0.80} --presence-penalty ${PRESENCE_PENALTY:-1.5}}
     deploy:
       resources:
         reservations:
