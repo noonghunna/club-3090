@@ -318,11 +318,23 @@ services:
         # vLLM streams return_token_ids fine and llama.cpp has no such restriction, so an
         # client that works against vllm/qwen38-27b-* can fail here at REQUEST time — after
         # you have already committed to the slug. No workaround short of stream=false.
-        # Reported by @Naelith (Discord), hit via pi and opencode behind an API-switching
-        # proxy — which is the worst shape of this: the proxy makes the backends look
-        # interchangeable right up until a field one of them refuses.
-        # ✅ The 8-pack is NOT affected: benchlocal-cli and the HermesAgent sandbox set none
-        # of these fields and do not stream, so quality runs against sgl/ slugs are fine.
+        # Reported by @Naelith (Discord), surfaced behind an API-switching proxy — the worst
+        # shape of this: the proxy makes the backends look interchangeable right up until a
+        # field one of them refuses.
+        # ✅ MEASURED 2026-09-11 — the clients we ship and run are all CLEAN. Each was pointed
+        # at a request-recording mock endpoint and its actual payload inspected:
+        #     pi      streams; sends max_completion_tokens, messages, model, store, stream,
+        #             stream_options, tools — none of the three
+        #     hermes  streams; sends messages, model, reasoning_effort, stream,
+        #             stream_options, thinking, tools — none of the three
+        #     8-pack  benchlocal-cli + the HermesAgent sandbox set none of them and do not
+        #             stream, so quality runs against sgl/ slugs are fine
+        # ⇒ If you hit this, suspect the PROXY or a bespoke benchmarking client, not the
+        #   agent — a translation layer is the thing likely to add return_token_ids for
+        #   token accounting.
+        # ⓘ hermes also sends `thinking`, which SGLang does not declare. It is TOLERATED
+        #   (the request model ignores extras) but therefore silently DROPPED, not honoured
+        #   — thinking must go via chat_template_kwargs / ENABLE_THINKING here.
         # ⓘ return_meta_info being non-streaming-only is also the ONLY clean way to read
         # per-request spec_accept_length out of this engine — see the accept-len A/B in
         # learnings/sglang-engine.md, which had to run non-streaming for exactly this reason.
