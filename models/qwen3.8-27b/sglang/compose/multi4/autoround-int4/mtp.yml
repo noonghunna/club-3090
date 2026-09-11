@@ -60,25 +60,27 @@
 #     at 4 against a ~440K KV pool; at full context that pool cannot hold two
 #     sessions, so 4 was "a testing value this hardware can't honestly ship".
 # ---------------------------------------------------------------------------
-#   ⭐ MEASURED ON THIS COMPOSE, 2026-09-10 (stock v0.5.19, no patches):
+#   ⭐⭐ INHERITED FROM THE MEASURED DUAL SIBLING — NOT measured on this compose.
+#   Source: sgl/qwen38-27b-dual-fast (TP=2). Transfers on TOPOLOGY ONLY.
 #
-#     bench.sh, ENABLE_THINKING=1, one boot per arm (fp32 vs bf16 SSM state)
-#     | leg                              |    fp32 |    bf16 |      Δ |
-#     |----------------------------------|--------:|--------:|-------:|
-#     | narrative decode (n=5, 1000 tok) |   88.84 |   89.24 |  +0.5% |
-#     | code decode      (n=5,  800 tok) |  102.20 |  112.50 | +10.1% |
-#     | prefill @10K     (n=3)           | 1154.28 | 1183.41 |  +2.5% |
-#     | prefill @90K     (n=1)           |  948.45 |  952.92 |  +0.5% |
-#     MTP accept len 2.86 / rate 0.465 (n=131 decode batches) — healthy.
-#     verify-full: ALL CHECKS PASSED (8 scored ✓; [2] Genesis N/A and [9]
-#     MTP-acceptance skipped — [9] greps for vLLM's `SpecDecoding metrics`
-#     line, which SGLang does not emit. That skip is a harness gap.)
+#     --mamba-ssm-dtype: ESTABLISHED 2026-09-11 by A,B,A,B repeat-boot,
+#     FORCE_TOKENS=800 (NOT the single-boot figures an earlier revision of this
+#     header carried):
+#     | leg              | A fp32  | B bf16  |      Δ | verdict            |
+#     |------------------|--------:|--------:|-------:|--------------------|
+#     | code decode      |  111.92 |  120.82 |  +8.0% | SUPPORTED          |
+#     | narrative decode |   96.78 |   94.21 |  -2.7% | null (arms overlap)|
+#     | prefill @10K     | 1208.77 | 1192.84 |  -1.3% | bf16 LOSES         |
+#     | prefill @90K     |  965.43 |  955.58 |  -1.0% | bf16 LOSES         |
 #
-#   ⚠️ ONE BOOT PER ARM. Boot-to-boot spread on this rig is ~2.8%, so the
-#     +10.1% / +2.5% clear the band but are NOT established, and they are NOT
-#     mechanistically explained (a narrower recurrent state should help
-#     depth-independently, yet the narrative leg is a flat null). An A,B,A,B
-#     repeat-boot is required before any BENCHMARKS.md row.
+#   ⛔⛔ THIS HEADER PREVIOUSLY CLAIMED "+10.1% code / +2.5% prefill" FROM ONE
+#   BOOT. The prefill half FLIPPED SIGN on repeat. Independent evidence it was
+#   never real: the same fp32 config measured 1154.28 prefill@10K one day and
+#   1208.77 the next — ~4.7% day-to-day drift, LARGER than the claimed delta.
+#   ⇒ On this stack treat ANY sub-5% prefill delta from a single boot as noise.
+#
+#   Dual sibling also measured: MTP accept len 2.86 / rate 0.465 (n=131),
+#   verify-full ALL PASS, vision 4/4. ⚠️ None of it measured at this topology.
 #
 #   ⛔ DO NOT CITE the `decode tok/s @ Nk depth` rows bench.sh prints in the
 #     prefill probe (+33%/+47% here). That probe runs `max_tokens=16`, so it

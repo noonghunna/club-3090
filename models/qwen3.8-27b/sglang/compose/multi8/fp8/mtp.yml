@@ -61,25 +61,20 @@
 #     at 4 against a ~440K KV pool; at full context that pool cannot hold two
 #     sessions, so 4 was "a testing value this hardware can't honestly ship".
 # ---------------------------------------------------------------------------
-#   ⭐ MEASURED ON THIS COMPOSE, 2026-09-10 (stock v0.5.19, no patches):
+#   ⛔⛔ NO MEASUREMENTS EXIST FOR THIS COMPOSE. An earlier revision of this
+#   header carried a bench table — those numbers were from the **INT4** dual
+#   sibling and do not belong on an FP8 compose at all. Removed 2026-09-11.
 #
-#     bench.sh, ENABLE_THINKING=1, one boot per arm (fp32 vs bf16 SSM state)
-#     | leg                              |    fp32 |    bf16 |      Δ |
-#     |----------------------------------|--------:|--------:|-------:|
-#     | narrative decode (n=5, 1000 tok) |   88.84 |   89.24 |  +0.5% |
-#     | code decode      (n=5,  800 tok) |  102.20 |  112.50 | +10.1% |
-#     | prefill @10K     (n=3)           | 1154.28 | 1183.41 |  +2.5% |
-#     | prefill @90K     (n=1)           |  948.45 |  952.92 |  +0.5% |
-#     MTP accept len 2.86 / rate 0.465 (n=131 decode batches) — healthy.
-#     verify-full: ALL CHECKS PASSED (8 scored ✓; [2] Genesis N/A and [9]
-#     MTP-acceptance skipped — [9] greps for vLLM's `SpecDecoding metrics`
-#     line, which SGLang does not emit. That skip is a harness gap.)
+#   The nearest measured relative is sgl/qwen38-27b-dual-max (FP8, TP=2):
+#   67.33 narrative / 75.58 code decode TPS, prefill 1120.80 @10K / 906.70 @90K,
+#   MTP accept len 2.92 (n=147), verify-full ALL PASS, vision 4/4 — and its KV
+#   pool caps at 157,875 tokens, which is why the dual FP8 tier ships 131072
+#   while this one claims the full 262144 on sharding arithmetic.
+#   ⚠️ Those transfer on TOPOLOGY ONLY, and not at all on pool size or context.
 #
-#   ⚠️ ONE BOOT PER ARM. Boot-to-boot spread on this rig is ~2.8%, so the
-#     +10.1% / +2.5% clear the band but are NOT established, and they are NOT
-#     mechanistically explained (a narrower recurrent state should help
-#     depth-independently, yet the narrative leg is a flat null). An A,B,A,B
-#     repeat-boot is required before any BENCHMARKS.md row.
+#   ⚠️ --mamba-ssm-dtype bfloat16 is carried from the int4 tiers where an
+#   A,B,A,B repeat-boot (2026-09-11) established +8.0% code decode and -1.3%
+#   prefill. Its effect on an FP8 target is UNMEASURED.
 #
 #   ⛔ DO NOT CITE the `decode tok/s @ Nk depth` rows bench.sh prints in the
 #     prefill probe (+33%/+47% here). That probe runs `max_tokens=16`, so it
