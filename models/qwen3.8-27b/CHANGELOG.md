@@ -2,6 +2,55 @@
 
 Dated history for Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-09-11 — SGLang W4A8: vendor @A1RM4X's re-cut patch, wire it to every `sgl/` slug
+
+Takes the **patch half** of [#1226](https://github.com/noonghunna/club-3090/pull/1226) — the
+installer, the v0.5.19 re-cut and the `patches.yml` entry, cherry-picked with @A1RM4X's authorship
+intact — and leaves his TP=4 compose out, because the eleven `sgl/` slugs shipped in
+[#1237](https://github.com/noonghunna/club-3090/pull/1237) already cover that shape with a
+`W4A8=1` toggle. His bench numbers are banked in BENCHMARKS.md as a community 4-card row.
+
+`W4A8=1` now works on all 13 SGLang composes with no extra steps: the patch dir is vendored at
+`models/qwen3.8-27b/sglang/patches/sglang-autoround-w4a8-v0.5.19/` and each compose already mounted
+that path at `/etc/club3090/w4a8`. Until this commit the mount resolved to nothing and the toggle
+hard-failed by design rather than silently serving W4A16; that guard stays, but its message no
+longer tells you to go land #1226.
+
+**Why a patch at all.** SGLang has no env-gated W4A8 path the way vLLM does
+(`VLLM_MARLIN_INPUT_DTYPE=int8`) — here, applying the patch *is* the activation. The patch is a
+**re-cut of @jb-seo's `0004-autoround-w4a8.patch` (cut against v0.5.18) onto v0.5.19**, which is the
+first release carrying DFlash2 upstream, so a single engine build can serve W4A8 + DFlash2 together.
+
+**The re-cut's real contribution is the shape guard.** jb-seo's eligibility gate omitted the
+per-shard `K%128==0 / N%64==0` constraint that `prepare_w4a8` hard-asserts. On Qwen3.8-27B's merged
+GDN `in_proj_ba` tensor (N=96 → 48/rank at TP=4, not 64-divisible) a naive W4A8 pass crashes in
+`gptq_marlin_repack` with `size_n=48 is not divisible by 64`. The guard pre-checks each shard and
+routes non-conformant layers to standard Marlin W4A16 instead of crashing. @A1RM4X proved it
+necessary by isolation: stock v0.5.19 without the guard crashes identically, which exonerates the
+rest of the patch.
+
+**⚠️ Checkpoint data fix — separate from the patch, do not skip.** Stock SGLang crashes on the Avuja
+AutoRound checkpoint at weight-load *even without* W4A8: its GDN `in_proj_a`/`in_proj_b` layers are
+BF16 in the checkpoint, but SGLang builds a merged `in_proj_ba` and routes it through GPTQ-Marlin.
+The fix is data-side, in the target's `config.json`
+(`".*in_proj_ba.*": {"bits":16,"data_type":"fp"}`). The patch does **not** fix this — it is a
+checkpoint property. Full story in the patch README.
+
+**Measured on @A1RM4X's 4× 3090 Turbo (NVLink, 220 W, fp8 KV, TP=4, DFlash2 n=8), 2026-09-09:**
+SGLang wins c=1 decode **+43%** (144.6 narr / 244.8 code vs vLLM 100.8 / 185.0); the win narrows to
++4%/+6% by c=8 as vLLM's batching scales harder (crossover c=4→8), then +11%/+10% at c=16. Prefill
+raw TPS −2%…−17%, but **TTFT is lower at 4K+** (5.0 s vs 8.6 s @16K). `spec_accept_length` 5.65
+tok/step, accept rate 66%. Raw in `results/sglang-q38-ar-w4a8-dflash2-tp4-20260909/`.
+⚠️ That is a 4-card NVLink rig; it does not transfer to the PCIe-only dual tiers.
+
+On our own 2× 3090, the same toggle measured **+44.5% prefill@10K / +33.9%@90K for −11.1% code
+decode** on `sgl/qwen38-27b-dual-fast`, and took `dual-superfast` prefill to 1779 tok/s against
+vLLM's 1778 — parity, while still ahead on decode. It is a trade, not a free win.
+
+**Status: 🧪 Experimental**, unchanged. No verify-stress, soak or 8-pack has been run on any `sgl/`
+slug with `W4A8=1`.
+
+
 ## 2026-09-04 — dual-fast: `MAMBA_BLOCK_SIZE` knob — the "2.17×/2.49× concurrency" pool figures were ~20% optimistic; 8192-token SSM checkpoints recover it (2×242K concurrent, 0 preemptions)
 
 **Finding.** vLLM's "GPU KV cache size: N tokens" counts attention KV only. In `--mamba-cache-mode align` (the shipped default) the GDN/SSM state is checkpointed at **every attention block** — 1,616 tokens on this slug, since align pads the attention block up to the mamba page — and those state pages are carved out of the *same* pool at runtime without appearing in N. Measured on the ref 2×3090 (v0.27.1, W4A8, MTP n=4, util 0.92, 4 seqs): pool reported **530,081 tokens (2.02×)**, but two ~200K prompts filled it (`kv_cache_usage_perc` → 0.98) at ~400K live tokens, preempted twice and serialized (TTFT 292 s / 481 s). Effective capacity ≈ **80% of nominal**, so the header's 652,346 → 2.49× and 567,737 → 2.17× read as ~2.0× / ~1.75× in practice. `max_num_seqs` (4→2: +0.8%), util 0.90→0.92 (+3%), `MAX_NUM_BATCHED_TOKENS` 8192→4096 (0 — the 1.96 GiB "peak activation" reserve is fixed) and `MAMBA_CACHE_MODE=none` (a no-op while prefix caching is on) do not move it.

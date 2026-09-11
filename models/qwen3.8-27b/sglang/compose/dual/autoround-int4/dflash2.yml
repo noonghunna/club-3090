@@ -280,14 +280,17 @@ services:
         if [ "$$_w4a8" = "1" ]; then
           _p=/etc/club3090/w4a8
           if [ ! -f "$$_p/install.sh" ]; then
-            echo "[w4a8] W4A8=1 but the patch is not mounted at $$_p." >&2
-            echo "[w4a8] This compose does NOT vendor it. Land club-3090#1226 (or mount its" >&2
-            echo "[w4a8] patch dir there yourself), then retry. Refusing to serve W4A16 silently." >&2
+            echo "[w4a8] W4A8=1 but no installer at $$_p." >&2
+            echo "[w4a8] The patch IS vendored (models/qwen3.8-27b/sglang/patches/" >&2
+            echo "[w4a8] sglang-autoround-w4a8-v0.5.19) and mounted there by default, so this" >&2
+            echo "[w4a8] means the mount did not resolve - a W4A8_PATCH_DIR override pointing" >&2
+            echo "[w4a8] somewhere else, or docker created an empty dir because the path was" >&2
+            echo "[w4a8] missing. Refusing to serve W4A16 silently." >&2
             exit 1
           fi
           bash "$$_p/install.sh" || { echo "[w4a8] install FAILED" >&2; exit 1; }
           bash "$$_p/install.sh" --verify || { echo "[w4a8] post-install verify FAILED" >&2; exit 1; }
-          echo "[w4a8] ON - int8 activations via club-3090#1226" >&2
+          echo "[w4a8] ON - int8 activations (patch by @A1RM4X, club-3090#1226; re-cut of @jb-seo's)" >&2
         else
           echo "[w4a8] off (W4A8=1 to enable; ~+44% prefill, ~-11% code decode)" >&2
         fi

@@ -361,6 +361,19 @@ Dense 27B, Qwen3-Next hybrid (16 full-attention + 48 linear-attention layers, 24
 
 ⚠️ **Do not diff these against the Qwen3.6-27B rows.** Different checkpoint, different sampler defaults (this tier follows the 3.8 model card's Instruct row), and cross-session TPS comparison is invalid on this rig — single boots swing ~5 TPS on the code leg, which is wider than most tier gaps. Same-session A/B only.
 
+
+### Quad-card (4× RTX 3090, TP=4) — SGLang
+
+Community submission. **Not a shipped compose** — @A1RM4X ran his own TP=4 W4A8 compose from
+[#1226](https://github.com/noonghunna/club-3090/pull/1226); the equivalent on the shipped catalog is
+`sgl/qwen38-27b-multi4-superfast` with `W4A8=1`, which mounts the same vendored patch. His numbers
+are banked here because they are the only W4A8 measurements on this engine from a rig that can
+actually run TP=4.
+
+| Config | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| TP=4 · DFlash2 n=8 · **W4A8** (@A1RM4X's own compose, [#1226](https://github.com/noonghunna/club-3090/pull/1226)) | @A1RM4X (4× 3090 Turbo 24 GB, **NVLink** (0,2)/(1,3), 220 W cap) | fp8 e4m3 | 262144 | **144.6 / 244.8** (c=1, CV 1.5% / ~1%) | 1810 @16K (flat 1K–16K) | **22,055–22,365 MiB/card** (0 MiB leak) | 2026-09-09 | 🧪 Experimental. **SGLang v0.5.19.** The *engine A/B* of his own vLLM DFlash2 run — same model/quant/DFlash2/FP8 KV/TP4/262K/220 W; only engine + drafter depth (7→8) differ, so the decode delta is an engine comparison. **SGLang wins c=1 decode +43%** (144.6/244.8 vs vLLM 100.8/185.0); ITL p50 21.9 ms vs ~31 ms. **The win narrows as concurrency rises:** +43% at c=1 → +4%/+6% by c=8 (vLLM's batching scales harder; crossover between c=4 and c=8) → +11%/+10% at c=16. No knee at c=16 on either engine (combined decode still climbs c=8→c=16: narr 315→535, code 620→974). **Prefill:** raw TPS slightly lower (1683–1875 vs vLLM 1758–1910) **but TTFT is *lower* at 4K+** — 1.5 s vs 2.1 s @4K, 2.7 s vs 4.3 s @8K, **5.0 s vs 8.6 s @16K** — speculative prefill overlap cutting user-visible latency at long context. **SpecDecode (Prometheus, `--enable-metrics`):** `spec_accept_length` **5.65 tok/step**, `spec_accept_rate` **66.0%** (54 accepted / 56 drafts, 6 requests, 6.5 s window). ⚠️ c=1 code decode is short-completion (646–800 tok actual vs 800 target — the quicksort prompt self-terminates); c=8 codeln TTFT 1069 ms and c=16 codeln TTFT 2356 ms are single-outlier rounds (medians fine). **Read against his vLLM DFlash2 row, not the Qwen3.6-27B tier.** ⚠️ **This is a 4-card NVLink rig** — the reference rig has 2 PCIe-only 3090s, so these do not transfer to the `dual` tiers. Raw: [`results/sglang-q38-ar-w4a8-dflash2-tp4-20260909/`](results/sglang-q38-ar-w4a8-dflash2-tp4-20260909/). Patch: [`models/qwen3.8-27b/sglang/patches/sglang-autoround-w4a8-v0.5.19/`](models/qwen3.8-27b/sglang/patches/sglang-autoround-w4a8-v0.5.19/). |
+
 ---
 
 ## Qwen3.6-40B-Deckard
