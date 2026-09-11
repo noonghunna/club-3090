@@ -9,7 +9,7 @@
 #   KV:        fp8_e4m3 → FlashInfer (fp8 KV can't use FLASH_ATTN on Ampere).
 #   Vision:    ✅ tower present (input-only); untested on this tier.
 #   Template:  native + club-3090 alias — the model's own chat_template.jinja
-#              with `high` remapped to `medium` (patches/qwen38-reasoning-effort-template)
+#              with `high` remapped to `xhigh` (patches/qwen38-reasoning-effort-template)
 #   Max ctx:   262144 (full arch max — fp8 KV is 2× smaller than bf16, so unlike the
 #              ultrafast/bf16 tier this fits the full 262K).
 #   Genesis:   none
@@ -77,7 +77,7 @@ services:
       - ../../../patches/vllm-dflash2-backport:/etc/club3090/dflash2:ro
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       # Chat template: the model's OWN, plus seven lines mapping the standard
-      # OpenAI/Anthropic rung `high` onto `medium`. Qwen3.8's ladder is
+      # OpenAI/Anthropic rung `high` onto `xhigh`. Qwen3.8's ladder is
       # low/medium/xhigh with NO `high`, and the stock template
       # raise_exception()s on anything else, so a client sending the standard top
       # rung gets HTTP 500 while /v1/models still returns 200. Observed live via
@@ -253,7 +253,7 @@ services:
       # which is what makes it slow and timeout-prone. REASONING_EFFORT=medium if
       # you want the model un-nudged rather than pushed toward brevity.
       # ⚠️ Valid values are xhigh | medium | low, plus `high`, which THIS REPO
-      # maps onto MEDIUM via the patched chat template mounted above. Upstream
+      # maps onto XHIGH via the patched chat template mounted above. Upstream
       # Qwen has no `high` rung and its stock template RAISES on it; the mapping
       # is the whole point of that mount. medium is the UN-NUDGED baseline (no
       # branch, no injected preamble), deliberately NOT xhigh — a client sending
