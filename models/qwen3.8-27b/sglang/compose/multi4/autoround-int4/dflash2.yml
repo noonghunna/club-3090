@@ -193,17 +193,56 @@
 #   ⚠️ PCIe, no NVLink assumed: --disable-custom-all-reduce stays on. More ranks
 #   = more all-reduce on a slow bus; that is the cost side of this trade.
 # ---------------------------------------------------------------------------
+#   ---------------------------------------------------------------------------
+#   ⭐ W4A8 (int8 activations) — OPT-IN, and the patch is NOT VENDORED HERE.
+#
+#   Set `W4A8=1` to serve int8 activations through @A1RM4X's re-cut of jb-seo's
+#   AutoRound W4A8 patch (club-3090#1226). We deliberately do NOT carry a copy:
+#   jb-seo's original (club-3090#1178) is cut against v0.5.18 and its eligibility
+#   gate omits the per-shard `K%128==0 / N%64==0` constraint that `prepare_w4a8`
+#   hard-asserts, so it crashes on the GDN merged `in_proj_ba` tensor. #1226 is
+#   cut against v0.5.19 (our pin) AND adds the shape guard.
+#
+#   ⚠️ Until #1226 merges, `W4A8=1` HARD-FAILS with a pointer rather than
+#   silently serving W4A16 — a silent fallback here would be indistinguishable
+#   from the feature working.
+#
+#   ⭐ MEASURED on this rig 2026-09-11 with #1226 applied (Frozenlock @ TP=2 —
+#   a different checkpoint and topology from his Avuja @ TP=4):
+#     | tier      | prefill@10K         | prefill@90K        | code decode | accept |
+#     |-----------|---------------------|--------------------|-------------|--------|
+#     | fast      | 1183 -> 1710 +44.5% | 953 -> 1276 +33.9% |   -11.1%    | 2.86 = |
+#     | superfast | 1234 -> 1779 +44.1% | 973 -> 1345 +38.3% |   ~flat     | 3.72 = |
+#   Numerically clean (greedy 17*23=391, verify-full ALL PASS, vision 4/4), and
+#   the drafter is untouched on both tiers. ⭐ The quantized-MTP-head case passes:
+#   520 layers W4A8-prepared, no shape-guard fallback, acceptance unchanged.
+#
+#   ⚠️ IT IS A TRADE, NOT A FREE WIN: ~+44% prefill for ~-11% code decode on the
+#   MTP tier. Prefill-heavy and agentic work wants it; long-generation chat does
+#   not. Same shape the vLLM tiers encode with their own W4A8 toggle.
+#
+#   ⚠️ SGLang ACTIVATION DIFFERS FROM vLLM: there is no
+#   `VLLM_MARLIN_INPUT_DTYPE`-style runtime gate — the patch flips
+#   `experimental_w4a8 = True` unconditionally, so APPLYING it IS the activation.
+#   That is why this toggle gates the INSTALL, not a runtime env var.
+#
+#   ⚠️ DEBUGGING A W4A8 FAILURE: this compose ships
+#   `restart: ${CLUB3090_RESTART:-unless-stopped}`, so a hard-fail RESTART-LOOPS
+#   and `docker ps` reports "Restarting" rather than "Exited". Set
+#   `CLUB3090_RESTART=no` to make the failure sit still and be readable.
+#   ---------------------------------------------------------------------------
 # ===========================================================================
 services:
   sglang-qwen38-27b-dflash2-multi4:
     image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.19}
     container_name: ${ESTATE_CONTAINER:-sglang-qwen38-27b-dflash2-multi4}
-    restart: unless-stopped
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     init: true
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8152}}:30000"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+      - "${W4A8_PATCH_DIR:-../../../patches/sglang-autoround-w4a8-v0.5.19}:/etc/club3090/w4a8:ro"
     ipc: host
     shm_size: "16gb"
     environment:
@@ -214,6 +253,7 @@ services:
       - ATTENTION_BACKEND
       - MAX_RUNNING_REQUESTS
       - MAMBA_SSM_DTYPE
+      - W4A8
       - CHUNKED_PREFILL_SIZE
       - DRAFTER_DIR
       - DRAFT_QUANT
@@ -260,6 +300,23 @@ services:
           else
             echo "[spec] DFlash2 EXTERNAL drafter ON - block_size INFERRED from $$D (expect 8)" >&2
           fi
+        fi
+        # --- W4A8 opt-in (patch from club-3090#1226; not vendored here) ---
+        _w4a8="${W4A8:-0}"
+        case "$$_w4a8" in 0|1) : ;; *) echo "[w4a8] W4A8='$$_w4a8' must be 0 or 1" >&2; exit 1 ;; esac
+        if [ "$$_w4a8" = "1" ]; then
+          _p=/etc/club3090/w4a8
+          if [ ! -f "$$_p/install.sh" ]; then
+            echo "[w4a8] W4A8=1 but the patch is not mounted at $$_p." >&2
+            echo "[w4a8] This compose does NOT vendor it. Land club-3090#1226 (or mount its" >&2
+            echo "[w4a8] patch dir there yourself), then retry. Refusing to serve W4A16 silently." >&2
+            exit 1
+          fi
+          bash "$$_p/install.sh" || { echo "[w4a8] install FAILED" >&2; exit 1; }
+          bash "$$_p/install.sh" --verify || { echo "[w4a8] post-install verify FAILED" >&2; exit 1; }
+          echo "[w4a8] ON - int8 activations via club-3090#1226" >&2
+        else
+          echo "[w4a8] off (W4A8=1 to enable; ~+44% prefill, ~-11% code decode)" >&2
         fi
         exec python3 -m sglang.launch_server \
           --model-path "$$M" \
