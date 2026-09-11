@@ -1,0 +1,49 @@
+schema_version: 1
+id: zlab-qwen38-dflash2
+display_name: z-lab Qwen3.8-27B DFlash2 (BF16, reference)
+spec_method: dflash
+model_compat:
+  - qwen3.8-27b
+n_default: 8          # ⚠️ BLOCK SIZE, not vLLM's n. SGLang counts the bonus token,
+                      # so block_size 8 == the vLLM tier's num_speculative_tokens 7.
+                      # Inferred from the checkpoint's dflash_config when unset.
+n_max: 8
+download:
+  hf_repo: z-lab/Qwen3.8-27B-DFlash2
+  size_gb: 3.85
+  format: safetensors-bf16
+vram_footprint_gb: 2.22      # MEASURED per rank at TP=2, 2026-09-10.
+status: experimental
+# ⭐⭐ WHY THIS EXISTS ALONGSIDE syvai-qwen38-dflash2 — MEASURED 2026-09-10, and it is
+# not a preference, it is a correctness requirement ON SGLANG.
+#
+# The two drafters are THE SAME WEIGHTS: identical parameter count (1,924,404,480),
+# identical dflash_config (block_size 8, selector_rank 256, selector_top_k 16, same
+# target_layer_ids), identical architecture (DFlash2DraftModel), identical tensor names
+# (candidate_selector.{hidden_projection.weight,predecessor_codebook,successor_codebook}).
+# syvai's is a compressed-tensors QUANTIZATION of z-lab's release.
+#
+# ⛔⛔ ON SGLANG THE QUANTIZED ONE SILENTLY DRAFTS GARBAGE:
+#     syvai (compressed-tensors)  accept len 1.03, accept rate 0.004  (n=422)
+#     z-lab (bf16, this profile)  accept len 3.71 @262K / 5.27 @32K   (n=100)
+# Decode on the shipped recipe: ~38 tok/s vs ~171-175. Nothing errors, nothing warns,
+# and verify-full returns "All checks passed" for BOTH (bad drafts are REJECTED, so a
+# dead drafter is slow, never wrong — and verify-full's acceptance check SKIPS on SGLang
+# because it greps for vLLM's `SpecDecoding metrics` line). The ONLY signal is the
+# engine's own `accept len:` decode-batch counter. Read it.
+#
+# ⚠️ Costs 2.22 GB/rank vs syvai's 1.16 — which is why the sglang DFlash2 composes ship
+# --mem-fraction-static 0.82 rather than the MTP sibling's 0.90.
+#
+# ⚠️ --speculative-draft-model-quantization unquant IS MANDATORY with this drafter:
+# sglang defaults draft quantization to the TARGET's (serving_hook.py:629), which is
+# auto-round here, and applying that to bf16 weights reproduces the identical
+# 0%-acceptance failure. `unquant` resolves to None (serving_hook.py:648).
+#
+# Corroboration: sglang#36118 runs this exact drafter on Qwen3.8-27B and reports
+# accepted span 4.49@10K / 3.61@60K, and states z-lab is byte-identical to the incoai
+# release. No upstream issue covers the quantized-draft silent failure; the closest is
+# sglang#36599 (same class, NEXTN/modelopt_fp4) which CRASHES rather than failing quietly.
+#
+# ⚠️ vLLM composes keep syvai-qwen38-dflash2 — the quantized drafter works there. This
+# divergence is engine-scoped; do not "unify" the two without re-measuring acceptance.

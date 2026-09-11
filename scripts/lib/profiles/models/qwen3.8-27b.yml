@@ -157,6 +157,16 @@ weights:
     kind: draft
     verify_glob: "*.safetensors"
     setup_env: WITH_DFLASH_DRAFT=1
+  # ⭐ BF16 reference DFlash2 drafter (z-lab, the originating lab). SAME WEIGHTS as
+  # `dflash2` above — identical param count / dflash_config / tensor names — but
+  # UNQUANTIZED. Required by the SGLang DFlash2 composes: on SGLang the
+  # compressed-tensors variant silently drafts garbage (accept len 1.03 vs 3.71).
+  # Measured 2026-09-10; see drafters/zlab-qwen38-dflash2.yml for the full A/B.
+  dflash2-zlab:
+    path: qwen3.8-27b-dflash2-zlab-bf16
+    format: bf16
+    local_subdir: qwen3.8-27b-dflash2-zlab-bf16
+    hf_repo: z-lab/Qwen3.8-27B-DFlash2
   # F16 multimodal projector — the mmproj companion of the VISION slug
   # (llamacpp/qwen38-27b-single-iq4xs-vision). Quant-INDEPENDENT: one F16 tower
   # for every llama.cpp GGUF quant of this model, so it lands at the SHARED gguf
@@ -191,6 +201,7 @@ default_weight_variant: unsloth-iq4xs
 compatible_drafters:
   - qwen-mtp-builtin
   - syvai-qwen38-dflash2
+  - zlab-qwen38-dflash2
 # ⚠️ valid_tp is a VALIDITY list (will vLLM run this shard?), NOT a cleanliness
 # list (does KV divide evenly?). Those two diverge past TP=4 on this model and
 # conflating them is what made this list wrong until 2026-08-15.
