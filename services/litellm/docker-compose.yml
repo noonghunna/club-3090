@@ -9,8 +9,10 @@ services:
       - ./config.yaml:/app/config.yaml
     environment:
       - LITELLM_MASTER_KEY=sk-litellm-master-key
-      # Cloud reference route (qwen3.8-max*) — referenced as os.environ/DASHSCOPE_API_KEY
+      # Cloud reference routes — referenced as os.environ/DASHSCOPE_API_KEY and
+      # os.environ/ORCAROUTER_API_KEY in config.yaml
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - ORCAROUTER_API_KEY=${ORCAROUTER_API_KEY:-}
     command: ["--config", "/app/config.yaml", "--port", "4000", "--host", "0.0.0.0", "--num_workers", "1"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
