@@ -50,7 +50,7 @@
 # ===========================================================================
 services:
   vllm-qwen38-27b-multi4-ultrafast:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.29.0}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-multi4-ultrafast}"
     user: "0:${DOCKER_GID:-1000}"
     # Repo contract (test-compose-restart-policy): every shipped vLLM compose uses
@@ -83,9 +83,13 @@ services:
       # validated 3/3 boots on the reference 2×3090. Anchor drift → boot refused.
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
       - ../../../patches/vllm-flashinfer-decode-pin:/etc/club3090/flashinfer-decode-pin:ro
-      # DFlash2 external-drafter support — vLLM PR#52816 backport (syv-ai). Adds
-      # DFlash2DraftModel; refuses boot on apply failure.
-      - ../../../patches/vllm-dflash2-backport:/etc/club3090/dflash2:ro
+      # DFlash2 model classes are NATIVE since vLLM v0.29.0 (vllm#52816, merged
+      # 2026-08-21) so the old dflash2 backport is gone. What is NOT upstream is
+      # vllm#51581 (OPEN): the fused-KV slice `a.qkv_proj.weight[a.q_size:]` has no
+      # quantization awareness, so a W4A16 drafter either AttributeErrors at load
+      # or — worse — slices packed rows and corrupts SILENTLY. This mount restores
+      # only that dequant fix. Anchor drift → boot refused.
+      - ../../../patches/vllm-51581-dflash-dense-kv:/etc/club3090/dflash-dense-kv:ro
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       # Chat template: the model's OWN, plus seven lines mapping the standard
       # OpenAI/Anthropic rung `high` onto `xhigh`. Qwen3.8's ladder is
@@ -168,8 +172,8 @@ services:
         bash /etc/club3090/w4a8/install.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
         bash /etc/club3090/gdn-async-order/install.sh || exit 1
+        bash /etc/club3090/dflash-dense-kv/install.sh || exit 1
         FI_PINQ_LIB_ALL="${FI_PINQ_LIB_ALL:-0}" bash /etc/club3090/flashinfer-decode-pin/install.sh || exit 1
-        bash /etc/club3090/dflash2/install.sh || exit 1
         echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
         AR=""
         [ "$${_NVLINK_ENABLED:-0}" = "1" ] || AR="--disable-custom-all-reduce"
