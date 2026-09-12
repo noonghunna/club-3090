@@ -127,6 +127,12 @@ OPTIONS (extra)
                    --reasoning suite). Mutually exclusive with --enable-thinking.
                    Use for a clean all-off arm of a reasoning A/B. Also
                    settable via NO_THINKING=1 env.
+                   All four degrade gracefully: across 150 saved hermesagent-20
+                   entries the off arm medians 11/20 vs 12/20 on, i.e. ~1-2
+                   scenarios of 20 (#1269). A pack that comes back 0/N is a
+                   structural failure, not a thinking-off score — the
+                   structural-zero guard drops it out of the reported TOTAL
+                   whatever the cause (#1270).
   --thinking-max-tokens N
                    Forward to benchlocal-cli --thinking-max-tokens N. The
                    budget applies only to packs whose thinking gate resolves on
@@ -218,6 +224,12 @@ INSTALL benchlocal-cli (one-time)
 OUTPUT
   - Markdown table to stdout (paste-ready for BENCHMARKS quality rows)
   - JSON blob to results/quality/quality-<timestamp>.json (full detail)
+  - STRUCTURAL-ZERO GUARD block when ANY pack scored 0/N (#1270): both TOTALs
+    (valid subset + all packs, the latter marked "do not cite") plus the zeroed
+    pack's p50 as corroboration. Cause-agnostic and post-hoc — it reports the
+    outcome and lists candidate causes, it does not guess one; the per-rig
+    quality record is not published for such a run. A verifier_fail row is the
+    MODEL being wrong and keeps counting — only a WHOLE pack at 0/N trips it.
   - Compact one-liner for the compose `Quality:` profile field, stamped with
     per-pack versions and run provenance (#981/#983E)
 
@@ -1083,6 +1095,144 @@ fi
 benchlocal-cli "${CLI_ARGS[@]}" || RC=$?
 RC="${RC:-0}"
 
+# ---- #1270: structural-zero guard — refuse a bare TOTAL when a pack scored 0/N
+# The #960 preflight above guards ONE cause of a zeroed pack (endpoint not
+# reachable from the sandbox container). @paulp83's #1253 endpoint WAS reachable,
+# so that preflight passed correctly and the damage happened anyway: his leg A
+# read 102/150 (68%) where the valid subset was 102/130 (78%) — ten points of
+# apparent instruct deficit that was one structurally-zeroed pack.
+#
+# Any cause produces the same misleading arithmetic: unreachable endpoint
+# (guarded above), a sandboxed pack whose agent harness failed to initialise,
+# Docker dying mid-run, an image pull failure, a sandbox OOM, a pack version
+# mismatch. So this check is cause-AGNOSTIC — it fires on the OUTCOME, after the
+# results are in, whatever produced it. The 0/N is the trigger; latency is
+# printed as corroboration only and never gates the warning.
+#
+# ⚠️ Deliberately NOT thinking-aware, and #1269 is why. That issue proposed
+# treating hermesagent-20 as incompatible with --no-thinking; the saved results
+# refute it. Across 150 full 20-scenario hermesagent-20 entries (per-pack
+# thinking_enabled, run-level as fallback): thinking OFF n=74, median 11/20,
+# range 0-15, 4 runs at 0/20; thinking ON n=76, median 12/20, range 0-16, 6 runs
+# at 0/20. Structural zeros occur on BOTH arms and slightly MORE often with
+# thinking ON, and paired per model the off arm costs ~1-2 scenarios of 20 — the
+# same graceful degradation the other three thinking-default-on packs show. So
+# forced thinking-off is NOT a candidate cause, and a guard that pointed at it
+# would send triage the wrong way. It is also why no blanket pre-run drop of the
+# pack exists: it would discard valid measurements, and benchlocal-cli has no
+# pack-exclusion flag anyway (the only wrapper-side spelling is a scenario
+# enumeration, which tags the run PARTIAL).
+#
+# Three of those four thinking-off zeros are ONE incident: three consecutive
+# runs, every scenario ~1.5s, reported as 20 x verifier_fail, trace carrying
+# agent_exit_code=1 / tool_events=0 / an AIAgent.__init__() keyword mismatch. A
+# harness constructor fault wearing the model's label — which is exactly the
+# shape this guard exists to catch, and which qualifies the verifier_fail
+# caveat below: per row a verifier_fail is the model being wrong, but a WHOLE
+# PACK of them can be the harness.
+#
+# Exit contract of the probe below: 0 = nothing to report, 3 = a pack scored
+# 0/N (block printed), anything else = the probe itself broke and said so.
+ZERO_GUARD_RC=0
+if [[ -f "$JSON_OUT" ]]; then
+  python3 - "$JSON_OUT" <<'PYZERO' || ZERO_GUARD_RC=$?
+import json
+import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+path = sys.argv[1]
+
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception as exc:
+    # Unreadable/truncated results must be LOUD. A silent skip here would make
+    # "guard found nothing" indistinguishable from "guard never ran".
+    print(
+        "[quality-test] WARN: structural-zero guard could not read %s (%s)" % (path, exc),
+        file=sys.stderr,
+    )
+    print(
+        "[quality-test]   the TOTAL above has NOT been checked for 0/N packs (#1270).",
+        file=sys.stderr,
+    )
+    sys.exit(0)
+
+# Only SCORED packs count. total == 0 means the pack never ran (sandbox
+# unavailable, stubbed metadata gate) — a skip, not a zero score.
+scored = [p for p in (data.get("packs") or []) if int(p.get("total") or 0) > 0]
+zeroed = [p for p in scored if int(p.get("passed") or 0) == 0]
+if not zeroed:
+    sys.exit(0)
+
+def fraction(passed, total):
+    if not total:
+        return "%d / 0" % passed
+    return "%d / %d (%d%%)" % (passed, total, round(100.0 * passed / total))
+
+
+all_passed = sum(int(p.get("passed") or 0) for p in scored)
+all_total = sum(int(p.get("total") or 0) for p in scored)
+valid = [p for p in scored if int(p.get("passed") or 0) > 0]
+valid_passed = sum(int(p.get("passed") or 0) for p in valid)
+valid_total = sum(int(p.get("total") or 0) for p in valid)
+
+bar = "=" * 74
+print()
+print(bar)
+print("⚠️  STRUCTURAL-ZERO GUARD (#1270) — a pack scored 0/N, so the bare TOTAL")
+print("    printed above is NOT citable.")
+print(bar)
+for pack in zeroed:
+    pid = pack.get("pack_id") or "?"
+    total = int(pack.get("total") or 0)
+    p50 = (pack.get("latency") or {}).get("p50")
+    p50_txt = "p50 %.2fs" % p50 if isinstance(p50, (int, float)) else "p50 n/a"
+    print(
+        "  %s scored 0/%d (%s, status=%s) — excluded from the TOTAL as a"
+        % (pid, total, p50_txt, pack.get("status") or "?")
+    )
+    print("    suspected structural failure, not as a model score.")
+    print("    * cause not determined here — candidates, cheapest first: endpoint not")
+    print("      reachable from a container (#960); a sandboxed agent whose harness failed")
+    print("      to initialise (returns fast, reports every scenario as verifier_fail);")
+    print("      Docker/sandbox health; sandbox image build or pull; sandbox OOM; pack")
+    print("      version mismatch. Read the trace before reading the score:")
+    print("      benchlocal-cli inspect <json> --pack %s --full" % pid)
+    print("    * %s is CORROBORATION only, never the trigger. A p50 far below this" % p50_txt)
+    print("      pack's own healthy figure means it failed FAST — returning without")
+    print("      attempting — rather than failing hard. Compare against a run that passed.")
+print()
+if valid_total:
+    print("  TOTAL (valid subset)  %s" % fraction(valid_passed, valid_total))
+else:
+    print("  TOTAL (valid subset)  none — every scored pack returned 0/N; the whole run")
+    print("                        is suspect, not just one pack.")
+print("  TOTAL (all packs)     %s   <- do not cite" % fraction(all_passed, all_total))
+print()
+print("  A whole pack at 0/N is a harness/config outcome until proven otherwise.")
+print("  Individual verifier_fail rows are the MODEL being wrong and DO keep counting")
+print("  toward both figures — this guard fires only on a whole pack scoring zero.")
+print("  But a whole pack OF verifier_fail rows can itself be a harness fault: a")
+print("  sandboxed agent that dies in its constructor reports exactly that shape.")
+print(bar)
+sys.exit(3)
+PYZERO
+fi
+STRUCTURAL_ZERO=0
+case "$ZERO_GUARD_RC" in
+  0) ;;
+  3) STRUCTURAL_ZERO=1 ;;
+  *)
+    echo "[quality-test] WARN: the structural-zero guard (#1270) exited ${ZERO_GUARD_RC} — the" >&2
+    echo "               TOTAL above has NOT been checked for 0/N packs." >&2
+    ;;
+esac
+
 # ---- emit compact one-liner suitable for compose Quality: schema field -------
 
 if [[ -f "$JSON_OUT" ]]; then
@@ -1180,7 +1330,14 @@ fi
 # quality run's score supersedes in c3 (append-only history kept). resolve-serving
 # maps the served container -> slug; unmatched/bare-metal runs skip cleanly. This
 # writes a quality-ONLY record (no TPS) that MERGES with the bench TPS record.
-if [[ "${QUALITY_RECORD:-1}" == "1" && -f "${JSON_OUT:-}" ]] && command -v python3 >/dev/null 2>&1; then
+# Same defect, a different consumer: the record's 8pk field IS a bare TOTAL
+# (c3 renders it verbatim), so a run that tripped the structural-zero guard has
+# no citable figure to publish. Skip it and say so — the skip and this notice
+# are the same branch.
+if [[ "$STRUCTURAL_ZERO" == "1" && "${QUALITY_RECORD:-1}" == "1" && -f "${JSON_OUT:-}" ]]; then
+  echo "[quality-test] per-rig quality record NOT written: a pack scored 0/N, so this run has no citable TOTAL (#1270)."
+fi
+if [[ "$STRUCTURAL_ZERO" != "1" && "${QUALITY_RECORD:-1}" == "1" && -f "${JSON_OUT:-}" ]] && command -v python3 >/dev/null 2>&1; then
   _qt_score="$(python3 - "$JSON_OUT" <<'PYQ' 2>/dev/null
 import json, sys
 try:

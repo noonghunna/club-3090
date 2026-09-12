@@ -115,6 +115,23 @@ wrapper invocation, wire it or route it through `--`.
 
 ## ⭐ The canonical two-leg run
 
+> **All four thinking-on packs degrade gracefully with `--no-thinking`** —
+> including `hermesagent-20`, contrary to the original #1269 premise (retracted).
+> Across 150 full 20-scenario `hermesagent-20` entries in the saved results
+> (filtered on per-pack `thinking_enabled`, run-level as fallback):
+>
+> | | n | median | mean | range | runs at 0/20 |
+> |---|--:|--:|--:|--:|--:|
+> | thinking OFF | 74 | 11/20 | 10.3 | 0-15 | 4 |
+> | thinking ON | 76 | 12/20 | 11.1 | 0-16 | 6 |
+>
+> Structural zeros occur on **both** arms and slightly more often with thinking
+> ON, and paired per model the off arm costs ~1-2 scenarios of 20. So a `0/20`
+> on an off-leg is **not** evidence about thinking — treat it as a structural
+> failure and find the real cause (the one investigated incident was a
+> sandboxed-agent constructor mismatch reported as 20 × `verifier_fail`). The
+> structural-zero guard above is deliberately cause-agnostic for that reason.
+
 This is the recipe every announcement quotes and the one to copy if you're producing a number
 anyone else will read. Substitute your slug.
 
@@ -405,6 +422,49 @@ Failure reasons are surfaced in three places, cheapest first:
 `failure_mode` is one of: `verifier_fail` (answer wrong / below threshold) · `timeout` · `agent_runner_timeout` / `agent_runner_crashed` (sandboxed agentic packs) · `server_error` / `http_error` / `model_endpoint_unreachable` (serving problem, not a quality signal) · `result_json_malformed` · `wrong_answer` · `verifier_not_implemented` (stub, excluded from scoring).
 
 The breakdown is **terminal-only** — `quality-test.sh` does not tee it to a log file, but the same data persists in the saved JSON.
+
+### A whole pack at `0 / N` — the structural-zero guard (#1270)
+
+A pack that scores `0 / N` is almost never a model score: it is the harness, the
+config or the endpoint. But the TOTAL counts those N as model failures, and the
+result is plausible enough to publish — @paulp83's #1253 leg A read **102/150
+(68%)** where the valid subset was **102/130 (78%)**, ten points of apparent
+instruct deficit from one zeroed pack.
+
+`quality-test.sh` therefore checks the **outcome** after every run, whatever
+caused it, and refuses to leave the bare TOTAL standing:
+
+```
+⚠️  STRUCTURAL-ZERO GUARD (#1270) — a pack scored 0/N, so the bare TOTAL
+    printed above is NOT citable.
+  hermesagent-20 scored 0/20 (p50 2.40s, status=ok) — excluded from the TOTAL …
+  TOTAL (valid subset)  102 / 130 (78%)
+  TOTAL (all packs)     102 / 150 (68%)   <- do not cite
+```
+
+- **The `0/N` is the trigger.** Latency is printed as corroboration only: a p50
+  far below that pack's own healthy figure means it failed *fast* (returned
+  without attempting) rather than *hard*. It never gates the warning.
+- **Not the same as `verifier_fail`.** An individual `verifier_fail` row is the
+  MODEL being wrong, not the grader — those keep counting toward both figures.
+  Only a whole pack scoring zero trips the guard.
+- A pack with `total == 0` (sandbox unavailable, stubbed metadata gate) never
+  ran. That is a skip, not a zero, and does not trip the guard.
+- The run's **exit code is unchanged** — a genuine 0/N is possible, so the guard
+  reports rather than fails. What it does refuse is *publication*: the per-rig
+  quality record (whose 8pk field is a bare TOTAL) is not written for that run.
+- Causes seen so far: endpoint not reachable from the sandbox container (#960,
+  also caught by a preflight); a sandboxed pack whose agent harness failed to
+  initialise — returns in ~1.5s and reports every scenario as `verifier_fail`,
+  with `agent_exit_code=1` / `tool_events=0` in the trace; Docker dying mid-run;
+  sandbox image build or pull failure; sandbox OOM; pack version mismatch.
+- The guard lists candidates and does **not** guess. In particular it is not
+  thinking-aware: forced thinking-off was proposed as a cause in #1269 and the
+  saved results refute it (zeros appear on both thinking arms — see the two-leg
+  section), so pointing triage at thinking would send it the wrong way.
+- A whole pack of `verifier_fail` rows is the one case where that failure mode
+  is **not** a model verdict — a sandboxed agent that dies in its constructor
+  reports exactly that shape.
 
 ## Per-scenario timeouts
 
