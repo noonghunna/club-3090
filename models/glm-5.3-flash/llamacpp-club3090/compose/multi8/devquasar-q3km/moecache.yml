@@ -438,8 +438,8 @@ services:
             echo "[spec]   $$_draft" >&2
             echo "[spec] This slug REQUIRES it (block-45 MTP is unwired => no other spec path)." >&2
             echo "[spec] Fix one of:" >&2
-            echo "[spec]   - download it: /opt/ai/hf-download.sh Anbeeld/GLM-5.3-Flash-DFlash2-GGUF \\" >&2
-            echo "[spec]       <MODEL_DIR>/glm-5.3-flash-gguf/dflash2 GLM-5.3-Flash-DFlash2-Q4_K_M.gguf" >&2
+            echo "[spec]   - fetch it with setup (knows this drafter is required):" >&2
+            echo "[spec]       WEIGHTS=q3km bash scripts/setup.sh glm-5.3-flash" >&2
             echo "[spec]   - or run drafter-off knowingly: SPEC_N=0" >&2
             exit 1
           fi
