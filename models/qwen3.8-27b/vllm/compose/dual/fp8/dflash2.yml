@@ -30,6 +30,11 @@
 #    cudagraph downgrade FULL_AND_PIECEWISE -> PIECEWISE. A steady tax, not a cliff.
 #   Best for:  MAX decode on the fidelity weights — FA2 fast path (sacrifices ctx).
 # ---------------------------------------------------------------------------
+# Sibling              KV          Attention         Default context
+# dflash2.yml          bf16        stock FA2         65536
+# dflash2-fp8.yml      fp8_e4m3    stock FlashInfer  147456
+# dflash2-fp8-fa2.yml  fp8_e4m3    custom FA2 SM86   262144 (hypermax, experimental)
+#
 # ULTRAMAX = the MAX tier (official FP8) with DFlash2 on the bf16/FLASH_ATTN fast
 # path — the fidelity counterpart to ultrafast. Fastest decode on fp8 weights, but
 # bf16 KV + the larger fp8 weights cap context well below supermax's 262K. Boot-

@@ -2,6 +2,16 @@
 
 Dated history for Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-09-12 — HYPERMAX: FA2 with FP8 KV on dual SM86
+
+Add experimental `vllm/qwen38-27b-dual-hypermax`, served by
+`vllm/compose/dual/fp8/dflash2-fp8-fa2.yml`: official FP8 weights, DFlash2 W4A16
+n=7, FP8 KV for target and draft, FA2 attention, 262K context and one image.
+The pinned source build runs inside stock vLLM 0.29.0; a small version-checked
+adapter follows its KV layout contract. The model default remains unchanged.
+Validation results for 0.29.0 are reported separately from historical 0.27.1
+measurements. This profile has a tight VRAM budget and stays experimental.
+
 ## 2026-09-11 — SGLang W4A8: vendor @A1RM4X's re-cut patch, wire it to every `sgl/` slug
 
 Takes the **patch half** of [#1226](https://github.com/noonghunna/club-3090/pull/1226) — the
