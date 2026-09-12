@@ -338,6 +338,56 @@ patches:
       drop_when: "upstream Qwen accepts `high` as a valid rung at all (costs them nothing), OR vLLM's Anthropic router stops forwarding a `high` it cannot know is unsupported. Re-vendor from the model dir if Qwen ships a corrected template and re-run the drift guard."
     status: verified
 
+  - id: vllm-51581-dflash-dense-kv
+    # Successor to `vllm-dflash2-backport`, which bundled TWO upstream fixes.
+    # vllm#52816 (the DFlash2 model classes) is native since v0.29.0; vllm#51581
+    # (this) is still OPEN. Splitting them is what makes the v0.29.0 pin bump
+    # possible: the old bundle cannot be re-applied on v0.29.0 (its
+    # _check_applied.py does not recognise upstream's refactor, so install.sh
+    # attempts the apply, conflicts, and exits 1 -> boot REFUSED on all 12
+    # dflash2 composes).
+    model: [qwen3.8-27b]
+    files:
+      - models/qwen3.8-27b/vllm/patches/vllm-51581-dflash-dense-kv/install.sh
+      - models/qwen3.8-27b/vllm/patches/vllm-51581-dflash-dense-kv/patch_dflash_dense_kv.py
+    load_bearing_when:
+      - composes:
+          - vllm/qwen38-27b-dual-superfast
+          - vllm/qwen38-27b-dual-ultrafast
+          - vllm/qwen38-27b-dual-supermax
+          - vllm/qwen38-27b-dual-ultramax
+          - vllm/qwen38-27b-multi4-superfast
+          - vllm/qwen38-27b-multi4-ultrafast
+          - vllm/qwen38-27b-multi4-supermax
+          - vllm/qwen38-27b-multi4-ultramax
+          - vllm/qwen38-27b-multi8-superfast
+          - vllm/qwen38-27b-multi8-ultrafast
+          - vllm/qwen38-27b-multi8-supermax
+          - vllm/qwen38-27b-multi8-ultramax
+        reason: "vllm#51581 (OPEN 2026-08-09): DFlashQwen3Model._build_context_kv_buffers builds its fused KV buffer with `kv_weights = [a.qkv_proj.weight[a.q_size :] for a in layers_attn]`, and qwen3_dflash.py has ZERO quantization awareness (no qweight / weight_packed / quant_method / scheme references anywhere in the file). On the shipped W4A16 drafter that means either a hard `AttributeError: 'QKVParallelLinear' object has no attribute 'weight'` at EngineCore init (reproduced on v0.29.0, 2026-09-12) or -- per the upstream title -- SILENT CORRUPTION where .weight exists but holds packed uint8/float8 rows that get sliced and fed to F.linear without error. This patch restores _dense_kv_rows(), which unpacks weight_packed/weight_scale and dequantizes before the slice; an already-dense 2-D .weight short-circuits so unquantized drafters take the stock path. Without it EVERY vLLM DFlash2 tier is either dead or suspect on v0.29.0."
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/vllm/patches/vllm-51581-dflash-dense-kv/install.sh
+      mounted_at: /etc/club3090/dflash-dense-kv
+      invoke: bash /etc/club3090/dflash-dense-kv/install.sh
+      invoked_before: vllm-serve
+    drift_guard:
+      kind: boot
+      check: "Entrypoint runs install.sh before serve; boot log '[51581] applied: DFlash fused-KV slice now dequantizes qkv_proj' (first boot) or '[51581] already patched (idempotent no-op)'. Anchor drift -> REFUSE (exit 1), deliberately fail-closed: an unpatched fused-KV path on a quantized drafter can corrupt silently rather than crash, so a silent half-wire is the one outcome we must not allow. Anchors verified inside the real vllm/vllm-openai:v0.29.0 image 2026-09-12 (apply + idempotent re-run + ast.parse)."
+    capability: dflash2-quantized-drafter
+    foundational: false
+    upstream:
+      ref: "vllm-project/vllm#51581"
+      status: "open"
+      filed_by: "third-party (not us) - 11 comments as of 2026-09-12"
+      also_implemented_by: "gratex/Qwen3.8-27B-DFlash2-W4A16-g128-sym-GPTQ ships scripts/apply_dense_kv_fix.py with a BROADER _dense_kv_rows covering FP8 (per-tensor/channel/shard/block), GPTQ/AWQ, NVFP4 and MXFP4; ours covers compressed-tensors W4A16/W8A16 only. Borrow from it if an fp8 drafter is ever adopted. It also confirms GGUF/bitsandbytes/MLX drafters are unsupported on this path."
+      drop_when: "vLLM merges a #51581 fix AND the vllm-stable pin moves past it -> remove the 12 dflash2 compose mounts + entrypoint calls and retire this row. Verify by booting a dflash2 slug on the new pin with the mount REMOVED and reading accept-len (a corrupt fused-KV path presents as a merely slow drafter, so boot-success alone is NOT sufficient evidence)."
+    status: verified
   - id: vllm-pr48375-mamba-drop-eagle-block
     # qwen3.8-27b added 2026-08-14: its two vLLM "max" composes ship the SAME
     # MTP + prefix-caching pair on the same Qwen3-Next hybrid family, and mount
@@ -394,16 +444,10 @@ patches:
     model: [qwen3.8-27b]
     files:
       - models/qwen3.8-27b/vllm/patches/vllm-dflash2-backport
-    load_bearing_when:
-      - composes:
-          - vllm/qwen38-27b-dual-ultrafast
-          - vllm/qwen38-27b-multi4-ultrafast
-          - vllm/qwen38-27b-multi8-ultrafast
-        reason: "Without the backport, vLLM v0.27.1 cannot resolve the DFlash2DraftModel architecture in the drafter checkpoint (syvai/Qwen3.8-27B-DFlash2-W4A16), so --speculative-config method=dflash fails to load and the ULTRAFAST tier cannot boot. The backport adds qwen3_dflash2.py + the v1 DFlash2 speculator (grouped dynamic depthwise conv + candidate selector) and routes to the V2 Model Runner. An external block-drafter, so it entirely sidesteps the built-in-MTP acceptance collapse (club-3090#1052 / vllm#52873). On-rig validation 2026-08-20 (reference 2x3090, v0.27.1, Frozenlock target): boot resolves 'DFlash2DraftModel' + 'Model Runner V2' + 'Capturing model for DFlash2 speculator'; verify-full 9/9 (accept-len 3.74); bench 132 narr / 227 code TPS; collapse soak clean to 21k gen with 0 crashes."
-        evidence: "models/qwen3.8-27b/vllm/patches/vllm-dflash2-backport/README.md; vllm#52816; learnings/qwen3.8-27b.md"
+    load_bearing_when: []   # de-wired 2026-09-12; native since v0.29.0
     delivery:
       dockerfile_bake: false
-      entrypoint_invoke: true
+      entrypoint_invoke: false
       genesis: false
     delivery_gaps: []
     delivery_mechanism: install_script
@@ -420,9 +464,29 @@ patches:
       on_fail: boot-refused
     upstream:
       ref: "vllm-project/vllm#52816"
-      status: "open"
+      status: "merged"
+      merged_at: "2026-08-21"
+      shipped_in_release: "v0.28.0"
+      native_since_pin: "vllm-stable@v0.29.0"
       drop_when: "vLLM merges #52816 (DFlash2DraftModel + candidate selector) AND the vllm-stable pin moves past it -> remove the 3 dflash2 compose mounts + entrypoint calls + retire this row and the patch dir."
-    status: verified
+    deprecated_on: 2026-09-12
+    deprecation_reason: >-
+      DROPPED at the v0.29.0 pin bump — its own drop_when is satisfied. vLLM merged
+      #52816 on 2026-08-21 and v0.29.0 ships DFlash2 natively:
+      model_executor/models/qwen3_dflash2.py (DFlash2Qwen3ForCausalLM / Model /
+      DecoderLayer, CandidateSelector, DFlashGroupedConv) plus
+      v1/worker/gpu/spec_decode/dflash2/speculator.py (DFlash2Speculator) — the same
+      v1/worker/gpu tree this backport retrofitted. All 12 compose mounts and their
+      entrypoint install calls are removed; the patch directory is retained as
+      history. Do NOT re-wire it on v0.29.0+: install.sh applies unconditionally when
+      _check_applied.py does not recognise the tree, and a conflicting apply exits 1,
+      which REFUSES the boot (verified in the real v0.29.0 image 2026-09-12).
+      ⚠️ SUPERSEDED, NOT SIMPLY DROPPED: this backport bundled TWO fixes. #52816 is now
+      native, but vllm#51581 (fused-KV slice has no quantization awareness) is STILL
+      OPEN, and dropping the bundle wholesale killed every W4A16-drafter tier on
+      v0.29.0 with an AttributeError. The #51581 half lives on as
+      `vllm-51581-dflash-dense-kv`, which is what the 12 dflash2 composes now mount.
+    status: suspect
   - id: vllm-flashinfer-decode-pin
     # qwen3.8-27b (2026-08-18): the dual-fast slug (W4A8 + MTP n=4 + fp8 KV +
     # prefix caching, the hybrid GDN family) crashed the engine in ~15s at
