@@ -3872,7 +3872,7 @@ entries:
     default_port: 8144
     kvcalc_key: SKIP
     status: experimental
-    status_note: "HYPERMAX: SM86-only FA2 target and DFlash2 attention, FP8 KV, full context and vision. Version-checked vLLM 0.29.0 sidecar; first boot builds pinned CUDA sources. Fixed KV budget; external draft/workspace costs are not modeled by kv-calc. Validation pending; --force."
+    status_note: "HYPERMAX: SM86-only FA2 target/DFlash2 attention, FP8 KV, full context and vision on vLLM 0.29.0. Measured 99.88/191.93 decode TPS; verify-full 10/10, soak PASS, 261K text and 260K combined vision checks passed. Stress failed the 1 GiB margin (299 MiB free; combined vision minimum 239 MiB). Experimental, --force. First boot builds pinned CUDA sources. Fixed KV budget; external draft/workspace costs are not modeled by kv-calc."
     weights_companions:
       - dflash2
     gateway: false

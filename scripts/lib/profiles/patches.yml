@@ -40,7 +40,7 @@ patches:
       ref: AntonProkopyev/fa2-fp8kv-sm86@ef08ffb9a23f9493435fdd81e3addba6ad4f5fff
       status: experimental
       drop_when: "Stock vLLM provides a validated SM86 FA2 FP8 KV path."
-    status: unverified
+    status: verified
   - id: qwen-sglang-autoround-fused-bf16
     deprecated_on: "2026-06-05"
     deprecation_reason: "SGLang path parked; no functional compose uses it (#254)."

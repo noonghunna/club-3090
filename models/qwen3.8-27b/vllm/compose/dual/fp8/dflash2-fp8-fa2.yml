@@ -8,6 +8,7 @@
 #   Max ctx:   262144
 #   Genesis:   none
 #   Status:    🧪 Experimental
+#   Quality:   toolcall-15 14/15 (93%) · instructfollow-15 13/15 (87%) · structoutput-15 15/15 (100%) · dataextract-15 12/15 (80%) · reasonmath-15 9/15 (60%) (--medium, thinking OFF, sampling=server, validity=valid, packs tc1.0.1·if1.0.0·so1.1.0·de1.2.0·rm1.0.0, 2026-09-12)
 #   Best for:  HYPERMAX — full-context single-sequence FA2 on dual 3090
 # ---------------------------------------------------------------------------
 # Sibling              KV          Attention         Default context
@@ -21,6 +22,9 @@
 # First boot downloads pinned sources and compiles two CUDA extensions.
 # The installer refuses backend-source drift. See patches/fa2-fp8kv-sm86/README.md
 # and docs/UPSTREAM.md. This profile does not change the model default.
+# Stress recalled through 240K but left only 299 MiB/card free; combined
+# vision/context reached 239 MiB free, below the standard 1 GiB margin.
+# See the patch validation report before deployment.
 # Requires-homogeneous-arch: true
 # ===========================================================================
 services:

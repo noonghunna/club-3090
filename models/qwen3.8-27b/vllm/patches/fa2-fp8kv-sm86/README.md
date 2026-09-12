@@ -42,3 +42,16 @@ The 262K context, one 4 MP image and fixed KV allocation leave little memory
 headroom on a 24 GB card. This is an experimental profile, not a production
 recommendation. Results from vLLM 0.27.1 are historical and must not be labeled
 as measurements of this 0.29.0 sidecar.
+
+The API boundary probes are included beside the adapter. Run from the repo
+root after the model is ready; each full-context request takes several minutes:
+
+```bash
+python3 models/qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86/check_context.py --url http://127.0.0.1:8144
+python3 models/qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86/check_vision_context.py --url http://127.0.0.1:8144
+```
+
+The first sends exactly 261000 input tokens and rejects a 263000-token request.
+The second uses the repository's vision fixture, exercises about 4 MP of image
+processing, fills about 260K combined tokens, and checks two follow-up turns.
+See `VALIDATION.md` for the measured scope and limitations.

@@ -1,8 +1,9 @@
 # HYPERMAX validation — September 12, 2026
 
 Status: experimental. Functional and throughput validation passed. The full
-context ladder and continuous soak are still running; this report does not
-claim production readiness.
+context ladder returned correct answers but failed the 1 GiB free-VRAM margin.
+Continuous soak, quality, exact-context and combined vision/context checks
+finished. The profile does not meet the production memory-margin gate.
 
 ## Configuration
 
@@ -54,20 +55,64 @@ windowed throughput is indicative, not interchangeable with request timing.
 
 ## Checks and limitations
 
+Quality (`--medium --no-thinking --sampling-from-server --strict-thinking`):
+**63/75** — ToolCall 14/15, InstructFollow 13/15, Structured Output 15/15,
+Data Extraction 12/15, ReasonMath 9/15. Thinking validity passed for all packs.
+Runner 0.9.9; packs tc1.0.1, if1.0.0, so1.1.0, de1.2.0, rm1.0.0.
+The live server supplied temperature=0.7, top_p=0.8, top_k=20, min_p=0.
+The historical 0.27.1 run scored 62/75 with the checkpoint's 1.0/0.95 sampling
+defaults, so the score difference is not a controlled engine A/B.
+
+Thinking ON (`--quick --enable-thinking --sampling-from-server
+--strict-thinking`): **27/30**, ToolCall 13/15 and InstructFollow 14/15.
+All 30 responses contained reasoning; strict thinking validity passed.
+This leg inherited the same live server sampling row as the OFF leg; it tests
+the request-level thinking switch, not a restart into the thinking sampler row.
+
 - Compose render, registry canonicalization, profile diagnostics on dual
   RTX 3090, patch attribution and KV-calculator calibration checks passed.
   KV-calculator projection is unavailable for this model/external-draft
   combination; the compose uses the measured fixed KV allocation.
 - Both CUDA libraries built successfully. A second install reused the build.
   Negative checks refused a different vLLM version and a modified backend hash.
-- The full 152-script catalog sweep ran. Socket-based fixture tests needed
-  reruns outside the sandbox. Final counts are pending those reruns.
+- The full 152-script catalog sweep ran: **146 passed, 6 failed** after reruns
+  of socket-based fixture tests outside the sandbox. All five guards affected
+  by the new compose/installer wiring passed on the final tree.
 - Six unrelated capture/benchmark fixture failures also reproduce on release
   v0.11.0: test-bench-capture, test-pull, test-pullemit-capture, test-loop-input,
   test-submit-pull and test-trust-pipeline. They concern the triad worker-count
   assertion and capture manifest schema/outcome fields.
-- Full-context stress and continuous soak: pending. The original 0.27.1
-  measurements are historical; none of them are substituted for 0.29.0 checks.
+- `verify-stress.sh`: all response checks passed, including the six-step
+  ceiling ladder from about 94K through 240K actual input tokens. The last
+  step recalled its secret at 1011.6 input tok/s. The command exited 1 solely
+  because physical free VRAM was 299 MiB, below the 1024 MiB margin. The
+  threshold was not lowered. This uniform-haystack test checks addressability,
+  not retrieval quality on natural documents.
+- Continuous soak: **PASS**, 5 sessions × 5 turns, zero errors, zero measured
+  VRAM growth (47656 MiB total throughout), 100% throughput retention by the
+  harness metric. This is a bounded sample, not a long-term stability claim.
+- The original 0.27.1 measurements are historical; none substitute for these
+  0.29.0 checks.
+
+The exact context-boundary probe passed: **261000 input tokens**, zero cached
+tokens, 11 output tokens, exact code recall, **266.603 seconds**. A request with
+263000 input tokens was rejected with HTTP 400. Peak VRAM during this probe
+was 23828 MiB on each card. The API probes are included as `check_context.py`
+and `check_vision_context.py`; their `--url` and `--model` arguments allow
+repeating the checks on another host.
+
+The combined vision/context probe passed all five facts (document key, three
+colored shapes and the number). It processed a 640×480 source fixture at about
+4 MP, producing **4070 image tokens**. The image-only request took 3.815 s;
+the combined **259872-token** request took **266.634 s**, with zero cached
+tokens. Two follow-ups at 259932 and 259992 tokens also passed, in 8.210 s and
+8.162 s, each reusing 255440 cached tokens. This tests processing/memory and
+simple visual facts, not general high-resolution vision quality.
+
+Across every serving test, per-card peak VRAM was **23888 / 23888 MiB** and
+minimum physical free memory was **239 / 239 MiB**, sampled every 500 ms.
+The standard stress margin remains failed; no threshold or context reduction
+was used to turn that result green.
 
 Reproduce serving checks with `URL`, `MODEL=qwen3.8-27b` and
 `CONTAINER=vllm-qwen38-27b-dual-hypermax` set for the running profile:
