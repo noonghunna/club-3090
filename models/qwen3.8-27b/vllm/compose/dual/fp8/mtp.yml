@@ -283,6 +283,7 @@
 # Override defaults via .env or shell:
 #   MODEL_DIR / PORT / TP / PP / MAX_MODEL_LEN / GPU_MEMORY_UTILIZATION /
 #   MAX_NUM_BATCHED_TOKENS / KV_CACHE_DTYPE / PREFIX_CACHE_ARG /
+#   PROMPT_TOKENS_DETAILS_ARG /
 #   TEMP TOP_P TOP_K MIN_P PRESENCE_PENALTY REPEAT_PENALTY
 #   SPEC=off                    -> drop the MTP drafter (vllm#50021 mitigation 2)
 #   ASYNC_SCHED=off             -> --no-async-scheduling: vllm#50021 mitigation 1,
@@ -654,6 +655,14 @@ services:
       # ENABLE_THINKING (THINKING by default since 2026-09-01; instruct when
       # false); explicit
       # TEMP/TOP_P/PRESENCE_PENALTY still win. Both rows: "SAMPLER" header above.
+      # prompt_tokens_details in the OpenAI `usage` block (#1246, @zhanmu-tw).
+      # Populates usage.prompt_tokens_details.cached_tokens — how much of the
+      # prompt the prefix cache served — instead of the `null` clients get by
+      # default. Pure response-shaping: _make_prompt_tokens_details() reads
+      # counters the engine already keeps, so it costs nothing in the inference
+      # path; it is off upstream only because vLLM defaults the flag to False.
+      # Opt out: PROMPT_TOKENS_DETAILS_ARG=--no-enable-prompt-tokens-details
+      - "${PROMPT_TOKENS_DETAILS_ARG:---enable-prompt-tokens-details}"
       - --host
       - 0.0.0.0
       - --port
