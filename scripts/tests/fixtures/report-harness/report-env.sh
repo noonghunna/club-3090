@@ -39,6 +39,14 @@ report_env_init() {
   : > "$REPORT_TRACE"
 }
 
+# report_nvsmi_stub — replace the hard-fail nvidia-smi stub with a scripted one.
+# The script body is read from stdin. Additive: the default stub stays `exit 1`
+# for every existing caller, so this only affects tests that opt in.
+report_nvsmi_stub() {
+  cat > "${REPORT_FAKE_BIN}/nvidia-smi"
+  chmod +x "${REPORT_FAKE_BIN}/nvidia-smi"
+}
+
 report_env_cleanup() {
   report_stub_stop
   [[ -n "${REPORT_ENV_DIR:-}" ]] && rm -rf "$REPORT_ENV_DIR"
