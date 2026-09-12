@@ -34,7 +34,7 @@ import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
 from club3090_tui_core.detect import (
@@ -737,6 +737,19 @@ class CockpitData:
         root = Path(model_dir or self.weights_model_dir())
         base = root / meta.subdir
         try:
+            # ABSENT must be probed at the directory the verify_glob ACTUALLY lives in,
+            # not at `subdir`. 9 of 87 weights entries carry a nested glob whose first
+            # segment is the variant dir under a SHARED parent -- e.g.
+            # subdir=glm-5.3-flash-gguf + verify_glob=UD-IQ4_XS/*.gguf, with sibling
+            # variants (devquasar-q2k, dflash2, mmproj) in that same parent. Probing
+            # `subdir` there left `base.is_dir()` true for as long as ANY sibling was on
+            # disk, so ABSENT was UNREACHABLE and a cleanly deleted variant reported
+            # PARTIAL forever -- offering "Download resumes it" for a 100-250 GB fresh
+            # pull with nothing to resume. For a flat glob PurePosixPath("*.gguf").parent
+            # is "." so probe == base and the other 78 entries are unaffected.
+            probe = base / PurePosixPath(meta.verify_glob or "").parent
+            if not probe.is_dir():
+                return WEIGHTS_ABSENT, meta
             if not base.is_dir():
                 return WEIGHTS_ABSENT, meta
             if not any(base.glob(meta.verify_glob)):
