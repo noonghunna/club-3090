@@ -144,6 +144,29 @@ details() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# gpu_power_caps — one "idx|limit_w|default_w|percent" row per GPU whose power
+# limit is BELOW its factory default. Empty output when nothing is capped.
+#
+# ⚠️ Empty is NOT proof of "at stock power": it is also what an absent
+# nvidia-smi, an unreadable query (driver/library mismatch, no permission) or a
+# non-numeric [N/A] field produce. The GPU hardware section states that case
+# explicitly; do not re-interpret emptiness here as a clean bill of health.
+gpu_power_caps() {
+  have nvidia-smi || return 0
+  nvidia-smi --query-gpu=index,power.limit,power.default_limit \
+    --format=csv,noheader,nounits 2>/dev/null \
+    | while IFS=, read -r _cap_idx _cap_lim _cap_def; do
+        _cap_idx="${_cap_idx// /}"; _cap_lim="${_cap_lim// /}"; _cap_def="${_cap_def// /}"
+        # nounits still yields "230.00"; drop the fraction before integer tests.
+        _cap_lim="${_cap_lim%.*}"; _cap_def="${_cap_def%.*}"
+        [[ "$_cap_idx" =~ ^[0-9]+$ ]] || continue
+        [[ "$_cap_lim" =~ ^[0-9]+$ && "$_cap_def" =~ ^[0-9]+$ ]] || continue
+        [[ "$_cap_def" -gt 0 && "$_cap_lim" -lt "$_cap_def" ]] || continue
+        printf '%s|%s|%s|%s\n' "$_cap_idx" "$_cap_lim" "$_cap_def" \
+          "$(( _cap_lim * 100 / _cap_def ))"
+      done
+}
+
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
@@ -179,6 +202,33 @@ if [[ $EUID -ne 0 ]] && ! sudo -n true 2>/dev/null; then
     printf '>\n> For a complete report re-run with sudo:\n>\n> ```bash\n> sudo bash scripts/report.sh %s\n> ```\n' "${REPORT_ARGS:-}"
     printf '>\n> Worth doing before filing a CPU-offload issue: memory channels and speed are the\n> variables that set throughput on those configs, and they cannot be read without root.\n'
   fi
+fi
+
+# GPU power cap — warn UP FRONT, for the same reason the root-gated block above
+# does: reports get truncated from the bottom, and a reader scanning a paste
+# will not go hunting for a nested bullet in the GPU section.
+#
+# This exists because a run on this stack measured ~40% below its own recorded
+# baseline, with a signature that read as an upstream speculative-decoding
+# regression (spec_n=1 and spec_n=2 producing identical throughput while draft
+# acceptance stayed healthy). An upstream bug report was nearly filed. The cause
+# was a persistent 230 W cap against 370/420 W factory defaults, applied at boot
+# by a systemd unit and found only by manually reading power.limit.
+#
+# The generalisation is what matters for a *shared* report: a cap applied at
+# boot is nobody's per-run decision, so the reporter does not know to mention
+# it, and every throughput number in the report is silently power-dependent.
+# The percentage is deliberate — a triager reading someone else's rig has no
+# idea what that card's stock TDP is, so a bare "limit=230 W" reads as normal.
+_pwr_caps="$(gpu_power_caps)"
+if [[ -n "$_pwr_caps" ]]; then
+  printf '\n> ⚠️ **GPU power cap active — the throughput numbers in this report are NOT at stock power.**\n'
+  while IFS='|' read -r _pc_idx _pc_lim _pc_def _pc_pct; do
+    [[ -n "$_pc_idx" ]] || continue
+    printf '> - GPU %s capped to %s W of %s W default (%s%%)\n' \
+      "$_pc_idx" "$_pc_lim" "$_pc_def" "$_pc_pct"
+  done <<< "$_pwr_caps"
+  printf '>\n> Treat every benchmark below as power-limited: it is not comparable to a baseline\n> taken at stock power, and a deep cap can look like an engine or speculative-decoding\n> regression rather than a power one. Caps commonly survive reboots (a systemd unit or\n> startup script running `nvidia-smi -pl`), so a rig can boot capped without anyone\n> choosing it for this run. Check and clear before comparing against any baseline:\n>\n> ```bash\n> nvidia-smi --query-gpu=index,power.limit,power.default_limit,enforced.power.limit --format=csv\n> ```\n'
 fi
 
 # ---------------------------------------------------------------------------
@@ -479,9 +529,36 @@ if ! have nvidia-smi; then
   echo "_nvidia-smi not available — no NVIDIA GPU detected or driver not installed_"
 else
   {
-    nvidia-smi --query-gpu=index,name,memory.total,driver_version,vbios_version,persistence_mode,power.limit,power.default_limit,power.max_limit,power.draw,pci.bus_id,pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current,pcie.link.width.max \
-      --format=csv,noheader 2>/dev/null \
-      | while IFS=, read -r idx name memtotal driver vbios persistence pwr_limit pwr_default pwr_max pwr_draw bus_id pcie_gen_cur pcie_gen_max pcie_width_cur pcie_width_max; do
+    # Captured into a variable rather than piped straight into `while read`:
+    # nvidia-smi can be installed and STILL fail this query (driver/library
+    # version mismatch, a container started without --gpus, permission denial).
+    # A failed query piped into the loop yields zero iterations, so this whole
+    # section used to render as a heading with nothing whatsoever under it — and
+    # a reader cannot distinguish "no power cap" from "power was never read".
+    # The power limit is precisely the field that failure mode hides, so the
+    # empty case now says so out loud instead of looking complete.
+    _gpu_fields='index,name,memory.total,driver_version,vbios_version,persistence_mode,power.limit,power.default_limit,power.max_limit,power.draw,pci.bus_id,pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current,pcie.link.width.max'
+
+    # enforced.power.limit is APPENDED and then fallen back from, never assumed.
+    # An nvidia-smi that does not recognise a field prints
+    #   Field "enforced.power.limit" is not a valid field to query.
+    # to STDOUT and exits non-zero — so a non-empty test would score that error
+    # text as a GPU row and parse it as one card. Gate on the EXIT CODE, and on
+    # failure retry the field set every driver has, so a report from an older
+    # driver loses one optional column instead of the whole GPU section.
+    _gpu_rows="$(nvidia-smi --query-gpu="${_gpu_fields},enforced.power.limit" --format=csv,noheader 2>/dev/null)"
+    _gpu_rows_rc=$?
+    if [[ "$_gpu_rows_rc" -ne 0 ]]; then
+      _gpu_rows="$(nvidia-smi --query-gpu="${_gpu_fields}" --format=csv,noheader 2>/dev/null)"
+      _gpu_rows_rc=$?
+    fi
+    if [[ "$_gpu_rows_rc" -ne 0 || -z "${_gpu_rows//[[:space:]]/}" ]]; then
+      echo "- ⚠️ **GPU fields unreadable** — \`nvidia-smi\` is installed but \`--query-gpu\` returned no rows (exit ${_gpu_rows_rc})."
+      echo "  - **Power limit: NOT READ.** The absence of a power-cap warning in this report does *not* mean these cards are at their default power limit."
+      echo "  - Usual causes: driver/library version mismatch, a container without \`--gpus\`, or insufficient permission. Confirm by hand with \`nvidia-smi --query-gpu=index,power.limit,power.default_limit --format=csv\`."
+    else
+    printf '%s\n' "$_gpu_rows" \
+      | while IFS=, read -r idx name memtotal driver vbios persistence pwr_limit pwr_default pwr_max pwr_draw bus_id pcie_gen_cur pcie_gen_max pcie_width_cur pcie_width_max pwr_enforced; do
           # trim leading spaces from CSV fields
           idx="${idx# }"; name="${name# }"; memtotal="${memtotal# }"
           driver="${driver# }"; vbios="${vbios# }"; persistence="${persistence# }"
@@ -489,17 +566,38 @@ else
           pwr_max="${pwr_max# }"; pwr_draw="${pwr_draw# }"
           bus_id="${bus_id# }"; pcie_gen_cur="${pcie_gen_cur# }"; pcie_gen_max="${pcie_gen_max# }"
           pcie_width_cur="${pcie_width_cur# }"; pcie_width_max="${pcie_width_max# }"
+          pwr_enforced="${pwr_enforced# }"
 
-          # Flag if user has capped below default
+          # Flag if user has capped below default.
+          #
+          # State the cap as a PERCENTAGE of the card's own default, not just as
+          # a wattage: whoever triages this report has no idea what that card's
+          # stock TDP is, so "limit=230.00 W" reads as an ordinary number while
+          # "62% of 370.00 W default" does not. The uncapped rendering is left
+          # byte-for-byte as it was, so a healthy report gains nothing.
           power_note=""
+          power_envelope=""
           pwr_limit_w="${pwr_limit% W}"; pwr_limit_w="${pwr_limit_w%.*}"
           pwr_default_w="${pwr_default% W}"; pwr_default_w="${pwr_default_w%.*}"
           if [[ "$pwr_limit_w" =~ ^[0-9]+$ ]] && [[ "$pwr_default_w" =~ ^[0-9]+$ ]]; then
-            if [[ "$pwr_limit_w" -lt "$pwr_default_w" ]]; then
-              power_note=" ⚠ user-capped below default"
+            if [[ "$pwr_limit_w" -lt "$pwr_default_w" ]] && [[ "$pwr_default_w" -gt 0 ]]; then
+              power_envelope=" ($(( pwr_limit_w * 100 / pwr_default_w ))% of ${pwr_default} default, max=${pwr_max})"
+              power_note=" ⚠ **CAPPED BELOW DEFAULT** — throughput on this card is power-limited, not comparable to a stock-power baseline"
             elif [[ "$pwr_limit_w" -gt "$pwr_default_w" ]]; then
               power_note=" (overclocked above default)"
             fi
+          fi
+          [[ -n "$power_envelope" ]] || power_envelope=" (default=${pwr_default}, max=${pwr_max})"
+
+          # enforced.power.limit is what the driver is ACTUALLY clamping to; it
+          # diverges from power.limit under thermal or hardware slowdown, and
+          # nothing else in this report would reveal it. Emitted only when the
+          # two differ, so the common case costs zero bytes.
+          pwr_enforced_note=""
+          pwr_enforced_w="${pwr_enforced% W}"; pwr_enforced_w="${pwr_enforced_w%.*}"
+          if [[ "$pwr_enforced_w" =~ ^[0-9]+$ ]] && [[ "$pwr_limit_w" =~ ^[0-9]+$ ]] \
+             && [[ "$pwr_enforced_w" -ne "$pwr_limit_w" ]]; then
+            pwr_enforced_note=" | enforced=${pwr_enforced} ⚠ driver is clamping below the set limit (thermal / HW slowdown)"
           fi
 
           # Flag if PCIe lane width is below max — that's hardware-level (slot
@@ -514,9 +612,10 @@ else
           fi
 
           echo "- **GPU $idx:** $name | $memtotal | driver $driver | VBIOS $vbios | persistence=$persistence"
-          echo "  - **Power:** limit=${pwr_limit} (default=${pwr_default}, max=${pwr_max}) | current_draw=${pwr_draw}${power_note}"
+          echo "  - **Power:** limit=${pwr_limit}${power_envelope} | current_draw=${pwr_draw}${pwr_enforced_note}${power_note}"
           echo "  - **PCIe:** x${pcie_width_cur} lanes negotiated (GPU max x${pcie_width_max}, Gen up to ${pcie_gen_max}) | bus ${bus_id}${pcie_note}"
         done
+    fi
 
     cuda_ver=$(nvidia-smi 2>/dev/null | grep -oE 'CUDA Version: [0-9.]+' | head -1 | awk '{print $3}')
     [[ -n "$cuda_ver" ]] && echo "- **CUDA Runtime (per driver):** $cuda_ver"
