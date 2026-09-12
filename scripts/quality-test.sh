@@ -127,12 +127,12 @@ OPTIONS (extra)
                    --reasoning suite). Mutually exclusive with --enable-thinking.
                    Use for a clean all-off arm of a reasoning A/B. Also
                    settable via NO_THINKING=1 env.
-                   ⚠ hermesagent-20 is the outlier of those four: its multi-step
-                   agent scenarios can COLLAPSE to 0/20 with thinking forced off
-                   (#1269) while the other three degrade gracefully. The wrapper
-                   warns up front when the pack set contains it, and the
-                   structural-zero guard drops a 0/N pack out of the reported
-                   TOTAL (#1270). Avoid it entirely with --no-sandboxed.
+                   All four degrade gracefully: across 150 saved hermesagent-20
+                   entries the off arm medians 11/20 vs 12/20 on, i.e. ~1-2
+                   scenarios of 20 (#1269). A pack that comes back 0/N is a
+                   structural failure, not a thinking-off score — the
+                   structural-zero guard drops it out of the reported TOTAL
+                   whatever the cause (#1270).
   --thinking-max-tokens N
                    Forward to benchlocal-cli --thinking-max-tokens N. The
                    budget applies only to packs whose thinking gate resolves on
@@ -226,9 +226,10 @@ OUTPUT
   - JSON blob to results/quality/quality-<timestamp>.json (full detail)
   - STRUCTURAL-ZERO GUARD block when ANY pack scored 0/N (#1270): both TOTALs
     (valid subset + all packs, the latter marked "do not cite") plus the zeroed
-    pack's p50 as corroboration. Cause-agnostic and post-hoc; the per-rig
-    quality record is not published for such a run. verifier_fail rows are the
-    MODEL being wrong and keep counting — only a WHOLE pack at 0/N trips it.
+    pack's p50 as corroboration. Cause-agnostic and post-hoc — it reports the
+    outcome and lists candidate causes, it does not guess one; the per-rig
+    quality record is not published for such a run. A verifier_fail row is the
+    MODEL being wrong and keeps counting — only a WHOLE pack at 0/N trips it.
   - Compact one-liner for the compose `Quality:` profile field, stamped with
     per-pack versions and run provenance (#981/#983E)
 
@@ -768,10 +769,6 @@ fi
 # Does a scenario selection touch the Docker-sandboxed packs? (drives the
 # same image preflight that --full gets — cli-40 probes are the primary use)
 SELECTION_HAS_SANDBOX=0
-# Set to 1 below when the sandbox-image preflight decides the sandbox packs
-# cannot run — a pack that will not run cannot collapse, so the #1269 notice
-# must not fire for it.
-SANDBOX_PACKS_SKIPPED=0
 if [[ ${#SCENARIOS[@]} -gt 0 || -n "$SCENARIOS_FILE" ]]; then
   _sel_lines="$(printf '%s\n' ${SCENARIOS[@]+"${SCENARIOS[@]}"})"
   if [[ -n "$SCENARIOS_FILE" ]]; then
@@ -781,26 +778,6 @@ if [[ ${#SCENARIOS[@]} -gt 0 || -n "$SCENARIOS_FILE" ]]; then
     SELECTION_HAS_SANDBOX=1
   fi
 fi
-
-# Will the resolved pack set include hermesagent-20? Mirrors how benchlocal-cli
-# resolves it (--pack > --sandboxed-only > selection > mode flag), so the #1269
-# notice below fires only for a run that genuinely contains the pack.
-# (if-forms, not `[[ ]] &&` — a false condition as the last command would trip set -e)
-_pack_set_includes_hermes() {
-  if [[ -n "$RESUME" ]]; then return 1; fi          # pack set restored from the journal; unknown out here
-  if [[ -n "$PACK" ]]; then
-    if [[ "$PACK" == "hermesagent-20" ]]; then return 0; fi
-    return 1
-  fi
-  if [[ "$NO_SANDBOX" == "1" || "$SANDBOX_PACKS_SKIPPED" == "1" ]]; then return 1; fi
-  if [[ ${#SCENARIOS[@]} -gt 0 || -n "$SCENARIOS_FILE" ]]; then
-    if command grep -qE '^hermesagent-20/' <<<"${_sel_lines:-}"; then return 0; fi
-    return 1
-  fi
-  if [[ "$SANDBOXED_ONLY" == "1" ]]; then return 0; fi
-  if [[ "$MODE" == "--full" ]]; then return 0; fi
-  return 1
-}
 
 if { [[ -z "$PACK" ]] && { [[ "$MODE" == "--full" && "$NO_SANDBOX" != "1" ]] || [[ "$SANDBOXED_ONLY" == "1" ]]; }; } || [[ "$SELECTION_HAS_SANDBOX" == "1" && "$NO_SANDBOX" != "1" ]]; then
   _sb_missing=()
@@ -865,7 +842,6 @@ except Exception:
       echo "  then re-run. For a no-Docker run instead:  bash scripts/quality-test.sh --medium" >&2
       exit 1
     fi
-    SANDBOX_PACKS_SKIPPED=1
     echo "[quality-test] ⚠  sandbox packs (BugFind / CLI / Hermes) will be SKIPPED — not available: ${_sb_missing[*]}" >&2
     echo "               They need pre-built Docker images that aren't auto-pulled. Build them once from a" >&2
     echo "               benchlocal-cli CHECKOUT (the build tooling isn't in the pip package):" >&2
@@ -1052,42 +1028,6 @@ fi
 if [[ "$NO_THINKING" == "1" ]]; then
   CLI_ARGS+=(--no-thinking)
   echo "[quality-test] thinking: disabled for every pack, ignoring per-pack defaults (non-canonical)"
-  # #1269: four packs default thinking ON (instructfollow-15, reasonmath-15,
-  # bugfind-15, hermesagent-20). Three degrade gracefully with thinking forced
-  # off; hermesagent-20 can COLLAPSE — @paulp83's instruct arm returned 0/20 at
-  # p50 2.40s where his thinking arm scored 14/20 at 10.36s on the same rig. A
-  # pack that takes ~10s when it works and returns uniformly in 2.4s is not
-  # failing the scenarios, it is not attempting them.
-  #
-  # Why the pack is NOT pre-dropped here:
-  #   1. The collapse is NOT a property of the combination. 46 saved runs in
-  #      results/quality/ carry hermesagent-20 with thinking resolved OFF; 44 of
-  #      them score 6-15/20 at healthy p50 (including the b9967 pin-bump off-leg
-  #      and a qwen3.8-27b off-leg at 14/20). Treating the pair as structurally
-  #      incompatible would discard measurements this repo cites.
-  #   2. benchlocal-cli has no pack-exclusion flag, and faking one by enumerating
-  #      the other packs' scenarios sets `selection` in the result JSON, i.e.
-  #      turns a canonical 8-pack run into a PARTIAL one (refused by history
-  #      ingestion / rescore without --allow-partial).
-  # So: warn loudly up front, and let the post-run structural-zero guard (#1270)
-  # drop it out of the TOTAL by OUTCOME if it does collapse.
-  if _pack_set_includes_hermes; then
-    echo "[quality-test] ⚠  --no-thinking + hermesagent-20 is a KNOWN-RISKY combination (#1269)." >&2
-    echo "               hermesagent-20 defaults thinking ON — its 20 scenarios are multi-step agent" >&2
-    echo "               tasks that need room to plan. With thinking forced off a model can return" >&2
-    echo "               uniformly in ~2s and score 0/20: not failing the scenarios, NOT ATTEMPTING" >&2
-    echo "               them. The other thinking-on packs (instructfollow-15 / reasonmath-15 /" >&2
-    echo "               bugfind-15) degrade gracefully instead — this one is the outlier." >&2
-    echo "               If it collapses this run it is EXCLUDED from the reported TOTAL and the" >&2
-    echo "               denominator drops by its 20 scenarios (--full: 150 → 130); see the" >&2
-    echo "               STRUCTURAL-ZERO GUARD block printed after the scoreboard." >&2
-    echo "               It is NOT pre-excluded: saved thinking-off runs on the reference rig do" >&2
-    echo "               score this pack 6-15/20, so a blanket drop would discard valid results." >&2
-    echo "               Avoid the risk entirely: drop --no-thinking (pack defaults keep hermes" >&2
-    echo "               thinking-on), or run the thinking-off arm over the deterministic packs" >&2
-    echo "               only (--no-sandboxed, or --medium)." >&2
-    echo >&2
-  fi
 fi
 # ---- reasoning switch: resolved by benchlocal-cli itself (its #131) ---------
 # WHICH request field turns reasoning off is model-specific, and an unrecognised
@@ -1163,21 +1103,39 @@ RC="${RC:-0}"
 # apparent instruct deficit that was one structurally-zeroed pack.
 #
 # Any cause produces the same misleading arithmetic: unreachable endpoint
-# (guarded above), thinking forced off on a thinking-default pack (#1269),
+# (guarded above), a sandboxed pack whose agent harness failed to initialise,
 # Docker dying mid-run, an image pull failure, a sandbox OOM, a pack version
 # mismatch. So this check is cause-AGNOSTIC — it fires on the OUTCOME, after the
 # results are in, whatever produced it. The 0/N is the trigger; latency is
 # printed as corroboration only and never gates the warning.
 #
-# ⚠️ NOT the same thing as verifier_fail. A verifier_fail row is the MODEL being
-# wrong, not the grader, and those keep counting toward both figures. Only a
-# WHOLE PACK scoring zero trips this.
+# ⚠️ Deliberately NOT thinking-aware, and #1269 is why. That issue proposed
+# treating hermesagent-20 as incompatible with --no-thinking; the saved results
+# refute it. Across 150 full 20-scenario hermesagent-20 entries (per-pack
+# thinking_enabled, run-level as fallback): thinking OFF n=74, median 11/20,
+# range 0-15, 4 runs at 0/20; thinking ON n=76, median 12/20, range 0-16, 6 runs
+# at 0/20. Structural zeros occur on BOTH arms and slightly MORE often with
+# thinking ON, and paired per model the off arm costs ~1-2 scenarios of 20 — the
+# same graceful degradation the other three thinking-default-on packs show. So
+# forced thinking-off is NOT a candidate cause, and a guard that pointed at it
+# would send triage the wrong way. It is also why no blanket pre-run drop of the
+# pack exists: it would discard valid measurements, and benchlocal-cli has no
+# pack-exclusion flag anyway (the only wrapper-side spelling is a scenario
+# enumeration, which tags the run PARTIAL).
+#
+# Three of those four thinking-off zeros are ONE incident: three consecutive
+# runs, every scenario ~1.5s, reported as 20 x verifier_fail, trace carrying
+# agent_exit_code=1 / tool_events=0 / an AIAgent.__init__() keyword mismatch. A
+# harness constructor fault wearing the model's label — which is exactly the
+# shape this guard exists to catch, and which qualifies the verifier_fail
+# caveat below: per row a verifier_fail is the model being wrong, but a WHOLE
+# PACK of them can be the harness.
 #
 # Exit contract of the probe below: 0 = nothing to report, 3 = a pack scored
 # 0/N (block printed), anything else = the probe itself broke and said so.
 ZERO_GUARD_RC=0
 if [[ -f "$JSON_OUT" ]]; then
-  python3 - "$JSON_OUT" "$NO_THINKING" <<'PYZERO' || ZERO_GUARD_RC=$?
+  python3 - "$JSON_OUT" <<'PYZERO' || ZERO_GUARD_RC=$?
 import json
 import sys
 
@@ -1187,18 +1145,6 @@ except Exception:
     pass
 
 path = sys.argv[1]
-wrapper_forced_off = len(sys.argv) > 2 and sys.argv[2] == "1"
-
-# Packs whose benchlocal-cli metadata sets `default_thinking: on`. Forcing
-# thinking off on one of these is #1269's mechanism, so the guard can name the
-# likely cause instead of shrugging. benchlocal-cli's per-pack metadata is the
-# source of truth; this mirrors the --no-thinking help text above.
-THINKING_DEFAULT_ON = {
-    "instructfollow-15",
-    "reasonmath-15",
-    "bugfind-15",
-    "hermesagent-20",
-}
 
 try:
     with open(path, encoding="utf-8") as fh:
@@ -1222,9 +1168,6 @@ scored = [p for p in (data.get("packs") or []) if int(p.get("total") or 0) > 0]
 zeroed = [p for p in scored if int(p.get("passed") or 0) == 0]
 if not zeroed:
     sys.exit(0)
-
-forced_off = data.get("thinking_mode") == "force-off" or wrapper_forced_off
-
 
 def fraction(passed, total):
     if not total:
@@ -1254,15 +1197,12 @@ for pack in zeroed:
         % (pid, total, p50_txt, pack.get("status") or "?")
     )
     print("    suspected structural failure, not as a model score.")
-    if forced_off and pid in THINKING_DEFAULT_ON:
-        print("    * check FIRST: thinking was forced OFF for this run and %s" % pid)
-        print("      defaults thinking ON (#1269). Its scenarios need room to plan; forced")
-        print("      thinking-off has been observed to make the pack return without attempting")
-        print("      them. Re-run it without --no-thinking to see whether the zero is real.")
-    else:
-        print("    * cause not determined here. Check: endpoint reachable from a container")
-        print("      (#960), Docker/sandbox health, sandbox image build, sandbox OOM, pack")
-        print("      version mismatch.")
+    print("    * cause not determined here — candidates, cheapest first: endpoint not")
+    print("      reachable from a container (#960); a sandboxed agent whose harness failed")
+    print("      to initialise (returns fast, reports every scenario as verifier_fail);")
+    print("      Docker/sandbox health; sandbox image build or pull; sandbox OOM; pack")
+    print("      version mismatch. Read the trace before reading the score:")
+    print("      benchlocal-cli inspect <json> --pack %s --full" % pid)
     print("    * %s is CORROBORATION only, never the trigger. A p50 far below this" % p50_txt)
     print("      pack's own healthy figure means it failed FAST — returning without")
     print("      attempting — rather than failing hard. Compare against a run that passed.")
@@ -1277,6 +1217,8 @@ print()
 print("  A whole pack at 0/N is a harness/config outcome until proven otherwise.")
 print("  Individual verifier_fail rows are the MODEL being wrong and DO keep counting")
 print("  toward both figures — this guard fires only on a whole pack scoring zero.")
+print("  But a whole pack OF verifier_fail rows can itself be a harness fault: a")
+print("  sandboxed agent that dies in its constructor reports exactly that shape.")
 print(bar)
 sys.exit(3)
 PYZERO

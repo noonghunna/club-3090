@@ -11,18 +11,25 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #   2. It must NOT fire on a pack that merely FAILED scenarios (verifier_fail
 #      rows are the MODEL being wrong and keep counting), nor on a pack with
 #      total == 0 (sandbox-unavailable / stubbed = never ran, not a zero score).
-#   3. #1269: --no-thinking over a pack set containing hermesagent-20 prints a
-#      loud, specific up-front notice naming the mechanism AND the reduced
-#      denominator — and does NOT print it for a pack set without that pack.
+#   3. The guard is deliberately NOT thinking-aware (#1269 retracted). Its
+#      premise — that --no-thinking makes hermesagent-20 return a structural
+#      zero — is refuted by the saved results: across 150 full 20-scenario
+#      hermesagent-20 entries the thinking-OFF arm is n=74, median 11/20, 4 runs
+#      at 0/20, and the thinking-ON arm is n=76, median 12/20, 6 runs at 0/20 —
+#      zeros on BOTH arms, slightly more often with thinking ON. So the guard
+#      must NOT name forced thinking-off as a cause (that is where triage went
+#      wrong), and the wrapper must NOT warn about the combination. Cases F/J/E2
+#      below pin that removal so it cannot silently come back.
 #
-# NEGATIVE CONTROLS (each of these FAILS against pre-#1269/#1270 quality-test.sh):
+# NEGATIVE CONTROLS (each of these FAILS against pre-#1270 quality-test.sh):
 #   - case A: the guard block + both TOTAL figures + the record refusal
 #   - case D: the every-pack-zeroed wording
-#   - case E: cause attribution that does NOT blame thinking when thinking was
-#             not forced off
-#   - case F/J: the #1269 up-front notice
-# And the false-positive controls (B, C, G, H, I) assert the guard/notice stay
-# silent, so a guard that fires unconditionally cannot pass either.
+#   - case E: the cause-agnostic candidate list
+#   - case K: a loud failure on an unreadable results JSON
+# The false-positive controls (B, C) assert the guard stays silent when no pack
+# zeroed, so a guard that fires unconditionally cannot pass either. Cases F, J
+# and E2 are the REGRESSION controls for the retraction: they fail if any
+# thinking-specific claim or attribution comes back.
 #
 set -euo pipefail
 
@@ -204,9 +211,6 @@ assert_contains A "$OUT" "p50 2.40s"
 assert_contains A "$OUT" "TOTAL (valid subset)  102 / 130 (78%)"
 assert_contains A "$OUT" "TOTAL (all packs)     102 / 150 (68%)   <- do not cite"
 assert_contains A "$OUT" "verifier_fail rows are the MODEL being wrong and DO keep counting"
-# thinking_mode: force-off + a thinking-default-on pack -> name #1269 as the first suspect
-assert_contains A "$OUT" "check FIRST: thinking was forced OFF"
-assert_contains A "$OUT" "(#1269)"
 # the per-rig record is a bare TOTAL too: it must not be published
 assert_contains A "$OUT" "per-rig quality record NOT written"
 assert_not_contains A "$(cat "$record_log")" "MEASUREMENT_RECORD"
@@ -230,43 +234,72 @@ assert_contains D "$OUT" "STRUCTURAL-ZERO GUARD (#1270)"
 assert_contains D "$OUT" "TOTAL (valid subset)  none — every scored pack returned 0/N"
 assert_contains D "$OUT" "TOTAL (all packs)     0 / 30 (0%)   <- do not cite"
 
-echo "--- case E: thinking NOT forced off -> do not blame thinking ---"
+echo "--- case E: cause-agnostic candidate list, no guessed cause ---"
 run_wrapper "${tmp_work}/pack-defaults.json" -- --quick
 assert_contains E "$OUT" "STRUCTURAL-ZERO GUARD (#1270)"
-assert_not_contains E "$OUT" "check FIRST: thinking was forced OFF"
 assert_contains E "$OUT" "cause not determined here"
-assert_contains E "$OUT" "endpoint reachable from a container"
+assert_contains E "$OUT" "reachable from a container"
+# the real observed cause of the one investigated incident belongs on the list
+assert_contains E "$OUT" "harness failed"
+assert_contains E "$OUT" "every scenario as verifier_fail"
+# ...and a whole pack of verifier_fail rows must be called out as possibly the harness
+assert_contains E "$OUT" "whole pack OF verifier_fail rows can itself be a harness fault"
+# no thinking attribution, on either arm
+assert_not_contains E "$OUT" "thinking was forced OFF"
+assert_not_contains E "$OUT" "defaults thinking ON"
 
-echo "--- case E2: JSON without thinking_mode falls back to the wrapper's NO_THINKING ---"
+echo "--- case E2 (regression control): thinking_mode=force-off must NOT be blamed ---"
+# The retracted #1269 shape: a 0/20 hermesagent-20 in a thinking_mode=force-off
+# run. The guard must report it identically to any other cause — zeros occur on
+# both arms, so naming thinking here would send triage the wrong way.
+run_wrapper "${tmp_work}/paul-off.json" -- --quick
+assert_contains E2 "$OUT" "STRUCTURAL-ZERO GUARD (#1270)"
+assert_contains E2 "$OUT" "cause not determined here"
+assert_not_contains E2 "$OUT" "thinking was forced OFF"
+assert_not_contains E2 "$OUT" "#1269"
+# same with the wrapper's own --no-thinking in play
 run_wrapper "${tmp_work}/no-tmode.json" NO_THINKING=1 -- --quick
-assert_contains E2 "$OUT" "check FIRST: thinking was forced OFF"
+assert_contains E2 "$OUT" "cause not determined here"
+assert_not_contains E2 "$OUT" "thinking was forced OFF"
 
-echo "--- case F: #1269 up-front notice on --full --no-thinking ---"
+echo "--- case F (regression control): --full --no-thinking must NOT warn about the combination ---"
+# #1269's premise is retracted: thinking-OFF hermesagent-20 medians 11/20 over 74
+# saved runs. A warning that fires on every off-leg and misattributes the cause is
+# worse than silence, so the wrapper must stay quiet about the pairing.
 run_wrapper "${tmp_work}/paul-off.json" -- --full --no-thinking
-assert_contains F "$OUT" "--no-thinking + hermesagent-20 is a KNOWN-RISKY combination (#1269)"
-assert_contains F "$OUT" "NOT ATTEMPTING"
-assert_contains F "$OUT" "denominator drops by its 20 scenarios (--full: 150 → 130)"
-assert_contains F "$OUT" "instructfollow-15 / reasonmath-15 /"
-assert_contains F "$OUT" "--no-sandboxed, or --medium"
+assert_contains F "$OUT" "thinking: disabled for every pack"
+assert_not_contains F "$OUT" "KNOWN-RISKY"
+assert_not_contains F "$OUT" "hermesagent-20 is the outlier"
+assert_not_contains F "$OUT" "NOT ATTEMPTING"
+assert_not_contains F "$OUT" "150 → 130"
+assert_not_contains F "$OUT" "thinking was forced OFF"
+# the outcome guard still fires on the same run — the removal is of the CAUSE claim only
+assert_contains F "$OUT" "STRUCTURAL-ZERO GUARD (#1270)"
+assert_contains F "$OUT" "TOTAL (valid subset)  102 / 130 (78%)"
 assert_not_contains F "$OUT" "sandbox packs (BugFind / CLI / Hermes) will be SKIPPED"
 
-echo "--- case G: --medium --no-thinking has no hermesagent-20 -> no notice ---"
+echo "--- case G: a healthy off-leg stays quiet end to end ---"
 run_wrapper "${tmp_work}/paul-healthy.json" -- --medium --no-thinking
 assert_contains G "$OUT" "thinking: disabled for every pack"
-assert_not_contains G "$OUT" "KNOWN-RISKY combination (#1269)"
+assert_not_contains G "$OUT" "KNOWN-RISKY"
+assert_not_contains G "$OUT" "STRUCTURAL-ZERO GUARD"
 
-echo "--- case H: --full WITHOUT --no-thinking -> no notice ---"
+echo "--- case H: --full WITHOUT --no-thinking, healthy -> quiet ---"
 run_wrapper "${tmp_work}/paul-healthy.json" -- --full
-assert_not_contains H "$OUT" "KNOWN-RISKY combination (#1269)"
+assert_not_contains H "$OUT" "KNOWN-RISKY"
+assert_not_contains H "$OUT" "STRUCTURAL-ZERO GUARD"
 
-echo "--- case I: --full --no-thinking --no-sandboxed drops hermes -> no notice ---"
+echo "--- case I: --full --no-thinking --no-sandboxed -> quiet ---"
 run_wrapper "${tmp_work}/paul-healthy.json" -- --full --no-thinking --no-sandboxed
 assert_contains I "$OUT" "thinking: disabled for every pack"
-assert_not_contains I "$OUT" "KNOWN-RISKY combination (#1269)"
+assert_not_contains I "$OUT" "KNOWN-RISKY"
 
-echo "--- case J: --pack hermesagent-20 --no-thinking -> notice ---"
+echo "--- case J (regression control): --pack hermesagent-20 --no-thinking must NOT warn ---"
 run_wrapper "${tmp_work}/paul-off.json" -- --pack hermesagent-20 --no-thinking
-assert_contains J "$OUT" "KNOWN-RISKY combination (#1269)"
+assert_contains J "$OUT" "thinking: disabled for every pack"
+assert_not_contains J "$OUT" "KNOWN-RISKY"
+assert_not_contains J "$OUT" "hermesagent-20 is the outlier"
+assert_not_contains J "$OUT" "thinking was forced OFF"
 
 echo "--- case K: an unreadable results JSON must say so, not pass silently ---"
 : > "${tmp_work}/truncated.json"
@@ -279,4 +312,4 @@ if [[ "$FAILED" != "0" ]]; then
   echo "FAIL: test-quality-zero-pack" >&2
   exit 1
 fi
-echo "PASS: test-quality-zero-pack (#1269 notice + #1270 structural-zero guard)"
+echo "PASS: test-quality-zero-pack (#1270 structural-zero guard, cause-agnostic by design)"

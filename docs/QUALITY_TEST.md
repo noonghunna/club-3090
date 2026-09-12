@@ -115,19 +115,22 @@ wrapper invocation, wire it or route it through `--`.
 
 ## ⭐ The canonical two-leg run
 
-> ⚠️ **`--no-thinking` × `hermesagent-20` (#1269).** Four packs default thinking
-> ON (`instructfollow-15`, `reasonmath-15`, `bugfind-15`, `hermesagent-20`).
-> Three degrade gracefully with thinking forced off; `hermesagent-20` can
-> **collapse** — its scenarios are multi-step agent tasks that need room to
-> plan, and a model with no room can return uniformly in ~2s and score 0/20 (not
-> failing the scenarios, not attempting them). The wrapper prints a specific
-> notice up front whenever `--no-thinking` meets a pack set containing that
-> pack, and the structural-zero guard above drops the pack out of the reported
-> TOTAL if it does collapse (`--full`: 150 → 130). It is **not** pre-excluded:
-> saved thinking-off runs on the reference rig score `hermesagent-20` in the
-> 6-15/20 range, so a blanket exclusion would discard valid measurements. To
-> avoid the risk entirely, run the thinking-off leg over the deterministic packs
-> (`--no-sandboxed`).
+> **All four thinking-on packs degrade gracefully with `--no-thinking`** —
+> including `hermesagent-20`, contrary to the original #1269 premise (retracted).
+> Across 150 full 20-scenario `hermesagent-20` entries in the saved results
+> (filtered on per-pack `thinking_enabled`, run-level as fallback):
+>
+> | | n | median | mean | range | runs at 0/20 |
+> |---|--:|--:|--:|--:|--:|
+> | thinking OFF | 74 | 11/20 | 10.3 | 0-15 | 4 |
+> | thinking ON | 76 | 12/20 | 11.1 | 0-16 | 6 |
+>
+> Structural zeros occur on **both** arms and slightly more often with thinking
+> ON, and paired per model the off arm costs ~1-2 scenarios of 20. So a `0/20`
+> on an off-leg is **not** evidence about thinking — treat it as a structural
+> failure and find the real cause (the one investigated incident was a
+> sandboxed-agent constructor mismatch reported as 20 × `verifier_fail`). The
+> structural-zero guard above is deliberately cause-agnostic for that reason.
 
 This is the recipe every announcement quotes and the one to copy if you're producing a number
 anyone else will read. Substitute your slug.
@@ -451,9 +454,17 @@ caused it, and refuses to leave the bare TOTAL standing:
   reports rather than fails. What it does refuse is *publication*: the per-rig
   quality record (whose 8pk field is a bare TOTAL) is not written for that run.
 - Causes seen so far: endpoint not reachable from the sandbox container (#960,
-  also caught by a preflight), thinking forced off on a thinking-default pack
-  (#1269), Docker dying mid-run, sandbox image build failure, sandbox OOM, pack
-  version mismatch.
+  also caught by a preflight); a sandboxed pack whose agent harness failed to
+  initialise — returns in ~1.5s and reports every scenario as `verifier_fail`,
+  with `agent_exit_code=1` / `tool_events=0` in the trace; Docker dying mid-run;
+  sandbox image build or pull failure; sandbox OOM; pack version mismatch.
+- The guard lists candidates and does **not** guess. In particular it is not
+  thinking-aware: forced thinking-off was proposed as a cause in #1269 and the
+  saved results refute it (zeros appear on both thinking arms — see the two-leg
+  section), so pointing triage at thinking would send it the wrong way.
+- A whole pack of `verifier_fail` rows is the one case where that failure mode
+  is **not** a model verdict — a sandboxed agent that dies in its constructor
+  reports exactly that shape.
 
 ## Per-scenario timeouts
 
