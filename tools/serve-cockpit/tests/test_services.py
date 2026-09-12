@@ -952,6 +952,62 @@ class TestLoadCatalog:
         await cd.enrich_weights([e], model_dir=str(tmp_path))
         assert e.weights_state == WEIGHTS_PRESENT
 
+    @pytest.mark.asyncio
+    async def test_weights_state_absent_when_nested_glob_variant_dir_removed(self, tmp_path):
+        """A variant whose verify_glob carries its own directory component (e.g.
+        subdir=glm-5.3-flash-gguf, verify_glob=UD-IQ4_XS/*.gguf) must read ABSENT once
+        that variant dir is deleted -- even while SIBLING variants keep the shared
+        parent on disk.
+
+        Regression: `base` was the shared PARENT, so `base.is_dir()` stayed true for as
+        long as any sibling existed and ABSENT was UNREACHABLE -- a cleanly deleted
+        variant reported PARTIAL forever, and the UI offered "Download resumes it" for
+        a 100-250 GB fresh pull with nothing to resume. Hit on glm-5.3-flash iq4xs /
+        iq3xxs; 9 of 87 weights entries carry a nested glob like this.
+        """
+        from club3090_cockpit.data import (
+            CatalogEntry, WEIGHTS_PRESENT, WEIGHTS_ABSENT,
+        )
+
+        listing = json.dumps([
+            {"model": "glm-5.3-flash", "variant": "unsloth-ud-iq4xs",
+             "subdir": "glm-5.3-flash-gguf", "hf_repo": "unsloth/x",
+             "size_gb": 100.0, "verify_glob": "UD-IQ4_XS/*.gguf",
+             "status": "experimental"},
+        ])
+        cd = CockpitData(ROOT, runner=full_runner(**{"weights.py list --json": ok(listing)}))
+        hf = tmp_path
+        parent = hf / "glm-5.3-flash-gguf"
+        variant = parent / "UD-IQ4_XS"
+        sibling = parent / "dflash2"          # a DIFFERENT variant sharing the parent
+        variant.mkdir(parents=True)
+        sibling.mkdir(parents=True)
+        (variant / "w.gguf").write_text("x")
+        (sibling / "d.gguf").write_text("x")
+
+        e = CatalogEntry(row=_variant_row_from_dict({
+            "slug": "llamacpp-club3090/glm53-flash-dual-iq4xs-moecache", "port": 8099,
+            "model": "glm-5.3-flash", "switch_engine": "llamacpp-club3090",
+            "launch_engine": "llamacpp-club3090", "engine": "llamacpp-club3090-v1.6",
+            "compose_dir": "models/glm-5.3-flash/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs",
+            "file": "moecache.yml",
+            "compose_path": "models/glm-5.3-flash/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/moecache.yml",
+            "kvcalc_key": "SKIP", "container": "c", "status": "experimental",
+            "ctx_label": "", "status_note": "",
+        }))
+        await cd.enrich_weights([e], model_dir=str(tmp_path))
+        assert e.weights_state == WEIGHTS_PRESENT
+
+        # Delete ONLY this variant. The shared parent survives via the sibling.
+        (variant / "w.gguf").unlink()
+        variant.rmdir()
+        assert parent.is_dir() and sibling.is_dir()          # parent still populated
+        await cd.enrich_weights([e], model_dir=str(tmp_path))
+        assert e.weights_state == WEIGHTS_ABSENT, (
+            f"cleanly-deleted nested-glob variant read {e.weights_state!r}; "
+            "ABSENT must be reachable even when siblings keep the parent alive"
+        )
+
     def test_download_progress_aggregates_core_and_companion(self, tmp_path):
         """Live-progress regression: progress must aggregate bytes across the WHOLE
         set (core + companions) / total size — so a core-already-present slug shows
