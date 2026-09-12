@@ -431,6 +431,10 @@ if [[ "$ENGINE_KIND" == "unknown" && "${CONTAINER:-}" != "none" ]] && command -v
     ENGINE_KIND="llamacpp"
   elif [[ "${container_image} ${container_name}" == *"vllm"* ]]; then
     ENGINE_KIND="vllm"
+  elif [[ "${container_image} ${container_name}" == *"sglang"* || "${container_image} ${container_name}" == *"lmsysorg"* ]]; then
+    # club-3090#1261: without this an SGLang container read as "unknown", which
+    # silently changed which spec-decode metrics bench.sh went looking for.
+    ENGINE_KIND="sglang"
   fi
 fi
 
