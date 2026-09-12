@@ -127,6 +127,12 @@ OPTIONS (extra)
                    --reasoning suite). Mutually exclusive with --enable-thinking.
                    Use for a clean all-off arm of a reasoning A/B. Also
                    settable via NO_THINKING=1 env.
+                   ⚠ hermesagent-20 is the outlier of those four: its multi-step
+                   agent scenarios can COLLAPSE to 0/20 with thinking forced off
+                   (#1269) while the other three degrade gracefully. The wrapper
+                   warns up front when the pack set contains it, and the
+                   structural-zero guard drops a 0/N pack out of the reported
+                   TOTAL (#1270). Avoid it entirely with --no-sandboxed.
   --thinking-max-tokens N
                    Forward to benchlocal-cli --thinking-max-tokens N. The
                    budget applies only to packs whose thinking gate resolves on
@@ -218,6 +224,11 @@ INSTALL benchlocal-cli (one-time)
 OUTPUT
   - Markdown table to stdout (paste-ready for BENCHMARKS quality rows)
   - JSON blob to results/quality/quality-<timestamp>.json (full detail)
+  - STRUCTURAL-ZERO GUARD block when ANY pack scored 0/N (#1270): both TOTALs
+    (valid subset + all packs, the latter marked "do not cite") plus the zeroed
+    pack's p50 as corroboration. Cause-agnostic and post-hoc; the per-rig
+    quality record is not published for such a run. verifier_fail rows are the
+    MODEL being wrong and keep counting — only a WHOLE pack at 0/N trips it.
   - Compact one-liner for the compose `Quality:` profile field, stamped with
     per-pack versions and run provenance (#981/#983E)
 
@@ -757,6 +768,10 @@ fi
 # Does a scenario selection touch the Docker-sandboxed packs? (drives the
 # same image preflight that --full gets — cli-40 probes are the primary use)
 SELECTION_HAS_SANDBOX=0
+# Set to 1 below when the sandbox-image preflight decides the sandbox packs
+# cannot run — a pack that will not run cannot collapse, so the #1269 notice
+# must not fire for it.
+SANDBOX_PACKS_SKIPPED=0
 if [[ ${#SCENARIOS[@]} -gt 0 || -n "$SCENARIOS_FILE" ]]; then
   _sel_lines="$(printf '%s\n' ${SCENARIOS[@]+"${SCENARIOS[@]}"})"
   if [[ -n "$SCENARIOS_FILE" ]]; then
@@ -766,6 +781,26 @@ if [[ ${#SCENARIOS[@]} -gt 0 || -n "$SCENARIOS_FILE" ]]; then
     SELECTION_HAS_SANDBOX=1
   fi
 fi
+
+# Will the resolved pack set include hermesagent-20? Mirrors how benchlocal-cli
+# resolves it (--pack > --sandboxed-only > selection > mode flag), so the #1269
+# notice below fires only for a run that genuinely contains the pack.
+# (if-forms, not `[[ ]] &&` — a false condition as the last command would trip set -e)
+_pack_set_includes_hermes() {
+  if [[ -n "$RESUME" ]]; then return 1; fi          # pack set restored from the journal; unknown out here
+  if [[ -n "$PACK" ]]; then
+    if [[ "$PACK" == "hermesagent-20" ]]; then return 0; fi
+    return 1
+  fi
+  if [[ "$NO_SANDBOX" == "1" || "$SANDBOX_PACKS_SKIPPED" == "1" ]]; then return 1; fi
+  if [[ ${#SCENARIOS[@]} -gt 0 || -n "$SCENARIOS_FILE" ]]; then
+    if command grep -qE '^hermesagent-20/' <<<"${_sel_lines:-}"; then return 0; fi
+    return 1
+  fi
+  if [[ "$SANDBOXED_ONLY" == "1" ]]; then return 0; fi
+  if [[ "$MODE" == "--full" ]]; then return 0; fi
+  return 1
+}
 
 if { [[ -z "$PACK" ]] && { [[ "$MODE" == "--full" && "$NO_SANDBOX" != "1" ]] || [[ "$SANDBOXED_ONLY" == "1" ]]; }; } || [[ "$SELECTION_HAS_SANDBOX" == "1" && "$NO_SANDBOX" != "1" ]]; then
   _sb_missing=()
@@ -830,6 +865,7 @@ except Exception:
       echo "  then re-run. For a no-Docker run instead:  bash scripts/quality-test.sh --medium" >&2
       exit 1
     fi
+    SANDBOX_PACKS_SKIPPED=1
     echo "[quality-test] ⚠  sandbox packs (BugFind / CLI / Hermes) will be SKIPPED — not available: ${_sb_missing[*]}" >&2
     echo "               They need pre-built Docker images that aren't auto-pulled. Build them once from a" >&2
     echo "               benchlocal-cli CHECKOUT (the build tooling isn't in the pip package):" >&2
@@ -1016,6 +1052,42 @@ fi
 if [[ "$NO_THINKING" == "1" ]]; then
   CLI_ARGS+=(--no-thinking)
   echo "[quality-test] thinking: disabled for every pack, ignoring per-pack defaults (non-canonical)"
+  # #1269: four packs default thinking ON (instructfollow-15, reasonmath-15,
+  # bugfind-15, hermesagent-20). Three degrade gracefully with thinking forced
+  # off; hermesagent-20 can COLLAPSE — @paulp83's instruct arm returned 0/20 at
+  # p50 2.40s where his thinking arm scored 14/20 at 10.36s on the same rig. A
+  # pack that takes ~10s when it works and returns uniformly in 2.4s is not
+  # failing the scenarios, it is not attempting them.
+  #
+  # Why the pack is NOT pre-dropped here:
+  #   1. The collapse is NOT a property of the combination. 46 saved runs in
+  #      results/quality/ carry hermesagent-20 with thinking resolved OFF; 44 of
+  #      them score 6-15/20 at healthy p50 (including the b9967 pin-bump off-leg
+  #      and a qwen3.8-27b off-leg at 14/20). Treating the pair as structurally
+  #      incompatible would discard measurements this repo cites.
+  #   2. benchlocal-cli has no pack-exclusion flag, and faking one by enumerating
+  #      the other packs' scenarios sets `selection` in the result JSON, i.e.
+  #      turns a canonical 8-pack run into a PARTIAL one (refused by history
+  #      ingestion / rescore without --allow-partial).
+  # So: warn loudly up front, and let the post-run structural-zero guard (#1270)
+  # drop it out of the TOTAL by OUTCOME if it does collapse.
+  if _pack_set_includes_hermes; then
+    echo "[quality-test] ⚠  --no-thinking + hermesagent-20 is a KNOWN-RISKY combination (#1269)." >&2
+    echo "               hermesagent-20 defaults thinking ON — its 20 scenarios are multi-step agent" >&2
+    echo "               tasks that need room to plan. With thinking forced off a model can return" >&2
+    echo "               uniformly in ~2s and score 0/20: not failing the scenarios, NOT ATTEMPTING" >&2
+    echo "               them. The other thinking-on packs (instructfollow-15 / reasonmath-15 /" >&2
+    echo "               bugfind-15) degrade gracefully instead — this one is the outlier." >&2
+    echo "               If it collapses this run it is EXCLUDED from the reported TOTAL and the" >&2
+    echo "               denominator drops by its 20 scenarios (--full: 150 → 130); see the" >&2
+    echo "               STRUCTURAL-ZERO GUARD block printed after the scoreboard." >&2
+    echo "               It is NOT pre-excluded: saved thinking-off runs on the reference rig do" >&2
+    echo "               score this pack 6-15/20, so a blanket drop would discard valid results." >&2
+    echo "               Avoid the risk entirely: drop --no-thinking (pack defaults keep hermes" >&2
+    echo "               thinking-on), or run the thinking-off arm over the deterministic packs" >&2
+    echo "               only (--no-sandboxed, or --medium)." >&2
+    echo >&2
+  fi
 fi
 # ---- reasoning switch: resolved by benchlocal-cli itself (its #131) ---------
 # WHICH request field turns reasoning off is model-specific, and an unrecognised
@@ -1082,6 +1154,142 @@ fi
 # Run; capture exit code so we can also try to emit the compact one-liner
 benchlocal-cli "${CLI_ARGS[@]}" || RC=$?
 RC="${RC:-0}"
+
+# ---- #1270: structural-zero guard — refuse a bare TOTAL when a pack scored 0/N
+# The #960 preflight above guards ONE cause of a zeroed pack (endpoint not
+# reachable from the sandbox container). @paulp83's #1253 endpoint WAS reachable,
+# so that preflight passed correctly and the damage happened anyway: his leg A
+# read 102/150 (68%) where the valid subset was 102/130 (78%) — ten points of
+# apparent instruct deficit that was one structurally-zeroed pack.
+#
+# Any cause produces the same misleading arithmetic: unreachable endpoint
+# (guarded above), thinking forced off on a thinking-default pack (#1269),
+# Docker dying mid-run, an image pull failure, a sandbox OOM, a pack version
+# mismatch. So this check is cause-AGNOSTIC — it fires on the OUTCOME, after the
+# results are in, whatever produced it. The 0/N is the trigger; latency is
+# printed as corroboration only and never gates the warning.
+#
+# ⚠️ NOT the same thing as verifier_fail. A verifier_fail row is the MODEL being
+# wrong, not the grader, and those keep counting toward both figures. Only a
+# WHOLE PACK scoring zero trips this.
+#
+# Exit contract of the probe below: 0 = nothing to report, 3 = a pack scored
+# 0/N (block printed), anything else = the probe itself broke and said so.
+ZERO_GUARD_RC=0
+if [[ -f "$JSON_OUT" ]]; then
+  python3 - "$JSON_OUT" "$NO_THINKING" <<'PYZERO' || ZERO_GUARD_RC=$?
+import json
+import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+path = sys.argv[1]
+wrapper_forced_off = len(sys.argv) > 2 and sys.argv[2] == "1"
+
+# Packs whose benchlocal-cli metadata sets `default_thinking: on`. Forcing
+# thinking off on one of these is #1269's mechanism, so the guard can name the
+# likely cause instead of shrugging. benchlocal-cli's per-pack metadata is the
+# source of truth; this mirrors the --no-thinking help text above.
+THINKING_DEFAULT_ON = {
+    "instructfollow-15",
+    "reasonmath-15",
+    "bugfind-15",
+    "hermesagent-20",
+}
+
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception as exc:
+    # Unreadable/truncated results must be LOUD. A silent skip here would make
+    # "guard found nothing" indistinguishable from "guard never ran".
+    print(
+        "[quality-test] WARN: structural-zero guard could not read %s (%s)" % (path, exc),
+        file=sys.stderr,
+    )
+    print(
+        "[quality-test]   the TOTAL above has NOT been checked for 0/N packs (#1270).",
+        file=sys.stderr,
+    )
+    sys.exit(0)
+
+# Only SCORED packs count. total == 0 means the pack never ran (sandbox
+# unavailable, stubbed metadata gate) — a skip, not a zero score.
+scored = [p for p in (data.get("packs") or []) if int(p.get("total") or 0) > 0]
+zeroed = [p for p in scored if int(p.get("passed") or 0) == 0]
+if not zeroed:
+    sys.exit(0)
+
+forced_off = data.get("thinking_mode") == "force-off" or wrapper_forced_off
+
+
+def fraction(passed, total):
+    if not total:
+        return "%d / 0" % passed
+    return "%d / %d (%d%%)" % (passed, total, round(100.0 * passed / total))
+
+
+all_passed = sum(int(p.get("passed") or 0) for p in scored)
+all_total = sum(int(p.get("total") or 0) for p in scored)
+valid = [p for p in scored if int(p.get("passed") or 0) > 0]
+valid_passed = sum(int(p.get("passed") or 0) for p in valid)
+valid_total = sum(int(p.get("total") or 0) for p in valid)
+
+bar = "=" * 74
+print()
+print(bar)
+print("⚠️  STRUCTURAL-ZERO GUARD (#1270) — a pack scored 0/N, so the bare TOTAL")
+print("    printed above is NOT citable.")
+print(bar)
+for pack in zeroed:
+    pid = pack.get("pack_id") or "?"
+    total = int(pack.get("total") or 0)
+    p50 = (pack.get("latency") or {}).get("p50")
+    p50_txt = "p50 %.2fs" % p50 if isinstance(p50, (int, float)) else "p50 n/a"
+    print(
+        "  %s scored 0/%d (%s, status=%s) — excluded from the TOTAL as a"
+        % (pid, total, p50_txt, pack.get("status") or "?")
+    )
+    print("    suspected structural failure, not as a model score.")
+    if forced_off and pid in THINKING_DEFAULT_ON:
+        print("    * check FIRST: thinking was forced OFF for this run and %s" % pid)
+        print("      defaults thinking ON (#1269). Its scenarios need room to plan; forced")
+        print("      thinking-off has been observed to make the pack return without attempting")
+        print("      them. Re-run it without --no-thinking to see whether the zero is real.")
+    else:
+        print("    * cause not determined here. Check: endpoint reachable from a container")
+        print("      (#960), Docker/sandbox health, sandbox image build, sandbox OOM, pack")
+        print("      version mismatch.")
+    print("    * %s is CORROBORATION only, never the trigger. A p50 far below this" % p50_txt)
+    print("      pack's own healthy figure means it failed FAST — returning without")
+    print("      attempting — rather than failing hard. Compare against a run that passed.")
+print()
+if valid_total:
+    print("  TOTAL (valid subset)  %s" % fraction(valid_passed, valid_total))
+else:
+    print("  TOTAL (valid subset)  none — every scored pack returned 0/N; the whole run")
+    print("                        is suspect, not just one pack.")
+print("  TOTAL (all packs)     %s   <- do not cite" % fraction(all_passed, all_total))
+print()
+print("  A whole pack at 0/N is a harness/config outcome until proven otherwise.")
+print("  Individual verifier_fail rows are the MODEL being wrong and DO keep counting")
+print("  toward both figures — this guard fires only on a whole pack scoring zero.")
+print(bar)
+sys.exit(3)
+PYZERO
+fi
+STRUCTURAL_ZERO=0
+case "$ZERO_GUARD_RC" in
+  0) ;;
+  3) STRUCTURAL_ZERO=1 ;;
+  *)
+    echo "[quality-test] WARN: the structural-zero guard (#1270) exited ${ZERO_GUARD_RC} — the" >&2
+    echo "               TOTAL above has NOT been checked for 0/N packs." >&2
+    ;;
+esac
 
 # ---- emit compact one-liner suitable for compose Quality: schema field -------
 
@@ -1180,7 +1388,14 @@ fi
 # quality run's score supersedes in c3 (append-only history kept). resolve-serving
 # maps the served container -> slug; unmatched/bare-metal runs skip cleanly. This
 # writes a quality-ONLY record (no TPS) that MERGES with the bench TPS record.
-if [[ "${QUALITY_RECORD:-1}" == "1" && -f "${JSON_OUT:-}" ]] && command -v python3 >/dev/null 2>&1; then
+# Same defect, a different consumer: the record's 8pk field IS a bare TOTAL
+# (c3 renders it verbatim), so a run that tripped the structural-zero guard has
+# no citable figure to publish. Skip it and say so — the skip and this notice
+# are the same branch.
+if [[ "$STRUCTURAL_ZERO" == "1" && "${QUALITY_RECORD:-1}" == "1" && -f "${JSON_OUT:-}" ]]; then
+  echo "[quality-test] per-rig quality record NOT written: a pack scored 0/N, so this run has no citable TOTAL (#1270)."
+fi
+if [[ "$STRUCTURAL_ZERO" != "1" && "${QUALITY_RECORD:-1}" == "1" && -f "${JSON_OUT:-}" ]] && command -v python3 >/dev/null 2>&1; then
   _qt_score="$(python3 - "$JSON_OUT" <<'PYQ' 2>/dev/null
 import json, sys
 try:

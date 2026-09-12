@@ -115,6 +115,20 @@ wrapper invocation, wire it or route it through `--`.
 
 ## ⭐ The canonical two-leg run
 
+> ⚠️ **`--no-thinking` × `hermesagent-20` (#1269).** Four packs default thinking
+> ON (`instructfollow-15`, `reasonmath-15`, `bugfind-15`, `hermesagent-20`).
+> Three degrade gracefully with thinking forced off; `hermesagent-20` can
+> **collapse** — its scenarios are multi-step agent tasks that need room to
+> plan, and a model with no room can return uniformly in ~2s and score 0/20 (not
+> failing the scenarios, not attempting them). The wrapper prints a specific
+> notice up front whenever `--no-thinking` meets a pack set containing that
+> pack, and the structural-zero guard above drops the pack out of the reported
+> TOTAL if it does collapse (`--full`: 150 → 130). It is **not** pre-excluded:
+> saved thinking-off runs on the reference rig score `hermesagent-20` in the
+> 6-15/20 range, so a blanket exclusion would discard valid measurements. To
+> avoid the risk entirely, run the thinking-off leg over the deterministic packs
+> (`--no-sandboxed`).
+
 This is the recipe every announcement quotes and the one to copy if you're producing a number
 anyone else will read. Substitute your slug.
 
@@ -405,6 +419,41 @@ Failure reasons are surfaced in three places, cheapest first:
 `failure_mode` is one of: `verifier_fail` (answer wrong / below threshold) · `timeout` · `agent_runner_timeout` / `agent_runner_crashed` (sandboxed agentic packs) · `server_error` / `http_error` / `model_endpoint_unreachable` (serving problem, not a quality signal) · `result_json_malformed` · `wrong_answer` · `verifier_not_implemented` (stub, excluded from scoring).
 
 The breakdown is **terminal-only** — `quality-test.sh` does not tee it to a log file, but the same data persists in the saved JSON.
+
+### A whole pack at `0 / N` — the structural-zero guard (#1270)
+
+A pack that scores `0 / N` is almost never a model score: it is the harness, the
+config or the endpoint. But the TOTAL counts those N as model failures, and the
+result is plausible enough to publish — @paulp83's #1253 leg A read **102/150
+(68%)** where the valid subset was **102/130 (78%)**, ten points of apparent
+instruct deficit from one zeroed pack.
+
+`quality-test.sh` therefore checks the **outcome** after every run, whatever
+caused it, and refuses to leave the bare TOTAL standing:
+
+```
+⚠️  STRUCTURAL-ZERO GUARD (#1270) — a pack scored 0/N, so the bare TOTAL
+    printed above is NOT citable.
+  hermesagent-20 scored 0/20 (p50 2.40s, status=ok) — excluded from the TOTAL …
+  TOTAL (valid subset)  102 / 130 (78%)
+  TOTAL (all packs)     102 / 150 (68%)   <- do not cite
+```
+
+- **The `0/N` is the trigger.** Latency is printed as corroboration only: a p50
+  far below that pack's own healthy figure means it failed *fast* (returned
+  without attempting) rather than *hard*. It never gates the warning.
+- **Not the same as `verifier_fail`.** An individual `verifier_fail` row is the
+  MODEL being wrong, not the grader — those keep counting toward both figures.
+  Only a whole pack scoring zero trips the guard.
+- A pack with `total == 0` (sandbox unavailable, stubbed metadata gate) never
+  ran. That is a skip, not a zero, and does not trip the guard.
+- The run's **exit code is unchanged** — a genuine 0/N is possible, so the guard
+  reports rather than fails. What it does refuse is *publication*: the per-rig
+  quality record (whose 8pk field is a bare TOTAL) is not written for that run.
+- Causes seen so far: endpoint not reachable from the sandbox container (#960,
+  also caught by a preflight), thinking forced off on a thinking-default pack
+  (#1269), Docker dying mid-run, sandbox image build failure, sandbox OOM, pack
+  version mismatch.
 
 ## Per-scenario timeouts
 
