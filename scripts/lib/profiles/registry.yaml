@@ -3846,6 +3846,54 @@ entries:
         presence_penalty: 0.0
         repetition_penalty: 1.0
     sampler_default_mode: thinking
+  vllm/qwen38-27b-dual-hypermax:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: fp8
+    workload: long-ctx-single
+    engine: vllm-stable
+    drafter: syvai-qwen38-dflash2
+    spec_method: null
+    kv_format: fp8_e4m3
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    chat_template: qwen38-reasoning-effort
+    tp: 2
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: 0.95
+    compose_path: models/qwen3.8-27b/vllm/compose/dual/fp8/dflash2-fp8-fa2.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: true
+    required_engine_features: []
+    default_port: 8144
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "HYPERMAX: SM86-only FA2 target and DFlash2 attention, FP8 KV, full context and vision. Version-checked vLLM 0.29.0 sidecar; first boot builds pinned CUDA sources. Fixed KV budget; external draft/workspace costs are not modeled by kv-calc. Validation pending; --force."
+    weights_companions:
+      - dflash2
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    sampler_profiles:
+      instruct:
+        temperature: 0.7
+        top_p: 0.8
+        top_k: 20
+        min_p: 0.0
+        presence_penalty: 1.5
+        repetition_penalty: 1.0
+      thinking:
+        temperature: 1.0
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
+        presence_penalty: 0.0
+        repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-supermax:
     origin: core
     model: qwen3.8-27b

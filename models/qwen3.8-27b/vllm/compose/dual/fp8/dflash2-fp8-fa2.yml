@@ -1,0 +1,162 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B (official FP8 weights)
+#   Topology:  Dual RTX 3090 PCIe (TP=2, no NVLink, SM86 only)
+#   Drafter:   DFlash2 W4A16 n=7; FA2 attention and FP8 KV
+#   KV:        fp8_e4m3; BF16 compute and bounded BF16 prefill workspace
+#   Vision:    yes; one image up to about 4 MP, no video
+#   Max ctx:   262144
+#   Genesis:   none
+#   Status:    🧪 Experimental
+#   Best for:  HYPERMAX — full-context single-sequence FA2 on dual 3090
+# ---------------------------------------------------------------------------
+# Sibling              KV          Attention         Default context
+# dflash2.yml          bf16        stock FA2         65536
+# dflash2-fp8.yml      fp8_e4m3    stock FlashInfer  147456
+# dflash2-fp8-fa2.yml  fp8_e4m3    custom FA2        262144
+# Registry: vllm/qwen38-27b-dual-hypermax
+#
+# The FLASHINFER enum supplies the cache contract; target and draft attention
+# execute FA2 kernels. GDN and vision retain their normal implementations.
+# First boot downloads pinned sources and compiles two CUDA extensions.
+# The installer refuses backend-source drift. See patches/fa2-fp8kv-sm86/README.md
+# and docs/UPSTREAM.md. This profile does not change the model default.
+# Requires-homogeneous-arch: true
+# ===========================================================================
+services:
+  vllm-qwen38-27b-dual-hypermax:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.29.0}
+    container_name: ${ESTATE_CONTAINER:-vllm-qwen38-27b-dual-hypermax}
+    user: "0:${DOCKER_GID:-1000}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ipc: host
+    shm_size: "16gb"
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8144}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface:ro
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+      - ../../../cache/fa2-fp8kv:/opt/club3090/fa2-cache
+      - ../../../patches/fa2-fp8kv-sm86:/etc/club3090/fa2:ro
+      - ../../../patches/qwen38-reasoning-effort-template/chat_template.jinja:/root/.cache/huggingface/qwen3.8-27b-fp8/chat_template.jinja:ro
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
+      - ../../../patches/vllm-51581-dflash-dense-kv:/etc/club3090/dflash-dense-kv:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - CUDA_VISIBLE_DEVICES
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
+      - ENABLE_THINKING=${ENABLE_THINKING:-true}
+      - TEMP=${TEMP:-}
+      - TEMPERATURE=${TEMPERATURE:-}
+      - TOP_P=${TOP_P:-}
+      - TOP_K=${TOP_K:-}
+      - MIN_P=${MIN_P:-}
+      - PRESENCE_PENALTY=${PRESENCE_PENALTY:-}
+      - REPEAT_PENALTY=${REPEAT_PENALTY:-}
+      - MAX_JOBS=${MAX_JOBS:-2}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_USE_DEEP_GEMM
+      - VLLM_USE_FLASHINFER_SAMPLER=0
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_ENFORCE_EAGER
+      - NCCL_CUMEM_ENABLE=0
+      # Set to 0 only after proving PCIe peer access on the host.
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      - OMP_NUM_THREADS=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        umask 0002
+        export PYTHONUTF8="$${PYTHONUTF8:-1}"
+        bash /etc/club3090/pr48375/install.sh
+        bash /etc/club3090/gdn-async-order/install.sh
+        bash /etc/club3090/dflash-dense-kv/install.sh
+        bash /etc/club3090/fa2/install.sh
+        source /etc/club3090/fa2-runtime.env
+        _spec_n="$${SPEC_N:-7}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] Fix: SPEC_N must be a non-negative integer." >&2; exit 1 ;;
+        esac
+        DRAFTER=/root/.cache/huggingface/qwen3.8-27b-dflash2-w4a16
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"method\":\"dflash\",\"model\":\"$$DRAFTER\",\"num_speculative_tokens\":$$_spec_n,\"attention_backend\":\"FLASHINFER\",\"kv_cache_dtype\":\"fp8_e4m3\"}")
+        fi
+        _temp="$${TEMP:-$${TEMPERATURE:-}}"
+        if [ "$${ENABLE_THINKING:-true}" = true ]; then
+          : "$${_temp:=1.0}" "$${TOP_P:=0.95}" "$${PRESENCE_PENALTY:=0.0}"
+        else
+          : "$${_temp:=0.7}" "$${TOP_P:=0.80}" "$${PRESENCE_PENALTY:=1.5}"
+        fi
+        # presence_penalty must also be sent by clients; vLLM ignores this
+        # field in override-generation-config (same contract as siblings).
+        SAMPLER_ARGS=(--override-generation-config "{\"temperature\":$$_temp,\"top_p\":$${TOP_P},\"top_k\":$${TOP_K:-20},\"min_p\":$${MIN_P:-0.0},\"presence_penalty\":$${PRESENCE_PENALTY},\"repetition_penalty\":$${REPEAT_PENALTY:-1.0}}")
+        exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.8-27b-fp8
+      - --served-model-name
+      - qwen3.8-27b
+      - qwen3.8-27b-fp8
+      - --quantization
+      - fp8
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "2"
+      - --disable-custom-all-reduce
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      - --kv-cache-memory-bytes
+      - "${KV_CACHE_MEMORY_BYTES:-6335076762}"
+      - --max-num-seqs
+      - "1"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-2048}"
+      - --long-prefill-token-threshold
+      - "0"
+      - --kv-cache-dtype
+      - fp8_e4m3
+      - --attention-backend
+      - FLASHINFER
+      - --limit-mm-per-prompt
+      - '{"image":1,"video":0}'
+      - --mm-processor-kwargs
+      - '{"size":{"longest_edge":4194304,"shortest_edge":65536}}'
+      - --compilation-config
+      - '{"cudagraph_capture_sizes":[1,2,4,8],"max_cudagraph_capture_size":8}'
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": ${ENABLE_THINKING:-true}, "reasoning_effort": "${REASONING_EFFORT:-low}"}'
+      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
+      - --enable-chunked-prefill
+      - "${PROMPT_TOKENS_DETAILS_ARG:---enable-prompt-tokens-details}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

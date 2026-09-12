@@ -11,6 +11,36 @@ schema_version: 1
 # all new tooling MUST read `delivery_mechanism`/`delivery_spec` instead. Do
 # not add new compose wiring decisions to the boolean block.
 patches:
+  - id: fa2-fp8kv-sm86
+    model: [qwen3.8-27b]
+    files:
+      - models/qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86/install.sh
+      - models/qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86/install.py
+      - models/qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86/fa2_sm86_adapter.py
+    load_bearing_when:
+      - composes: [vllm/qwen38-27b-dual-hypermax]
+        reason: "Stock FA2 cannot consume FP8 KV on SM86. This sidecar uses pinned FA2 E4M3 kernels for target/draft attention and bounded native FA2 prefill."
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86/install.sh
+      mounted_at: /etc/club3090/fa2
+      invoke: bash /etc/club3090/fa2/install.sh
+      invoked_before: vllm-serve
+    drift_guard:
+      kind: boot
+      check: "install.py requires vLLM 0.29.0 and the exact stock flashinfer.py SHA256; archives and cached libraries are SHA256-checked. Drift refuses boot."
+    capability: fa2-fp8kv-sm86
+    foundational: false
+    upstream:
+      ref: AntonProkopyev/fa2-fp8kv-sm86@ef08ffb9a23f9493435fdd81e3addba6ad4f5fff
+      status: experimental
+      drop_when: "Stock vLLM provides a validated SM86 FA2 FP8 KV path."
+    status: unverified
   - id: qwen-sglang-autoround-fused-bf16
     deprecated_on: "2026-06-05"
     deprecation_reason: "SGLang path parked; no functional compose uses it (#254)."
@@ -295,6 +325,7 @@ patches:
           - vllm/qwen38-27b-dual-max
           - vllm/qwen38-27b-multi4-max
           - vllm/qwen38-27b-multi8-max
+          - vllm/qwen38-27b-dual-hypermax
           - vllm/qwen38-27b-dual-supermax
           - vllm/qwen38-27b-multi4-supermax
           - vllm/qwen38-27b-multi8-supermax
@@ -354,6 +385,7 @@ patches:
       - composes:
           - vllm/qwen38-27b-dual-superfast
           - vllm/qwen38-27b-dual-ultrafast
+          - vllm/qwen38-27b-dual-hypermax
           - vllm/qwen38-27b-dual-supermax
           - vllm/qwen38-27b-dual-ultramax
           - vllm/qwen38-27b-multi4-superfast
@@ -405,6 +437,7 @@ patches:
           - vllm/qwen-27b-multi-fast
           - vllm/qwen-27b-multi-max
           - vllm/tess-dual-w4a16
+          - vllm/qwen38-27b-dual-hypermax
           - vllm/qwen38-27b-dual-max
           - vllm/qwen38-27b-multi4-max
         reason: "Vendored upstream fix vllm#48375 for vllm#43559 (MTP x prefix-caching corrupts recurrent-state KV on Qwen3-Next hybrids; ~20% acc drop reproduced upstream on 35B-A3B): MambaManager.find_longest_cache_hit receives drop_eagle_block but silently ignores it, so the final matched page's Mamba/GDN state snapshot may reflect draft tokens verification later rejected. The 9-line fix lowers the hit-search ceiling by one page. ACTIVE by default since 2026-07-17: the same PR flipped the pair-capable composes back to --enable-prefix-caching (the #720 off-default cost 7.4x TTFT on long prefixes per kevinb361's production data, and the pair-clean evidence stack is now: upstream repro+fix+tests, kevin's 7-day production at 89.5% hit rate on v0.25.x, our 6-arm probe matrix). Opt-out: PREFIX_CACHE_ARG=--no-enable-prefix-caching makes the patched path dormant again. On-rig validation 2026-07-17: no-harm on both hybrid families (27B + 35B-A3B, MTP n=3 + prefix-ON: 12/12 post-agent tool-call probes clean per arm with prefix_cache_hits_total asserted; accept-len 3.2-3.9 intact; ~5% fewer hit tokens = the by-design one-block reduction). Full 6-arm matrix: club-3090#710."
@@ -542,6 +575,7 @@ patches:
       - models/qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order/patch_gdn_mtp_async_spec_order.py
     load_bearing_when:
       - composes:
+          - vllm/qwen38-27b-dual-hypermax
           - vllm/qwen38-27b-dual-fast
           - vllm/qwen38-27b-multi4-fast
           - vllm/qwen38-27b-multi8-fast

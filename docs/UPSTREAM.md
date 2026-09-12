@@ -8,6 +8,13 @@ If you're adding a new compose that depends on an unmerged upstream patch (volum
 
 ---
 
+## FA2 FP8 KV on Ampere SM86
+
+| Dependency | Status | Local dependency / removal condition |
+|---|---|---|
+| [fa2-fp8kv-sm86, ef08ffb](https://github.com/AntonProkopyev/fa2-fp8kv-sm86/tree/ef08ffb9a23f9493435fdd81e3addba6ad4f5fff) | ⚫ Experimental external fork | `vllm/qwen38-27b-dual-hypermax` builds this pinned source plus CUTLASS `62750a2b75c802660e4894434dc55e839f322277`. FP8 E4M3 is KV storage; attention uses BF16 on SM86. The local sidecar checks the vLLM 0.29.0 backend hash before installing. Remove when stock vLLM provides a validated equivalent. DFlash quantized-KV and GDN patches remain separate dependencies tracked below. |
+
+
 ## How rows work
 
 Each row covers one upstream link with: **title • status • our dependency / impact • workaround (if any)**.

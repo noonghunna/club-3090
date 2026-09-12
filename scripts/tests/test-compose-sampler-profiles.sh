@@ -234,6 +234,8 @@ def argv_under(text, env):
         etc = dp / "etc" / "club3090"
         etc.mkdir(parents=True, exist_ok=True)
         (etc / "detect_nvlink.sh").write_text("_NVLINK_ENABLED=0\n")
+        # FA2 installer exports library paths; this test stubs CUDA installation.
+        (etc / "fa2-runtime.env").write_text("", encoding="utf-8")
         for sub in set(re.findall(r"/etc/club3090/([\w.-]+)/install\.sh", body)):
             (etc / sub).mkdir(parents=True, exist_ok=True)
             (etc / sub / "install.sh").write_text("#!/bin/bash\nexit 0\n")

@@ -197,6 +197,8 @@ def argv_under(text, env):
         etc = dp / "etc" / "club3090"
         etc.mkdir(parents=True, exist_ok=True)
         (etc / "detect_nvlink.sh").write_text("_NVLINK_ENABLED=0\n")
+        # Library-path exports are irrelevant to the speculative CLI contract.
+        (etc / "fa2-runtime.env").write_text("", encoding="utf-8")
         # any `bash /etc/club3090/<x>/install.sh` the entrypoint runs
         for sub in set(re.findall(r"/etc/club3090/([\w.-]+)/install\.sh", body)):
             (etc / sub).mkdir(parents=True, exist_ok=True)
