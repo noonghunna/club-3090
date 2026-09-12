@@ -928,11 +928,12 @@ fi
 # Engine class — drives which probes run inside the container body. Inferred
 # from container name; user can override with ENGINE_KIND=vllm|llamacpp env var.
 case "${ENGINE_KIND:-}" in
-  vllm|llamacpp|unknown) ;;  # respect user override
+  vllm|llamacpp|sglang|unknown) ;;  # respect user override (sglang: club-3090#1261)
   *)
     case "$CONTAINER" in
-      vllm-*)      ENGINE_KIND="vllm" ;;
-      llama-cpp-*) ENGINE_KIND="llamacpp" ;;
+      vllm-*)         ENGINE_KIND="vllm" ;;
+      llama-cpp-*)    ENGINE_KIND="llamacpp" ;;
+      sglang-*|sgl-*) ENGINE_KIND="sglang" ;;   # club-3090#1261
       club3090-*)
         container_image=$(docker ps --filter "name=$CONTAINER" --format '{{.Image}}' 2>/dev/null | head -1)
         case "$container_image" in

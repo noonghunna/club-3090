@@ -18,6 +18,7 @@ calib_engine_for_container() {
   case "$1" in
     vllm-*)                 echo "vllm" ;;
     llama-cpp-*|ik-llama-*) echo "llamacpp" ;;
+    sglang-*|sgl-*)         echo "sglang" ;;   # club-3090#1261
     *)                      echo "unknown" ;;
   esac
 }

@@ -473,9 +473,11 @@ detect_engine() {
     vllm-*)   echo "vllm"; return 0 ;;
     sglang-*) echo "sglang"; return 0 ;;
   esac
+  # sglang-*/sgl-* added club-3090#1261 — see the long note in verify-full.sh.
   case "$CONTAINER" in
     vllm-*)      echo "vllm"; return 0 ;;
-    llama-cpp-*) echo "llamacpp"; return 0 ;;
+    llama-cpp-*|ik-llama-*) echo "llamacpp"; return 0 ;;
+    sglang-*|sgl-*) echo "sglang"; return 0 ;;
   esac
   echo "unknown"
 }

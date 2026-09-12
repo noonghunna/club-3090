@@ -139,10 +139,18 @@ detect_engine() {
     sglang-*)  echo "sglang"; return 0 ;;
     b[0-9]*)   echo "llamacpp"; return 0 ;;   # llama-server build str: b10454[-hash]
   esac
-  # Hint 3: container name pattern as a fallback (cheap, no extra HTTP)
+  # Hint 3: container name pattern as a fallback (cheap, no extra HTTP).
+  # ⚠️ sglang-* was MISSING here until club-3090#1261. SGLang does not set a
+  # `sglang-`-prefixed system_fingerprint, so hint 2 never matches it and every
+  # SGLang run fell through to "unknown" — which meant the `case "$ENGINE_KIND"`
+  # dispatch below skipped straight past the SGLang branch into the vLLM one and
+  # SKIPPED the acceptance check. A dead DFlash2 drafter (sglang#39087) leaves
+  # output correct and only collapses decode, so that skip is silent. The prefix
+  # is the same one rebench-full.sh and club3090-env.sh already use.
   case "$CONTAINER" in
     vllm-*)      echo "vllm"; return 0 ;;
-    llama-cpp-*) echo "llamacpp"; return 0 ;;
+    llama-cpp-*|ik-llama-*) echo "llamacpp"; return 0 ;;
+    sglang-*|sgl-*) echo "sglang"; return 0 ;;
   esac
   echo "unknown"
 }
