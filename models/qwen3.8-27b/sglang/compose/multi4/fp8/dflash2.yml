@@ -4,8 +4,12 @@
 #              OFFICIAL Qwen/Qwen3.8-27B-FP8 — block-quantised e4m3, ~29 GB.
 #   Engine:    SGLang STOCK v0.5.19 (`lmsysorg/sglang:v0.5.19`) — NO PATCHES.
 #   Topology:  4x GPU (TP=4) — NOT the reference rig
-#   Drafter:   DFlash2 EXTERNAL block-drafter (syv-ai W4A16, compressed-tensors,
-#              5 layers, `DFlash2DraftModel`) — NOT the in-checkpoint MTP head.
+#   Drafter:   DFlash2 EXTERNAL block-drafter, 5 layers, `DFlash2DraftModel`
+#              — NOT the in-checkpoint MTP head. DEFAULT is the z-lab BF16
+#              drafter (`DRAFTER_DIR=…/qwen3.8-27b-dflash2-zlab-bf16`,
+#              `DRAFT_QUANT=unquant`). The syv-ai W4A16 compressed-tensors
+#              drafter is HISTORY, not the default — it drafted garbage
+#              (sglang#39087); see Provenance.
 #   KV:        fp8_e4m3 — same as the MTP sibling; full 262K fits because fp8 KV
 #              is half the bytes of bf16.
 #   Vision:    ✅ tower present. The MTP sibling scored verify-full 4/4 on vision
