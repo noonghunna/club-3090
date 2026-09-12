@@ -293,7 +293,22 @@ services:
       # 15-38% on agent traffic (bench-agentic), flatter TTFT-vs-ctx growth
       # (6.8x vs 9.7x); decode-neutral, soak PASS (0 leak). ⚠️ align mode is
       # upstream-EXPERIMENTAL + adds ~100ms cold-start TTFT (precopy JIT). Disable
-      # with MAMBA_CACHE_MODE=none. pmu is inert unless align is active.
+      # with MAMBA_CACHE_MODE=none.
+      # ⚠️ CORRECTED 2026-09-11 (club-3090#1246): pmu is inert unless align is
+      # active — AND inert whenever the MTP drafter is on, which is the default
+      # on this compose. Measured on vllm/qwen38-27b-dual-max (v0.27.1; 7 prompt
+      # sizes, 2 arms separated by a reboot, every prompt UUID-prefixed so none
+      # is a prefix of another): with MTP n=3 reuse snaps to the attention-block
+      # boundary and loses one block, an exact 7/7 fit for
+      #     cached_tokens = max(0, (floor(N/B) - 1) * B)
+      # where B is that slug's block size (1,600 on the one measured). With
+      # SPEC_N=0 the same prompts reuse ~99.7% at exact 16-token granularity —
+      # pmu does what it advertises only with the drafter OFF. Consequence:
+      # prefix reuse is EXACTLY ZERO below 2*B (~3.2K tokens), and ~21% of
+      # reusable tokens are lost at 10-14K. ⚠️ B is per-slug and only dual/fp8
+      # was measured — don't quote 1,600 for this compose without checking.
+      # NOT a reason to drop MTP: it buys decode throughput, and which side wins
+      # end-to-end is UNBENCHED.
       - --mamba-cache-mode
       - "${MAMBA_CACHE_MODE:-align}"
       - --prefix-match-unit
