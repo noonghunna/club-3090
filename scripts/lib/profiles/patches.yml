@@ -17,6 +17,8 @@ patches:
       - models/qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86/install.sh
       - models/qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86/install.py
       - models/qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86/fa2_sm86_adapter.py
+      - models/qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86/check_context.py
+      - models/qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86/check_vision_context.py
     load_bearing_when:
       - composes: [vllm/qwen38-27b-dual-hypermax]
         reason: "Stock FA2 cannot consume FP8 KV on SM86. This sidecar uses pinned FA2 E4M3 kernels for target/draft attention and bounded native FA2 prefill."
