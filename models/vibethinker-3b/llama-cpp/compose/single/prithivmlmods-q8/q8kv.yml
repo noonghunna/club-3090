@@ -68,7 +68,7 @@
 #   LLAMACPP_IMAGE   engine image        (default: rolling server-cuda; launcher injects engine pin)
 services:
   llama-cpp-vibethinker-3b:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b10236}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:6ac921528d613deb0fd142c654735e594a446a1c37a069eeab08d8fd974d4bec}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-vibethinker-3b}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:

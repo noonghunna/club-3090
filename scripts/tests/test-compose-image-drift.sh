@@ -39,8 +39,21 @@ from scripts.lib.profiles.compat import load_profiles
 PENDING_254 = set()
 
 profiles = load_profiles()
-pat = re.compile(r'image:\s*\$\{VLLM_IMAGE:-([^}]+)\}')
+# ANY `<ENGINE>_IMAGE` var, not just VLLM_IMAGE. Until 2026-09-12 this regex was
+# VLLM_IMAGE-only, so 53 fixed literals across LLAMACPP_IMAGE / SGLANG_IMAGE /
+# IK_LLAMA_IMAGE / BEELLAMA_IMAGE / VLLM_OMNI_IMAGE had NO drift guard at all --
+# more unguarded than guarded. Found when the llama.cpp mainline pin bump turned up
+# qwen3.6-35b-a3b/.../morikomorizz-q6kp/mtp.yml still on server-cuda-b9570 while its
+# engine had moved to b10236 five weeks earlier. Negative control for the widening: a
+# planted stale LLAMACPP_IMAGE + SGLANG_IMAGE literal made the PRE-widening gate
+# report "ok"; after widening it REDS on both.
+# Safe to take the first match per compose: verified 0 composes carry >1 FIXED image
+# literal, so there is no sidecar ambiguity. If that changes, compare the literal
+# whose registry/repo matches the engine spec, not merely the first one found.
+pat = re.compile(r'image:\s*\$\{([A-Z_]+_IMAGE):-([^}]+)\}')
 drift, checked, pending, deprecated = [], 0, [], 0
+foreign = []
+by_var = {}
 for slug, entry in COMPOSE_REGISTRY.items():
     if entry.get("status") == "deprecated":
         deprecated += 1
@@ -65,10 +78,26 @@ for slug, entry in COMPOSE_REGISTRY.items():
     m = pat.search(p.read_text())
     if not m:
         continue
-    literal = m.group(1).strip()
+    img_var, literal = m.group(1), m.group(2).strip()
     if "${" in literal:
         continue  # templated (e.g. nightly-${VLLM_NIGHTLY_SHA}) — self-syncs
+    # Compare only within the SAME repository. A literal from a DIFFERENT repo is a
+    # deliberately different engine image, not a stale tag of this engine's image --
+    # e.g. the ik-llama/ornith* slugs carry ghcr.io/ikawrakow/ik-llama-cpp while their
+    # registry entry says engine=llama-cpp-local, because no ik-llama engine profile
+    # exists yet. Flagging those would be a false positive whose only "fix" is to point
+    # an ik-llama compose at ggml-org/llama.cpp. Reported below as a NOTE instead, so the
+    # registry oddity stays visible rather than silently passing. (Precedent: the docs
+    # slug gate had to be narrowed after a wider scope produced ~200 false positives.)
+    def _repo(ref):
+        base = ref.split("@", 1)[0]
+        return base.rsplit(":", 1)[0] if ":" in base.rsplit("/", 1)[-1] else base
+    if _repo(literal) != _repo(spec):
+        foreign.append(f"  {slug}: compose image `{literal}` is from a different repo than "
+                       f"engine `{eng_id}` spec `{spec}` — no engine profile for it? ({cpath})")
+        continue
     checked += 1
+    by_var[img_var] = by_var.get(img_var, 0) + 1
     if literal != spec:
         drift.append(
             f"  {slug}: compose default `{literal}` != engine `{eng_id}` install.spec "
@@ -76,7 +105,7 @@ for slug, entry in COMPOSE_REGISTRY.items():
         )
 
 if drift:
-    print("IMAGE DRIFT — a fixed compose `${VLLM_IMAGE:-…}` default disagrees with the")
+    print("IMAGE DRIFT — a fixed compose `${<ENGINE>_IMAGE:-…}` default disagrees with the")
     print("engine its slug resolves to (direct `docker compose` would serve a stale image):")
     print("\n".join(drift))
     print("Fix: bump the compose literal to the engine install.spec (or vice-versa).")
@@ -84,7 +113,9 @@ if drift:
 if pending:
     print(f"NOTE: {len(pending)} slug(s) exempt pending #254 engine migration: {', '.join(sorted(pending))}")
 print(
-    f"test-compose-image-drift: ok ({checked} fixed-image vLLM composes match their engine spec; "
+    ("NOTE: different-repo engine images (informational, not drift):\n" + "\n".join(foreign) + "\n" if foreign else "") +
+    f"test-compose-image-drift: ok ({checked} fixed-image composes match their engine spec "
+    f"[{', '.join(f'{k}={v}' for k, v in sorted(by_var.items()))}]; "
     f"{deprecated} deprecated skipped, {len(pending)} pending-#254 exempt)"
 )
 PY
