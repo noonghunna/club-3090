@@ -38,7 +38,7 @@ latest=$(gh api "$PKG" --paginate \
 [ -n "$latest" ] && [ "$latest" != "null" ] || { echo "ERROR: no commit-pinned '${CHANNEL}-*' tag found on $REPO_IMG" >&2; exit 4; }
 new_spec="$REPO_IMG:$latest"
 
-cur_spec=$(grep -oE "spec: \S+" "$PROFILE" | head -1 | awk '{print $2}')
+cur_spec=$(command grep -oE "spec: \S+" "$PROFILE" | head -1 | awk '{print $2}')
 echo "[pin-bump] channel : $CHANNEL"
 echo "[pin-bump] current : $cur_spec"
 echo "[pin-bump] latest  : $new_spec"

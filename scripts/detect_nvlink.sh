@@ -29,7 +29,7 @@
 
 NVLINK_MODE="${NVLINK_MODE:-auto}"
 _P2P_LEVEL=NVL   # NCCL_P2P_LEVEL used when _NVLINK_ENABLED=1 (overridden by pcie_p2p)
-_GPU_COUNT=$(nvidia-smi -L 2>/dev/null | grep -c 'GPU' || echo 0)
+_GPU_COUNT=$(nvidia-smi -L 2>/dev/null | command grep -c 'GPU' || echo 0)
 
 # What may we honestly claim about vLLM's custom all-reduce? Only "ON" for <=2
 # GPUs, or for a FULLY-CONNECTED NVLink mesh: vLLM hard-disables its custom
@@ -148,7 +148,7 @@ case "$NVLINK_MODE" in
     GPU_COUNT="$_GPU_COUNT"
     if [ "$GPU_COUNT" -gt 2 ]; then
       # Check topology matrix for any NVLink connections (e.g. 2 bridges on 4 cards).
-      if nvidia-smi topo -m 2>/dev/null | grep -qP '\bNV[0-9]+\b'; then
+      if nvidia-smi topo -m 2>/dev/null | command grep -qP '\bNV[0-9]+\b'; then
         _NVLINK_ENABLED=1
         if _nvlink_full_mesh; then
           echo "[nvlink] $GPU_COUNT GPUs detected — NVLink full mesh, enabling NVLink mode"

@@ -20,7 +20,7 @@
 
 # GPU count (host).
 p2p_gpu_count() {
-  nvidia-smi -L 2>/dev/null | grep -c '^GPU ' || echo 0
+  nvidia-smi -L 2>/dev/null | command grep -c '^GPU ' || echo 0
 }
 
 # Host capability: "nvlink" | "pcie_p2p" | "none".
@@ -31,7 +31,7 @@ p2p_host_capability() {
     echo none
     return 0
   fi
-  if nvidia-smi topo -m 2>/dev/null | grep -qP '\bNV[0-9]+\b'; then
+  if nvidia-smi topo -m 2>/dev/null | command grep -qP '\bNV[0-9]+\b'; then
     echo nvlink
     return 0
   fi
@@ -275,7 +275,7 @@ p2p_bar1_min() {
 # True (0) when `topo -p2p r` reports CNS on any pair — the stock GeForce
 # driver's software refusal, the one gate a patched module actually lifts.
 p2p_reports_cns() {
-  nvidia-smi topo -p2p r 2>/dev/null | grep -qE '(^|[[:space:]])CNS([[:space:]]|$)'
+  nvidia-smi topo -p2p r 2>/dev/null | command grep -qE '(^|[[:space:]])CNS([[:space:]]|$)'
 }
 
 # p2p_opportunity_hint <gpu_count> <host_capability>

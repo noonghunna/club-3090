@@ -28,7 +28,7 @@ THP_MEMINFO="${THP_MEMINFO:-/proc/meminfo}"
 thp_setting() {
   local f="$THP_SYSFS_DIR/$1"
   [[ -r "$f" ]] || { echo "n/a"; return; }
-  sed -n 's/.*\[\([a-z_+]*\)\].*/\1/p' "$f" 2>/dev/null | head -1 | grep . || echo "n/a"
+  sed -n 's/.*\[\([a-z_+]*\)\].*/\1/p' "$f" 2>/dev/null | head -1 | command grep . || echo "n/a"
 }
 
 # thp_meminfo_kib <Key> -> kB value, or empty

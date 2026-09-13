@@ -29,7 +29,7 @@ OWUI="${2:-${OWUI_CONTAINER:-open-webui}}"
 DOCKER="${DOCKER:-docker}"
 log(){ echo "[owui-unregister] $*"; }
 
-if ! $DOCKER ps --format '{{.Names}}' 2>/dev/null | grep -qx "$OWUI"; then
+if ! $DOCKER ps --format '{{.Names}}' 2>/dev/null | command grep -qx "$OWUI"; then
   log "Open WebUI ('$OWUI') not running — skipping (nothing to unregister)."
   exit 0
 fi

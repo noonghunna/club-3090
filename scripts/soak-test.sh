@@ -272,10 +272,10 @@ auto_container() {
   # otherwise take the first. The `|| true` is load-bearing under set -euo pipefail.
   local lines name
   lines=$(docker ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null \
-    | grep -E '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(8000|8080|30000)/tcp' || true)
+    | command grep -E '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(8000|8080|30000)/tcp' || true)
   [[ -z "$lines" ]] && return 0
   name=$(printf '%s\n' "$lines" \
-    | grep -E '^(vllm-|llama-cpp-|ik-llama-|sglang-|beellama-)' | head -1 || true)
+    | command grep -E '^(vllm-|llama-cpp-|ik-llama-|sglang-|beellama-)' | head -1 || true)
   [[ -z "$name" ]] && name=$(printf '%s\n' "$lines" | head -1)
   printf '%s\n' "${name%%|*}"
 }

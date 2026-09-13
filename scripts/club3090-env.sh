@@ -42,7 +42,7 @@ while IFS=' ' read -r cid cname; do
   fi
 done < <(docker ps --filter 'status=running' \
   --format '{{.ID}} {{.Names}}' 2>/dev/null \
-  | grep -E '(vllm-|llamacpp-|sglang-|beellama-|ik-llama-|llama-cpp-)' \
+  | command grep -E '(vllm-|llamacpp-|sglang-|beellama-|ik-llama-|llama-cpp-)' \
   | head -1 || true)
 
 if [[ -z "$CONTAINER_ID" ]]; then

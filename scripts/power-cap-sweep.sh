@@ -207,7 +207,7 @@ while [ $# -gt 0 ]; do
     --include-commit) INCLUDE_COMMIT=1; shift ;;
     --no-reset)    RESET=0; shift ;;
     -h|--help)
-      sed -n '1,/^set -euo/p' "$0" | grep '^#' | sed 's/^# \?//'
+      sed -n '1,/^set -euo/p' "$0" | command grep '^#' | sed 's/^# \?//'
       exit 0 ;;
     *)             echo "unknown arg: $1" >&2; exit 1 ;;
   esac
@@ -290,7 +290,7 @@ gpu_indices_from_container() {
   # uses all GPUs / can't be determined (caller then falls back to all GPUs).
   local c="$1" nvd
   nvd="$(docker inspect "$c" 2>/dev/null \
-    | grep -o 'NVIDIA_VISIBLE_DEVICES=[^"]*' | head -1 | cut -d= -f2)"
+    | command grep -o 'NVIDIA_VISIBLE_DEVICES=[^"]*' | head -1 | cut -d= -f2)"
   case "${nvd:-}" in
     ""|all|void|none) echo "" ;;
     *) echo "$nvd" | tr -d ' ' ;;

@@ -116,12 +116,12 @@ elif ! docker inspect "${CONTAINER}" >/dev/null 2>&1; then
   echo "  (skipped — container '${CONTAINER}' not found; if your container has a different name, set CONTAINER=...)"
 else
   logs="$(docker logs "${CONTAINER}" 2>&1)"
-  if echo "$logs" | grep -q "\[Genesis\] FAILED"; then
+  if echo "$logs" | command grep -q "\[Genesis\] FAILED"; then
     fail "Genesis apply_all reported FAILED patch(es)" \
          "Inspect: docker logs ${CONTAINER} 2>&1 | grep -E 'Genesis.*FAILED' | head"
-  elif echo "$logs" | grep -q "apply_all elapsed"; then
+  elif echo "$logs" | command grep -q "apply_all elapsed"; then
     pass "Genesis patches applied (apply_all completed clean)"
-  elif echo "$logs" | grep -q "\[Genesis\] applied:"; then
+  elif echo "$logs" | command grep -q "\[Genesis\] applied:"; then
     pass "Genesis patches applied (apply_all may still be running)"
   else
     echo "  (warn — no Genesis marker in logs; container may have been restarted. Continuing.)"
@@ -143,7 +143,7 @@ resp="$(curl -sf -m ${TMO_BASIC} "${URL}/v1/chat/completions" \
   }")" || fail "completion request failed" "Check docker logs ${CONTAINER}"
 
 content="$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['choices'][0]['message']['content'])" 2>/dev/null || true)"
-if echo "$content" | grep -qi "Paris"; then
+if echo "$content" | command grep -qi "Paris"; then
   pass "reply contains 'Paris': $(echo "$content" | head -c 70)..."
 else
   fail "reply didn't mention Paris: $(echo "$content" | head -c 80)" \
@@ -202,16 +202,16 @@ except Exception as e:
     print(f'__PARSE_ERROR__: {e}')
 " 2>&1)"
 
-if echo "$tool_calls" | grep -q "__INLINED__"; then
+if echo "$tool_calls" | command grep -q "__INLINED__"; then
   fail "model emitted <tool_call> as inline text (tool_calls[] is empty)" \
        "Genesis Patch 12 (Qwen3 tool_call fix) did not apply. Re-check the container logs and pin the image digest. README § Troubleshooting has the full chain."
-elif echo "$tool_calls" | grep -q "__NONE__"; then
+elif echo "$tool_calls" | command grep -q "__NONE__"; then
   fail "model answered without invoking the tool" \
        "May be a model-behavior issue (it chose not to call) rather than a patch issue. Try rephrasing the prompt or lowering temperature. Raw content: $(echo "$tool_calls" | tail -1)"
-elif echo "$tool_calls" | grep -q "__PARSE_ERROR__"; then
+elif echo "$tool_calls" | command grep -q "__PARSE_ERROR__"; then
   fail "couldn't parse the response JSON" \
        "Response was: $(echo "$tool_resp" | head -c 400)"
-elif echo "$tool_calls" | grep -qi "get_weather"; then
+elif echo "$tool_calls" | command grep -qi "get_weather"; then
   pass "tool_calls[] populated, includes get_weather:"
   echo "$tool_calls" | head -20 | sed 's/^/      /'
 else

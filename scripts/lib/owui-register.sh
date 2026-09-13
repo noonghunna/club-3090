@@ -28,7 +28,7 @@ PORT="${1:?usage: owui-register.sh <port> [owui_container]}"
 OWUI="${2:-${OWUI_CONTAINER:-open-webui}}"
 log(){ echo "[owui-register] $*"; }
 
-if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$OWUI"; then
+if ! docker ps --format '{{.Names}}' 2>/dev/null | command grep -qx "$OWUI"; then
   log "Open WebUI ('$OWUI') not running — skipping (it's optional; start OWUI + re-run with --owui to wire)."
   exit 0
 fi

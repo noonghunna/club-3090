@@ -636,7 +636,7 @@ echo ""
 # @easel, and others. Safe no-op on bare-metal (only runs when /proc/version
 # contains "microsoft").
 COMPOSE_DIR="${ROOT_DIR}/models/${MODEL_NAME}/vllm/compose"
-if [[ -f /proc/version ]] && grep -qi microsoft /proc/version 2>/dev/null; then
+if [[ -f /proc/version ]] && command grep -qi microsoft /proc/version 2>/dev/null; then
   ENV_FILE="${COMPOSE_DIR}/.env"
   if [[ -d "${COMPOSE_DIR}" ]]; then
     if [[ ! -f "${ENV_FILE}" ]]; then
