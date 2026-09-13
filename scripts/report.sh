@@ -15,7 +15,8 @@
 #   bash scripts/report.sh --agentic         # adds bench-agentic.sh curve-shape output (~8 min estimate)
 #   bash scripts/report.sh --full            # ALL five: verify + stress + soak + bench + agentic (~43 min estimate, the canonical "everything" pass for cross-rig contributions)
 #   bash scripts/report.sh --studio          # adds AI Studio container log tails (ComfyUI + director + …) — for image/video/audio generation bugs (~2 sec)
-#   bash scripts/report.sh --no-redact       # disable path/host/user redaction
+#   bash scripts/report.sh --engine-args     # adds the engine's FULL startup dump to the resolved-config section (~8 KB on SGLang)
+#   bash scripts/report.sh --no-redact       # disable path/host/user redaction (the engine-env ALLOWLIST still applies)
 #   bash scripts/report.sh --container NAME  # override container auto-detection
 #   bash scripts/report.sh --full-calibration  # kv-calc matrix for ALL models (default: only the running model; skipped on llama.cpp/ik_llama)
 #   bash scripts/report.sh > my-rig.md       # capture for paste
@@ -56,6 +57,10 @@ DO_SOAK=0
 DO_BENCH=0
 DO_AGENTIC=0
 DO_STUDIO=0
+# club-3090#1265: the engine's own startup dump is ~8 KB on one line for SGLang,
+# and reports already bump against issue-body limits — so it is opt-in, and
+# deliberately NOT folded into --full.
+DO_ENGINE_ARGS=0
 REDACT=1
 CONTAINER="${CONTAINER:-}"
 # KV-calc calibration is scoped to the running model by default (#168). Set to 1
@@ -78,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --bench) DO_BENCH=1; shift ;;
     --agentic) DO_AGENTIC=1; shift ;;
     --studio) DO_STUDIO=1; shift ;;
+    --engine-args) DO_ENGINE_ARGS=1; shift ;;
     --full) DO_VERIFY=1; DO_STRESS=1; DO_SOAK=1; DO_BENCH=1; DO_AGENTIC=1; shift ;;
     --no-redact) REDACT=0; shift ;;
     --container) CONTAINER="${2:-}"; shift 2 ;;
@@ -1267,6 +1273,44 @@ else
   docker logs "$CONTAINER" 2>&1 | head -200 | redact | details "First 200 lines of docker logs"
   fi  # end of vLLM/llamacpp engine branch
 fi  # end of "if no container running"
+
+# ---------------------------------------------------------------------------
+# Engine configuration (resolved)  — club-3090#1265
+# ---------------------------------------------------------------------------
+# Everything above says what the RIG is. This says what the ENGINE RAN, and
+# whether it was a shipped recipe.
+#
+# ⛔ Deliberately NOT a compose dump. A compose is a TEMPLATE (${VAR:-default}),
+#    so its text shows defaults rather than what ran; and the launchers resolve
+#    the engine image from scripts/lib/profiles/engines/<engine>.yml and INJECT
+#    it, overriding the compose's own `image:` line — so a compose dump would
+#    report the WRONG engine image in every report. The reasoning, and the
+#    measured proof of the interpolation/escape rules this relies on, are in
+#    scripts/lib/resolved_config.py's module docstring.
+#
+# The renderer is python3 STDLIB-ONLY on purpose: it reads the catalog through
+# compose_registry.py, not registry-emit.sh --json, because the emit path may
+# need PyYAML and a community rig without it is exactly the rig whose report we
+# most need (#584).
+section "Engine configuration (resolved)"
+if ! have python3; then
+  echo "_python3 not available — cannot resolve the engine configuration._"
+elif ! have docker; then
+  echo "_docker not available — the engine configuration is captured from \`docker inspect\`, so nothing to report._"
+elif ! docker info >/dev/null 2>&1; then
+  echo "_docker daemon unreachable — the engine configuration is captured from \`docker inspect\`, so nothing to report._"
+else
+  _rc_args=(section --root "$REPO_ROOT" --container "${CONTAINER:-}" --engine-kind "${ENGINE_KIND:-unknown}")
+  # `if`, not `A && B`: at statement level a false AND-list is a non-zero exit,
+  # which an errexit shell would treat as a failure (the repo's own idiom).
+  if [[ $DO_ENGINE_ARGS -eq 1 ]]; then _rc_args+=(--engine-args); fi
+  # stderr is folded in on purpose: a traceback here must be VISIBLE in the
+  # report, not swallowed into an empty-looking section (#584's lesson).
+  if ! python3 "$REPO_ROOT/scripts/lib/resolved_config.py" "${_rc_args[@]}" 2>&1 | redact; then
+    echo
+    echo "_⚠️ The resolved-config renderer failed (output above). Engine configuration NOT captured._"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Recent failed boot attempts
