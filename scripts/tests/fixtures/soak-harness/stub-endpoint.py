@@ -21,8 +21,12 @@ Plan directive syntax (one per line, '#' comments and blanks ignored):
                    comfortably measurable.
   narrow[:VRAM]    autoregressive fast burst — first content delta, ~80 ms
                    gap, then the rest + usage. Window is under the harness's
-                   100 ms measurability floor but nowhere near zero. This is
-                   the #849 shape that must KEEP printing decode_tps=0.0.
+                   100 ms client-timing floor but nowhere near zero. The #849
+                   shape: must NOT be reclassified as canvas, and since #1267
+                   must render as `decode_tps=n/a` + the window width rather
+                   than a 0.0 indistinguishable from a silent-empty turn. With
+                   STUB_TPOT_TPS set it is also the #1268 shape — a turn the
+                   engine counter can measure and the SSE window cannot.
   canvas[:VRAM]    canvas granularity — the entire response arrives in ONE
                    chunk carrying content + usage, so the decode window is
                    zero-width. The #809 shape.
@@ -34,6 +38,17 @@ Plan directive syntax (one per line, '#' comments and blanks ignored):
 The optional trailing VRAM value is written to <vram-file> BEFORE the response
 is produced, so the fake nvidia-smi the harness calls after each turn reports
 it. That is how a test reproduces "the baseline was taken on a corpse".
+
+Env:
+  STUB_TPOT_TPS   When set to a float, the stub also serves a Prometheus
+                  /metrics page carrying a `vllm:time_per_output_token_seconds`
+                  histogram (plus a decoy histogram and a `_bucket` line that
+                  must NOT be mistaken for `_sum`/`_count`). Its totals advance
+                  by one request's worth on every chat completion, arranged so
+                  the (_count, _sum) DELTA across a turn is exactly this many
+                  tokens per second. That is the engine-counter path of #1268.
+                  Unset (the default) makes /metrics 404, which is the
+                  client-timed fallback path.
 """
 
 import json
@@ -50,6 +65,8 @@ PLAN_IDX = [0]
 PLAN_LOCK = threading.Lock()
 VRAM_FILE = [""]
 ALIVE_FILE = [""]
+# (count, sum_seconds) for the fake time_per_output_token_seconds histogram.
+TPOT = [0.0, 0.0]
 
 
 def next_directive():
@@ -64,6 +81,35 @@ def next_directive():
 def set_vram(value):
     if value is not None and VRAM_FILE[0]:
         pathlib.Path(VRAM_FILE[0]).write_text(str(value) + "\n", encoding="utf-8")
+
+
+def advance_tpot(completion_tokens):
+    """Book `completion_tokens` decode steps at exactly STUB_TPOT_TPS tok/s."""
+    tps = float(os.environ.get("STUB_TPOT_TPS") or 0)
+    if tps <= 0 or completion_tokens <= 0:
+        return
+    with PLAN_LOCK:
+        TPOT[0] += completion_tokens
+        TPOT[1] += completion_tokens / tps
+
+
+def metrics_page():
+    """A Prometheus page shaped like vLLM's, including traps for the parser:
+    a `_bucket` line (must not be read as sum/count) and a decoy histogram
+    (must not be read as the TPOT one)."""
+    with PLAN_LOCK:
+        count, total = TPOT[0], TPOT[1]
+    return (
+        "# HELP vllm:e2e_request_latency_seconds End to end request latency.\n"
+        "# TYPE vllm:e2e_request_latency_seconds histogram\n"
+        'vllm:e2e_request_latency_seconds_sum{model_name="stub-model"} 9999.0\n'
+        'vllm:e2e_request_latency_seconds_count{model_name="stub-model"} 1.0\n'
+        "# HELP vllm:time_per_output_token_seconds Inter-token latency.\n"
+        "# TYPE vllm:time_per_output_token_seconds histogram\n"
+        'vllm:time_per_output_token_seconds_bucket{le="0.01",model_name="stub-model"} 777\n'
+        'vllm:time_per_output_token_seconds_sum{model_name="stub-model"} %r\n'
+        'vllm:time_per_output_token_seconds_count{model_name="stub-model"} %r\n'
+    ) % (total, count)
 
 
 def sse(payload):
@@ -93,6 +139,17 @@ class Handler(BaseHTTPRequestHandler):
         pass  # keep the test output clean
 
     def do_GET(self):
+        if self.path.rstrip("/").endswith("/metrics"):
+            if not (os.environ.get("STUB_TPOT_TPS") or "").strip():
+                self.send_error(404)
+                return
+            payload = metrics_page().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if self.path.rstrip("/").endswith("/v1/models"):
             if ALIVE_FILE[0] and not pathlib.Path(ALIVE_FILE[0]).exists():
                 # The "engine" has crashed: still listening, no longer serving.
@@ -154,6 +211,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
                 return
+
+            advance_tpot(usage["completion_tokens"])
 
             if kind == "canvas":
                 # ONE chunk carrying the whole canvas + usage: the decode window
