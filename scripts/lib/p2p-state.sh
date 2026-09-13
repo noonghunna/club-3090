@@ -18,9 +18,25 @@
 #   pcie_p2p forced, grant UNVERIFIED  -> WARN (looked engaged, wasn't — #688;
 #                                        driver didn't confirm peer access)
 
-# GPU count (host).
+# GPU count (host). Prints EXACTLY one line: a non-negative integer.
+#
+# The `|| echo 0` this used to carry was not a fallback, it was the bug (#1279):
+# `grep -c` PRINTS `0` *and* exits 1 when it matches nothing, so on any rig where
+# `nvidia-smi -L` fails or lists no GPUs, BOTH sides fired and the function
+# returned the two-line string "0\n0". Every consumer does arithmetic on it
+# (`[[ "$(p2p_gpu_count)" -ge 2 ]]`), which then dies with
+# `[[: 0 0: syntax error in expression` — pasted straight into the diagnostic
+# report a user is about to send us. A caller-side `|| echo 0` cannot rescue it
+# either: the function already exited 0, its last command having been the echo.
+#
+# So: capture the count, keep grep's no-match exit off `set -e`/pipefail, and
+# print one integer whatever happened. `command grep` because the interactive
+# shell shims grep to ugrep.
 p2p_gpu_count() {
-  nvidia-smi -L 2>/dev/null | grep -c '^GPU ' || echo 0
+  local n
+  n="$(nvidia-smi -L 2>/dev/null | command grep -c '^GPU ')" || true
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  printf '%s\n' "$n"
 }
 
 # Host capability: "nvlink" | "pcie_p2p" | "none".
