@@ -14,13 +14,14 @@
 # Echoes: vllm | llamacpp | unknown
 # "llamacpp" intentionally covers BOTH mainline llama.cpp and ik_llama — both
 # use the ggml allocator, so kv-calc's vLLM memory model applies to neither.
+# Delegates to the canonical resolver (club-3090#1282) — do NOT re-inline the
+# prefix arms here; scripts/lib/engine-kind.sh is the single source of truth.
 calib_engine_for_container() {
-  case "$1" in
-    vllm-*)                 echo "vllm" ;;
-    llama-cpp-*|ik-llama-*) echo "llamacpp" ;;
-    sglang-*|sgl-*)         echo "sglang" ;;   # club-3090#1261
-    *)                      echo "unknown" ;;
-  esac
+  if ! declare -F engine_kind_from_container >/dev/null 2>&1; then
+    # shellcheck source=engine-kind.sh
+    source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/engine-kind.sh"
+  fi
+  engine_kind_from_container "$1"
 }
 
 # Map a running container name to its kv-calc model id (a MODEL_SPECS key in

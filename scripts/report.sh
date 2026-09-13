@@ -95,6 +95,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 # KV-calc calibration helpers (engine/model detection + per-model filter, #168).
+# Canonical engine classification (club-3090#1282) — single source of truth.
+# shellcheck source=lib/engine-kind.sh
+source "$REPO_ROOT/scripts/lib/engine-kind.sh"
 source "$REPO_ROOT/scripts/lib/report_calib.sh"
 # shellcheck source=lib/p2p-state.sh
 source "$REPO_ROOT/scripts/lib/p2p-state.sh"
@@ -1029,19 +1032,13 @@ fi
 case "${ENGINE_KIND:-}" in
   vllm|llamacpp|sglang|unknown) ;;  # respect user override (sglang: club-3090#1261)
   *)
-    case "$CONTAINER" in
-      vllm-*)         ENGINE_KIND="vllm" ;;
-      llama-cpp-*)    ENGINE_KIND="llamacpp" ;;
-      sglang-*|sgl-*) ENGINE_KIND="sglang" ;;   # club-3090#1261
-      club3090-*)
-        container_image=$(docker ps --filter "name=$CONTAINER" --format '{{.Image}}' 2>/dev/null | head -1)
-        case "$container_image" in
-          *llama.cpp*|*llama-cpp*) ENGINE_KIND="llamacpp" ;;
-          *vllm*)                  ENGINE_KIND="vllm" ;;
-          *)                       ENGINE_KIND="unknown" ;;
-        esac ;;
-      *)           ENGINE_KIND="unknown" ;;
-    esac ;;
+    # Prefix arms live in scripts/lib/engine-kind.sh (club-3090#1282).
+    ENGINE_KIND="$(engine_kind_from_container "$CONTAINER")"
+    if [[ "$ENGINE_KIND" == "unknown" ]]; then
+      # club3090-* and any other non-conventional name: fall back to the image.
+      container_image=$(docker ps --filter "name=$CONTAINER" --format '{{.Image}}' 2>/dev/null | head -1)
+      ENGINE_KIND="$(engine_kind_from_image "$container_image")"
+    fi ;;
 esac
 
 if [[ "$CONTAINER" == "none" ]]; then

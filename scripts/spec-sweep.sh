@@ -69,20 +69,20 @@ PROMPT='Write a detailed 800-word essay on the history and impact of the printin
 [[ -n "$SWEEP_N" ]] || { echo "SWEEP_N is required (e.g. SWEEP_N=\"0 1 2 4\") — 0 = spec-OFF baseline arm." >&2; exit 2; }
 
 # --- engine resolution (registry when SLUG given; else llama.cpp fast path) --
+# ⚠️ This used to be a PRIVATE two-valued classifier
+# (`"vllm" if eng.startswith("vllm") else "llamacpp"`), which silently routed
+# every SGLang slug into the llama.cpp fast path — club-3090#1282. The rules now
+# live in scripts/lib/engine-kind.sh and NOTHING here re-implements them; a
+# guard test fails if a private classifier reappears anywhere under scripts/.
+# shellcheck source=lib/engine-kind.sh
+source "${ROOT_DIR}/scripts/lib/engine-kind.sh"
 ENGINE_FAMILY="llamacpp"
 if [[ -n "$SLUG" ]]; then
-  ENGINE_FAMILY="$(python3 - "$SLUG" <<'PY'
-import sys
-sys.path.insert(0, "scripts/lib/profiles")
-from compose_registry import COMPOSE_REGISTRY
-e = COMPOSE_REGISTRY.get(sys.argv[1])
-if e is None:
-    print("unknown"); raise SystemExit
-eng = e["engine"]
-print("vllm" if eng.startswith("vllm") else "llamacpp")
-PY
-)"
-  [[ "$ENGINE_FAMILY" != "unknown" ]] || { echo "unknown SLUG '$SLUG' (not in compose_registry)" >&2; exit 2; }
+  ENGINE_FAMILY="$(ENGINE_KIND_ROOT="$ROOT_DIR" engine_kind_from_slug "$SLUG")"
+  # "unknown" now also covers a slug whose engine id we do not recognise. The
+  # old code silently called that llamacpp and swept the wrong path; refusing
+  # is the point of the fix.
+  [[ "$ENGINE_FAMILY" != "unknown" ]] || { echo "unknown SLUG '$SLUG' (not in compose_registry, or its engine id is unrecognised — add it to scripts/lib/engine-kind.sh)" >&2; exit 2; }
   if [[ -z "$URL" ]]; then
     PORT="$(python3 - "$SLUG" <<'PY'
 import sys
@@ -96,13 +96,15 @@ PY
 elif [[ -z "$URL" ]]; then
   URL="http://localhost:8020"
 fi
-[[ "$ENGINE_FAMILY" == "vllm" && -z "$SLUG" ]] && { echo "vLLM sweeps need SLUG (reboot per arm)." >&2; exit 2; }
+# Everything that is not llama.cpp reboots per arm, so it needs a SLUG. Written
+# as != llamacpp (not == vllm) so a newly added engine inherits the safe path.
+[[ "$ENGINE_FAMILY" != "llamacpp" && -z "$SLUG" ]] && { echo "$ENGINE_FAMILY sweeps need SLUG (reboot per arm)." >&2; exit 2; }
 
 echo "[spec-sweep] engine=$ENGINE_FAMILY url=$URL n in { $SWEEP_N } gens=$GENS x ${GEN_TOKENS}tok temp=$TEMP"
 
 if [[ "$SWEEP_DRY" == "1" ]]; then
   for n in $SWEEP_N; do
-    if [[ "$ENGINE_FAMILY" == "vllm" ]]; then
+    if [[ "$ENGINE_FAMILY" != "llamacpp" ]]; then
       echo "[sweep:dry] would: SPEC_N=$n switch.sh $SLUG -> measure n=$n"
     else
       echo "[sweep:dry] would: per-request speculative.n_max=$n against $URL (no reboot)"
@@ -282,7 +284,9 @@ if [[ "$ENGINE_FAMILY" == "llamacpp" ]]; then
     exit 3
   fi
 else
-  # --- vLLM: reboot per arm ----------------------------------------------------
+  # --- vLLM / SGLang: reboot per arm -------------------------------------------
+  # SGLang lands here (not the llama.cpp fast path) as of club-3090#1282;
+  # _measure_vllm_arm reads its `accept rate:` / `accept len:` lines (#1249/#1252).
   # --force + restore-on-exit trap (same rationale as the llama.cpp reboot path
   # above): a status-gated slug (experimental/incubating) would otherwise be
   # REFUSED by switch.sh AFTER the old container is torn down, and set -e would

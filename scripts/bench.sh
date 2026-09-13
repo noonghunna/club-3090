@@ -288,6 +288,11 @@ fi
 # Auto-detect running container + port (URL/CONTAINER env vars still win).
 # See scripts/preflight.sh::preflight_autodetect_endpoint.
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# Canonical engine classification (club-3090#1282). Sourced UNCONDITIONALLY —
+# it was briefly nested under the registry-lookup guard, which would have left
+# engine_kind_* undefined at the call site if that sibling were absent.
+# shellcheck source=lib/engine-kind.sh
+source "${ROOT_DIR}/scripts/lib/engine-kind.sh"
 if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
   # shellcheck source=preflight.sh
   source "${ROOT_DIR}/scripts/preflight.sh"
@@ -427,15 +432,12 @@ ENGINE_KIND="${ENGINE_KIND:-unknown}"
 if [[ "$ENGINE_KIND" == "unknown" && "${CONTAINER:-}" != "none" ]] && command -v docker >/dev/null 2>&1 && docker inspect "${CONTAINER}" >/dev/null 2>&1; then
   container_image="$(docker inspect --format '{{.Config.Image}}' "${CONTAINER}" 2>/dev/null || true)"
   container_name="$(docker inspect --format '{{.Name}}' "${CONTAINER}" 2>/dev/null || true)"
-  if [[ "${container_image} ${container_name}" == *"llama.cpp"* || "${container_image} ${container_name}" == *"llama-cpp"* ]]; then
-    ENGINE_KIND="llamacpp"
-  elif [[ "${container_image} ${container_name}" == *"vllm"* ]]; then
-    ENGINE_KIND="vllm"
-  elif [[ "${container_image} ${container_name}" == *"sglang"* || "${container_image} ${container_name}" == *"lmsysorg"* ]]; then
-    # club-3090#1261: without this an SGLang container read as "unknown", which
-    # silently changed which spec-decode metrics bench.sh went looking for.
-    ENGINE_KIND="sglang"
-  fi
+  # club-3090#1261 gave SGLang its arm here; club-3090#1282 moved the rules to
+  # scripts/lib/engine-kind.sh so a new engine is added in ONE place. Image
+  # first, then the container name — both are just evidence for the same rules.
+  ENGINE_KIND="$(engine_kind_from_image "${container_image}")"
+  [[ "$ENGINE_KIND" == "unknown" ]] && ENGINE_KIND="$(engine_kind_from_image "${container_name}")"
+  [[ "$ENGINE_KIND" == "unknown" ]] && ENGINE_KIND="$(engine_kind_from_container "${container_name#/}")"
 fi
 
 PP_MODE="log"
