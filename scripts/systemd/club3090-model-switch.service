@@ -13,6 +13,13 @@
 # The token + model port are read from the repo-root .env via EnvironmentFile
 # (CLUB3090_API_TOKEN / VLLM_API_KEY, PORT, MODEL_DIR, …), so switch.sh's child
 # `docker compose` inherits the same environment the CLI uses.
+#
+# Self-healing knobs (all optional; defaults are sensible) can go in .env too:
+#   MODEL_SWITCH_WATCHDOG=1  MODEL_SWITCH_WATCH_INTERVAL_S=15  MODEL_SWITCH_HEAL_GRACE_S=60
+#   MODEL_SWITCH_BOOT_GRACE_S=300  MODEL_SWITCH_MAX_HEAL_FAILURES=3  (see the README).
+# StateDirectory= gives the service /var/lib/club3090-model-switch (owned by User=) and
+# exports $STATE_DIRECTORY, which server.py uses to persist the desired-model state so
+# healing survives a service restart.
 [Unit]
 Description=club-3090 model-switch HTTP control plane
 After=docker.service
@@ -26,6 +33,9 @@ WorkingDirectory=/opt/club-3090
 # Leading '-' = optional: a fresh checkout has no root .env yet (loopback + a
 # token passed another way still works). Add the token/port here for the tailnet.
 EnvironmentFile=-/opt/club-3090/.env
+# Persisted desired-model state (server.py reads $STATE_DIRECTORY) →
+# /var/lib/club3090-model-switch, so self-healing survives a restart.
+StateDirectory=club3090-model-switch
 ExecStart=/usr/bin/python3 /opt/club-3090/tools/model-switch/server.py
 Restart=on-failure
 RestartSec=3
