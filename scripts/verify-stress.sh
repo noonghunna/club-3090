@@ -329,6 +329,10 @@ trap finalize_save_json EXIT
 # Auto-detect running container + port (URL/CONTAINER env vars still win).
 # See scripts/preflight.sh::preflight_autodetect_endpoint.
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# Canonical engine classification (club-3090#1282). Sourced unconditionally:
+# the rules live in ONE place and every consumer delegates to them.
+# shellcheck source=lib/engine-kind.sh
+source "${ROOT_DIR}/scripts/lib/engine-kind.sh"
 
 # --- per-rig #249 record: self-tee stdout so the ceiling-ladder line (the ctx
 # ceiling this stress run validates) can be parsed at the end for the corpus
@@ -469,17 +473,14 @@ detect_engine() {
     -H 'Content-Type: application/json' \
     -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":1}" 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('system_fingerprint','') or '')" 2>/dev/null)"
-  case "$fp" in
-    vllm-*)   echo "vllm"; return 0 ;;
-    sglang-*) echo "sglang"; return 0 ;;
-  esac
-  # sglang-*/sgl-* added club-3090#1261 — see the long note in verify-full.sh.
-  case "$CONTAINER" in
-    vllm-*)      echo "vllm"; return 0 ;;
-    llama-cpp-*|ik-llama-*) echo "llamacpp"; return 0 ;;
-    sglang-*|sgl-*) echo "sglang"; return 0 ;;
-  esac
-  echo "unknown"
+  local k
+  k="$(engine_kind_from_fingerprint "$fp")"
+  [[ "$k" != "unknown" ]] && { echo "$k"; return 0; }
+  # Container-name fallback. sglang-*/sgl-* added club-3090#1261; the arms
+  # themselves now live in scripts/lib/engine-kind.sh (club-3090#1282) so a new
+  # engine is added in ONE place — see the long note in verify-full.sh.
+  engine_kind_from_container "$CONTAINER"
+  return 0
 }
 ENGINE_KIND="$(detect_engine)"
 

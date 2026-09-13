@@ -77,6 +77,10 @@ done
 # Auto-detect running container + port (URL/CONTAINER env vars still win).
 # See scripts/preflight.sh::preflight_autodetect_endpoint.
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# Canonical engine classification (club-3090#1282). Sourced unconditionally:
+# the rules live in ONE place and every consumer delegates to them.
+# shellcheck source=lib/engine-kind.sh
+source "${ROOT_DIR}/scripts/lib/engine-kind.sh"
 if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
   # shellcheck source=preflight.sh
   source "${ROOT_DIR}/scripts/preflight.sh"
@@ -134,11 +138,9 @@ detect_engine() {
     -H 'Content-Type: application/json' \
     -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":1}" 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('system_fingerprint','') or '')" 2>/dev/null)"
-  case "$fp" in
-    vllm-*)    echo "vllm"; return 0 ;;
-    sglang-*)  echo "sglang"; return 0 ;;
-    b[0-9]*)   echo "llamacpp"; return 0 ;;   # llama-server build str: b10454[-hash]
-  esac
+  local k
+  k="$(engine_kind_from_fingerprint "$fp")"
+  [[ "$k" != "unknown" ]] && { echo "$k"; return 0; }
   # Hint 3: container name pattern as a fallback (cheap, no extra HTTP).
   # ⚠️ sglang-* was MISSING here until club-3090#1261. SGLang does not set a
   # `sglang-`-prefixed system_fingerprint, so hint 2 never matches it and every
@@ -147,12 +149,10 @@ detect_engine() {
   # SKIPPED the acceptance check. A dead DFlash2 drafter (sglang#39087) leaves
   # output correct and only collapses decode, so that skip is silent. The prefix
   # is the same one rebench-full.sh and club3090-env.sh already use.
-  case "$CONTAINER" in
-    vllm-*)      echo "vllm"; return 0 ;;
-    llama-cpp-*|ik-llama-*) echo "llamacpp"; return 0 ;;
-    sglang-*|sgl-*) echo "sglang"; return 0 ;;
-  esac
-  echo "unknown"
+  # The prefix arms themselves now live in scripts/lib/engine-kind.sh
+  # (club-3090#1282) so adding an engine is a ONE-place change.
+  engine_kind_from_container "$CONTAINER"
+  return 0
 }
 
 # True only when $CONTAINER names a real Docker container. `--type container`

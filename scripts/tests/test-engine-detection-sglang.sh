@@ -34,7 +34,12 @@ check() { [[ "$2" == "$3" ]] && ok "$1" || bad "$1" "$2" "$3"; }
 DEAD_URL="http://127.0.0.1:1"
 
 for script in verify-full.sh verify-stress.sh; do
-  awk '/^detect_engine\(\) \{/,/^\}/' "${ROOT}/scripts/${script}" > "${TMP}/fn.sh"
+  # club-3090#1282: detect_engine now DELEGATES the prefix arms to the canonical
+  # resolver, so the extracted body needs the lib in scope. Sourcing it here is
+  # not a weakening of the control — the arms under test are the lib's, and this
+  # test still drives the real extracted function against a dead URL.
+  { echo "source '${ROOT}/scripts/lib/engine-kind.sh'"; \
+    awk '/^detect_engine\(\) \{/,/^\}/' "${ROOT}/scripts/${script}"; } > "${TMP}/fn.sh"
   if [[ ! -s "${TMP}/fn.sh" ]]; then
     bad "${script}: detect_engine() not extractable" "a function body" "empty"
     continue
@@ -70,13 +75,22 @@ else
   bad "report.sh: honours ENGINE_KIND=sglang override" "sglang in the override guard" "absent"
 fi
 
-# --- 5: bench.sh container-name detection must know sglang ------------------
-if awk '/^ENGINE_KIND="\$\{ENGINE_KIND:-unknown\}"/,/^fi$/' "${ROOT}/scripts/bench.sh" \
-     | command grep -q 'sglang'; then
-  ok "bench.sh: container-name detection knows sglang"
+# --- 5: bench.sh detection must RESOLVE sglang ------------------------------
+# ⚠️ This used to grep bench.sh for a literal 'sglang' arm. club-3090#1282 moved
+# the arms into scripts/lib/engine-kind.sh, so a text assertion would now fail
+# on a correct tree — it was asserting the IMPLEMENTATION SHAPE, not the
+# behaviour. Assert the outcome instead: bench.sh must source the canonical
+# resolver, and that resolver must answer sglang for both evidence forms
+# bench.sh actually has (image ref and container name).
+if command grep -q 'lib/engine-kind.sh' "${ROOT}/scripts/bench.sh"; then
+  ok "bench.sh: sources the canonical engine resolver"
 else
-  bad "bench.sh: container-name detection knows sglang" "an sglang branch" "absent"
+  bad "bench.sh: sources the canonical engine resolver" "a source of lib/engine-kind.sh" "absent"
 fi
+got="$(bash -c "source '${ROOT}/scripts/lib/engine-kind.sh'; engine_kind_from_image lmsysorg/sglang:v0.5.19" 2>/dev/null)"
+check "bench.sh path: sglang image → sglang" "sglang" "$got"
+got="$(bash -c "source '${ROOT}/scripts/lib/engine-kind.sh'; engine_kind_from_container sglang-qwen38" 2>/dev/null)"
+check "bench.sh path: sglang-* container → sglang" "sglang" "$got"
 
 echo
 if [[ "$FAIL" == "0" ]]; then
