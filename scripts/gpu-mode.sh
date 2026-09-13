@@ -264,7 +264,7 @@ _director_device() {
     local d=gpu0
     if [ -f "$CLUB3090_DIR/.env" ]; then
         local v
-        v=$(grep -E '^STUDIO_DIRECTOR_DEVICE=' "$CLUB3090_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")
+        v=$(command grep -E '^STUDIO_DIRECTOR_DEVICE=' "$CLUB3090_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")
         [ -n "$v" ] && d="$v"
     fi
     echo "$d"
@@ -798,7 +798,7 @@ preflight_studio_models() {
     fi
     # Roots: weights (director, MODEL_DIR from .env) · comfy (image/video/audio tree).
     local model_dir comfy_models
-    model_dir="$(grep -E '^MODEL_DIR=' "$CLUB3090_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+    model_dir="$(command grep -E '^MODEL_DIR=' "$CLUB3090_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2-)"
     model_dir="${model_dir:-/mnt/models/huggingface}"
     comfy_models="${COMFYUI_MODELS_DIR:-/mnt/models/comfyui/models}"
     local director_missing=0 warns=() modality label root rel size installer base
@@ -1042,7 +1042,7 @@ mode_off() {
     # (#535 class; caught live 2026-07-04 when off left vllm-qwen36-27b-minimal
     # serving and the 27b TP=2 scene booted into its residue).
     _stragglers=$(docker ps --format '{{.Names}}' 2>/dev/null \
-        | grep -E '^(vllm-|llama-cpp-|ik-llama-|sglang-|beellama-)' || true)
+        | command grep -E '^(vllm-|llama-cpp-|ik-llama-|sglang-|beellama-)' || true)
     if [ -n "$_stragglers" ]; then
         echo -e "  ${YELLOW}▼${NC} Stopping catalog-launched engine(s): $(echo "$_stragglers" | tr '\n' ' ')"
         echo "$_stragglers" | xargs -r docker stop >/dev/null 2>&1 || true
@@ -1059,7 +1059,7 @@ mode_off() {
     echo -e "VRAM:"
     nvidia-smi --query-gpu=memory.free,memory.total --format=csv,noheader 2>/dev/null
     echo -e "RAM:"
-    free -h | grep Mem | awk '{print "  Free: "$4" / Total: "$2}'
+    free -h | command grep Mem | awk '{print "  Free: "$4" / Total: "$2}'
 }
 
 # --- Scene catalog (`--list-modes [--json]`) --------------------------------

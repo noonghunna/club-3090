@@ -271,7 +271,7 @@ env_set_key() {
   tmp="$(mktemp)"
   if [[ -f "$ENV_FILE" ]]; then
     # Drop any existing assignment for KEY (with or without `export`).
-    grep -vE "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_FILE" > "$tmp" || true
+    command grep -vE "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_FILE" > "$tmp" || true
   fi
   printf '%s=%s\n' "$key" "$value" >> "$tmp"
   mv "$tmp" "$ENV_FILE"
@@ -282,7 +282,7 @@ env_clear_key() {
   local key="$1" tmp
   [[ -f "$ENV_FILE" ]] || return 0
   tmp="$(mktemp)"
-  grep -vE "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_FILE" > "$tmp" || true
+  command grep -vE "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_FILE" > "$tmp" || true
   mv "$tmp" "$ENV_FILE"
 }
 
@@ -314,7 +314,7 @@ from scripts.lib.profiles.compose_registry import model_default_pin_key  # noqa:
 print(model_default_pin_key(sys.argv[2]))
 PY_CLEARKEY
 )"
-  if [[ -f "$ENV_FILE" ]] && grep -qE "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_FILE"; then
+  if [[ -f "$ENV_FILE" ]] && command grep -qE "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_FILE"; then
     env_clear_key "$key"
     echo "[switch] cleared your pinned default for ${model} (removed ${key} from .env)."
   else

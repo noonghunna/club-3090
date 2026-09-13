@@ -132,7 +132,7 @@ run bash "${ROOT_DIR}/scripts/setup.sh" "$MODEL"
 echo ""
 echo "[update] ✓ done."
 echo ""
-running=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b)' | head -1 || true)
+running=$(docker ps --format '{{.Names}}' 2>/dev/null | command grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b)' | head -1 || true)
 if [[ -n "$running" ]]; then
   echo "[update] A club-3090 container is currently running: ${running}"
   echo "[update] To pick up the latest config, restart it:"

@@ -556,7 +556,7 @@ sys.exit(0 if walk(obj) else 1)
      && command -v docker >/dev/null 2>&1 \
      && docker inspect "$CONTAINER" >/dev/null 2>&1; then
     docker inspect "$CONTAINER" 2>/dev/null \
-      | grep -Eq -- '(--reasoning[= ]+on|"--reasoning"[[:space:]]*,[[:space:]]*"on")' && return 0
+      | command grep -Eq -- '(--reasoning[= ]+on|"--reasoning"[[:space:]]*,[[:space:]]*"on")' && return 0
   fi
   return 1
 }
@@ -2200,7 +2200,7 @@ if [[ "${CONTAINER:-}" != "none" ]] && command -v docker >/dev/null 2>&1 \
   # club-3090#1251 (2x 5090, sgl/qwen38-27b-dual-fast): the section came back blank while
   # the drafter was running fine.
   docker logs "${CONTAINER}" 2>&1 \
-    | grep -E "SpecDecoding metrics|accept len:|draft acceptance" | tail -3 || true
+    | command grep -E "SpecDecoding metrics|accept len:|draft acceptance" | tail -3 || true
 fi
 
 # Repeated at the END on purpose (#832): a reader who tails the log, or who

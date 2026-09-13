@@ -319,7 +319,7 @@ check_basic() {
     }")" || { fail "completion request failed" "Check docker logs ${CONTAINER}"; return 1; }
   local content
   content="$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['choices'][0]['message']['content'])" 2>/dev/null || true)"
-  if echo "$content" | grep -qi "Paris"; then
+  if echo "$content" | command grep -qi "Paris"; then
     pass "reply contains 'Paris'"
   else
     fail "reply didn't mention Paris: $(echo "$content" | head -c 80)" \
@@ -364,7 +364,7 @@ try:
 except Exception as e:
     print(f'__PARSE_ERROR__: {e}')
 " 2>&1)"
-  if echo "$tool_calls" | grep -q "__INLINED__"; then
+  if echo "$tool_calls" | command grep -q "__INLINED__"; then
     # This hint was hardcoded to the Qwen3.6/vLLM cause and printed on EVERY engine.
     # A GLM-on-llama.cpp reporter was told "MTP x TurboQuant incompat, use
     # docker-compose.tools.yml" — a file that does not exist for that model, naming a
@@ -382,7 +382,7 @@ except Exception as e:
         fail "model emitted <tool_call> as inline text (tool_calls[] empty)" \
              "On the Qwen3.6 vLLM tiers this is the MTP x TurboQuant incompat - use docker-compose.tools.yml or .tools-text.yml (README Known issues). On other stacks check --tool-call-parser and the chat template first." ;;
     esac
-  elif echo "$tool_calls" | grep -qi "get_weather"; then
+  elif echo "$tool_calls" | command grep -qi "get_weather"; then
     pass "tool_calls[] populated with get_weather"
   else
     fail "unexpected tool_calls structure" "Raw: $(echo "$tool_calls" | head -c 300)"
@@ -681,8 +681,8 @@ check_mtp_acceptance() {
       sleep 3
       local sgl_al
       sgl_al="$(docker logs --tail 400 "${CONTAINER}" 2>&1 \
-                | grep -oE 'accept len: [0-9]+\.[0-9]+' | tail -5 \
-                | grep -oE '[0-9]+\.[0-9]+' \
+                | command grep -oE 'accept len: [0-9]+\.[0-9]+' | tail -5 \
+                | command grep -oE '[0-9]+\.[0-9]+' \
                 | awk '{s+=$1; n++} END{if(n) printf "%.3f", s/n}')"
       if [[ -z "$sgl_al" ]]; then
         skip "no 'accept len' in the last 400 log lines (spec-dec off for this compose?)"
@@ -719,15 +719,15 @@ check_mtp_acceptance() {
   sleep 3  # let log line flush
 
   local recent
-  recent="$(docker logs --tail 200 "${CONTAINER}" 2>&1 | grep -iE "SpecDecoding|acceptance length|spec_decode" | tail -3)"
+  recent="$(docker logs --tail 200 "${CONTAINER}" 2>&1 | command grep -iE "SpecDecoding|acceptance length|spec_decode" | tail -3)"
   if [[ -z "$recent" ]]; then
     skip "no SpecDecoding metrics in logs (compose may not have spec-decode enabled)"
     return 0
   fi
 
   local al
-  al="$(echo "$recent" | grep -oiE "(mean acceptance length|acceptance length|al|mean_acceptance_length)[: ]+[0-9]+\.[0-9]+" \
-        | grep -oE "[0-9]+\.[0-9]+" | tail -1)"
+  al="$(echo "$recent" | command grep -oiE "(mean acceptance length|acceptance length|al|mean_acceptance_length)[: ]+[0-9]+\.[0-9]+" \
+        | command grep -oE "[0-9]+\.[0-9]+" | tail -1)"
   if [[ -z "$al" ]]; then
     skip "couldn't parse AL from: $(echo "$recent" | head -c 240 | tr '\n' ' ')"
     return 0
@@ -770,7 +770,7 @@ check_vision() {
   # when an mmproj is loaded but the image path does not work.
   local intended=0
   if container_is_real && command -v docker >/dev/null 2>&1; then
-    if docker logs "${CONTAINER}" 2>&1 | grep -qiE "loaded multimodal model|clip_ctx:|mmproj"; then
+    if docker logs "${CONTAINER}" 2>&1 | command grep -qiE "loaded multimodal model|clip_ctx:|mmproj"; then
       intended=1
     fi
   fi

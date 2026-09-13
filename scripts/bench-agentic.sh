@@ -766,7 +766,7 @@ if command -v docker >/dev/null 2>&1 && docker inspect "${CONTAINER}" >/dev/null
   # club-3090#1251 (2x 5090, sgl/qwen38-27b-dual-fast): the section came back blank while
   # the drafter was running fine.
   docker logs "${CONTAINER}" 2>&1 \
-    | grep -E "SpecDecoding metrics|accept len:|draft acceptance" | tail -3 || true
+    | command grep -E "SpecDecoding metrics|accept len:|draft acceptance" | tail -3 || true
 fi
 
 # --- per-rig #249 record: the agentic TTFT/decode-by-turn curve (no canonical

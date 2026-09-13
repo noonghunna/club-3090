@@ -72,7 +72,7 @@ gpu_select_container_uuids() {
   [[ -z "$container" ]] && return 0
   docker exec "$container" nvidia-smi \
       --query-compute-apps=gpu_uuid --format=csv,noheader 2>/dev/null \
-    | tr -d '[:space:]' | grep '^GPU-' | sort -u | paste -sd, -
+    | tr -d '[:space:]' | command grep '^GPU-' | sort -u | paste -sd, -
 }
 
 # gpu_select_assert_placement "<container>" "<requested_uuid_csv>" ["<log_prefix>"]

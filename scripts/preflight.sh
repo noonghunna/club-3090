@@ -66,7 +66,7 @@ preflight_gpu() {
   local gpu_lines
   gpu_lines=$(nvidia-smi -L 2>/dev/null || true)
   local gpu_count
-  gpu_count=$(echo "$gpu_lines" | grep -c '^GPU ' || true)
+  gpu_count=$(echo "$gpu_lines" | command grep -c '^GPU ' || true)
   if [[ "$gpu_count" -lt "$min_count" ]]; then
     echo "[preflight] ERROR: needs ${min_count} GPU(s), found ${gpu_count}." >&2
     if [[ "$gpu_count" -eq 0 ]]; then
@@ -119,14 +119,14 @@ preflight_gpu() {
   # detected. Composes run cross-rig but per-class gotchas (ctx derate,
   # VRAM envelope, SM-gated kernels) live in the FAQ — easier to catch
   # the hint here than for a user to discover it after a confusing run.
-  if echo "$gpu_lines" | grep -qE "RTX 4090"; then
+  if echo "$gpu_lines" | command grep -qE "RTX 4090"; then
     echo "[preflight] note:    4090 detected → docs/FAQ.md#can-i-use-a-4090-instead-of-a-3090 (ctx ceiling ~15–20% lower than headless 3090)"
   fi
-  if echo "$gpu_lines" | grep -qE "RTX 5090"; then
+  if echo "$gpu_lines" | command grep -qE "RTX 5090"; then
     echo "[preflight] note:    5090 detected → docs/FAQ.md#can-i-use-a-5090 (32 GB envelope unlocks single-card configs)"
   fi
   # nvidia-container-toolkit check — needed for docker GPU access.
-  if ! docker info 2>/dev/null | grep -qi 'Runtimes:.*nvidia'; then
+  if ! docker info 2>/dev/null | command grep -qi 'Runtimes:.*nvidia'; then
     echo "[preflight] WARN:  Docker doesn't list the 'nvidia' runtime. If 'docker compose up' fails" >&2
     echo "                   with 'unknown runtime' or 'could not select device driver', install:" >&2
     echo "                   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/" >&2
@@ -487,7 +487,7 @@ preflight_compose_hardware() {
   # (live-validated 2x3090 sm_86, 2026-07-11); on a MIXED pair the faster rank
   # takes the native activation path and the slower one cannot follow.
   local sel_sm_count
-  sel_sm_count="$(printf '%s\n' ${sel_sm_list} | grep -c . || true)"
+  sel_sm_count="$(printf '%s\n' ${sel_sm_list} | command grep -c . || true)"
   if (( tp > 1 && sel_sm_count > 1 )); then
     if [[ "${requires_homog_arch,,}" == "true" || "${requires_homog_arch,,}" == "yes" ]]; then
       echo "[preflight] ERROR: ${variant:-compose} requires a HOMOGENEOUS GPU architecture for TP=${tp}." >&2
@@ -568,7 +568,7 @@ preflight_lmcache_ram() {
 
   # Soft: SHM must be >= l1 or LMCache silently falls back to slow pickle serialization.
   local shm_gb
-  shm_gb="$(grep -oE 'shm_size:[[:space:]]*"?[0-9]+' "$compose_file" | grep -oE '[0-9]+' | head -1 || true)"
+  shm_gb="$(command grep -oE 'shm_size:[[:space:]]*"?[0-9]+' "$compose_file" | command grep -oE '[0-9]+' | head -1 || true)"
   if [[ -n "$shm_gb" ]] && (( shm_gb < l1 )); then
     echo "[preflight] WARN:  shm_size (${shm_gb}g) < LMCACHE_L1_GB (${l1}) — LMCache SHM will fall back to slow pickle." >&2
     echo "            Fix: raise shm_size in the compose to >= ${l1}g." >&2
@@ -662,14 +662,14 @@ preflight_compose_gpu_fit() {
   # Effective util: an env GPU_MEMORY_UTILIZATION override wins over the compose default
   # (`${GPU_MEMORY_UTILIZATION:-<X>}`), so the gate matches what vLLM will actually use.
   local util_default util
-  util_default=$(grep -oE 'GPU_MEMORY_UTILIZATION:-[0-9.]+' "$compose" | head -1 | sed 's/.*-//')
+  util_default=$(command grep -oE 'GPU_MEMORY_UTILIZATION:-[0-9.]+' "$compose" | head -1 | sed 's/.*-//')
   util="${GPU_MEMORY_UTILIZATION:-$util_default}"
   case "$util" in ''|*[!0-9.]*) return 0 ;; esac   # unknown / non-numeric → can't gate
 
   # Cards this compose uses (TP / min-gpu-count header; default 1).
   local need_cards
-  need_cards=$(grep -oiE '#[[:space:]]*(Tensor-parallel|Requires-min-gpu-count):[[:space:]]*[0-9]+' "$compose" \
-               | grep -oE '[0-9]+' | sort -rn | head -1)
+  need_cards=$(command grep -oiE '#[[:space:]]*(Tensor-parallel|Requires-min-gpu-count):[[:space:]]*[0-9]+' "$compose" \
+               | command grep -oE '[0-9]+' | sort -rn | head -1)
   [[ -z "$need_cards" ]] && need_cards=1
 
   # Settle window (~10s): a just-`down`ed scene's VRAM lags docker's return.
@@ -721,7 +721,7 @@ preflight_compose_gpu_fit() {
 preflight_running() {
   command -v docker >/dev/null 2>&1 || return 0
   local running
-  running=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|ik-llama-qwen36-27b|vllm-gemma-4-31b)' || true)
+  running=$(docker ps --format '{{.Names}}' 2>/dev/null | command grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|ik-llama-qwen36-27b|vllm-gemma-4-31b)' || true)
   if [[ -n "$running" ]]; then
     echo "[preflight] note:    a club-3090 container is already running:"
     echo "$running" | sed 's/^/[preflight]            /'
@@ -911,7 +911,7 @@ _preflight_compose_flag_paths() {
   [[ $# -gt 0 ]] || return 0
 
   # (a) inline — flag and value on the same line.
-  grep -hoE -- "(^|[[:space:]])(${flags})[[:space:]]+/models/[^[:space:]]+" "$@" 2>/dev/null \
+  command grep -hoE -- "(^|[[:space:]])(${flags})[[:space:]]+/models/[^[:space:]]+" "$@" 2>/dev/null \
     | awk '{print $NF}' || true
 
   # (b) YAML list — the value is the NEXT list item after the flag item.
@@ -1221,7 +1221,7 @@ preflight_compose_deps() {
     [[ -n "$extends_file" ]] || continue
     [[ "$extends_file" == /* ]] || extends_file="${compose_dir}/${extends_file}"
     [[ -f "$extends_file" ]] && compose_files+=("$extends_file")
-  done < <(grep -hE '^[[:space:]]*file:[[:space:]]*[^#[:space:]]+' "$compose_file" \
+  done < <(command grep -hE '^[[:space:]]*file:[[:space:]]*[^#[:space:]]+' "$compose_file" \
     | sed -E 's/^[[:space:]]*file:[[:space:]]*//' || true)
 
   local missing=()
@@ -1330,7 +1330,7 @@ preflight_compose_deps() {
     # could resolve the `:-default`, causing a false "missing" (the gemma-4-12b
     # MODEL_SUBDIR/SPEC_MODEL_SUBDIR composes). Stop only at real delimiters
     # (quote / whitespace / comma); the `${VAR:-default}` resolver runs downstream.
-    done < <(grep -hv '^[[:space:]]*#' "${compose_files[@]}" 2>/dev/null | grep -oE '/root/\.cache/huggingface/[^"'\''[:space:],]+' || true)
+    done < <(command grep -hv '^[[:space:]]*#' "${compose_files[@]}" 2>/dev/null | command grep -oE '/root/\.cache/huggingface/[^"'\''[:space:],]+' || true)
 
     # Experimental SGLang composes mount individual MODEL_DIR subdirectories to
     # /models/target and /models/drafter instead of using the HF cache mount.
@@ -1343,7 +1343,7 @@ preflight_compose_deps() {
       elif [[ -d "${model_dir}/${path}" ]]; then
         shard_dirs+=("${model_dir}/${path}")
       fi
-    done < <(grep -hoE '\$\{MODEL_DIR[^}]*\}/[^"[:space:]]+' "${compose_files[@]}" || true)
+    done < <(command grep -hoE '\$\{MODEL_DIR[^}]*\}/[^"[:space:]]+' "${compose_files[@]}" || true)
   fi
 
   # Present on the host, unreachable from the container. Reported SEPARATELY from
@@ -1519,16 +1519,16 @@ preflight_autodetect_endpoint() {
   # before its own "endpoint not responding" path. Empty = the no-container case.
   local engine_lines found_line
   engine_lines=$(docker ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null \
-    | grep -E '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(8000|8080|30000)/tcp' || true)
+    | command grep -E '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(8000|8080|30000)/tcp' || true)
   if [[ -z "$engine_lines" ]]; then
     return 0   # nothing serving on an engine port; defaults stand
   fi
   # Prefer a recognised club-3090 engine-family prefix when several match.
   found_line=$(printf '%s\n' "$engine_lines" \
-    | grep -E '^(vllm-|llama-cpp-|ik-llama-|sglang-|beellama-)' | head -1 || true)
+    | command grep -E '^(vllm-|llama-cpp-|ik-llama-|sglang-|beellama-)' | head -1 || true)
   [[ -z "$found_line" ]] && found_line=$(printf '%s\n' "$engine_lines" | head -1)
   # Several inference containers up → we picked one; tell the user how to override.
-  if [[ "$(printf '%s\n' "$engine_lines" | grep -c .)" -gt 1 ]]; then
+  if [[ "$(printf '%s\n' "$engine_lines" | command grep -c .)" -gt 1 ]]; then
     echo "[autodetect] multiple inference containers running; picked '${found_line%%|*}' — set CONTAINER=/URL= to override" >&2
   fi
 
@@ -1538,7 +1538,7 @@ preflight_autodetect_endpoint() {
   # or "127.0.0.1:8011->8000/tcp" forms (BIND_HOST=127.0.0.1 produces the last).
   # llama-cpp container maps to internal 8080, vllm to 8000, sglang to 30000.
   detected_port=$(echo "${found_line#*|}" \
-    | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(8000|8080|30000)/tcp' \
+    | command grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(8000|8080|30000)/tcp' \
     | head -1 \
     | sed -E 's|^[^:]+:([0-9]+)->.*|\1|')
 
@@ -2013,8 +2013,8 @@ _cuda_ge() {
 # Driver's max supported CUDA (major.minor), or "" if undetectable.
 _driver_cuda_version() {
   local v
-  v="$(nvidia-smi --query 2>/dev/null | grep -m1 -oE 'CUDA Version[[:space:]]*:[[:space:]]*[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' || true)"
-  [[ -z "$v" ]] && v="$(nvidia-smi 2>/dev/null | grep -m1 -oE 'CUDA Version:?[[:space:]]*[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' || true)"
+  v="$(nvidia-smi --query 2>/dev/null | command grep -m1 -oE 'CUDA Version[[:space:]]*:[[:space:]]*[0-9]+\.[0-9]+' | command grep -oE '[0-9]+\.[0-9]+' || true)"
+  [[ -z "$v" ]] && v="$(nvidia-smi 2>/dev/null | command grep -m1 -oE 'CUDA Version:?[[:space:]]*[0-9]+\.[0-9]+' | command grep -oE '[0-9]+\.[0-9]+' || true)"
   printf '%s' "$v"
 }
 

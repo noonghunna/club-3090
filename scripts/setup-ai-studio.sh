@@ -129,10 +129,10 @@ fi
 # gpu-mode's start_service swallows that failure ('… || echo "failed"' returns
 # 0). So gate the bring-up on 8080 being free, and verify OWUI afterwards,
 # instead of reporting a false "ready" (#686).
-if ! docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -qE "^open-webui .*:${OWUI_PORT}->"; then
+if ! docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | command grep -qE "^open-webui .*:${OWUI_PORT}->"; then
     _powui=""
     if command -v ss >/dev/null 2>&1; then
-        _powui=$(ss -Hltn 2>/dev/null | awk '{print $4}' | grep -E ":${OWUI_PORT}\$" | head -1)
+        _powui=$(ss -Hltn 2>/dev/null | awk '{print $4}' | command grep -E ":${OWUI_PORT}\$" | head -1)
     elif command -v lsof >/dev/null 2>&1; then
         _powui=$(lsof -iTCP:"$OWUI_PORT" -sTCP:LISTEN -Pn 2>/dev/null | tail -n +2 | head -1)
     fi

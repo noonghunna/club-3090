@@ -734,10 +734,10 @@ sys.exit(0 if walk(obj) else 1)
      && command -v docker >/dev/null 2>&1 \
      && docker inspect "$CONTAINER" >/dev/null 2>&1; then
     docker inspect "$CONTAINER" 2>/dev/null \
-      | grep -Eq -- '(--reasoning[= ]+on|"--reasoning"[[:space:]]*,[[:space:]]*"on")' && return 0
+      | command grep -Eq -- '(--reasoning[= ]+on|"--reasoning"[[:space:]]*,[[:space:]]*"on")' && return 0
     # SGLang spells it --reasoning-parser <name>; vLLM spells it --reasoning-parser too.
     docker inspect "$CONTAINER" 2>/dev/null \
-      | grep -Eq -- '--reasoning-parser' && return 0
+      | command grep -Eq -- '--reasoning-parser' && return 0
   fi
   # SGLang has no /props, so the probe above cannot see it. /get_model_info carries
   # reasoning_parser; a non-null value means the server splits <think> into
@@ -1044,7 +1044,7 @@ fi
 #
 # ⚠️ The capability check below is the guard that matters: a benchlocal-cli older
 # than #131 fails SILENTLY on such a model — no error, just a null A/B.
-if ! benchlocal-cli run --help 2>/dev/null | grep -q -- "--reasoning-effort"; then
+if ! benchlocal-cli run --help 2>/dev/null | command grep -q -- "--reasoning-effort"; then
   echo "[quality-test] WARN: this benchlocal-cli predates the model-specific thinking fix (#131)." >&2
   echo "[quality-test]   On a model that does not use chat_template_kwargs.enable_thinking (e.g. an" >&2
   echo "[quality-test]   effort-dial model), --no-thinking and --enable-thinking are BOTH ignored and" >&2

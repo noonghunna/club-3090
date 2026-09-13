@@ -416,7 +416,7 @@ CONTAINER="${CONTAINER:-vllm-qwen36-27b}"
 EAGER_MODE_DETECTED=0
 if command -v docker >/dev/null 2>&1; then
   if docker inspect "${CONTAINER}" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
-       | grep -qE '^VLLM_ENFORCE_EAGER=1$'; then
+       | command grep -qE '^VLLM_ENFORCE_EAGER=1$'; then
     EAGER_MODE_DETECTED=1
   fi
 fi
@@ -719,7 +719,7 @@ check_longctx() {
     prefill_str="${prefill_str}${cache_note}"
     local all_match=1
     for tok in $secret; do
-      echo "$content_raw" | grep -qiF "$tok" || all_match=0
+      echo "$content_raw" | command grep -qiF "$tok" || all_match=0
     done
     local outcome="recalled"
     [[ "$all_match" == "1" ]] || outcome="recall_miss"
@@ -1651,7 +1651,7 @@ with open('${cal_req}', 'w') as f:
         rm -f "$result_file"
         all_match=1
         for tok in $secret; do
-          echo "$content_raw" | grep -qiF "$tok" || all_match=0
+          echo "$content_raw" | command grep -qiF "$tok" || all_match=0
         done
         local pct=0
         [[ "$prompt_tok" -gt 0 && "$n_ctx" -gt 0 ]] && pct=$(( prompt_tok * 100 / n_ctx ))

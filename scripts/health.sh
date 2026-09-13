@@ -90,7 +90,7 @@ probe() {
   # Detect served model name + engine
   local model_name engine
   model_name=$(echo "$models_json" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('data',[{}])[0].get('id','unknown'))" 2>/dev/null)
-  if echo "$models_json" | grep -qi "owned_by.*llamacpp"; then
+  if echo "$models_json" | command grep -qi "owned_by.*llamacpp"; then
     engine="llama.cpp"
   else
     engine="vLLM"
@@ -101,9 +101,9 @@ probe() {
   local container container_id status_str started uptime
   if [[ -n "$CONTAINER" ]]; then
     # Exact-name match for the user-specified container.
-    container=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -Fx "$CONTAINER" | head -1)
+    container=$(docker ps --format '{{.Names}}' 2>/dev/null | command grep -Fx "$CONTAINER" | head -1)
   else
-    container=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "$ENGINE_PREFIX_RE" | head -1)
+    container=$(docker ps --format '{{.Names}}' 2>/dev/null | command grep -E "$ENGINE_PREFIX_RE" | head -1)
   fi
   if [[ -z "$container" ]]; then
     warn "No matching container running on this host (server may be on another machine, or running as a host process)"
@@ -154,7 +154,7 @@ else: print(f'{s//3600}h{(s%3600)//60:02d}m')
       # KV cache % from latest "Engine 000" line
       echo "vLLM runtime (last ${LOG_LINES} log lines):"
       local kv_line
-      kv_line=$(echo "$logs" | grep -oE 'GPU KV cache usage: [0-9.]+%' | tail -1 || true)
+      kv_line=$(echo "$logs" | command grep -oE 'GPU KV cache usage: [0-9.]+%' | tail -1 || true)
       if [[ -n "$kv_line" ]]; then
         ok "KV cache: ${kv_line#GPU KV cache usage: }"
       else
@@ -162,7 +162,7 @@ else: print(f'{s//3600}h{(s%3600)//60:02d}m')
       fi
       # Last 5 SpecDecoding accept rates (AL)
       local al_lines
-      al_lines=$(echo "$logs" | grep -oE 'Mean acceptance length: [0-9.]+' | tail -5 || true)
+      al_lines=$(echo "$logs" | command grep -oE 'Mean acceptance length: [0-9.]+' | tail -5 || true)
       if [[ -n "$al_lines" ]]; then
         local al_avg
         al_avg=$(echo "$al_lines" | awk '{ s += $4; n++ } END { if (n) printf "%.2f", s/n; else print "n/a" }')
@@ -172,13 +172,13 @@ else: print(f'{s//3600}h{(s%3600)//60:02d}m')
       fi
       # Recent throughput
       local tput
-      tput=$(echo "$logs" | grep -oE 'Avg generation throughput: [0-9.]+ tokens/s' | tail -1 || true)
+      tput=$(echo "$logs" | command grep -oE 'Avg generation throughput: [0-9.]+ tokens/s' | tail -1 || true)
       [[ -n "$tput" ]] && ok "Last gen throughput: ${tput#Avg generation throughput: }"
     else
       # llama.cpp
       echo "llama.cpp runtime (last ${LOG_LINES} log lines):"
       local slot_state
-      slot_state=$(echo "$logs" | grep -E 'update_slots: all slots are idle|prompt processing|n_tokens =' | tail -3 || true)
+      slot_state=$(echo "$logs" | command grep -E 'update_slots: all slots are idle|prompt processing|n_tokens =' | tail -3 || true)
       if [[ -n "$slot_state" ]]; then
         ok "Slot activity (recent):"
         echo "$slot_state" | sed 's/^/      /'
@@ -187,7 +187,7 @@ else: print(f'{s//3600}h{(s%3600)//60:02d}m')
       fi
       # Decode throughput
       local llcpp_tps
-      llcpp_tps=$(echo "$logs" | grep -oE 'eval time =[^,]*\(.*tokens per second\)' | tail -3 || true)
+      llcpp_tps=$(echo "$logs" | command grep -oE 'eval time =[^,]*\(.*tokens per second\)' | tail -3 || true)
       if [[ -n "$llcpp_tps" ]]; then
         echo "  Recent decode rates:"
         echo "$llcpp_tps" | tail -3 | sed 's/^/      /'
@@ -198,7 +198,7 @@ else: print(f'{s//3600}h{(s%3600)//60:02d}m')
     echo ""
     echo "Recent errors / warnings (last ${LOG_LINES} log lines):"
     local errs
-    errs=$(echo "$logs" | grep -E 'ERROR|CRITICAL|Traceback|OutOfMemory|CUDA error|Failed' | grep -v 'INFO' | tail -5 || true)
+    errs=$(echo "$logs" | command grep -E 'ERROR|CRITICAL|Traceback|OutOfMemory|CUDA error|Failed' | command grep -v 'INFO' | tail -5 || true)
     if [[ -z "$errs" ]]; then
       ok "no errors logged"
     else

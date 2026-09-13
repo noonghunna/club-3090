@@ -56,7 +56,7 @@ if [[ -z "$IMAGE" ]]; then
   # Any vLLM/SGLang image ships torch + NCCL. Prefer whatever is already local so
   # the check never triggers a multi-GB pull.
   IMAGE="$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-           | grep -E 'vllm|sglang' | grep -v '<none>' | head -1)"
+           | command grep -E 'vllm|sglang' | command grep -v '<none>' | head -1)"
 fi
 if [[ -z "$IMAGE" ]]; then
   echo "ERROR: no local vLLM/SGLang image found and no --image given." >&2

@@ -379,7 +379,7 @@ section "CPU + RAM"
     # LC_ALL=C — lscpu TRANSLATES its field labels, so every lookup below would
     # silently return empty on a non-English locale (same class as #779).
     _lscpu="$(LC_ALL=C lscpu 2>/dev/null)"
-    _lscpu_f() { printf '%s\n' "$_lscpu" | grep -m1 -E "^$1:" | sed -E 's/^[^:]*:[[:space:]]*//'; }
+    _lscpu_f() { printf '%s\n' "$_lscpu" | command grep -m1 -E "^$1:" | sed -E 's/^[^:]*:[[:space:]]*//'; }
 
     cpu_model="$(_lscpu_f 'Model name')"
     cpu_threads="$(_lscpu_f 'CPU\(s\)')"
@@ -626,7 +626,7 @@ else
         done
     fi
 
-    cuda_ver=$(nvidia-smi 2>/dev/null | grep -oE 'CUDA Version: [0-9.]+' | head -1 | awk '{print $3}')
+    cuda_ver=$(nvidia-smi 2>/dev/null | command grep -oE 'CUDA Version: [0-9.]+' | head -1 | awk '{print $3}')
     [[ -n "$cuda_ver" ]] && echo "- **CUDA Runtime (per driver):** $cuda_ver"
 
     # Persistence mode + ECC summary
@@ -635,7 +635,7 @@ else
   } | redact
 
   subsection "NVLink"
-  if nvidia-smi nvlink --status -i 0 2>/dev/null | grep -qE 'Link [0-9]+:'; then
+  if nvidia-smi nvlink --status -i 0 2>/dev/null | command grep -qE 'Link [0-9]+:'; then
     nvidia-smi nvlink --status 2>&1 | redact | details "NVLink link status"
   else
     echo "_No NVLink detected (PCIe-only)_"
@@ -717,7 +717,7 @@ else
         local slot="$1" label="$2"
         echo "# lspci -vvv -s ${slot}  (${label}: LnkCap/LnkSta/ACSCap/ACSCtl)"
         "${LSPCI_CMD[@]}" -vvv -s "$slot" 2>/dev/null \
-          | grep -E '^[[:space:]]*(LnkCap|LnkSta|ACSCap|ACSCtl):' \
+          | command grep -E '^[[:space:]]*(LnkCap|LnkSta|ACSCap|ACSCtl):' \
           || echo "  (no matching LnkCap/LnkSta/ACSCap/ACSCtl lines)"
         echo
       }
@@ -735,10 +735,10 @@ else
           echo "  (could not resolve upstream bridge for ${slot} — ACS state for P2P may be elsewhere in the tree)"
           echo
         fi
-      done < <(lspci -D 2>/dev/null | grep -iE 'VGA compatible controller.*NVIDIA|3D controller.*NVIDIA')
+      done < <(lspci -D 2>/dev/null | command grep -iE 'VGA compatible controller.*NVIDIA|3D controller.*NVIDIA')
 
       echo "# lspci -nnk | grep -A3 -i nvidia  (driver binding + device IDs)"
-      lspci -nnk 2>/dev/null | grep -A3 -i nvidia 2>/dev/null \
+      lspci -nnk 2>/dev/null | command grep -A3 -i nvidia 2>/dev/null \
         || echo "  (no NVIDIA functions found)"
     } 2>&1 | redact | details "lspci PCIe/P2P detail (LnkSta / ACS / topology)"
   fi
@@ -852,7 +852,7 @@ section "Stack version"
 
   if [[ -f scripts/setup.sh ]]; then
     # Parse `GENESIS_PIN="${GENESIS_PIN:-<default>}"` — extract just the default value
-    genesis_pin=$(grep -E '^GENESIS_PIN=' scripts/setup.sh 2>/dev/null | head -1 \
+    genesis_pin=$(command grep -E '^GENESIS_PIN=' scripts/setup.sh 2>/dev/null | head -1 \
       | sed -E 's/.*:-([^}]+)\}.*/\1/; t; s/.*=//' \
       | tr -d '"' | tr -d "'")
     [[ -n "$genesis_pin" ]] && echo "- **GENESIS_PIN default:** \`$genesis_pin\` (per scripts/setup.sh)"
@@ -917,8 +917,8 @@ if have python3 && [[ -f tools/kv-calc.py ]]; then
       echo "- _Scoped to the running model \`${CALIB_MODEL_ID}\` — pass \`--full-calibration\` for all calibrated models._"
     fi
     calib_output=$(python3 tools/kv-calc.py --calibration 2>&1 | calib_filter_model_section "$calib_scope" || true)
-    overall=$(echo "$calib_output" | grep -E '^Overall:' | head -1)
-    fail_rows=$(echo "$calib_output" | grep -E '\bFAIL\b' || true)
+    overall=$(echo "$calib_output" | command grep -E '^Overall:' | head -1)
+    fail_rows=$(echo "$calib_output" | command grep -E '\bFAIL\b' || true)
     {
       if [[ -n "$overall" ]]; then
         echo "- ${overall}"
@@ -1091,7 +1091,7 @@ else
       # llama-server prints its version + build flags on startup. Grep the
       # boot log for the version banner instead of trying to docker exec
       # (the llama-cpp image doesn't ship interactive shell utilities).
-      llama_version=$(docker logs "$CONTAINER" 2>&1 | grep -E '^build_info:|^version:|^system_info:' | head -3)
+      llama_version=$(docker logs "$CONTAINER" 2>&1 | command grep -E '^build_info:|^version:|^system_info:' | head -3)
       if [[ -n "$llama_version" ]]; then
         echo "**llama-server version + build:**"
         echo '```'
@@ -1101,7 +1101,7 @@ else
       fi
 
       # Loaded model + ctx + KV type — surfaces model identity from boot log.
-      model_loaded=$(docker logs "$CONTAINER" 2>&1 | grep -E 'load_model:|llama_model_load_from_file_impl:|llama_kv_cache_init:|llama_init_from_model:' | head -8)
+      model_loaded=$(docker logs "$CONTAINER" 2>&1 | command grep -E 'load_model:|llama_model_load_from_file_impl:|llama_kv_cache_init:|llama_init_from_model:' | head -8)
       if [[ -n "$model_loaded" ]]; then
         echo "**Model load + KV cache init:**"
         echo '```'
@@ -1112,7 +1112,7 @@ else
 
       # llama.cpp doesn't have Genesis / vLLM SpecDecoding metrics. Skip
       # those grep patterns. Capture warnings/errors only.
-      boot_errors=$(docker logs "$CONTAINER" 2>&1 | grep -iE '^(warn|error|fatal|abort)|panic|core dumped' | tail -5)
+      boot_errors=$(docker logs "$CONTAINER" 2>&1 | command grep -iE '^(warn|error|fatal|abort)|panic|core dumped' | tail -5)
       if [[ -n "$boot_errors" ]]; then
         echo "**Recent warnings/errors (last 5):**"
         echo '```'
@@ -1168,12 +1168,12 @@ else
     # head -200) so a late line on a 3-4 GPU boot isn't missed, and fall back to
     # the live container env. ALWAYS prints something so a reviewer never has to
     # guess whether P2P was engaged (the gap that forced asks on #446 / #488).
-    nvlink_boot=$(docker logs "$CONTAINER" 2>&1 | grep -E '\[nvlink\]' | head -8)
-    p2p_env=$(docker exec "$CONTAINER" env 2>/dev/null | grep -E '^(NCCL_P2P|NVLINK_MODE|NCCL_CUMEM)=' | sort)
+    nvlink_boot=$(docker logs "$CONTAINER" 2>&1 | command grep -E '\[nvlink\]' | head -8)
+    p2p_env=$(docker exec "$CONTAINER" env 2>/dev/null | command grep -E '^(NCCL_P2P|NVLINK_MODE|NCCL_CUMEM)=' | sort)
     # vLLM's runtime custom-AR veto (world>2 without NVLink — its gate never
     # consults peer access). Fed to the classifier so the verdict can't claim
     # "custom all-reduce ON" that vLLM already vetoed (#786).
-    vllm_ar_gate=$(docker logs "$CONTAINER" 2>&1 | grep -m1 'Custom allreduce is disabled' || true)
+    vllm_ar_gate=$(docker logs "$CONTAINER" 2>&1 | command grep -m1 'Custom allreduce is disabled' || true)
     echo "**Interconnect / P2P engagement:**"
     if [[ -n "$nvlink_boot" || -n "$p2p_env" || -n "$vllm_ar_gate" ]]; then
       echo '```'
@@ -1222,7 +1222,7 @@ else
     fi
     echo
 
-    genesis_results=$(docker logs "$CONTAINER" 2>&1 | grep -E '\[INFO:genesis\.apply_all\] (Genesis|✅) Results' | tail -1)
+    genesis_results=$(docker logs "$CONTAINER" 2>&1 | command grep -E '\[INFO:genesis\.apply_all\] (Genesis|✅) Results' | tail -1)
     if [[ -n "$genesis_results" ]]; then
       echo "**Genesis patches applied:**"
       echo '```'
@@ -1231,7 +1231,7 @@ else
       echo
     fi
 
-    sidecar_status=$(docker logs "$CONTAINER" 2>&1 | grep -E '^\[(tolist_cudagraph_fix|inputs_embeds_optional|workspace_lock_disable|pn25_genesis_register_fix|pn30_dst_shaped_temp_fix|fa_max_seqlen_clamp|pn12_ffn_pool_anchor|pn12_compile_safe_custom_op)\]' | head -10)
+    sidecar_status=$(docker logs "$CONTAINER" 2>&1 | command grep -E '^\[(tolist_cudagraph_fix|inputs_embeds_optional|workspace_lock_disable|pn25_genesis_register_fix|pn30_dst_shaped_temp_fix|fa_max_seqlen_clamp|pn12_ffn_pool_anchor|pn12_compile_safe_custom_op)\]' | head -10)
     if [[ -n "$sidecar_status" ]]; then
       echo "**Local sidecar application:**"
       echo '```'
@@ -1240,7 +1240,7 @@ else
       echo
     fi
 
-    kv_pool=$(docker logs "$CONTAINER" 2>&1 | grep -E 'Available KV cache memory|GPU KV cache size:|Maximum concurrency for' | tail -3)
+    kv_pool=$(docker logs "$CONTAINER" 2>&1 | command grep -E 'Available KV cache memory|GPU KV cache size:|Maximum concurrency for' | tail -3)
     if [[ -n "$kv_pool" ]]; then
       echo "**KV pool sizing:**"
       echo '```'
@@ -1251,7 +1251,7 @@ else
 
     # Engine config — the line containing "non-default args" or "Initializing a V1 LLM engine"
     # captures every important CLI flag (max_model_len, mem_util, kv dtype, spec config, etc.)
-    engine_config=$(docker logs "$CONTAINER" 2>&1 | grep -E 'non-default args:|Initializing a V1 LLM engine' | head -2)
+    engine_config=$(docker logs "$CONTAINER" 2>&1 | command grep -E 'non-default args:|Initializing a V1 LLM engine' | head -2)
     if [[ -n "$engine_config" ]]; then
       echo "**Engine config (CLI flags + engine init):**"
       echo '```'
@@ -1260,7 +1260,7 @@ else
       echo
     fi
 
-    boot_errors=$(docker logs "$CONTAINER" 2>&1 | grep -E '^(WARNING|ERROR|CRITICAL)' | tail -5)
+    boot_errors=$(docker logs "$CONTAINER" 2>&1 | command grep -E '^(WARNING|ERROR|CRITICAL)' | tail -5)
     if [[ -n "$boot_errors" ]]; then
       echo "**Recent warnings/errors (last 5):**"
       echo '```'
@@ -1331,7 +1331,7 @@ else
   exited_lines=$(docker ps -a \
     --format '{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.ID}}' \
     --filter 'status=exited' 2>/dev/null \
-    | grep -E '^(vllm-|llama-cpp-)' || true)
+    | command grep -E '^(vllm-|llama-cpp-)' || true)
 
   if [[ -z "$exited_lines" ]]; then
     echo "_No recently-exited vLLM or llama.cpp containers found._"
@@ -1678,7 +1678,7 @@ if [[ $DO_STUDIO -eq 1 ]]; then
   _studio_found=0
   # ComfyUI first (the generation engine — longest tail), then the studio sidecars.
   for c in comfyui studio-director studio-orchestrator studio-image-shim studio-tts studio-step-voice studio-gallery; do
-    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | command grep -qx "$c"; then
       _studio_found=1
       _tail=200; [[ "$c" == comfyui ]] && _tail=400
       _running=$(docker ps --filter "name=^${c}$" --format '{{.Status}}' 2>/dev/null | head -1)
