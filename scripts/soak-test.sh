@@ -33,6 +33,14 @@
 #   the overlay bind-mounts stripped (or on a baseline image) and compare
 #   metrics. See https://github.com/noonghunna/club-3090/issues/140.
 #
+# Reading a per-turn decode figure (#1267):
+#   Every turn states where its number came from, because "decode_tps=0.0" used
+#   to mean two opposite things. `n/a` is NOT a measurement of zero.
+#     decode_tps=83.1 ... (engine-reported: ...)      the engine's own counter
+#     decode_tps=83.1 ... (client-timed: 940 ms ...)  inferred from SSE arrivals
+#     decode_tps=n/a  ... (no decode figure: ...)     window too narrow to time
+#     decode_tps=0.0  ... (SILENT-EMPTY: 0 ...)       the failure soak looks for
+#
 # Time budget:
 #   Default SOAK_SESSIONS=20 x SOAK_TURNS=5, capped by SOAK_TIMEOUT_S=1800.
 #   Expect 10-30 minutes depending on config.
@@ -75,6 +83,19 @@
 #                          LABELS it, instead of printing decode_tps=0.0 (#809).
 #                          "auto" detects the signature and latches; "canvas"
 #                          forces it; "autoregressive" restores the old zeroing.
+#   SOAK_ENGINE_COUNTER    auto (default) | off. "auto" reads the ENGINE's own
+#                          decode counter when one is reachable — vLLM/SGLang
+#                          `<engine>:time_per_output_token_seconds` on
+#                          <endpoint>/metrics, SGLang's "gen throughput
+#                          (token/s)" decode-batch line, or llama.cpp's per-
+#                          request "eval time" line — and falls back to timing
+#                          the SSE stream when none is. An engine counter is
+#                          computed over real decode steps, so it is immune to a
+#                          decode window too narrow to time (#1268: #849 saw
+#                          82-83 ms windows, #1261 saw 49/65/97 ms on 3 of 5
+#                          turns, all reported as 0.0). "off" forces client-side
+#                          timing for the whole run. Every per-turn line names
+#                          the source it used; no figure is unattributed.
 #   SOAK_CANVAS_WINDOW_MS  Zero-width bound for the canvas signature, in ms.
 #                          Default: 5. Deliberately far below the 100 ms
 #                          measurability floor — a fast autoregressive rig
@@ -217,6 +238,15 @@ case "$SOAK_DECODE_GRANULARITY" in
   *) echo "ERROR: SOAK_DECODE_GRANULARITY='${SOAK_DECODE_GRANULARITY}' — must be 'auto', 'canvas' or 'autoregressive'." >&2; exit 2 ;;
 esac
 export SOAK_DECODE_GRANULARITY
+# Engine-side decode counter (#1268). "auto" prefers the engine's own counter
+# and falls back to client-side SSE timing; "off" is the one-word reversal of
+# that decision — it pins every turn to client-side timing plus the floor.
+SOAK_ENGINE_COUNTER="${SOAK_ENGINE_COUNTER:-auto}"
+case "$SOAK_ENGINE_COUNTER" in
+  auto|off) ;;
+  *) echo "ERROR: SOAK_ENGINE_COUNTER='${SOAK_ENGINE_COUNTER}' — must be 'auto' or 'off'." >&2; exit 2 ;;
+esac
+export SOAK_ENGINE_COUNTER
 SOAK_TIMEOUT_S="${SOAK_TIMEOUT_S:-1800}"
 SOAK_REQ_TIMEOUT_S="${SOAK_REQ_TIMEOUT_S:-600}"
 SOAK_OUTPUT="${SOAK_OUTPUT:-results/soak-$(date +%Y%m%d-%H%M%S)}"
@@ -378,12 +408,40 @@ RESPONSE_DIR="${SOAK_OUTPUT}/responses"
 STATE_DIR="${SOAK_OUTPUT}/states"
 mkdir -p "$REQUEST_DIR" "$RESPONSE_DIR" "$STATE_DIR"
 
-printf 'session_id,turn_id,t_ms,vram_mib,ttft_ms,decode_tps,completion_tokens,status,error,decode_basis\n' > "$TURN_LOG"
+printf 'session_id,turn_id,t_ms,vram_mib,ttft_ms,decode_tps,completion_tokens,status,error,decode_basis,decode_source\n' > "$TURN_LOG"
 printf 'session_id,turn_id,gpu_index,memory_used_mib,utilization_gpu_pct\n' > "$GPU_LOG"
 
 capture_state "baseline"
 python3 "$HELPER" baseline "$SOAK_OUTPUT" "$CONTAINER" "$ENDPOINT" "$MODEL" \
   "$SOAK_SESSIONS" "$SOAK_TURNS" "$SOAK_MAX_GROWTH_MIB"
+
+# --- decode-rate source (#1268) ---------------------------------------------
+# Resolved once, before the first turn, and announced: a reader must never have
+# to guess whether a decode figure is engine-reported or client-inferred. The
+# probe asks the endpoint/container what it can answer — it does NOT classify
+# the engine (the canonical resolver is club-3090#1282; a private classifier
+# here would be its own defect).
+ENGINE_COUNTER_PROBE="$(python3 "$HELPER" engine-counter-probe "$ENDPOINT" "$CONTAINER" || true)"
+[[ -n "$ENGINE_COUNTER_PROBE" ]] || ENGINE_COUNTER_PROBE="none probe failed"
+SOAK_ENGINE_COUNTER_KIND="${ENGINE_COUNTER_PROBE%% *}"
+ENGINE_COUNTER_DETAIL="${ENGINE_COUNTER_PROBE#* }"
+SOAK_ENGINE_COUNTER_METRIC=""
+SOAK_ENGINE_LOG_CONTAINER=""
+case "$SOAK_ENGINE_COUNTER_KIND" in
+  prom)
+    SOAK_ENGINE_COUNTER_METRIC="$ENGINE_COUNTER_DETAIL"
+    log "decode-rate source: ENGINE counter — ${ENDPOINT}/metrics ${SOAK_ENGINE_COUNTER_METRIC} (computed over the engine's own decode steps; client-side SSE timing is the fallback)"
+    ;;
+  log)
+    SOAK_ENGINE_LOG_CONTAINER="$ENGINE_COUNTER_DETAIL"
+    log "decode-rate source: ENGINE counter — decode-rate lines in 'docker logs ${SOAK_ENGINE_LOG_CONTAINER}' (client-side SSE timing is the fallback on turns that log none)"
+    ;;
+  *)
+    SOAK_ENGINE_COUNTER_KIND="none"
+    log "decode-rate source: CLIENT-side SSE timing — ${ENGINE_COUNTER_DETAIL}. A turn whose decode window is under the measurability floor reports n/a with its window width, never 0.0 (#1267)."
+    ;;
+esac
+export SOAK_ENGINE_COUNTER_KIND SOAK_ENGINE_COUNTER_METRIC SOAK_ENGINE_LOG_CONTAINER
 
 log "running soak test against ${ENDPOINT} (model=${MODEL}, container=${CONTAINER})"
 log "mode=${SOAK_MODE} sessions=${SOAK_SESSIONS} turns=${SOAK_TURNS} max_growth=${SOAK_MAX_GROWTH_MIB}MiB timeout=${SOAK_TIMEOUT_S}s"
@@ -428,7 +486,12 @@ for session in $(seq 1 "$SOAK_SESSIONS"); do
     append_gpu_snapshot "$session" "$turn"
     python3 "$HELPER" append-log "$TURN_LOG" "$session" "$turn" "$vram" "$metrics_file"
 
-    read -r status t_ms ttft_ms decode_tps err_flag decode_basis < <(python3 "$HELPER" metric "$metrics_file")
+    # decode_note is LAST and free-text: `read` slurps the remainder of the line
+    # into it, so the wording of every per-turn provenance label lives in
+    # soak-helper.py::decode_label() and nowhere else. decode_window_ms and
+    # decode_source are read for position — the label already states both.
+    read -r status t_ms ttft_ms decode_tps err_flag decode_basis decode_window_ms decode_source decode_note \
+      < <(python3 "$HELPER" metric "$metrics_file")
     TURNS_RUN=$((TURNS_RUN + 1))
     [[ "${err_flag:-0}" == "1" ]] && session_errors=$((session_errors + 1))
     if [[ "${decode_basis:-decode}" == "wall" ]]; then
@@ -444,10 +507,15 @@ for session in $(seq 1 "$SOAK_SESSIONS"); do
         log "  canvas-granularity generation detected (single-chunk response, zero-width decode window)"
         log "  per-turn figures are wall-derived from here on — wall TPS, includes prefill. See issue #809."
       fi
-      log "  turn ${turn}/${SOAK_TURNS}: status=${status} wall=${t_ms}ms ttft=${ttft_ms}ms decode_tps=${decode_tps} (wall-derived, canvas) vram=${vram}MiB"
-    else
-      log "  turn ${turn}/${SOAK_TURNS}: status=${status} wall=${t_ms}ms ttft=${ttft_ms}ms decode_tps=${decode_tps} vram=${vram}MiB"
     fi
+    # An UNMEASURABLE turn must not render as a numeric 0.0 (#1267): that is
+    # byte-identical to a genuine silent-empty turn, so the failure soak exists
+    # to catch reads exactly like a harmless fast turn. `n/a` + the window width
+    # + the label make the two impossible to confuse. The summary's silent-empty
+    # discriminator is unchanged — it keys on completion_tokens, not on this.
+    decode_show="$decode_tps"
+    [[ "${decode_basis:-decode}" == "unmeasurable" ]] && decode_show="n/a"
+    log "  turn ${turn}/${SOAK_TURNS}: status=${status} wall=${t_ms}ms ttft=${ttft_ms}ms decode_tps=${decode_show} vram=${vram}MiB (${decode_note})"
   done
 
   # Capture warm baseline at END of the first CLEAN session — after all 5 turn

@@ -7,8 +7,12 @@
 #
 # Source this from a test, then call:
 #   soak_env_init                 — create the sandbox (sets SOAK_ENV_DIR)
-#   soak_stub_start <plan-file>   — boot the stub (sets SOAK_STUB_URL / _PID)
+#   soak_stub_start <plan> [E=V]  — boot the stub (sets SOAK_STUB_URL / _PID);
+#                                   extra KEY=VAL go to the stub process, e.g.
+#                                   STUB_TPOT_TPS=123.456 to serve /metrics
 #   soak_stub_stop                — stop it (by PID; never pkill -f, see below)
+#   soak_stub_docker <log-file>   — put a fake `docker` on PATH whose `logs`
+#                                   prints <log-file> on STDERR (#1268)
 #   soak_run <out-dir> [env...]   — run soak-test.sh, capture stdout+rc
 #
 # `pkill -f` / `pgrep -f` are deliberately NOT used anywhere here: the pattern
@@ -52,10 +56,10 @@ soak_env_cleanup() {
 }
 
 soak_stub_start() {
-  local plan="$1"
+  local plan="$1"; shift
   local port_file="${SOAK_ENV_DIR}/port.txt"
   rm -f "$port_file"
-  python3 "${SOAK_ENV_FIXTURES}/stub-endpoint.py" "$port_file" "$plan" "$SOAK_VRAM_FILE" \
+  env "$@" python3 "${SOAK_ENV_FIXTURES}/stub-endpoint.py" "$port_file" "$plan" "$SOAK_VRAM_FILE" \
     >"${SOAK_ENV_DIR}/stub.log" 2>&1 &
   SOAK_STUB_PID=$!
   local waited=0
@@ -77,6 +81,36 @@ soak_stub_stop() {
     wait "$SOAK_STUB_PID" 2>/dev/null || true
   fi
   SOAK_STUB_PID=""
+}
+
+# soak_stub_docker <log-file> — fake `docker` for the engine-log counter path.
+#
+# Two things it exists to prove, both of which have burned this repo before:
+#   1. `docker logs` output must be read from STDERR as well as stdout — every
+#      engine here logs to stderr, so a helper reading only stdout scores a live
+#      counter as "never fired". This stub prints ONLY on stderr.
+#   2. the harness must bound the scrape to the turn it is measuring. Every
+#      invocation's argv is appended to ${SOAK_ENV_DIR}/docker-argv.log so a
+#      test can assert the --since window was actually passed.
+soak_stub_docker() {
+  local log_file="$1"
+  : > "${SOAK_ENV_DIR}/docker-argv.log"
+  cat > "${SOAK_ENV_BIN}/docker" <<DOCKER
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "${SOAK_ENV_DIR}/docker-argv.log"
+case "\$1" in
+  logs) cat "${log_file}" >&2 ;;
+  inspect)
+    for a in "\$@"; do
+      [[ "\$a" == "{{.State.Running}}" ]] && { echo true; exit 0; }
+    done
+    exit 0 ;;
+  stats) echo '{}' ;;
+  *) : ;;
+esac
+exit 0
+DOCKER
+  chmod +x "${SOAK_ENV_BIN}/docker"
 }
 
 # soak_run <script-root> <out-dir> [KEY=VAL ...]

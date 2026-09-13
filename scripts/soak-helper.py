@@ -3,7 +3,10 @@ import csv
 import json
 import os
 import pathlib
+import re
+import shutil
 import statistics
+import subprocess
 import sys
 import time
 import urllib.error
@@ -535,6 +538,200 @@ def cmd_ingest(state_path, metrics_path, turn):
     pathlib.Path(state_path).write_text(json.dumps(state, indent=2) + "\n")
 
 
+# --- engine-side decode counters (#1268) -------------------------------------
+# A decode rate inferred from SSE arrival times is only honest when the decode
+# window (wall - ttft) is wide enough to time. Below DECODE_FLOOR_MS the window
+# is dominated by scheduling and transport noise, so the harness refuses to
+# quote a rate. That floor is right for the inference and wrong as a
+# measurement policy: on fast hardware a legitimate turn finishes decoding
+# INSIDE it (#849 measured 82-83 ms windows on dual 5090s; #1261 measured
+# 49 / 65 / 97 ms on 3 of 5 turns), so a healthy run can end up with no decode
+# figure on most of its turns. Soak's per-turn decode series is how a Cliff-2b
+# decay would show up, and a series full of holes can hide one.
+#
+# So ask the ENGINE for its own decode rate first: it is computed over real
+# decode steps and does not care how narrow the wall-clock window is. Client
+# timing stays as the FALLBACK, and the floor stays with it, where it is doing
+# its job. Sources, in the order they are tried:
+#
+#   prom-tpot     <engine>:time_per_output_token_seconds on <endpoint>/metrics
+#                 (vLLM always; SGLang with --enable-metrics). The DELTA of
+#                 (_sum, _count) across one turn is that turn's mean seconds per
+#                 output token, i.e. decode steps only — prefill is excluded by
+#                 construction. Attributing the delta to one turn is valid
+#                 because soak is single-stream by design.
+#   sglang-log    "gen throughput (token/s): N" on SGLang's decode-batch lines.
+#   llamacpp-log  llama.cpp's per-request "eval time = ... (N tokens per
+#                 second)" summary. NOT "prompt eval time", which is the prefill
+#                 rate — the lookbehind below is all that keeps them apart.
+#
+# Every turn records WHICH source produced its number (decode_source), because a
+# figure whose provenance a reader has to guess is the defect #1267 is about.
+# SOAK_ENGINE_COUNTER=off restores pure client-side timing for the whole run.
+#
+# NOTE (club-3090#1282): none of this classifies the engine — it probes for a
+# counter and matches signatures. When the canonical engine resolver lands
+# (scripts/lib/engine-kind.sh) the probe can key off it instead of trying each
+# signature in turn. A private engine classifier here would be its own defect,
+# so there deliberately is not one.
+DECODE_FLOOR_MS = 100.0
+
+# Prometheus histogram lines: `<name>_sum{labels} <value>` / `<name>_count ...`.
+# A `_bucket` line cannot match: the suffix group accepts only sum|count.
+_TPOT_RE = re.compile(
+    r"^(?P<name>[A-Za-z_][A-Za-z0-9_:]*?time_per_output_token_seconds)"
+    r"_(?P<field>sum|count)(?:\{[^}]*\})?\s+(?P<value>\S+)\s*$"
+)
+_SGLANG_LOG_RE = re.compile(r"gen throughput \(token/s\):\s*([0-9]+(?:\.[0-9]+)?)")
+_LLAMACPP_LOG_RE = re.compile(
+    r"(?<!prompt )eval time\s*=[^\n]*?([0-9]+(?:\.[0-9]+)?)\s*tokens per second"
+)
+# A counter reading this far out is a parse error, not a measurement.
+ENGINE_TPS_SANE_MAX = 100000.0
+ENGINE_SOURCE_LABELS = {
+    "prom-tpot": "engine-reported: /metrics time_per_output_token_seconds",
+    "sglang-log": "engine-reported: SGLang 'gen throughput (token/s)' log line",
+    "llamacpp-log": "engine-reported: llama.cpp 'eval time' log line",
+}
+
+
+def _metrics_url(endpoint):
+    return endpoint.rstrip("/") + "/metrics"
+
+
+def _read_metrics_text(url, timeout=3.0):
+    """GET a Prometheus page. Any failure means 'no counter', never a run failure."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            if getattr(resp, "status", 200) != 200:
+                return ""
+            return resp.read(4 * 1024 * 1024).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _tpot_series(text):
+    """{metric_name: [sum_seconds, count]}, summed across every label series."""
+    out = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = _TPOT_RE.match(line)
+        if not m:
+            continue
+        try:
+            value = float(m.group("value"))
+        except ValueError:
+            continue
+        if value != value or value in (float("inf"), float("-inf")):
+            continue  # NaN / Inf: the engine has no sample yet
+        slot = out.setdefault(m.group("name"), [0.0, 0.0])
+        slot[0 if m.group("field") == "sum" else 1] += value
+    return out
+
+
+def engine_rate_from_metrics(before_text, after_text, metric):
+    """Decode tok/s for the turn that ran between the two /metrics snapshots."""
+    before = _tpot_series(before_text).get(metric)
+    after = _tpot_series(after_text).get(metric)
+    if not before or not after:
+        return None
+    d_sum = after[0] - before[0]
+    d_count = after[1] - before[1]
+    if d_sum <= 0 or d_count <= 0:
+        return None
+    rate = d_count / d_sum
+    if not 0 < rate < ENGINE_TPS_SANE_MAX:
+        return None
+    return round(rate, 3)
+
+
+def _rfc3339_nano(ts):
+    """`docker logs --since` wants RFC3339. Nanoseconds keep a fast PREVIOUS
+    turn's decode line from falling inside this turn's window."""
+    return "%s.%09dZ" % (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(ts)), int((ts % 1) * 1e9))
+
+
+def _docker_logs_since(container, since_ts, timeout=15.0):
+    """Engine log tail for one turn. stderr is MERGED into stdout, not
+    discarded: every engine in this repo logs to stderr, so a `2>/dev/null`
+    here would read as 'the counter never fired'."""
+    try:
+        proc = subprocess.run(
+            ["docker", "logs", "--since", _rfc3339_nano(since_ts), "--tail", "2000", container],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except Exception:
+        return ""
+    return proc.stdout or ""
+
+
+def engine_rate_from_logs(text):
+    """(tok/s, source) from the LAST engine decode-rate line in `text`."""
+    for regex, source in ((_SGLANG_LOG_RE, "sglang-log"), (_LLAMACPP_LOG_RE, "llamacpp-log")):
+        hits = regex.findall(text)
+        if not hits:
+            continue
+        try:
+            value = float(hits[-1])
+        except ValueError:
+            continue
+        if 0 < value < ENGINE_TPS_SANE_MAX:
+            return round(value, 3), source
+    return None, ""
+
+
+def decode_label(basis, source, window_ms):
+    """Provenance for one turn's decode figure (#1267).
+
+    The contract: an UNMEASURABLE turn and a genuine SILENT-EMPTY turn must
+    never render the same way. Pre-#1267 both printed a bare `decode_tps=0.0`,
+    so a harmless turn and the failure soak exists to catch were byte-identical
+    in the log and the reader had to redo `wall - ttft` by hand to tell them
+    apart.
+    """
+    if basis == "engine":
+        return ENGINE_SOURCE_LABELS.get(source, "engine-reported: %s" % (source or "engine counter"))
+    if basis == "decode":
+        return "client-timed: %d ms decode window" % window_ms
+    if basis == "wall":
+        return "wall-derived, canvas"
+    if basis == "empty":
+        return "SILENT-EMPTY: 0 completion tokens"
+    if basis == "unmeasurable":
+        return ("no decode figure: %d ms decode window is under the %d ms client-timing "
+                "floor and no engine counter was available" % (window_ms, int(DECODE_FLOOR_MS)))
+    return basis
+
+
+def cmd_engine_counter_probe(endpoint, container=""):
+    """Resolve ONCE per run where decode rates come from; print '<kind> <detail>'.
+
+    prom <metric>    — scrape /metrics before + after each turn
+    log <container>  — scrape `docker logs` for a decode-rate signature per turn
+    none <reason>    — client-side SSE timing, with the DECODE_FLOOR_MS floor
+    """
+    mode = (os.environ.get("SOAK_ENGINE_COUNTER") or "auto").strip().lower()
+    if mode == "off":
+        print("none SOAK_ENGINE_COUNTER=off")
+        return
+    names = sorted(_tpot_series(_read_metrics_text(_metrics_url(endpoint))))
+    if names:
+        print("prom " + names[0])
+        return
+    if container and container != "none" and shutil.which("docker"):
+        # Matched per turn by signature: a container whose logs carry no
+        # decode-rate line just falls back to client timing, labelled as such.
+        print("log " + container)
+        return
+    print("none no decode counter on %s and no container log to read" % _metrics_url(endpoint))
+
+
 def cmd_run(endpoint, req_path, timeout_s, metrics_path):
     body = pathlib.Path(req_path).read_bytes()
     req = urllib.request.Request(
@@ -543,6 +740,16 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    # Engine-side decode counter (#1268). The source is resolved ONCE per run by
+    # cmd_engine_counter_probe and handed down in the environment; the /metrics
+    # snapshot has to be taken BEFORE the request so its delta belongs to this
+    # turn and this turn only (valid because soak is single-stream).
+    counter_kind = (os.environ.get("SOAK_ENGINE_COUNTER_KIND") or "none").strip().lower()
+    if (os.environ.get("SOAK_ENGINE_COUNTER") or "auto").strip().lower() == "off":
+        counter_kind = "none"
+    counter_metric = (os.environ.get("SOAK_ENGINE_COUNTER_METRIC") or "").strip()
+    counter_container = (os.environ.get("SOAK_ENGINE_LOG_CONTAINER") or "").strip()
+    metrics_before = _read_metrics_text(_metrics_url(endpoint)) if counter_kind == "prom" else ""
     t0 = time.time()
     ttft = None
     completion_tokens = 0
@@ -611,6 +818,18 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
         error = f"{type(e).__name__}: {e}"
 
     wall = time.time() - t0
+    # Ask the engine for its own decode rate (#1268). A miss is not a failure:
+    # the client-side window below is the labelled fallback. Only asked when the
+    # turn produced tokens — a zero-token turn is silent-empty, full stop.
+    engine_tps = None
+    engine_source = ""
+    if completion_tokens > 0 and counter_kind == "prom" and metrics_before and counter_metric:
+        engine_tps = engine_rate_from_metrics(
+            metrics_before, _read_metrics_text(_metrics_url(endpoint)), counter_metric)
+        if engine_tps is not None:
+            engine_source = "prom-tpot"
+    elif completion_tokens > 0 and counter_kind == "log" and counter_container:
+        engine_tps, engine_source = engine_rate_from_logs(_docker_logs_since(counter_container, t0))
     # --- decode-rate basis (#809) --------------------------------------------
     # decode TPS = completion_tokens / (wall - ttft) assumes token-by-token
     # autoregressive streaming. Canvas-granularity (block-diffusion) models do
@@ -624,6 +843,11 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
     # tokens, derive from wall time and label the basis, rather than zeroing.
     #
     # decode_basis, carried into the metrics JSON and turn-log.csv:
+    #   engine        the ENGINE's own decode counter answered (#1268). Beats
+    #                 client-side timing whenever it is available, because it is
+    #                 computed over real decode steps and is therefore immune to
+    #                 a decode window too narrow to time. decode_source says
+    #                 which counter.
     #   decode        real decode window observed; decode_tps IS a decode rate
     #   wall          window unmeasurable, derived as completion_tokens / wall.
     #                 Equals wall TPS by construction: it INCLUDES prefill and
@@ -631,8 +855,11 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
     #   empty         completion_tokens == 0 — genuine silent-empty. Keeps the
     #                 0.0 that the silent-empty discriminator depends on; this
     #                 case must not regress (club-3090 #43, #47).
-    #   unmeasurable  window unmeasurable on a run NOT classified as canvas —
-    #                 the pre-#809 autoregressive behaviour, decode_tps = 0.0.
+    #   unmeasurable  window unmeasurable on a run NOT classified as canvas and
+    #                 no engine counter available. decode_tps stays 0.0 in the
+    #                 CSV for column compatibility, but it is NOT a measurement
+    #                 and must never be RENDERED as one (#1267) — see
+    #                 decode_label(), which is what soak-test.sh prints.
     #
     # The canvas SIGNATURE is ttft ≈ wall, i.e. a zero-width window — NOT merely
     # "narrow". That distinction is load-bearing: a fast autoregressive rig
@@ -658,20 +885,39 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
     canvas_signature = completion_tokens > 0 and (
         single_chunk or decode_s * 1000.0 <= canvas_window_ms
     )
+    # Branch order is load-bearing and unchanged from #809 for the client-side
+    # cases: a measurable window still beats the canvas branch (a multi-canvas
+    # turn IS a real decode measurement), and the canvas branch still claims a
+    # zero-width window before "unmeasurable" does. #1268 adds exactly one
+    # thing: where the client would have timed the stream, the engine's own
+    # counter is preferred. Canvas turns are deliberately NOT handed to the
+    # engine counter — an engine's per-output-token accounting is not meaningful
+    # for a model that denoises a whole canvas per step.
+    canvas_turn = granularity == "canvas" or (granularity == "auto" and canvas_signature)
+    measurable_window = decode_s >= DECODE_FLOOR_MS / 1000.0
     if completion_tokens <= 0:
         decode_tps = 0.0
         decode_basis = "empty"
-    elif decode_s >= 0.1:
-        decode_tps = round(completion_tokens / decode_s, 3)
-        decode_basis = "decode"
-    elif granularity == "canvas" or (granularity == "auto" and canvas_signature):
+        decode_source = "none"
+    elif measurable_window or not canvas_turn:
+        if engine_tps is not None:
+            decode_tps = engine_tps
+            decode_basis = "engine"
+            decode_source = engine_source
+        elif measurable_window:
+            decode_tps = round(completion_tokens / decode_s, 3)
+            decode_basis = "decode"
+            decode_source = "stream"
+        else:
+            # Window under the floor, no engine counter: streaming closed before
+            # decode steps were observable separately from prefill. NOT a zero.
+            decode_tps = 0.0
+            decode_basis = "unmeasurable"
+            decode_source = "none"
+    else:
         decode_tps = round(completion_tokens / wall, 3) if wall > 0 else 0.0
         decode_basis = "wall"
-    else:
-        # decode_s < 100 ms: streaming closed before decode steps were
-        # observable separately from prefill, on a run that is not canvas.
-        decode_tps = 0.0
-        decode_basis = "unmeasurable"
+        decode_source = "wall"
     # Reassemble the captured response for continuous-mode ingestion.
     # `tool_calls_response` is in OpenAI tool_calls format, ready to drop
     # into the next turn's assistant message.
@@ -692,6 +938,8 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
         "ttft_ms": round(ttft * 1000),
         "decode_tps": decode_tps,
         "decode_basis": decode_basis,
+        "decode_source": decode_source,
+        "decode_label": decode_label(decode_basis, decode_source, round(decode_s * 1000)),
         "decode_window_ms": round(decode_s * 1000),
         "completion_tokens": completion_tokens,
         # Continuous-mode capture (ignored in fresh mode):
@@ -716,9 +964,10 @@ def cmd_append_log(log_path, session, turn, vram, metrics_path):
                 metrics.get("completion_tokens", 0),
                 metrics.get("status", 0),
                 metrics.get("error", ""),
-                # decode_basis last, so a consumer reading the pre-#809 column
-                # order positionally still lines up.
+                # decode_basis, then decode_source, appended last so a consumer
+                # reading the pre-#809 column order positionally still lines up.
                 metrics.get("decode_basis", "decode"),
+                metrics.get("decode_source", ""),
             ]
         )
 
@@ -732,8 +981,16 @@ def cmd_metric(metrics_path):
     err_flag = 1 if (int(m.get("status", 0)) != 200 or m.get("error")) else 0
     # Field 6 (decode_basis) lets soak-test.sh label a wall-derived figure on the
     # per-turn line and make the canvas classification sticky for the run (#809).
+    # Fields 7-9 carry the provenance the per-turn line must show (#1267/#1268):
+    # the decode window in ms, which source produced the figure, and the label
+    # itself. The label is LAST and contains spaces — soak-test.sh reads it with
+    # a trailing `read` variable, so the wording lives here, in one place.
+    basis = m.get("decode_basis", "decode")
+    source = m.get("decode_source", "") or "none"
+    window_ms = int(m.get("decode_window_ms", 0) or 0)
+    label = m.get("decode_label") or decode_label(basis, source, window_ms)
     print(m.get("status", 0), m.get("t_ms", 0), m.get("ttft_ms", 0), m.get("decode_tps", 0),
-          err_flag, m.get("decode_basis", "decode"))
+          err_flag, basis, window_ms, source, label)
 
 
 def percentile(xs, p):
@@ -773,6 +1030,8 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
         # which case every row is treated as a real decode measurement — exactly
         # the pre-#809 reading of that data.
         has_decode_basis = "decode_basis" in (reader.fieldnames or [])
+        # decode_source column added 2026-09-13 (#1268). Absent on older CSVs.
+        has_decode_source = "decode_source" in (reader.fieldnames or [])
         for row in reader:
             for key in ("session_id", "turn_id", "t_ms", "vram_mib", "ttft_ms", "status"):
                 row[key] = int(float(row[key] or 0))
@@ -780,6 +1039,7 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
             # completion_tokens is new (added 2026-05-04) — back-compat for old CSVs
             row["completion_tokens"] = int(float(row.get("completion_tokens", 0) or 0))
             row["decode_basis"] = (row.get("decode_basis") or "decode") if has_decode_basis else "decode"
+            row["decode_source"] = (row.get("decode_source") or "") if has_decode_source else ""
             rows.append(row)
 
     sessions = sorted({r["session_id"] for r in rows})
@@ -799,6 +1059,16 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
     # every pool here is identical to the pre-#809 pools.
     derived = [r for r in rows if r["decode_basis"] == "wall"]
     measured_rows = [r for r in rows if r["decode_basis"] != "wall"]
+    # Basis pools for the denominator the summary owes the reader (#1267). An
+    # `engine` row IS a decode rate, so it belongs in the decode series with the
+    # client-timed ones; an `unmeasurable` row carries no rate at all and is
+    # dropped by realistic() below — which is numerically right and was, until
+    # now, invisible: p50 described an unstated subset with no denominator shown.
+    engine_rows = [r for r in rows if r["decode_basis"] == "engine"]
+    stream_rows = [r for r in rows if r["decode_basis"] == "decode"]
+    unmeasurable_rows = [r for r in rows if r["decode_basis"] == "unmeasurable"]
+    empty_rows = [r for r in rows if r["decode_basis"] == "empty"]
+    engine_sources = sorted({r["decode_source"] for r in engine_rows if r["decode_source"]})
     tps = [r["decode_tps"] for r in measured_rows if realistic(r["decode_tps"])]
     ttft = [r["ttft_ms"] for r in rows if r["ttft_ms"] > 0]
     first_tps = [r["decode_tps"] for r in measured_rows if r["session_id"] in first and realistic(r["decode_tps"])]
@@ -939,17 +1209,44 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
                 f"(sessions 1-{baseline_session - 1} had errored turns; their rows are "
                 f"excluded from growth + oscillation)"
             )
-    # Canvas-granularity block — emitted ONLY when a wall-derived turn exists, so
-    # an autoregressive run's summary is unchanged (#809).
+    # Decode-window basis block. Pre-#1267 this was gated on `derived`, i.e. it
+    # appeared ONLY when a canvas turn existed — so an autoregressive run with
+    # unmeasurable turns reported its p50 over an unstated subset and said
+    # nothing about the turns it had dropped. It now fires whenever the run is
+    # not uniformly client-timed decode turns, which keeps a plain healthy run's
+    # summary byte-identical while giving every other run its denominator.
+    basis_seg = []
+    if engine_rows:
+        basis_seg.append(
+            f"{len(engine_rows)} engine-reported"
+            f" ({', '.join(engine_sources) if engine_sources else 'engine counter'})")
+    if stream_rows:
+        basis_seg.append(f"{len(stream_rows)} client-timed")
+    if unmeasurable_rows:
+        basis_seg.append(
+            f"{len(unmeasurable_rows)} unmeasurable (decode window under the "
+            f"{int(DECODE_FLOOR_MS)} ms client-timing floor, no engine counter)")
+    if derived:
+        basis_seg.append(f"{len(derived)} wall-derived (canvas)")
+    if empty_rows:
+        basis_seg.append(f"{len(empty_rows)} silent-empty")
     basis_lines = []
     basis_rows = []
+    if derived or engine_rows or unmeasurable_rows:
+        basis_text = (
+            f"- Decode-window basis: {' / '.join(basis_seg)} of {len(rows)} turn(s). "
+            f"The decode percentiles and retention below are computed over the {len(tps)} "
+            f"turn(s) carrying a decode figure — that is the denominator; turns without one "
+            f"are excluded rather than counted as zero."
+        )
+        if derived:
+            basis_text += (
+                " A wall-derived turn arrived in a single chunk (canvas granularity), so its "
+                "decode window is zero-width and the figure is completion_tokens / wall — it "
+                "INCLUDES prefill and is not a decode rate."
+            )
+        basis_lines = [basis_text]
     if derived:
-        basis_lines = [
-            f"- Decode-window basis: {len(rows) - len(derived)} measured / {len(derived)} "
-            f"wall-derived of {len(rows)} turn(s). A wall-derived turn arrived in a single "
-            f"chunk (canvas granularity), so its decode window is zero-width and the figure "
-            f"is completion_tokens / wall — it INCLUDES prefill and is not a decode rate.",
-        ]
         basis_rows = [
             f"| p50 wall-derived TPS (canvas) | {percentile(dtps, 0.50):.2f} |",
             f"| p95 wall-derived TPS (canvas) | {percentile(dtps, 0.95):.2f} |",
@@ -1018,8 +1315,9 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
     print(f"[soak]   errors               {len(errors)}")
     print(f"[soak]   silent_empty         {len(silent_empty)} / {len(rows)} ({silent_empty_pct:.1f}%)")
     print(f"[soak]   p50_decode_tps       {percentile(tps, 0.50):.2f}")
+    if basis_lines:
+        print(f"[soak]   decode_basis         {' / '.join(basis_seg)} of {len(rows)}")
     if derived:
-        print(f"[soak]   decode_basis         {len(rows) - len(derived)} measured / {len(derived)} wall-derived (canvas)")
         print(f"[soak]   p50_wall_tps_canvas  {percentile(dtps, 0.50):.2f}  (includes prefill — NOT a decode rate)")
     print(f"[soak]   p95_ttft_ms          {percentile(ttft, 0.95):.0f}")
     print(f"[soak]   tps_retention        {tps_retention * 100:.1f}%")
@@ -1051,6 +1349,7 @@ def main():
         "run": cmd_run,
         "append-log": cmd_append_log,
         "metric": cmd_metric,
+        "engine-counter-probe": cmd_engine_counter_probe,
         "summary": cmd_summary,
     }[cmd](*args)
 
