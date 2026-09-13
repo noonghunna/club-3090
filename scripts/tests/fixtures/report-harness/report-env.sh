@@ -47,6 +47,16 @@ report_nvsmi_stub() {
   chmod +x "${REPORT_FAKE_BIN}/nvidia-smi"
 }
 
+# report_docker_stub — replace the hard-fail docker stub with a scripted one.
+# Body read from stdin, same additive contract as report_nvsmi_stub: the default
+# stays `exit 1` for every existing caller, so only tests that opt in are
+# affected. Needed by the resolved-config test (club-3090#1265), which has to
+# answer `docker inspect` with a fixture rather than have it fail.
+report_docker_stub() {
+  cat > "${REPORT_FAKE_BIN}/docker"
+  chmod +x "${REPORT_FAKE_BIN}/docker"
+}
+
 report_env_cleanup() {
   report_stub_stop
   [[ -n "${REPORT_ENV_DIR:-}" ]] && rm -rf "$REPORT_ENV_DIR"
