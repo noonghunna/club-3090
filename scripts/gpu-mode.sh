@@ -888,22 +888,79 @@ stop_estate() {
 }
 
 # --- GPU power-cap controls -------------------------------------------------
-# The rig normally runs both 3090s capped at 250W (quieter / cooler — see the
-# systemd unit below). The cap suppresses benchmark TPS, so maintainers need a
-# quick way to uncap to the hardware default for a true-TPS bench, then re-cap.
+# The rig normally runs both 3090s capped below stock (quieter / cooler — see
+# the systemd unit below). The cap suppresses benchmark TPS, so maintainers need
+# a quick way to uncap to the hardware default for a true-TPS bench, then re-cap.
 #
-# `nvidia-power-cap.service` is the single source of truth for the 250W value
-# AND re-applies it on every boot (Type=oneshot, RemainAfterExit=yes, enabled).
-# So `power-cap on` *restarts* that unit — `restart` (not `start`) is required:
-# the unit is already `active` from boot, and `systemctl start` on an
+# ⚠️ THIS SCRIPT HOLDS NO WATTAGE OF ITS OWN. `nvidia-power-cap.service` is the
+# single source of truth for the capped value, and we *read* it from the unit
+# (`systemctl cat` → its `-pl <watts>` ExecStart lines) instead of restating it.
+# It used to be restated: the comment block said 250W and the fallback below
+# executed `nvidia-smi -pl 250`, while the installed unit on this rig caps at
+# 230W — so the two halves of `power-cap on` disagreed about what "on" means,
+# and both reported success (#1281). A cap applied at the wrong wattage is worse
+# than no cap at all, because the benchmark it distorts still looks valid: a
+# cap on this class of rig already produced a −40% reading that was very nearly
+# filed upstream as a speculative-decoding regression. So when the unit is
+# missing or unparseable we REFUSE and say so — we never substitute a guess.
+#
+# The unit re-applies the cap on every boot (Type=oneshot, RemainAfterExit=yes,
+# enabled). So `power-cap on` *restarts* it — `restart` (not `start`) is
+# required: the unit is already `active` from boot, and `systemctl start` on an
 # already-active RemainAfterExit oneshot is a no-op (it won't re-run ExecStart,
 # so the cap wouldn't actually re-apply after a `power-cap off`). `restart`
-# stops it (clearing RemainAfterExit) then re-runs both `-pl 250` ExecStart
-# lines. `power-cap off` reads each card's Default Power Limit from nvidia-smi
+# stops it (clearing RemainAfterExit) then re-runs its ExecStart lines; the
+# fallback below replays exactly those parsed lines when systemd won't.
+# `power-cap off` reads each card's Default Power Limit from nvidia-smi
 # (370W on GPU 0, 420W on GPU 1 here — they differ, so we never hardcode) and
 # applies it. `off` is session-scoped: a reboot OR a driver reload re-applies
-# 250W via the service. We never disable the service.
+# the unit's cap. We never disable the service.
 POWER_CAP_SERVICE="nvidia-power-cap.service"
+
+# powercap_service_plan — the cap the service actually defines, as one
+# "<gpu-index|all> <watts>" row per power-limit ExecStart directive in the unit.
+# Exits 1 printing NOTHING when the unit is absent, unreadable, or carries no
+# parseable wattage — the caller must refuse rather than invent one (#1281).
+powercap_service_plan() {
+    local unit
+    unit="$(systemctl cat "$POWER_CAP_SERVICE" 2>/dev/null)" || return 1
+    [ -n "$unit" ] || return 1
+    printf '%s\n' "$unit" | awk '
+        /^[[:space:]]*ExecStart[[:space:]]*=/ {
+            idx = ""; watts = ""
+            for (i = 1; i <= NF; i++) {
+                if (($i == "-i" || $i == "--id") && i < NF)                 idx   = $(i+1)
+                else if ($i ~ /^--id=/)                                     { split($i, a, "="); idx   = a[2] }
+                else if (($i == "-pl" || $i == "--power-limit") && i < NF)  watts = $(i+1)
+                else if ($i ~ /^--power-limit=/)                            { split($i, a, "="); watts = a[2] }
+            }
+            if (watts ~ /^[0-9]+(\.[0-9]+)?$/) {
+                if (idx !~ /^[0-9]+$/) idx = "all"
+                print idx, watts
+                found++
+            }
+        }
+        END { exit (found > 0 ? 0 : 1) }'
+}
+
+# Display label for a plan: "230W", or "230W/250W" when the unit caps cards
+# differently. Display only — the applied values always come from the plan.
+powercap_plan_watts_label() {
+    printf '%s\n' "$1" | awk '
+        $2 != "" && !($2 in seen) { seen[$2] = 1; out = (out == "" ? $2 "W" : out "/" $2 "W") }
+        END { print out }'
+}
+
+# Same label for informational messages, degrading to a number-free phrase when
+# the unit cannot be read — a message must not invent a wattage either.
+powercap_service_watts_label() {
+    local plan
+    if plan="$(powercap_service_plan)"; then
+        powercap_plan_watts_label "$plan"
+    else
+        printf '%s\n' "its configured cap"
+    fi
+}
 
 # Print per-GPU enforced / default / min / max power limits (one row per card).
 powercap_show() {
@@ -937,7 +994,7 @@ mode_powercap() {
     # A numeric action = an explicit CUSTOM wattage applied to both cards (the
     # serve-cockpit power-cap menu's "custom" option).  Validated against each
     # card's [min,max] range; session-scoped like `off` (the boot service still
-    # re-applies 250W on reboot/reload).
+    # re-applies its own cap on reboot/reload).
     if [[ "$action" =~ ^[0-9]+$ ]]; then
         echo -e "${CYAN}═══ Setting custom GPU power cap (${action}W) ═══${NC}"
         local cidx cmin cmax crc=0 capplied=0
@@ -963,24 +1020,48 @@ mode_powercap() {
             exit 1
         fi
         echo -e "${GREEN}Custom cap ${action}W applied.${NC} ${YELLOW}Session-scoped — a reboot or driver"
-        echo -e "reload re-applies 250W via ${POWER_CAP_SERVICE}.${NC}"
+        echo -e "reload re-applies $(powercap_service_watts_label) via ${POWER_CAP_SERVICE}.${NC}"
         powercap_echo_enforced
         [ "$crc" -eq 0 ] || exit 1
         return
     fi
     case "$action" in
         on)
-            echo -e "${CYAN}═══ Re-applying GPU power cap (250W) ═══${NC}"
-            echo "Restarting ${POWER_CAP_SERVICE} (the boot-time 250W enforcer)."
+            # Resolve the wattage from the unit BEFORE touching anything. No
+            # literal here, and no guess: an unverified cap distorts every
+            # benchmark taken after it while still looking valid (#1281).
+            local plan label pidx pwatts prc=0
+            if ! plan="$(powercap_service_plan)"; then
+                echo -e "${RED}✗ Refusing to re-apply a power cap: cannot resolve one from ${POWER_CAP_SERVICE}.${NC}" >&2
+                echo "  The unit is missing, unreadable, or has no parseable '-pl <watts>' ExecStart line," >&2
+                echo "  and this script deliberately keeps no wattage of its own. Applying a guessed cap is" >&2
+                echo "  worse than applying none — the benchmark it silently suppresses still looks valid." >&2
+                echo "  Inspect the unit:   systemctl cat ${POWER_CAP_SERVICE}" >&2
+                echo "  Or cap explicitly:  gpu-mode power-cap <WATTS>" >&2
+                exit 1
+            fi
+            label="$(powercap_plan_watts_label "$plan")"
+            echo -e "${CYAN}═══ Re-applying GPU power cap (${label}, per ${POWER_CAP_SERVICE}) ═══${NC}"
+            echo "Restarting ${POWER_CAP_SERVICE} (the boot-time ${label} enforcer)."
             # restart, not start — the unit is already active from boot, so
             # `start` is a no-op on a RemainAfterExit oneshot (won't re-run -pl).
             if sudo systemctl restart "$POWER_CAP_SERVICE" 2>/dev/null; then
                 echo -e "${GREEN}Power cap re-applied via systemd.${NC}"
             else
-                # Fallback: service missing/disabled — apply 250W directly.
-                echo -e "${YELLOW}systemctl restart failed; falling back to direct nvidia-smi -pl 250.${NC}" >&2
-                if ! { sudo nvidia-smi -i 0 -pl 250 && sudo nvidia-smi -i 1 -pl 250; }; then
-                    echo -e "${RED}✗ Failed to set 250W cap.${NC} Check sudo + driver state with: nvidia-smi -q -d POWER" >&2
+                # Fallback: the unit exists (we just parsed it) but systemd
+                # would not run it — masked, disabled, failed dependency. Replay
+                # exactly the caps the unit itself defines, never a literal.
+                echo -e "${YELLOW}systemctl restart failed; replaying the unit's own ExecStart caps directly (${label}).${NC}" >&2
+                while read -r pidx pwatts; do
+                    [ -z "$pidx" ] && continue
+                    if [ "$pidx" = "all" ]; then
+                        sudo nvidia-smi -pl "$pwatts" >/dev/null 2>&1 || prc=1
+                    else
+                        sudo nvidia-smi -i "$pidx" -pl "$pwatts" >/dev/null 2>&1 || prc=1
+                    fi
+                done <<< "$plan"
+                if [ "$prc" -ne 0 ]; then
+                    echo -e "${RED}✗ Failed to apply the ${label} cap.${NC} Check sudo + driver state with: nvidia-smi -q -d POWER" >&2
                     exit 1
                 fi
             fi
@@ -1009,7 +1090,7 @@ mode_powercap() {
                 exit 1
             fi
             echo -e "${GREEN}Uncapped to default.${NC} ${YELLOW}Session-scoped — a reboot or driver"
-            echo -e "reload re-applies 250W via ${POWER_CAP_SERVICE}. Run 'gpu-mode power-cap on' to re-cap now.${NC}"
+            echo -e "reload re-applies $(powercap_service_watts_label) via ${POWER_CAP_SERVICE}. Run 'gpu-mode power-cap on' to re-cap now.${NC}"
             powercap_echo_enforced
             [ "$rc" -eq 0 ] || exit 1
             ;;
@@ -1086,7 +1167,7 @@ gemma12b	models	Gemma 4 12B AutoRound INT8 + bf16 KV + MTP n=2 (gemma4_unified a
 deckard	models	Qwen3.6-40B-Deckard Q6_K + MTP n=2 + q8_0 KV + 128K (llama.cpp, dual)	llama-cpp-deckard-40b,litellm,qdrant,openwebui,searxng,spark-dashboard	8199,8080,4000,3010	both
 ai-studio	studio	image · video · audio · voice — ComfyUI both GPUs + qwen director + sidecars + Open WebUI (pick the lane in OWUI)	comfyui,studio-director,studio-gallery,studio-orchestrator,studio-image-shim,studio-tts,studio-step-voice,openwebui,litellm,qdrant,searxng,spark-dashboard	8188,8090,8189,8190,8191,8192,8193,8080,4000,6333,3010	both
 off	ops	Stop all services	all-stopped		none
-power-cap	ops	GPU power-cap controls (on/off/status; both 3090s, 250W default cap)			both
+power-cap	ops	GPU power-cap controls (on/off/status; both 3090s, cap value read from nvidia-power-cap.service)			both
 prune	ops	docker image prune -a (safe — only unreferenced images)			none
 prune-all	ops	+ build cache (keep 5 GB) + dangling networks (volumes safe)			none
 TSV
@@ -1167,10 +1248,11 @@ usage() {
     echo "  off                Stop all services"
     echo "  status             Show running services, GPU, RAM, disk, Docker disk"
     echo ""
-    echo "  GPU power cap (both 3090s; normally capped at 250W for quiet/cool operation):"
-    echo "  power-cap on       Re-apply the 250W cap (via nvidia-power-cap.service)"
+    echo "  GPU power cap (both 3090s; normally capped below stock for quiet/cool operation):"
+    echo "  power-cap on       Re-apply the cap nvidia-power-cap.service defines (read from the"
+    echo "                     unit, never hardcoded; refuses if the unit is missing/unparseable)"
     echo "  power-cap off      Uncap to hardware default for a true-TPS bench"
-    echo "                     (session-scoped — a reboot / driver reload re-caps at 250W)"
+    echo "                     (session-scoped — a reboot / driver reload re-caps via the unit)"
     echo "  power-cap <WATTS>  Apply a custom cap to both cards (e.g. 'power-cap 280';"
     echo "                     validated against each card's [min,max]; session-scoped)"
     echo "  power-cap status   Show per-GPU enforced / default / min / max power limits"

@@ -264,4 +264,49 @@ mk_smi 'GPU 0: RTX 3090\n' "$TOPO_PHB" "$P2P_CNS" "$MEM_SMALL"
 assert_empty "$(hint)"                                  # single card
 echo "  ✓ opportunity hint: split/firmware/driver tiers, BAR1 outranks CNS, silent when moot"
 
+# ── 10. p2p_gpu_count is EXACTLY one integer line, driver up or down (#1279) ─
+# `grep -c` prints 0 AND exits 1 on no match, so the old `|| echo 0` tail fired
+# too and the function returned "0\n0". Every consumer does arithmetic on the
+# result, so report.sh emitted `[[: 0 0: syntax error in expression` into the
+# diagnostic a user was about to send us. "Contains 0" would have passed against
+# the broken version — these assert the LINE COUNT and the arithmetic.
+count_under() {  # count_under <nvidia-smi stub body>
+  printf '#!/usr/bin/env bash\n%s\n' "$1" > "$TMP/nvidia-smi"
+  chmod +x "$TMP/nvidia-smi"
+  PATH="$TMP:$PATH" bash -c 'source scripts/lib/p2p-state.sh; p2p_gpu_count'
+}
+
+# (a) driver query FAILS outright (no GPU / driver not loaded) -> exactly "0"
+out="$(count_under 'exit 1')"
+[[ "$(printf '%s' "$out" | wc -l)" -eq 0 ]] \
+  || fail "failing nvidia-smi: expected ONE line, got $(printf '%s\n' "$out" | wc -l): $(printf '%q' "$out")"
+[[ "$out" =~ ^[0-9]+$ ]] || fail "failing nvidia-smi: not an integer: $(printf '%q' "$out")"
+[[ "$out" == "0" ]]      || fail "failing nvidia-smi: expected 0, got $(printf '%q' "$out")"
+
+# (b) nvidia-smi present but prints nothing matching (empty output) -> "0"
+out="$(count_under 'exit 0')"
+[[ "$out" == "0" ]] || fail "empty nvidia-smi -L: expected 0, got $(printf '%q' "$out")"
+
+# (c) the happy path still counts
+out="$(count_under "printf 'GPU 0: RTX 3090\\nGPU 1: RTX 3090\\n'")"
+[[ "$out" == "2" ]] || fail "two GPUs: expected 2, got $(printf '%q' "$out")"
+
+# (d) the DOWNSTREAM shape that broke: arithmetic on the result, driver down.
+# report.sh:566 runs `[[ "$(p2p_gpu_count)" -ge 2 ]]`; with "0\n0" bash aborts
+# the test with a syntax error ON STDERR and a non-zero status. Assert stderr
+# is clean and the comparison evaluates.
+printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/nvidia-smi"; chmod +x "$TMP/nvidia-smi"
+err="$(PATH="$TMP:$PATH" bash -c 'source scripts/lib/p2p-state.sh
+if [[ "$(p2p_gpu_count)" -ge 2 ]]; then echo many; else echo few; fi' 2>&1 >/dev/null)"
+[[ -z "$err" ]] || fail "arithmetic on p2p_gpu_count emitted to stderr: $err"
+r="$(PATH="$TMP:$PATH" bash -c 'source scripts/lib/p2p-state.sh
+if [[ "$(p2p_gpu_count)" -ge 2 ]]; then echo many; else echo few; fi' 2>/dev/null)"
+[[ "$r" == "few" ]] || fail "driver-down arithmetic should take the <2 branch (got $r)"
+
+# (e) and it must not trip a pipefail caller (bench.sh runs with -o pipefail)
+r="$(PATH="$TMP:$PATH" bash -c 'set -euo pipefail; source scripts/lib/p2p-state.sh; p2p_gpu_count')" \
+  || fail "p2p_gpu_count returned non-zero under set -euo pipefail"
+[[ "$r" == "0" ]] || fail "pipefail caller: expected 0, got $(printf '%q' "$r")"
+echo "  ✓ p2p_gpu_count: exactly one integer line, driver up or down; arithmetic-safe"
+
 echo "test-p2p-state: ok"
