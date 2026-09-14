@@ -197,6 +197,12 @@ services:
       - KV_CACHE_DTYPE
       - ATTENTION_BACKEND
       - MAX_RUNNING_REQUESTS
+      # ── Prefix-cache policy (opt-in, OFF by default) — club-3090#1319 ──
+      # ⚠️ BARE pass-throughs. `- VAR=${X:-}` sets the EMPTY STRING, and
+      # SGLANG_ENABLE_UNIFIED_RADIX_TREE is an EnvBool where empty != unset.
+      # Bare means docker forwards them ONLY when the host sets them.
+      - SESSION_RADIX_CACHE
+      - RADIX_EVICTION_POLICY
       - MAMBA_SSM_DTYPE
       - W4A8
       - ENABLE_THINKING
@@ -269,6 +275,39 @@ services:
             echo "[spec] DFlash2 EXTERNAL drafter ON - block_size INFERRED from $$D (expect 8)" >&2
           fi
         fi
+        # --- Prefix-cache policy opt-ins (club-3090#1319) -------------------
+        # ⚠️ SESSION_RADIX_CACHE is a 0/1 GATE, not the flag: the feature needs
+        # BOTH the env var and the CLI flag (upstream: "implemented only by
+        # UnifiedRadixCache"). Setting one alone is the footgun, so one switch
+        # sets both — same reasoning as the W4A8 boolean.
+        CACHE=()
+        _src="${SESSION_RADIX_CACHE:-0}"
+        case "$$_src" in 0|1) : ;; *) echo "[cache] SESSION_RADIX_CACHE='$$_src' must be 0 or 1" >&2; exit 1 ;; esac
+        if [ "$$_src" = "1" ]; then
+          export SGLANG_ENABLE_UNIFIED_RADIX_TREE=1
+          CACHE+=(--enable-session-radix-cache)
+          echo "[cache] session-aware radix cache ON — eviction consumes UNREFERENCED" >&2
+          echo "[cache] entries before referenced ones. ⚠️ INERT unless clients send a" >&2
+          echo "[cache] session_id; close finished sessions via POST /close_session." >&2
+        fi
+        if [ -n "${RADIX_EVICTION_POLICY:-}" ]; then
+          CACHE+=(--radix-eviction-policy "$${RADIX_EVICTION_POLICY}")
+          echo "[cache] radix eviction policy: $${RADIX_EVICTION_POLICY} (default lru)" >&2
+        fi
+        # ⛔ NO --radix-eviction-policy-config KNOB. Upstream docs describe it (it
+        # tunes slru's protected_threshold) but it does NOT exist in the pinned
+        # v0.5.19 — passing it hard-fails the boot with "unrecognized arguments".
+        # Verified by booting, not by reading docs. Add it when the pin moves.
+        #
+        # ⛔ NO HiCache KNOB — DELIBERATELY. `--enable-hierarchical-cache` on a
+        # hybrid GDN model allocates host pools, backs up to them, retains them,
+        # and then NEVER serves a host hit: upstream sgl-project/sglang#33713
+        # (open) prunes the MAMBA node from the radix tree on device eviction
+        # instead of downgrading it, so the host bytes are orphaned. Measured
+        # here twice on 2026-09-14 (backup ok, dropped=0, host 37% free, yet
+        # load-back kv=0 mamba=0 and cache_source="host" never even instantiated).
+        # It costs ~HICACHE_GB x TP of host RAM for nothing. Re-test when #33713
+        # merges. See learnings/sglang-engine.md 2026-09-14.
         # --- W4A8 opt-in (patch from club-3090#1226; not vendored here) ---
         _w4a8="${W4A8:-0}"
         case "$$_w4a8" in 0|1) : ;; *) echo "[w4a8] W4A8='$$_w4a8' must be 0 or 1" >&2; exit 1 ;; esac
@@ -394,11 +433,35 @@ services:
         #
         #     usable warm-prefix slots = max_mamba_cache_size - 1 - 3 x max_running_requests
         #
-        # On 2x3090 TP=2 this compose gets max_mamba_cache_size=33 (set by
-        # --mamba-full-memory-ratio, default 0.9), which gives:
-        #     max-running-requests=1  -> 29 usable      =4  -> 20 usable
-        #                          =8  ->  8 usable      =10 ->  2 usable
-        #                          =11 -> INFEASIBLE (negative)
+        # ⭐ MEASURED on the reference 2x3090 TP=2, 2026-09-14:
+        #     max_mamba_cache_size = 34
+        # ⚠️ READ YOUR OWN BOOT LINE — this differs per weight tier, drafter tier
+        # and topology. The five dual composes measured 55 / 34 / 33 / 21 / 8;
+        # a single pasted constant was wrong on four of them (club-3090#1319).
+        #     Mamba Cache is allocated. max_mamba_cache_size: N
+        #
+        #     usable working slots = K - k x max_running_requests
+        #
+        # where k is set by --mamba-radix-cache-strategy (common.py:26-29):
+        #     extra_buffer=3 (default) · extra_buffer_lazy=2 · no_buffer=1
+        # ⚠️ There is NO -1 for a sink slot: MambaSlotAllocator's free list is
+        # arange(1, K+1) with slot 0 reserved separately, so K is already net.
+        # On this compose (K=34, k=3):
+        #     max-running-requests=1   ->  31 usable
+        #     max-running-requests=2   ->  28 usable
+        #     max-running-requests=4   ->  22 usable
+        #     max-running-requests=8   ->  10 usable
+        #
+        # ⭐ THE CONCURRENCY CLAMP USES A DIFFERENT RATIO. _calculate_mamba_ratio()
+        # gives r=5 (extra_buffer+overlap) / 4 (lazy) / 3 (no_buffer), and
+        # resolve_max_num_reqs() caps at K // r. Here that is 34 // 5 = 6,
+        # so a request for 8 resolves to 6.
+        # ⚠️ `server_args=` echoes the REQUEST; the later
+        # `max_total_num_tokens=... max_running_requests=N ...` line is EFFECTIVE.
+        #
+        # ⚠️ extra_buffer_lazy is NOT a free saving: the auto-fit solve
+        # K = floor((B - p(1+D)) / (p(1+D/r))) uses r, so 5->4 raises the
+        # denominator and can SHRINK K. Measure K and capacity together.
         #
         # ⚠️ A slot caches ONE DISTINCT PREFIX. Depth is nearly free — measured:
         # a 14-turn / ~33K-token conversation never evicted at 14 slots. BREADTH is
@@ -446,6 +509,7 @@ services:
           --context-length "${CONTEXT_LENGTH:-196608}" \
           --mem-fraction-static "${MEM_FRACTION:-0.82}" \
           --max-running-requests "${MAX_RUNNING_REQUESTS:-1}" \
+          \"$${CACHE[@]}\" \
           --trust-remote-code \
           --enable-metrics \
           --enable-cache-report \

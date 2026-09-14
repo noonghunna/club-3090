@@ -266,6 +266,12 @@ services:
       - KV_CACHE_DTYPE
       - ATTENTION_BACKEND
       - MAX_RUNNING_REQUESTS
+      # ── Prefix-cache policy (opt-in, OFF by default) — club-3090#1319 ──
+      # ⚠️ BARE pass-throughs. `- VAR=${X:-}` sets the EMPTY STRING, and
+      # SGLANG_ENABLE_UNIFIED_RADIX_TREE is an EnvBool where empty != unset.
+      # Bare means docker forwards them ONLY when the host sets them.
+      - SESSION_RADIX_CACHE
+      - RADIX_EVICTION_POLICY
       - MAMBA_SSM_DTYPE
       - W4A8
       - ENABLE_THINKING
@@ -338,6 +344,39 @@ services:
             echo "[spec] DFlash2 EXTERNAL drafter ON - block_size INFERRED from $$D (expect 8)" >&2
           fi
         fi
+        # --- Prefix-cache policy opt-ins (club-3090#1319) -------------------
+        # ⚠️ SESSION_RADIX_CACHE is a 0/1 GATE, not the flag: the feature needs
+        # BOTH the env var and the CLI flag (upstream: "implemented only by
+        # UnifiedRadixCache"). Setting one alone is the footgun, so one switch
+        # sets both — same reasoning as the W4A8 boolean.
+        CACHE=()
+        _src="${SESSION_RADIX_CACHE:-0}"
+        case "$$_src" in 0|1) : ;; *) echo "[cache] SESSION_RADIX_CACHE='$$_src' must be 0 or 1" >&2; exit 1 ;; esac
+        if [ "$$_src" = "1" ]; then
+          export SGLANG_ENABLE_UNIFIED_RADIX_TREE=1
+          CACHE+=(--enable-session-radix-cache)
+          echo "[cache] session-aware radix cache ON — eviction consumes UNREFERENCED" >&2
+          echo "[cache] entries before referenced ones. ⚠️ INERT unless clients send a" >&2
+          echo "[cache] session_id; close finished sessions via POST /close_session." >&2
+        fi
+        if [ -n "${RADIX_EVICTION_POLICY:-}" ]; then
+          CACHE+=(--radix-eviction-policy "$${RADIX_EVICTION_POLICY}")
+          echo "[cache] radix eviction policy: $${RADIX_EVICTION_POLICY} (default lru)" >&2
+        fi
+        # ⛔ NO --radix-eviction-policy-config KNOB. Upstream docs describe it (it
+        # tunes slru's protected_threshold) but it does NOT exist in the pinned
+        # v0.5.19 — passing it hard-fails the boot with "unrecognized arguments".
+        # Verified by booting, not by reading docs. Add it when the pin moves.
+        #
+        # ⛔ NO HiCache KNOB — DELIBERATELY. `--enable-hierarchical-cache` on a
+        # hybrid GDN model allocates host pools, backs up to them, retains them,
+        # and then NEVER serves a host hit: upstream sgl-project/sglang#33713
+        # (open) prunes the MAMBA node from the radix tree on device eviction
+        # instead of downgrading it, so the host bytes are orphaned. Measured
+        # here twice on 2026-09-14 (backup ok, dropped=0, host 37% free, yet
+        # load-back kv=0 mamba=0 and cache_source="host" never even instantiated).
+        # It costs ~HICACHE_GB x TP of host RAM for nothing. Re-test when #33713
+        # merges. See learnings/sglang-engine.md 2026-09-14.
         # --- W4A8 opt-in (patch from club-3090#1226; not vendored here) ---
         _w4a8="${W4A8:-0}"
         case "$$_w4a8" in 0|1) : ;; *) echo "[w4a8] W4A8='$$_w4a8' must be 0 or 1" >&2; exit 1 ;; esac
@@ -484,6 +523,7 @@ services:
           --context-length "${CONTEXT_LENGTH:-262144}" \
           --mem-fraction-static "${MEM_FRACTION:-0.82}" \
           --max-running-requests "${MAX_RUNNING_REQUESTS:-2}" \
+          \"$${CACHE[@]}\" \
           --trust-remote-code \
           --enable-metrics \
           --enable-cache-report \
