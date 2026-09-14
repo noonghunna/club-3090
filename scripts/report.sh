@@ -1240,11 +1240,48 @@ else
       echo
     fi
 
-    kv_pool=$(docker logs "$CONTAINER" 2>&1 | command grep -E 'Available KV cache memory|GPU KV cache size:|Maximum concurrency for' | tail -3)
-    if [[ -n "$kv_pool" ]]; then
-      echo "**KV pool sizing:**"
+    # ⚠️ The first three patterns are vLLM's. SGLang words every one of them
+    # differently ("KV Cache is allocated. ... #tokens: N"), so this block was
+    # silently EMPTY on every SGLang report — which is why no community report
+    # has ever carried a pool figure for an SGLang slug (club-3090#1319).
+    #
+    # ⭐ `Mamba Cache is allocated. max_mamba_cache_size: N` is the load-bearing
+    # one for hybrid GDN models (Qwen3.8 et al). Each running request LOCKS 3 of
+    # those slots, so the usable warm-prefix count is
+    #     max_mamba_cache_size - 1 - 3 x max_running_requests
+    # and it is the binding constraint on concurrency for these models — NOT the
+    # KV byte pool. It is topology- and tier-dependent and we cannot measure
+    # multi4/multi8 on a 2-GPU rig, so capturing it here is how those numbers
+    # reach us at all.
+    # ⚠️ Allocation lines are printed ONCE at boot and the "Memory pool end"
+    # line repeats per rank, so a plain `tail` drops the mamba line — which is
+    # the one that matters. Take allocation from the HEAD of the log and the
+    # effective-limits line from the TAIL, rather than tailing the union.
+    kv_pool=$(docker logs "$CONTAINER" 2>&1 | command grep -E 'Available KV cache memory|GPU KV cache size:|Maximum concurrency for|Mamba Cache is allocated|KV Cache is allocated' | head -6)
+    # ⭐ The EFFECTIVE limits, which are not the requested ones: SGLang CLAMPS
+    # max_running_requests to what the pool supports. Measured 2026-09-14 on the
+    # reference rig: the DFlash2 tier was asked for 8 and resolved to 6, while
+    # the MTP tier got all 8. `server_args` echoes the REQUEST, so it cannot be
+    # used to tell what the server is actually running — this line can.
+    kv_limits=$(docker logs "$CONTAINER" 2>&1 | command grep -E 'max_total_num_tokens=' | tail -1)
+    if [[ -n "$kv_pool" || -n "$kv_limits" ]]; then
+      echo "**KV / state pool sizing (and EFFECTIVE limits):**"
       echo '```'
-      echo "$kv_pool"
+      if [[ -n "$kv_pool" ]]; then echo "$kv_pool"; fi
+      if [[ -n "$kv_limits" ]]; then echo "$kv_limits"; fi
+      echo '```'
+      echo
+    fi
+
+    # SGLang scheduler steady state: the concurrency actually reached and what it
+    # cost in state slots. `#running-req` is STREAMS (never spec-dec depth), and
+    # `mamba usage` is the fraction of the state pool locked — together they say
+    # whether --max-running-requests is a real ceiling or an inherited default.
+    sgl_batch=$(docker logs "$CONTAINER" 2>&1 | command grep -E 'Decode batch.*#running-req' | tail -3)
+    if [[ -n "$sgl_batch" ]]; then
+      echo "**Scheduler steady state (concurrency + state-slot usage):**"
+      echo '```'
+      echo "$sgl_batch"
       echo '```'
       echo
     fi
