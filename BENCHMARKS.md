@@ -380,9 +380,12 @@ FLASH_ATTN + DFlash2 n=7). Read: **W4A8 buys +46.0% prefill @10K and +37.1% @90K
 decode (no change) and −6.0% narrative**. Prefill CV was ≤0.1% on both arms, so the prefill gain is
 far outside the ~2.8% boot-to-boot spread and is real. ⚠️ **Unlike the KV A/B above, this one is a
 single boot per arm** — the decode deltas are NOT boot-confirmed and the narrative −6.0% should be
-read as indicative only. W4A8 stays **off** by default because this is the decode tier; flip it when
-prefill-bound. It does not harm the drafter (acceptance 6.37/6.33 vs 6.65/6.40 against n=7), which
-retires the old "W4A8 unvalidated with this drafter on FA2" caveat.
+read as indicative only. **W4A8 was nonetheless flipped ON as the shipped default on 2026-09-14**
+(maintainer decision) — it costs nothing on **code** decode, which is what this tier serves, and it
+now matches the fast and superfast tiers. Set `W4A8=0` for the old W4A16 path; that is the arm to
+try if your workload is long **narrative** generation rather than code. It does not harm the drafter
+(acceptance 6.37/6.33 vs 6.65/6.40 against n=7), which retires the old "W4A8 unvalidated with this
+drafter on FA2" caveat.
 
 ⚠️ **Do not diff these against the Qwen3.6-27B rows.** Different checkpoint, different sampler defaults (this tier follows the 3.8 model card's Instruct row), and cross-session TPS comparison is invalid on this rig — single boots swing ~5 TPS on the code leg, which is wider than most tier gaps. Same-session A/B only.
 

@@ -142,7 +142,11 @@ services:
       - OMP_NUM_THREADS=1
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
       # ⭐ W4A8 (int8 activations) SHIPS ON — set W4A8=0 for the W4A16 path.
-      - W4A8=${W4A8:-0}
+      # Flipped ON 2026-09-14 to match the fast/superfast tiers. The measurement
+      # behind it is the DUAL ultrafast A/B (+46% prefill @10K, +0.3% code decode);
+      # like every other number on this slug it transfers on TOPOLOGY ONLY — this
+      # config has never booted on the 2-GPU reference rig.
+      - W4A8=${W4A8:-1}
       # ⚠️⚠️ WHY A SEPARATE BOOLEAN INSTEAD OF `${VLLM_MARLIN_INPUT_DTYPE:-int8}`:
       # vLLM VALIDATES this variable against a closed set and raises on anything
       # else — INCLUDING THE EMPTY STRING:

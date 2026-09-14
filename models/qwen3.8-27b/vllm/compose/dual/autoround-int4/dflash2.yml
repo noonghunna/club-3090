@@ -1,8 +1,8 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.8-27B (Frozenlock AutoRound INT4 — 4-bit, group 128, sym;
-#              ~18 GiB. Served W4A16 here: 16-bit activations, W4A8=0 default
-#              (W4A8=1 is a prefill win — measured table below).
+#              ~18 GiB. Served W4A8 here (int8 activations, W4A8=0 for W4A16) —
+#              +46% prefill; measured table below.
 #              lm_head is bf16, which the DFlash2 drafter requires — it ships no
 #              embeddings/lm_head and shares the target's.)
 #   Topology:  Dual 3090 PCIe (TP=2, no NVLink; NVLINK_MODE=auto detects)
@@ -69,16 +69,17 @@
 #   decode narrative n=5   117.9     125.4     -6.0%   4.1% / 4.3%
 #   decode code      n=5   226.9     226.2     +0.3%   5.3% / 6.5%
 #
-# ⭐ W4A8 here is a PREFILL lever, not a throughput one. Both prefill arms held CV
-# <=0.1%, and +46% / +37% dwarf the ~2.8% boot-to-boot spread, so that gain is real.
-# It is OFF by default because this is the DECODE tier; set W4A8=1 if you are
-# prefill-bound (long prompts, agent turns, TTFT-sensitive work). The gain narrows
-# with depth (+46% @10K -> +37% @90K) but stays large.
+# ⭐ W4A8 SHIPS ON as of 2026-09-14 (maintainer decision on the run above). Both
+# prefill arms held CV <=0.1% and +46% / +37% dwarf the ~2.8% boot-to-boot spread,
+# so the prefill gain is real, and it costs nothing on code decode (+0.3%) — which
+# is what this tier is for. The gain narrows with depth (+46% @10K -> +37% @90K)
+# but stays large. Set W4A8=0 for the old W4A16 path.
 #
 # ⚠️ The DECODE deltas are NOT boot-confirmed — one boot per arm, and boot-to-boot
 # spread on this rig is ~2.8%. Read code (+0.3%) as "no change" and narrative
 # (-6.0%) as "indicative, possibly real": it is only ~2x the boot noise off a
-# single boot. Re-measure with alternating boots before treating it as settled.
+# single boot. The default was flipped ON knowing this — if you serve mostly long
+# NARRATIVE generation rather than code, W4A8=0 is the arm to try.
 #
 # ⭐ W4A8 does NOT harm the DFlash2 drafter, which is what the old "unvalidated
 # with this drafter on FA2" caveat feared. Decode-window acceptance was 6.37/6.33
@@ -205,11 +206,10 @@ services:
       - VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
       - OMP_NUM_THREADS=1
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
-      # ⭐ W4A8 (int8 activations) ships OFF here — set W4A8=1 for ~+46% prefill
-      # @10K / ~+37% @90K at flat-to-slightly-down decode (measured table in the header).
-      # ⚠️ Unlike the superfast tier (dflash2-fp8.yml) which ships W4A8=1, this is
-      # a DECODE tier, so the default stays W4A16.
-      - W4A8=${W4A8:-0}
+      # ⭐ W4A8 (int8 activations) SHIPS ON — set W4A8=0 for the W4A16 path.
+      # ~+46% prefill @10K / ~+37% @90K at +0.3% code decode (measured table in
+      # the header). Matches the fast and superfast tiers, which also ship W4A8=1.
+      - W4A8=${W4A8:-1}
       # ⚠️⚠️ WHY A SEPARATE BOOLEAN INSTEAD OF `${VLLM_MARLIN_INPUT_DTYPE:-int8}`:
       # vLLM VALIDATES this variable against a closed set and raises on anything
       # else — INCLUDING THE EMPTY STRING:
@@ -245,7 +245,7 @@ services:
         # exported it afterwards, a failed patch would downgrade to a WARNING and we
         # would serve a HALF-WIRED int8 config — the exact thing that guard exists
         # to prevent.
-        if [ -z "$${VLLM_MARLIN_INPUT_DTYPE:-}" ] && [ "$${W4A8:-0}" != "0" ]; then
+        if [ -z "$${VLLM_MARLIN_INPUT_DTYPE:-}" ] && [ "$${W4A8:-1}" != "0" ]; then
           export VLLM_MARLIN_INPUT_DTYPE=int8
         fi
         bash /etc/club3090/w4a8/install.sh
@@ -257,7 +257,7 @@ services:
         # FLASH_ATTN API, which is the backend this compose already selects.
         bash /etc/club3090/fa2/install.sh
         source /etc/club3090/fa2-runtime.env
-        echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-0})"
+        echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
         AR=""
         [ "$${_NVLINK_ENABLED:-0}" = "1" ] || AR="--disable-custom-all-reduce"
         # -- Drafter toggle: the same contract on every club-3090 compose --------
