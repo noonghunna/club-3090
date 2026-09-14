@@ -4368,13 +4368,6 @@ entries:
     engine: vllm-stable
     drafter: syvai-qwen38-dflash2
     spec_method: null
-    required_sm: 8.6
-    supported_sm:
-      - 8.6
-      - 8.9
-      - 9.0
-      - 10.0
-      - 12.0
     kv_format: fp8_e4m3
     act_format: int8
     act8_capable: true
@@ -4397,6 +4390,13 @@ entries:
     weights_companions: []
     gateway: false
     serve_aliases: []
+    required_sm: 8.6
+    supported_sm:
+      - 8.6
+      - 8.9
+      - 9.0
+      - 10.0
+      - 12.0
     sampler_profiles:
       instruct:
         temperature: 0.7

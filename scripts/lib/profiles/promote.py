@@ -506,6 +506,20 @@ def validate_spec(spec: Any, root: Path, layer: str) -> dict:
             f"the {_LOCAL_SLUG_PREFIX!r} namespace belongs to the LOCAL layer — "
             "core slugs are <engine>/<name>"
         )
+    # ── Symmetric to the LOCAL containment check above (#1205 follow-up) ─────
+    # LOCAL writes may not leave the layer; CORE writes may not reach INTO it.
+    # `profiles-local/` is GITIGNORED, so a curated row whose compose_path points
+    # there would reference a file that exists on the maintainer's disk and
+    # nowhere else — the registry would ship pointing at nothing. This used to be
+    # unreachable by accident: every local-layer spec also carried a `local/`
+    # slug, so the namespace check above refused first. #1205 removed that
+    # namespace and with it the only thing standing in front of this.
+    if Path(cpath).is_relative_to(Path(_LOCAL_DIR_REL)):
+        raise Refusal(
+            f"compose.path {cpath!r} is inside the LOCAL layer ({_LOCAL_DIR_REL}/), "
+            f"which is gitignored — a curated entry must not point there. Move the "
+            f"compose under models/{mid}/ for a core write, or use --layer local."
+        )
     profile_path = root / _MODELS_DIR_REL / f"{mid}.yml"
     if profile_path.exists():
         raise Refusal(f"model profile already exists: {profile_path}")

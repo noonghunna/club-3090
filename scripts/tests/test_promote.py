@@ -20,13 +20,14 @@ from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from scripts.lib.profiles import promote  # noqa: E402
 
-# Everything the post-write checks (compose_registry import + registry-emit.sh
-REPO = Path(__file__).resolve().parents[2]
+# Everything the post-write checks need: the compose_registry import and
+# registry-emit.sh both resolve against the tmp root, so the copy has to carry
+# scripts/lib, tools/tui-core (emit imports it) and models/.
 _COPY_TREES = ("scripts/lib", "tools/tui-core", "models")
 
 
@@ -51,7 +52,10 @@ def _spec(*, mid="my-model", slug=None, layer_local=True):
     registry cannot carry <...> placeholders)."""
     quant = "autoround-int4"
     if layer_local:
-        slug = slug or f"local/{mid}-dual-{quant}"
+        # #1205 hard-cut `local/`: a local slug is '<engine>/<name>', the SAME
+        # shape a curated row uses. Only the compose path (and the stamped
+        # `origin` field) distinguishes the layers now.
+        slug = slug or f"vllm/{mid}-dual-{quant}"
         compose_path = (
             f"scripts/lib/profiles-local/composes/{mid}/vllm/compose/dual/{quant}/base.yml"
         )
@@ -162,7 +166,7 @@ class TestLocalLayer:
     def test_happy_path_writes_three_artifacts_and_ok(self, root):
         res = _run_cli(root, _spec(), "--layer", "local")
         assert res.returncode == 0, res.stderr + res.stdout
-        assert "PROMOTE_OK local/my-model-dual-autoround-int4" in res.stdout
+        assert "PROMOTE_OK vllm/my-model-dual-autoround-int4" in res.stdout
         for rel in LOCAL_ARTIFACTS:
             assert (root / rel).exists(), rel
         # NO core file was touched.
@@ -175,7 +179,7 @@ class TestLocalLayer:
                 sys.executable,
                 "-c",
                 "from scripts.lib.profiles.compose_registry import get_registry;"
-                "e = get_registry()['local/my-model-dual-autoround-int4'];"
+                "e = get_registry()['vllm/my-model-dual-autoround-int4'];"
                 "assert e['model'] == 'my-model' and e['status'] == 'incubating';"
                 "assert e['pp'] == 1",  # wrapped through _entry → full shape
             ],
@@ -206,15 +210,26 @@ class TestLocalLayer:
             for p in (root / "scripts/lib/profiles/models").glob("*.yml")
         )
         coll = _run_cli(
-            root, _spec(mid=core_mid, slug="local/other-dual-x"), "--layer", "local"
+            root, _spec(mid=core_mid, slug="vllm/other-dual-x"), "--layer", "local"
         )
         assert coll.returncode == promote.EXIT_COLLISION
         assert "CORE" in coll.stderr
 
-    def test_refuses_slug_outside_local_namespace(self, root):
-        res = _run_cli(root, _spec(slug="vllm/my-model-dual-x"), "--layer", "local")
+    def test_refuses_the_removed_local_namespace(self, root):
+        # INVERTED by #1205. This used to assert that a `<engine>/<name>` slug was
+        # refused for a local write; that shape is now the REQUIRED one, and it is
+        # `local/` that refuses. A user upgrading across #1205 hits this path, so
+        # the message must name the fix rather than just state the rule.
+        res = _run_cli(root, _spec(slug="local/my-model-dual-x"), "--layer", "local")
         assert res.returncode == promote.EXIT_COLLISION
-        assert "namespace" in res.stderr
+        assert "namespace was removed" in res.stderr
+        assert "<engine>/" in res.stderr
+        assert "my-model-dual-x" in res.stderr
+
+    def test_slug_must_have_exactly_one_slash(self, root):
+        res = _run_cli(root, _spec(slug="no-slash-at-all"), "--layer", "local")
+        assert res.returncode == promote.EXIT_COLLISION
+        assert "<engine>/<name>" in res.stderr
 
     def test_refuses_compose_outside_layer(self, root):
         spec = _spec()
@@ -239,7 +254,7 @@ class TestLocalLayer:
         raw = json.loads(
             (root / "scripts/lib/profiles-local/registry.local.json").read_text()
         )
-        assert raw["local/my-model-dual-autoround-int4"]["status"] == "incubating"
+        assert raw["vllm/my-model-dual-autoround-int4"]["status"] == "incubating"
 
 
 class TestCoreGate:
@@ -379,13 +394,35 @@ class TestCoreGate:
         )
         assert chk.returncode == 0, chk.stderr
 
-    def test_core_refuses_local_namespace_slug(self, root):
+    def test_core_refuses_a_compose_inside_the_local_layer(self, root):
+        # `_spec()` builds a LOCAL-layer spec: its compose.path sits under the
+        # gitignored scripts/lib/profiles-local/. A CORE write must refuse it —
+        # a curated row pointing into a gitignored dir references a file that
+        # exists on one disk and nowhere else.
+        #
+        # ⚠️ This test used to pass for the WRONG reason. Pre-#1205 `_spec()`
+        # also carried a `local/` slug, so the core path refused on the namespace
+        # and never reached the compose path — the containment guard did not
+        # exist. Removing the namespace exposed that; the guard was added with
+        # this test. Keep both legs.
         res = _run_cli(
             root,
             _spec(),
             "--layer",
             "core",
             env_extra={"C3_ALLOW_CORE_PROMOTE": "1"},
+        )
+        assert res.returncode == promote.EXIT_COLLISION
+        assert "LOCAL layer" in res.stderr
+        assert "gitignored" in res.stderr
+        # nothing curated was written
+        assert not (root / "scripts/lib/profiles/models/my-model.yml").exists()
+
+    def test_core_still_refuses_the_removed_local_namespace(self, root):
+        # The other leg: a `local/` slug with a core-shaped compose path.
+        spec = _spec(slug="local/my-model-dual-x", layer_local=False)
+        res = _run_cli(
+            root, spec, "--layer", "core", env_extra={"C3_ALLOW_CORE_PROMOTE": "1"}
         )
         assert res.returncode == promote.EXIT_COLLISION
         assert "LOCAL layer" in res.stderr
@@ -398,7 +435,7 @@ class TestInProcessMain:
         rc = promote.main(["--spec-file", str(_write_spec(root)), "--root", str(root)])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "PROMOTE_OK local/my-model-dual-autoround-int4" in out
+        assert "PROMOTE_OK vllm/my-model-dual-autoround-int4" in out
 
     def test_main_refusal_exit_3(self, root, capsys):
         spec = _spec()

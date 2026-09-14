@@ -136,9 +136,15 @@ def load_local_state(root: Path, mid: str) -> dict:
         )
     for e in entries:
         if str(e["slug"]).startswith(_LOCAL_SLUG_PREFIX):
+            # #1205 inverted this condition (the prefix went from REQUIRED to
+            # REFUSED) but left the old wording, so the message said "lacks the
+            # 'local/' namespace" about a slug that plainly had it. Say what
+            # actually happened, and name the fix.
             raise Refusal(
-                f"registry slug {e['slug']!r} lacks the {_LOCAL_SLUG_PREFIX!r} "
-                "namespace — not a LOCAL-layer entry"
+                f"registry slug {e['slug']!r} uses the {_LOCAL_SLUG_PREFIX!r} "
+                "namespace, which was removed — local slugs are '<engine>/<name>' "
+                f"(provenance is the 'origin' field). Re-register it as "
+                f"'<engine>/{str(e['slug'])[len(_LOCAL_SLUG_PREFIX):]}'."
             )
     return {
         "model_id": mid,
