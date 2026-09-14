@@ -198,18 +198,28 @@
 #   = more all-reduce on a slow bus; that is the cost side of this trade.
 # ---------------------------------------------------------------------------
 #   ---------------------------------------------------------------------------
-#   ⭐ W4A8 (int8 activations) — OPT-IN, and the patch is NOT VENDORED HERE.
+#   ⭐ W4A8 (int8 activations) — OPT-IN, and the patch IS VENDORED AND MOUNTED
+#   BY DEFAULT (see the w4a8 mount below). `W4A8=1` is all you need.
 #
-#   Set `W4A8=1` to serve int8 activations through @A1RM4X's re-cut of jb-seo's
-#   AutoRound W4A8 patch (club-3090#1226). We deliberately do NOT carry a copy:
-#   jb-seo's original (club-3090#1178) is cut against v0.5.18 and its eligibility
-#   gate omits the per-shard `K%128==0 / N%64==0` constraint that `prepare_w4a8`
-#   hard-asserts, so it crashes on the GDN merged `in_proj_ba` tensor. #1226 is
-#   cut against v0.5.19 (our pin) AND adds the shape guard.
+#   It is OFF by default because it is a PREFILL optimisation: ~+44% prefill at
+#   ~flat code decode on THIS (DFlash2) tier, where the MTP tier pays ~-11%.
+#   MEASURED on the reference rig 2026-09-11 — table below. Turn it on when you
+#   are prefill-bound (long prompts, agent work, high TTFT). Even here, where
+#   decode is ~flat, it is not free: it is a numeric-format trade, and the same
+#   shape the fp8-KV and NVFP4 paths make — cheaper format buys prefill.
 #
-#   ⚠️ Until #1226 merges, `W4A8=1` HARD-FAILS with a pointer rather than
-#   silently serving W4A16 — a silent fallback here would be indistinguishable
-#   from the feature working.
+#   The patch is @A1RM4X's re-cut of jb-seo's AutoRound W4A8 patch
+#   (club-3090#1226, vendored via #1248 on 2026-09-11) at
+#   sglang/patches/sglang-autoround-w4a8-v0.5.19/. jb-seo's original
+#   (club-3090#1178) was cut against v0.5.18 and its eligibility gate omitted the
+#   per-shard `K%128==0 / N%64==0` constraint that `prepare_w4a8` hard-asserts,
+#   so it crashed on the GDN merged `in_proj_ba` tensor (N=96 -> 48/rank at TP4,
+#   not 64-divisible). The vendored re-cut is against v0.5.19 (our pin) AND adds
+#   the shape guard, which is the reason it is carried rather than referenced.
+#
+#   ⚠️ `W4A8=1` still HARD-FAILS if the installer is missing, rather than
+#   silently serving W4A16 — a silent fallback would be indistinguishable from
+#   the feature working.
 #
 #   ⭐ MEASURED on this rig 2026-09-11 with #1226 applied (Frozenlock @ TP=2 —
 #   a different checkpoint and topology from his Avuja @ TP=4):
