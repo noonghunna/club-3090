@@ -57,7 +57,17 @@ def root(tmp_path):
             # #1142: skip root-owned container torch_compile caches under
             # models/ — copytree dies on them (Permission denied) on any
             # rig that has served a model. Pure build artifact.
-            ignore=shutil.ignore_patterns("__pycache__", "cache"),
+            #
+            # ⚠️⚠️ `profiles-local` is skipped for a DIFFERENT and sharper reason
+            # (#1316 follow-up): it is the REAL local layer of whoever is running
+            # the suite. Copying it in makes these tests inherit that machine's
+            # promoted models — so they pass on a clean checkout and fail on any
+            # rig that has ever run `promote.py --layer local`, which is the very
+            # feature under test. `_write_local` seeds what each test needs; the
+            # real layer must never be visible. Note the FIRST test here asserts
+            # "no local layer → core identity", which is precisely the assertion
+            # a stray real layer silently destroys.
+            ignore=shutil.ignore_patterns("__pycache__", "cache", "profiles-local"),
         )
     return tmp_path
 

@@ -43,10 +43,18 @@ def root(tmp_path):
         shutil.copytree(
             REPO / rel,
             repo / rel,
-            ignore=shutil.# #1142: skip root-owned container torch_compile caches under
+            # #1142: skip root-owned container torch_compile caches under
             # models/ — copytree dies on them (Permission denied) on any
             # rig that has served a model. Pure build artifact.
-            ignore_patterns("__pycache__", "cache"),
+            #
+            # ⚠️⚠️ `profiles-local` is skipped for a DIFFERENT and sharper reason
+            # (#1316 follow-up): it is the REAL local layer of whoever is running
+            # the suite. Copying it in makes these tests inherit that machine's
+            # promoted models — so they pass on a clean checkout and fail on any
+            # rig that has ever run `promote.py --layer local`, which is the very
+            # feature under test. Every test here seeds its own synthetic layer;
+            # the real one must never be visible.
+            ignore=shutil.ignore_patterns("__pycache__", "cache", "profiles-local"),
         )
     return repo
 

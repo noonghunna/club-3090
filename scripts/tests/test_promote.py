@@ -42,7 +42,15 @@ def root(tmp_path):
             # taking every test in this file down on any rig that has served a
             # model. They are pure build artifact (1 tracked file under those
             # paths), so skip them.
-            ignore=shutil.ignore_patterns("__pycache__", "cache"),
+            #
+            # ⚠️⚠️ `profiles-local` is skipped for a DIFFERENT and sharper reason
+            # (#1316 follow-up): it is the REAL local layer of whoever is running
+            # the suite. Copying it in makes these tests inherit that machine's
+            # promoted models — so they pass on a clean checkout and fail on any
+            # rig that has ever run `promote.py --layer local`, which is the very
+            # feature under test. promote.py creates the layer it needs; the real
+            # one must never be visible.
+            ignore=shutil.ignore_patterns("__pycache__", "cache", "profiles-local"),
         )
     return tmp_path
 
