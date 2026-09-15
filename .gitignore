@@ -45,6 +45,8 @@ venv/
 
 # Local env overrides
 .env
+# Rig-local LiteLLM gateway config (litellm-emit.sh --local, #1325)
+services/litellm/config.local.yaml
 *.env.local
 
 # Local safety backups of compose files (e.g. docker-compose.yml.default)
