@@ -97,7 +97,7 @@ def _load_model_specs_from_yaml(profiles):
     qwen, gemma = profiles.models["qwen3.6-27b"], profiles.models["gemma-4-31b"]
     qwen_moe, gemma_moe = profiles.models["qwen3.6-35b-a3b"], profiles.models["gemma-4-26b-a4b"]
     gemma12 = profiles.models["gemma-4-12b"]
-    q_fields = ("hidden_size", "num_hidden_layers", "num_gdn_layers", "num_attn_layers", "num_attn_heads", "num_kv_heads", "head_dim_attn", "linear_num_v_heads", "linear_num_k_heads", "linear_v_head_dim", "linear_k_head_dim", "linear_conv_kernel_dim", "max_ctx_supported", "attention_k_eq_v")
+    q_fields = ("hidden_size", "num_hidden_layers", "num_gdn_layers", "num_attn_layers", "num_attn_heads", "num_kv_heads", "head_dim_attn", "linear_num_v_heads", "linear_num_k_heads", "linear_v_head_dim", "linear_k_head_dim", "linear_conv_kernel_dim", "max_ctx_supported", "attention_k_eq_v", "mtp_num_hidden_layers")
     g_fields = ("hidden_size", "intermediate_size", "num_hidden_layers", "num_full_attn_layers", "num_sliding_attn_layers", "num_attn_heads", "num_kv_heads", "head_dim_sliding", "global_head_dim", "sliding_window", "max_ctx_supported", "attention_k_eq_v")
     gm_fields = (*g_fields, "num_global_kv_heads", "num_experts", "num_experts_per_tok", "moe_intermediate_size", "active_params_b", "mtp_num_hidden_layers")
     qm_fields = (*q_fields, "num_experts", "num_experts_per_tok", "moe_intermediate_size", "shared_expert_intermediate_size", "active_params_b", "mtp_num_hidden_layers")
@@ -707,6 +707,32 @@ def _weights_per_card_gb(spec, tp, weights_variant="default"):
     raise ValueError(f"Unknown model_family: {spec['model_family']}")
 
 
+def _kv_bearing_layers(spec, mtp_n: int = 0) -> int:
+    """Attention layers that actually grow KV per token.
+
+    ⚠️ A built-in MTP head is a KV-BEARING LAYER, not just extra context. Until
+    2026-09-15 this counted `num_attn_layers` unconditionally and modelled the
+    drafter purely as `max_ctx + mtp_n * 32` — ~128 tokens on a 262K window
+    (0.05%), when the real cost is +1 layer (+6.25% of per-token KV on a 16-layer
+    hybrid), paid on EVERY token.
+
+    Measured on Qwen3.8-27B (SGLang v0.5.19, TP=2, fp8 KV, same 16 full_attention
+    + 48 GDN geometry): sweeping the mamba pool gives an exactly linear state<->KV
+    exchange rate. A 16-layer prediction gives 2,394 tokens/slot; measured was
+    2,253.2 — a ratio of exactly 17/16, i.e. `mtp_num_hidden_layers = 1`.
+    See docs/KV_MATH.md and learnings/sglang-engine.md (2026-09-15).
+
+    ⚠️ Only counts the BUILT-IN head. An external drafter (DFlash2) carries its own
+    KV-bearing layers at its own geometry (5 sliding layers, 8 kv_heads, head_dim
+    128 => +31.25% measured) and is NOT modelled here — those composes remain
+    under-predicted. Tracked rather than silently approximated.
+    """
+    layers = spec["num_attn_layers"]
+    if mtp_n and mtp_n > 0:
+        layers += int(spec.get("mtp_num_hidden_layers") or 0)
+    return layers
+
+
 def kv_pool_per_card_bytes(spec, kv_format, max_ctx, max_num_seqs, tp, mtp_n=0):
     """Per-card KV pool bytes (growing portion only).
 
@@ -732,7 +758,7 @@ def kv_pool_per_card_bytes(spec, kv_format, max_ctx, max_num_seqs, tp, mtp_n=0):
     if spec["model_family"] == "qwen3-next-hybrid":
         # K and V stored independently
         per_token = (
-            spec["num_attn_layers"]
+            _kv_bearing_layers(spec, mtp_n)
             * spec["num_kv_heads"]
             * spec["head_dim_attn"]
             * 2  # K + V
@@ -746,7 +772,7 @@ def kv_pool_per_card_bytes(spec, kv_format, max_ctx, max_num_seqs, tp, mtp_n=0):
         # K and V stored independently. GDN recurrent state is fixed-size and
         # per-stream, not context-linear.
         per_token = (
-            spec["num_attn_layers"]
+            _kv_bearing_layers(spec, mtp_n)
             * spec["num_kv_heads"]
             * spec["head_dim_attn"]
             * 2

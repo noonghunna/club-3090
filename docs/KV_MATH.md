@@ -295,14 +295,37 @@ This term is exact (the checkpoint is a fixed size). DeltaNet's `linear_attn.in_
 
 ### 2. KV pool (attention layers only)
 
-In the Qwen3-Next hybrid architecture, **only the 16 full_attention layers contribute to the growing KV cache**. The 48 GDN (Gated DeltaNet) layers maintain a fixed-size recurrent state instead (Yang et al., [Gated Delta Networks ICLR 2025](https://github.com/NVlabs/GatedDeltaNet)).
+In the Qwen3-Next hybrid architecture, the 48 GDN (Gated DeltaNet) layers maintain a fixed-size recurrent state rather than a growing KV cache (Yang et al., [Gated Delta Networks ICLR 2025](https://github.com/NVlabs/GatedDeltaNet)), so only the **full_attention** layers grow per token.
 
-Applying the general formula:
+⚠️ **A drafter adds KV-bearing layers, and they are NOT free.** This section previously counted 16 layers unconditionally, which under-predicts per-token KV on **every drafter compose**. Corrected 2026-09-15 from a measured pool sweep (see below).
 
 ```
-per_token_bytes = 16 (growing layers) × 4 (kv_heads) × 256 (head_dim) × k_v_tensors=2 × bpe
-                = 32,768 × bpe bytes
+per_token_bytes = kv_bearing_layers × kv_heads × head_dim × k_v_tensors=2 × bpe
+
+   base model            16 × 4 × 256 × 2  = 32,768 × bpe
+   + built-in MTP head   17 × 4 × 256 × 2  = 34,816 × bpe      (+6.25%)
+   + DFlash2 drafter     (16 × 4 × 256 + 5 × 8 × 128) × 2 = 43,008 × bpe   (+31.25%)
 ```
+
+⚠️ The DFlash2 drafter's 5 `sliding_attention` layers have **different geometry** from the main model
+(8 kv_heads, head_dim 128, vs 4 × 256) — so it is not "21 layers at the main model's shape". And its
+KV is allocated **per token from the same pool**, not window-bounded, despite being sliding-window layers.
+
+**Where the layer count comes from:** `text_config.layer_types` (count `full_attention`) **plus**
+`text_config.mtp_num_hidden_layers` when a built-in MTP drafter is configured, **plus** the external
+drafter's own KV-bearing layers when one is loaded.
+
+> **Measured, not derived** (Qwen3.8-27B, SGLang v0.5.19, TP=2, fp8 KV — same 16+48 hybrid geometry).
+> Sweeping `--max-mamba-cache-size` and reading `max_total_num_tokens` gives an exactly linear
+> state↔KV exchange rate. Predicting it with 16 layers gave 2,394 tokens/slot; the measured value was
+> **2,253.2**, a ratio of exactly **17/16** — the MTP head. On the DFlash2 tier the measured slope was
+> **1,824.0**, matching 16+5 layers to the decimal (16-only predicts 2,394; 16+5+MTP predicts 1,741).
+> ⚠️ Turning the drafter off entirely also frees its weights and speculative buffers, so the **total**
+> context gain is far larger than the per-token rate implies: **+48.6% KV tokens at identical K**
+> (−33% context for having MTP on). Full detail in `learnings/sglang-engine.md`, 2026-09-15.
+
+The table below is the **base model (16 layers, no drafter)**. Multiply by **1.0625** for built-in
+MTP, or **1.3125** for the DFlash2 drafter.
 
 | KV format | bpe | per-token KV (TP=1) | per-token KV (TP=2) |
 |---|---:|---:|---:|

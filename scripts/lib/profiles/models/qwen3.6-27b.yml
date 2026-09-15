@@ -7,6 +7,7 @@ hidden_size: 5120
 num_hidden_layers: 64
 num_gdn_layers: 48
 num_attn_layers: 16
+mtp_num_hidden_layers: 1     # built-in MTP head is a KV-BEARING layer (+6.25% per-token KV; measured 2026-09-15)
 num_attn_heads: 24
 num_kv_heads: 4
 head_dim_attn: 256
