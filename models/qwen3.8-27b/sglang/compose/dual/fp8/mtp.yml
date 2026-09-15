@@ -10,7 +10,7 @@
 #              text_config.mtp_num_hidden_layers=1) — NOT an external drafter.
 #   KV:        fp8_e4m3 — half the bytes of bf16, which is what keeps the full context in pool.
 #   Vision:    ✅ tower present — verify-full scored 4/4 on ground truth here 2026-09-10.
-#   Max ctx:   131072 — ⚠️ NOT the 262144 architectural ceiling. VRAM-bound and
+#   Max ctx:   163840 — ⚠️ NOT the 262144 architectural ceiling. VRAM-bound and
 #              MEASURED: the pool holds 157,875 tokens at mem-fraction 0.92.
 #   Genesis:   N/A — Genesis is a vLLM construct.
 #   Status:    🧪 Experimental — BOOTED + benched + verify-full PASS 2026-09-10.
@@ -325,6 +325,7 @@ services:
       - KV_CACHE_DTYPE
       - ATTENTION_BACKEND
       - MAX_RUNNING_REQUESTS
+      - MAX_MAMBA_CACHE_SIZE
       # ── Prefix-cache policy (opt-in, OFF by default) — club-3090#1319 ──
       # ⚠️ BARE pass-throughs. `- VAR=${X:-}` sets the EMPTY STRING, and
       # SGLANG_ENABLE_UNIFIED_RADIX_TREE is an EnvBool where empty != unset.
@@ -596,6 +597,38 @@ services:
         # `cached_tokens: 0` explicitly. A consumer that reads a missing field as
         # "nothing was reused" cannot tell no-reuse from reporting-off — the same
         # misreading, one layer up. Read absent as UNKNOWN, not 0.
+        # ⭐⭐ K IS PINNED AT 10 AND ctx RAISED TO 163840 — MEASURED, NOT ESTIMATED
+        # (club-3090#16 follow-up, 2026-09-15). Auto-fit gives K=21 on this tier and
+        # spends the surplus slots on breadth this slug does not use: it ships
+        # --max-running-requests 1 and its role is a single-stream fidelity reference.
+        #
+        #   K   | max_total_num_tokens | avail mem | measured
+        #   ----|----------------------|-----------|----------
+        #   21  | 158,116              | 1.67 GB   | auto-fit (previous default)
+        #   10  | 182,901              | 1.66 GB   | this default
+        #
+        # The exchange rate is EXACTLY the one measured on the int4 tier — 2,253.2 KV
+        # tokens per mamba slot. Predicted 158,116 + 11 x 2,253.2 = 182,901; measured
+        # 182,901. It is quant-INDEPENDENT because per-slot SSM bytes (conv/ssm shapes)
+        # and per-token KV bytes (fp8_e4m3 over 17 KV-bearing layers incl. the MTP head)
+        # are identical across the two tiers; only the BUDGET differs.
+        #
+        # ⚠️ WHAT THIS COSTS: usable warm-prefix slots = K - 3 x max_running_requests,
+        # so 18 -> 7. Depth is unaffected (a long conversation occupies one slot);
+        # BREADTH is what shrinks. If you keep many distinct conversations warm, raise
+        # MAX_MAMBA_CACHE_SIZE back toward 21 and lower CONTEXT_LENGTH to match.
+        # ⚠️ Draft acceptance was NOT measurably hurt (2.77 / 3.85 / 3.05 at K=10), but
+        # accept len is noisy at N=1 — read that as "drafter alive", not "undegraded".
+        #
+        # ⚠️ ctx 163840 deliberately leaves ~19,061 tokens of radix headroom (1.12x).
+        # 180224 would fit arithmetically at ~1.01x and is NOT chosen: this tier has the
+        # slowest prefill on the rig (sm_86 has no native fp8 compute, so weights serve
+        # weight-only through Marlin), and zero headroom means every miss is repaid at
+        # full price. Do not raise ctx without re-reading the pool from YOUR boot line.
+        #
+        # ⚠️ HARD FLOOR: K >= 5 or the engine refuses to boot (max_num_reqs=0), and the
+        # concurrency clamp is C = K // 5, so K=10 admits C=2. K=5 buys only ~11K more
+        # tokens (~6%) while leaving 2 usable prefix slots — not worth it.
         exec python3 -m sglang.launch_server \
           --model-path "$$M" \
           --tp-size 2 \
@@ -605,9 +638,10 @@ services:
           --mamba-ssm-dtype "${MAMBA_SSM_DTYPE:-bfloat16}" \
           --chunked-prefill-size "${CHUNKED_PREFILL_SIZE:-2048}" \
           --attention-backend "${ATTENTION_BACKEND:-flashinfer}" \
-          --context-length "${CONTEXT_LENGTH:-131072}" \
+          --context-length "${CONTEXT_LENGTH:-163840}" \
           --mem-fraction-static "${MEM_FRACTION:-0.92}" \
           --max-running-requests "${MAX_RUNNING_REQUESTS:-1}" \
+          --max-mamba-cache-size "${MAX_MAMBA_CACHE_SIZE:-10}" \
           "$${CACHE[@]}" \
           --trust-remote-code \
           --enable-metrics \
