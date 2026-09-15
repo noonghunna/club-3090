@@ -136,7 +136,8 @@
 #     | intermediate_ssm_state_cache    |      0.70 GB |     0.35 GB |
 #     | intermediate_conv_window_cache  |      0.01 GB |     0.01 GB |
 #     | mamba total                     |  **2.65 GB** | **2.41 GB** |
-#     | KV pool #tokens                 |      394,661 | **409,552** |
+#     | KV pool #tokens                 |      394,661 | **451,633** |
+#     |   (409,552 was the 0.90 / max-running-requests=1 default, to 2026-09-15) |
 #     | `Memory pool end` avail mem     |      2.38 GB |     2.42 GB |
 #
 #   Per-slot SSM bytes halved exactly (0.0731 -> 0.0358 GB); the solver spent the
@@ -474,10 +475,20 @@ services:
         # ⚠️ There is NO -1 for a sink slot: MambaSlotAllocator's free list is
         # arange(1, K+1) with slot 0 reserved separately, so K is already net.
         # On this compose (K=55, k=3):
-        #     max-running-requests=1   ->  52 usable
+        #     max-running-requests=1   ->  52 usable     (at the OLD K=55 / 0.90 default)
         #     max-running-requests=2   ->  49 usable
         #     max-running-requests=4   ->  43 usable
         #     max-running-requests=8   ->  31 usable
+        #   SHIPPED DEFAULT SINCE 2026-09-15 is 0.95 / max-running-requests=2, where
+        #   auto-fit yields K=63, so usable = 63 - 3x2 = 57 and the clamp allows C=12.
+        #   MEASURED at that default: 451,633 tokens = 2 x 225,817 (86% of the 262,144
+        #   ceiling), accept len 3.25 / rate 0.56, 1.47 GB post-boot headroom, 0 OOM.
+        #   ⚠️ Forcing K DOWN buys context and COSTS draft acceptance: K=35 -> 3.02,
+        #   K=10 -> 2.27. Reaching a full 2 x 262,144 needs K <= ~30 and ~20% of accept
+        #   length. 86% of the ceiling is a soft limit (a longer session evicts, it does
+        #   not fail), so the throughput is worth more than the last 14% of context.
+        #   ⚠️ On 32 GB cards the scarcity INVERTS - context stops binding, concurrency
+        #   starts - so raise --max-running-requests there rather than lowering K.
         #
         # ⭐ THE CONCURRENCY CLAMP USES A DIFFERENT RATIO. _calculate_mamba_ratio()
         # gives r=5 (extra_buffer+overlap) / 4 (lazy) / 3 (no_buffer), and
@@ -534,8 +545,8 @@ services:
           --chunked-prefill-size "${CHUNKED_PREFILL_SIZE:-2048}" \
           --attention-backend "${ATTENTION_BACKEND:-flashinfer}" \
           --context-length "${CONTEXT_LENGTH:-262144}" \
-          --mem-fraction-static "${MEM_FRACTION:-0.90}" \
-          --max-running-requests "${MAX_RUNNING_REQUESTS:-1}" \
+          --mem-fraction-static "${MEM_FRACTION:-0.95}" \
+          --max-running-requests "${MAX_RUNNING_REQUESTS:-2}" \
           "$${CACHE[@]}" \
           --trust-remote-code \
           --enable-metrics \
