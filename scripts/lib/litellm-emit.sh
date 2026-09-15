@@ -52,8 +52,23 @@
 # (llama.cpp default-id servers, back-compat alias routes) AND the cloud
 # block — is untouched by this script.
 #
+# --local (#1325): a rig that serves a DIFFERENT scene of a gateway model than the
+# curated one (e.g. dual-fast instead of dual-max) records that in its .env pin
+# (CLUB3090_DEFAULT_<MODEL>, `switch.sh --set-default`). `--local` writes the
+# same config to a GITIGNORED services/litellm/config.local.yaml, with each
+# gateway model routed to its pinned scene when the pin names a known slug of
+# that SAME model with a default_port — any status (a non-functional scene gets
+# the usual `# status:` annotation: the gateway routes to what the rig serves;
+# the launcher's functional-status gate answers a different question). Invalid
+# pins fall back to the curated scene with a notice. A pin never ADDS a model to
+# the gateway, and the tracked config is never written. The LiteLLM compose picks
+# the file up via LITELLM_CONFIG=./config.local.yaml in services/litellm/.env.
+# `--local --check` gates the local file the same way.
+#
 # Env overrides (test seams):
 #   LITELLM_CONFIG             path to the config (relative to ROOT or absolute).
+#   LITELLM_LOCAL_CONFIG       --local output path (default: config.local.yaml
+#                              next to LITELLM_CONFIG).
 #   LITELLM_EMIT_REGISTRY_JSON path to pre-emitted registry JSON (skips the
 #                              registry-emit.sh subprocess; synthetic fixtures).
 set -euo pipefail
@@ -61,10 +76,12 @@ set -euo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 
 CHECK=0
+LOCAL=0
 ROOT_DIR=""
 for arg in "$@"; do
   case "$arg" in
     --check) CHECK=1 ;;
+    --local) LOCAL=1 ;;
     *) ROOT_DIR="$arg" ;;
   esac
 done
@@ -72,6 +89,7 @@ ROOT_DIR="${ROOT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}
 cd "$ROOT_DIR"
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 export LITELLM_EMIT_CHECK="$CHECK"
+export LITELLM_EMIT_LOCAL="$LOCAL"
 
 python3 - "$ROOT_DIR" <<'PY'
 import difflib
@@ -94,6 +112,12 @@ from scripts.lib.profiles.compose_registry import (
 CFG = Path(os.environ.get("LITELLM_CONFIG", "services/litellm/config.yaml"))
 if not CFG.is_absolute():
     CFG = root / CFG
+LOCAL = os.environ.get("LITELLM_EMIT_LOCAL") == "1"
+OUT = CFG
+if LOCAL:
+    OUT = Path(os.environ.get("LITELLM_LOCAL_CONFIG") or CFG.with_name("config.local.yaml"))
+    if not OUT.is_absolute():
+        OUT = root / OUT
 
 BEGIN_RX = re.compile(r"^\s*#\s*===\s*BEGIN GENERATED LOCAL BLOCK\b.*$")
 END_RX = re.compile(r"^\s*#\s*===\s*END GENERATED LOCAL BLOCK\b.*$")
@@ -117,14 +141,51 @@ variant_by_slug = {v["slug"]: v for v in facts.get("variants", [])}
 
 # --- eligibility: explicit gateway=True entries only -------------------------
 
+registry = get_registry(root)
 gw_by_model: dict = {}
-for slug, entry in get_registry(root).items():
+for slug, entry in registry.items():
     if entry.get("gateway"):
         gw_by_model.setdefault(entry["model"], {})[slug] = entry
 if not gw_by_model:
     sys.exit("litellm-emit: no gateway=True entries in the registry — nothing to emit")
 
 _TOPOLOGY_ORDER = ("dual", "single", "multi4", "multiN")
+
+
+def _env_pins():
+    """--local only: CLUB3090_DEFAULT_* from ROOT/.env, shell env winning."""
+    pins = {}
+    try:
+        lines = (root / ".env").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for ln in lines:
+        m = re.match(r"\s*(?:export\s+)?(CLUB3090_DEFAULT_[A-Z0-9_]+)\s*=\s*(.*?)\s*$", ln)
+        if m:
+            pins[m.group(1)] = _unquote(m.group(2))
+    pins.update({k: v for k, v in os.environ.items() if k.startswith("CLUB3090_DEFAULT_")})
+    return pins
+
+
+def pinned_slug(model):
+    """--local: the rig's .env scene pin for MODEL, or None (notice on invalid)."""
+    from scripts.lib.profiles.compose_registry import model_default_pin_key
+    key = model_default_pin_key(model)
+    pin = PINS.get(key, "")
+    if not pin:
+        return None
+    entry = registry.get(pin)
+    if entry is None:
+        why = "is not a known slug"
+    elif entry.get("model") != model:
+        why = f"belongs to model {entry.get('model')!r}"
+    elif not entry.get("default_port"):
+        why = "has no default_port"
+    else:
+        return pin
+    print(f"litellm-emit: note: pin {pin!r} ({key}) {why} — gateway keeps the "
+          f"curated scene for {model!r}", file=sys.stderr)
+    return None
 
 
 def canonical_slug(model, entries):
@@ -196,11 +257,17 @@ def _unquote(tok):
     if m:
         return m.group(1) or m.group(2) or ""
     return tok
+PINS = _env_pins() if LOCAL else {}
 routes = []  # (model, port, name, status) — sorted + deduped before emission
 for model in sorted(gw_by_model):
     entries = gw_by_model[model]
     slug = canonical_slug(model, entries)
-    entry = entries[slug]
+    pin = pinned_slug(model) if LOCAL else None
+    if pin and pin != slug:
+        print(f"litellm-emit: local: {model}: pinned scene {pin} replaces "
+              f"curated gateway scene {slug}", file=sys.stderr)
+        slug = pin
+    entry = entries.get(slug) or registry[slug]
     port = entry["default_port"]
     if not port:
         sys.exit(f"litellm-emit: gateway entry {slug!r} has no default_port")
@@ -271,6 +338,31 @@ if end_idx <= begin_idx:
 
 existing = "\n".join(lines[begin_idx:end_idx + 1])
 check_mode = os.environ.get("LITELLM_EMIT_CHECK") == "1"
+
+if LOCAL:
+    # Whole-file compare: the local config is the tracked one with only the
+    # generated block swapped, so any difference means it is stale.
+    new_text = "\n".join(lines[:begin_idx]) + "\n" + generated + "\n" + "\n".join(lines[end_idx + 1:])
+    if not new_text.endswith("\n"):
+        new_text += "\n"
+    try:
+        current = OUT.read_text(encoding="utf-8")
+    except OSError:
+        current = None
+    if check_mode:
+        if current == new_text:
+            print(f"OK: {OUT} matches the registry + this rig's scene pins.")
+            sys.exit(0)
+        print(f"FAIL: {OUT} is missing or stale versus the registry + .env pins.", file=sys.stderr)
+        sys.stderr.write("Fix: run `bash scripts/lib/litellm-emit.sh --local` to regenerate.\n")
+        sys.exit(1)
+    tmp = OUT.with_name(OUT.name + ".tmp")
+    tmp.write_text(new_text, encoding="utf-8")
+    os.replace(tmp, OUT)  # atomic: a failed write never leaves a half config
+    print(f"Wrote {OUT}: {len(deduped)} routes from {len(gw_by_model)} gateway models "
+          f"(scene pins applied); tracked {CFG} untouched.")
+    sys.exit(0)
+
 if existing == generated:
     print(f"OK: {CFG} generated local block matches the registry "
           f"({len(deduped)} routes from {len(gw_by_model)} gateway models).")

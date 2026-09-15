@@ -6,7 +6,10 @@ services:
     ports:
       - "4000:4000"
     volumes:
-      - ./config.yaml:/app/config.yaml
+      # Rig serving a different scene than the curated gateway one (#1325):
+      #   bash scripts/lib/litellm-emit.sh --local   → gitignored config.local.yaml
+      #   echo LITELLM_CONFIG=./config.local.yaml > services/litellm/.env
+      - ${LITELLM_CONFIG:-./config.yaml}:/app/config.yaml
     environment:
       - LITELLM_MASTER_KEY=sk-litellm-master-key
       # Cloud reference route (qwen3.8-max*) — referenced as os.environ/DASHSCOPE_API_KEY
