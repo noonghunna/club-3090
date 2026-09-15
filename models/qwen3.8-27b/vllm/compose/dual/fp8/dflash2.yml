@@ -48,6 +48,7 @@ services:
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
       - ../../../patches/vllm-51581-dflash-dense-kv:/etc/club3090/dflash-dense-kv:ro
+      - ../../../patches/vllm-dflash2-mamba-align-offload:/etc/club3090/dflash2-mamba-align:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       - CUDA_VISIBLE_DEVICES
@@ -104,6 +105,7 @@ services:
         bash /etc/club3090/pr48375/install.sh
         bash /etc/club3090/gdn-async-order/install.sh
         bash /etc/club3090/dflash-dense-kv/install.sh
+        bash /etc/club3090/dflash2-mamba-align/install.sh || exit 1
         bash /etc/club3090/fa2/install.sh
         source /etc/club3090/fa2-runtime.env
         _spec_n="$${SPEC_N:-7}"
