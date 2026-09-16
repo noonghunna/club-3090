@@ -183,6 +183,17 @@ p2p_verdict() {
     unknown) state="shows no P2P engagement signal (no [nvlink] boot line / NCCL env)" ;;
     *)       return 0 ;;
   esac
+  # At world<=2 vLLM's own custom-AR gate CANNOT be the cause of nccl_only: its
+  # veto fires only at >2 PCIe-only GPUs (#786), and a single bridged pair is a
+  # full 1-hop mesh. So on a 2-GPU rig the kernel is off because the OPERATOR
+  # turned it off (--disable-custom-all-reduce, the #922 mitigation) — saying
+  # "expected at >2 GPUs" there is a false attribution, and it reads as "nothing
+  # to see here" to the one person who deliberately disabled the kernel and is
+  # checking that it took. Reported on a 2x3090 rig in #1332.
+  if [[ "$eng" == "nccl_only" && "${count:-0}" -le 2 ]]; then
+    echo "✓ interconnect: P2P engaged via NCCL peer transfers, custom all-reduce OFF. At 2 GPUs vLLM does not veto its own kernel (#786 applies at >2), so this is an operator-supplied --disable-custom-all-reduce — the #922 mitigation. That is a healthy, deliberate state: you keep the NCCL transport (the prefill half of the win) and skip the custom kernel. If you did NOT set it, check the engine log for why."
+    return 0
+  fi
   case "$cap:$eng" in
     nvlink:on)
       echo "✓ interconnect: NVLink engaged (custom all-reduce ON)" ;;

@@ -149,7 +149,19 @@ assert_not_contains "$out" "custom all-reduce ON"
 out="$(p2p_verdict 4 nvlink nccl_only)";  assert_contains "$out" "NCCL"
 assert_empty "$(p2p_verdict 1 pcie_p2p nccl_only)"                   # single GPU -> silent
 assert_empty "$(p2p_verdict 2 none nccl_only)"                       # no capability -> silent
+# #1332: at 2 GPUs the #786 veto CANNOT fire, so nccl_only there is the operator's
+# own --disable-custom-all-reduce. Blaming the world>2 gate misattributes it and
+# tells the one user who deliberately disabled the kernel that it was automatic.
+for _cap in pcie_p2p nvlink; do
+  out="$(p2p_verdict 2 "$_cap" nccl_only)"
+  assert_contains "$out" "operator-supplied"
+  assert_contains "$out" "#922"
+  assert_not_contains "$out" "expected at >2"
+  assert_not_contains "$out" "not fully connected"
+done
+unset _cap
 echo "  ✓ #786: vLLM AR veto -> nccl_only state; verdict never claims custom-AR-ON"
+echo "  ✓ #1332: 2-GPU nccl_only attributed to the operator flag, not the world>2 gate"
 
 # ── 7. #786 decider wording: >2-GPU PCIe-P2P boot must not assert AR ON ──────
 L4='GPU 0: RTX 3090\nGPU 1: RTX 3090\nGPU 2: RTX 3090\nGPU 3: RTX 3090\n'
