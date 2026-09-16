@@ -196,6 +196,7 @@ services:
       - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - DISABLE_CUSTOM_ALL_REDUCE=${DISABLE_CUSTOM_ALL_REDUCE:-0}
       # Opt-in transfer check: VLLM_SKIP_P2P_CHECK=0 makes vLLM PROVE peer access by
       # moving bytes (report.sh reads the cache). Bare passthrough — absent unless set.
       # docs/PCIE_P2P.md §7.
@@ -290,7 +291,7 @@ services:
         else
           echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
         fi
-        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+        if [ "$${_CUSTOM_AR_ENABLED:-$${_NVLINK_ENABLED:-0}}" = "1" ]; then
           exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}" "$${KV_ARGS[@]}"
         else
           exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}" "$${KV_ARGS[@]}"

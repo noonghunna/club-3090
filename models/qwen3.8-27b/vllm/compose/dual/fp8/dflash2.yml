@@ -63,6 +63,7 @@ services:
       - REPEAT_PENALTY=${REPEAT_PENALTY:-}
       - FA2_ARTIFACT_ID=${FA2_ARTIFACT_ID:-731d1942112a7cf35be4f0add0919072c06cac47e3bad4f674ff0157edad0e3f}
       - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - DISABLE_CUSTOM_ALL_REDUCE=${DISABLE_CUSTOM_ALL_REDUCE:-0}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
       - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
@@ -95,7 +96,7 @@ services:
         AR_ARGS=()
         # The detector also enables PCIe P2P. Custom all-reduce in this profile
         # requires NVLink; NCCL peer access remains available on PCIe.
-        if [ "$${_NVLINK_ENABLED:-0}" != 1 ] || [ "$${NCCL_P2P_LEVEL:-}" != NVL ]; then
+        if [ "$${_CUSTOM_AR_ENABLED:-$${_NVLINK_ENABLED:-0}}" != 1 ] || [ "$${NCCL_P2P_LEVEL:-}" != NVL ]; then
           AR_ARGS=(--disable-custom-all-reduce)
           export PYTORCH_CUDA_ALLOC_CONF="$$_alloc_conf"
           echo "[fa2] custom all-reduce disabled; preserving the requested allocator"

@@ -713,7 +713,12 @@ launch_nvlink_active() {
   (
     # shellcheck source=detect_nvlink.sh
     source "${ROOT_DIR}/scripts/detect_nvlink.sh" >/dev/null 2>&1 || true
-    printf '%s' "${_NVLINK_ENABLED:-0}"
+    # ⚠️ The TRANSPORT, not _NVLINK_ENABLED — that name now carries the custom
+    # all-reduce decision (#1332), so reading it here would report "no fast
+    # interconnect" on a perfectly good peer path whenever the operator has
+    # turned only the kernel off. detect_nvlink.sh exports NCCL_P2P_DISABLE=1
+    # exactly when the transport is down.
+    if [ "${NCCL_P2P_DISABLE:-0}" = "1" ]; then printf '0'; else printf '1'; fi
   )
 }
 

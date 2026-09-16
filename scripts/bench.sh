@@ -2161,7 +2161,10 @@ bench_interconnect_block() {
   eng_text=""
   if [[ "${CONTAINER:-}" != "none" ]] && command -v docker >/dev/null 2>&1 \
      && docker inspect "${CONTAINER}" >/dev/null 2>&1; then
-    eng_text="$(docker logs "$CONTAINER" 2>&1 | command grep -E '\[nvlink\]|Custom allreduce is disabled|disable_custom_all_reduce=True' | head -8 || true)"
+    # ⚠️ NO head/-m1. The classifier slices the log to the CURRENT BOOT using the
+    # last [nvlink] STATE line; taking the FIRST matches hands it an older boot's
+    # record and it reports the wrong rig (#1332 review). Feed the log in order.
+    eng_text="$(docker logs "$CONTAINER" 2>&1 | command grep -E '\[nvlink\]|Custom allreduce is disabled|disable_custom_all_reduce=True' || true)"
   fi
   if [[ "$ENGINE_KIND" == "llamacpp" || "${CONTAINER:-}" == "none" ]]; then
     # llama.cpp/ik-llama split layers across cards with plain copies — there is
@@ -2171,7 +2174,10 @@ bench_interconnect_block() {
   else
     case "$(printf '%s\n%s' "$eng_text" "$nccl_line" | p2p_classify_engagement 2>/dev/null || echo unknown)" in
       on)        l3="ENGAGED — engine reports its custom all-reduce ON" ;;
-      nccl_only) l3="custom-AR OFF, P2P LIVE — the engine is not using its custom all-reduce; peer transfers still go via NCCL. Cause is either vLLM's own NVLink-only gate at world>2 (#786) or an operator-supplied --disable-custom-all-reduce (#922). Check the engine log to tell which; both are healthy states" ;;
+      nccl_only_operator) l3="custom-AR OFF (operator), P2P LIVE — --disable-custom-all-reduce / DISABLE_CUSTOM_ALL_REDUCE=1. Peer transfers still go via NCCL. Healthy, deliberate" ;;
+      nccl_only_gated)    l3="custom-AR OFF (engine-gated), P2P LIVE — vLLM's NVLink-only gate at world>2 (#786). Peer transfers still go via NCCL. Healthy" ;;
+      nccl_only_degraded) l3="⚠️ custom-AR OFF (P2P BROKEN) — the engine refused its kernel because peer access is missing or its P2P TEST FAILED. NOT an operator choice and NOT healthy; the grant can be advertised while transfers fail (#873). Run scripts/p2p-validate.sh" ;;
+      nccl_only_nolib)    l3="custom-AR unavailable — this image has no custom all-reduce library. Peer transfers still go via NCCL" ;;
       off)       l3="OFF — the serving container resolved to PCIe/no-P2P mode" ;;
       requested) l3="REQUESTED but UNVERIFIED — P2P forced on without a driver grant (#688)" ;;
       *)         l3="unknown — no [nvlink] boot line and no engine gate line in the log" ;;

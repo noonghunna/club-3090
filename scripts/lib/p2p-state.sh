@@ -102,58 +102,122 @@ p2p_driver_flavor() {
 # report.sh already gathers exactly this text: the container's `[nvlink]`
 # boot lines + resolved NCCL_P2P*/NVLINK_MODE env + vLLM's own custom-AR
 # gate line when present.
-# Prints: "on" | "nccl_only" | "off" | "unknown" | "requested".
+# Prints: "on" | "nccl_only_operator" | "nccl_only_gated" | "nccl_only_degraded"
+#         | "nccl_only_nolib" | "off" | "unknown" | "requested".
+# Reads detect_nvlink.sh's machine-readable STATE line for OUR configuration and
+# vLLM's own messages for what the ENGINE did; our prose is only consulted on the
+# legacy path (containers predating STATE, SGLang, llama.cpp). See #1332.
 p2p_classify_engagement() {
-  local text
+  local text state engine_verdict transport kernel cause verified
   text="$(cat)"
-  # A forced PCIe-P2P request whose driver grant we could NOT confirm: the
-  # NCCL/all-reduce config is applied but peer access is unverified. Must NOT
-  # read as "on" — that's the false-engaged bug from #688. Checked FIRST so it
-  # wins over the "custom all-reduce" signal the forced path also carries.
+
+  # ── Step 0: slice to the CURRENT BOOT ────────────────────────────────────
+  # `restart: unless-stopped` means one `docker logs` can hold several boots.
+  # Combining our state from one boot with vLLM's veto from another reports the
+  # wrong rig — and does so silently. detect_nvlink.sh's STATE line marks the
+  # start of a boot's record, so the LAST one wins and only engine lines after
+  # it describe the current boot. (Callers must not pre-filter with head/-m1.)
+  # ⚠️ LITERAL matching throughout. The marker contains "[nvlink]", which every
+  # regex engine reads as a bracket expression matching one of n/v/l/i/k — so a
+  # regex slice silently never matches and the epoch is not applied at all. Use
+  # grep -F to find it and awk index() to slice: take the log reversed, emit up
+  # to and including the first marker found (= the LAST one in real order), then
+  # un-reverse. That yields exactly the current boot's record.
+  # ⚠️ v=1 specifically, not "STATE v=". A future v=2 with different fields would
+  # otherwise be parsed under v=1 rules and silently mis-scored; an unknown version
+  # must fall through to the legacy cascade instead.
+  state="$(printf '%s\n' "$text" | command grep -F '[nvlink] STATE v=1 ' | tail -n 1)"
+  if [ -n "$state" ]; then
+    text="$(printf '%s\n' "$text" | tac \
+            | awk 'index($0,"[nvlink] STATE v=1 ")>0 {print; exit} {print}' | tac)"
+  fi
+
+  # ── Step 1: a forced-but-unconfirmed request outranks everything (#688) ───
+  # Checked before the STATE fields: the config was applied but the driver never
+  # confirmed peer access, and reporting that as a healthy configured state is
+  # the false-engaged bug.
   case "$text" in
     *"P2P REQUESTED (UNVERIFIED)"*) echo requested; return 0 ;;
   esac
-  # ⚠️ USER-disabled is a THIRD state, and it used to read as "on" (#922, juslex).
-  # When the operator passes `--disable-custom-all-reduce`, vLLM does NOT emit
-  # "Custom allreduce is disabled" — that string is its OWN world>2 veto (#786).
-  # It emits the config-dump form `disable_custom_all_reduce=True` and dispatches
-  # through PYNCCL. Meanwhile the [nvlink] trail still says P2P is up, so the
-  # classifier fell through to "on" and the report asserted the OPPOSITE of what
-  # was running — on precisely the configuration where that flag is the remedy for
-  # silent WRONG OUTPUT over a patched peer path. Checked BEFORE the "on" match.
-  # NB the vLLM FLAG is injected into the entrypoint AFTER detect_nvlink.sh runs,
-  # so the [nvlink] heuristic cannot see that either way — only the engine's own
-  # log can. What the trail CAN see is DISABLE_CUSTOM_ALL_REDUCE, the operator
-  # knob added in #1332, which detect_nvlink.sh resolves itself — hence the third
-  # pattern. All three mean the same state: kernel off, transport untouched.
+  case "$state" in *" verified=no"*) echo requested; return 0 ;; esac
+
+  # ── Step 2: what the ENGINE actually did (FOREIGN prose — vLLM's, not ours) ──
+  # ⚠️ The specific messages are matched first, then a CATCH-ALL on the shared
+  # prefix. vLLM has more veto reasons than we enumerate ("unsupported world
+  # size", "spans across nodes", and whatever a future release adds); an
+  # enumerated list silently scores those as "the engine said nothing", which
+  # resolves to our configured value and reports the kernel ON while it is off.
+  # The catch-all is the whole point — never replace it with a closed list.
+  engine_verdict=""
   case "$text" in
-    *"disable_custom_all_reduce=True"*|*"--disable-custom-all-reduce"*|*"custom all-reduce OFF by operator request"*)
-      # Same refinement the veto branch needs: custom-AR off says nothing about
-      # whether the PEER TRANSPORT is also off. If P2P itself is disabled this is
-      # plain "off", not "custom-AR off but P2P live". Dropping this check made
-      # the `veto + P2P disabled` fixture regress nccl_only — the guard caught it.
-      case "$text" in
-        *"P2P off"*|*"using PCIe mode"*|*"forcing PCIe mode"*|*NCCL_P2P_DISABLE=1*)
-          echo off; return 0 ;;
-      esac
-      echo nccl_only; return 0 ;;
+    *"lacks GPU P2P capability"*|*"P2P test failed"*)       engine_verdict=degraded ;;
+    *"missing custom allreduce library"*)                   engine_verdict=nolib ;;
+    *"not supported on"*"PCIe-only GPUs"*)                  engine_verdict=gated ;;
+    *"Custom allreduce is disabled"*)                       engine_verdict=gated ;;
+    # ⚠️ LAST, and only reachable when no veto matched above — every veto message
+    # ends "To silence this warning, specify disable_custom_all_reduce=True",
+    # which contains this substring and must not be read as an operator choice.
+    #
+    # This arm is why the engine's argv is consulted at all. Our STATE line says
+    # what detect_nvlink.sh DECIDED; it cannot know that a compose passed the flag
+    # on its own. `models/qwen3.8-27b/vllm/compose/dual/fp8/dflash2.yml` does
+    # exactly that on every non-NVLink rig, so without this the verdict reads
+    # "custom all-reduce ON" while the kernel is off — the #922 false-ON, on a
+    # shipped slug, and a regression against the legacy cascade.
+    *"disable_custom_all_reduce=True"*) engine_verdict=operator ;;
   esac
-  # vLLM runtime veto (#786): at world_size>2 without NVLink, vLLM disables its
-  # custom all-reduce regardless of peer access — its gate queries NVML for
-  # NVLink only. A pre-#786 boot trail still asserts "custom all-reduce ON" in
-  # that case, so this check must run BEFORE the "on" match. P2P itself stays
-  # live via NCCL peer transfers → a distinct state, not "on" and not "off".
-  # Matches vLLM's log line AND the post-#786 decider trail wording.
+
+  # ── Step 3: OUR configured state, as data ────────────────────────────────
+  if [ -n "$state" ]; then
+    transport="$(printf '%s' "$state" | sed -n 's/.* transport=\([a-z0-9_-]*\).*/\1/p')"
+    kernel="$(printf '%s'    "$state" | sed -n 's/.* kernel=\([a-z0-9_-]*\).*/\1/p')"
+    cause="$(printf '%s'     "$state" | sed -n 's/.* cause=\([a-z0-9_-]*\).*/\1/p')"
+    [ "$transport" = "off" ] && { echo off; return 0; }
+    # The engine overrides our intent when it spoke; it is the one that ran.
+    case "$engine_verdict" in
+      degraded) echo nccl_only_degraded; return 0 ;;
+      nolib)    echo nccl_only_nolib;    return 0 ;;
+      gated)    echo nccl_only_gated;    return 0 ;;
+      operator) echo nccl_only_operator; return 0 ;;
+    esac
+    # The engine has not spoken yet. If we predicted it will veto (>2 PCIe-only
+    # GPUs, or a partial NVLink mesh), say so rather than claiming the kernel is
+    # running — claiming AR ON there is the #786 bug.
+    case "$state" in *" gate=expected_veto"*) echo nccl_only_gated; return 0 ;; esac
+    if [ "$kernel" = "on" ]; then echo on; return 0; fi
+    case "$cause" in
+      operator)      echo nccl_only_operator; return 0 ;;
+      transport_off) echo off;               return 0 ;;
+      # An unrecognised cause is a PARSE failure, not a healthy state. Defaulting
+      # it to nccl_only_gated rendered a ✓ verdict for a line we did not understand.
+      *)             echo unknown;           return 0 ;;
+    esac
+  fi
+
+  # ── Step 4: LEGACY fallback — no STATE line ──────────────────────────────
+  # Reached by containers started before this shipped, by SGLang and llama.cpp
+  # (which never emit one), and after log rotation. It is the old prose cascade,
+  # unchanged, and it is PERMANENT for the non-vLLM engines — do not delete it.
+  # ⚠️ Our own trail phrases are load-bearing ONLY on this path; changing them
+  # breaks classification of older containers.
+  case "$text" in
+    *"lacks GPU P2P capability"*|*"P2P test failed"*)
+      case "$text" in *"P2P off"*|*"using PCIe mode"*|*"forcing PCIe mode"*|*NCCL_P2P_DISABLE=1*) echo off; return 0 ;; esac
+      echo nccl_only_degraded; return 0 ;;
+  esac
+  case "$text" in
+    *"missing custom allreduce library"*) echo nccl_only_nolib; return 0 ;;
+  esac
   case "$text" in
     *"Custom allreduce is disabled"*|*"custom all-reduce engine-gated"*)
-      case "$text" in
-        *"P2P off"*|*"using PCIe mode"*|*"forcing PCIe mode"*|*NCCL_P2P_DISABLE=1*)
-          echo off; return 0 ;;
-      esac
-      echo nccl_only; return 0 ;;
+      case "$text" in *"P2P off"*|*"using PCIe mode"*|*"forcing PCIe mode"*|*NCCL_P2P_DISABLE=1*) echo off; return 0 ;; esac
+      echo nccl_only_gated; return 0 ;;
   esac
-  # The [nvlink] decision trail is authoritative (it states what the boot
-  # resolved, post-override); env is the fallback for pre-trail entrypoints.
+  case "$text" in
+    *"disable_custom_all_reduce=True"*|*"--disable-custom-all-reduce"*|*"custom all-reduce OFF by operator request"*)
+      case "$text" in *"P2P off"*|*"using PCIe mode"*|*"forcing PCIe mode"*|*NCCL_P2P_DISABLE=1*) echo off; return 0 ;; esac
+      echo nccl_only_operator; return 0 ;;
+  esac
   case "$text" in
     *"custom all-reduce ON"*|*"enabling NVLink mode"*) echo on; return 0 ;;
   esac
@@ -180,31 +244,38 @@ p2p_verdict() {
     return 0
   fi
   [[ "$cap" != "none" ]] || return 0
+  # ⚠️ The cause of a custom-AR-off state is READ FROM THE SIGNAL, never inferred
+  # from GPU count. An earlier cut of this branched on `count <= 2` to decide
+  # that the operator must have disabled it — which mislabelled vLLM's
+  # P2P-TEST-FAILED veto (also 2 GPUs, also custom-AR off) as a healthy
+  # deliberate choice, and still misattributed an operator-disabled 2-GPU
+  # container on a 4-GPU host, because report.sh/bench.sh pass the HOST count,
+  # not the container's world size. The classifier now emits the cause directly.
   case "$eng" in
-    on|nccl_only) state="" ;;
+    nccl_only_degraded)
+      echo "⚠️ interconnect WARN: the engine disabled its custom all-reduce because peer access is MISSING or its own P2P TEST FAILED — this is not an operator choice and not a healthy state. The driver may still advertise peer access (topo -p2p: OK) while transfers do not work; that is the #873 class. Validate with scripts/p2p-validate.sh, and see docs/PCIE_P2P.md §4a/§7. NCCL is falling back, so throughput will sit at P2P-off levels."
+      return 0 ;;
+    nccl_only_operator)
+      echo "✓ interconnect: P2P engaged via NCCL peer transfers, custom all-reduce OFF by operator request (--disable-custom-all-reduce / DISABLE_CUSTOM_ALL_REDUCE=1 — the #922 mitigation). A deliberate, healthy state: you keep the NCCL transport and skip the custom kernel. If you did NOT set it, check the engine log."
+      return 0 ;;
+    nccl_only_nolib)
+      echo "ℹ interconnect: P2P transport is up, but this image has no custom all-reduce library to run (non-GPU or stripped build). Peer transfers still go via NCCL."
+      return 0 ;;
+  esac
+  case "$eng" in
+    on|nccl_only_gated) state="" ;;
     off)     state="is running with P2P OFF" ;;
     unknown) state="shows no P2P engagement signal (no [nvlink] boot line / NCCL env)" ;;
     *)       return 0 ;;
   esac
-  # At world<=2 vLLM's own custom-AR gate CANNOT be the cause of nccl_only: its
-  # veto fires only at >2 PCIe-only GPUs (#786), and a single bridged pair is a
-  # full 1-hop mesh. So on a 2-GPU rig the kernel is off because the OPERATOR
-  # turned it off (--disable-custom-all-reduce, the #922 mitigation) — saying
-  # "expected at >2 GPUs" there is a false attribution, and it reads as "nothing
-  # to see here" to the one person who deliberately disabled the kernel and is
-  # checking that it took. Reported on a 2x3090 rig in #1332.
-  if [[ "$eng" == "nccl_only" && "${count:-0}" -le 2 ]]; then
-    echo "✓ interconnect: P2P engaged via NCCL peer transfers, custom all-reduce OFF. At 2 GPUs vLLM does not veto its own kernel (#786 applies at >2), so this is an operator-supplied --disable-custom-all-reduce — the #922 mitigation. That is a healthy, deliberate state: you keep the NCCL transport (the prefill half of the win) and skip the custom kernel. If you did NOT set it, check the engine log for why."
-    return 0
-  fi
   case "$cap:$eng" in
     nvlink:on)
       echo "✓ interconnect: NVLink engaged (custom all-reduce ON)" ;;
     pcie_p2p:on)
       echo "✓ interconnect: PCIe P2P engaged (patched driver, custom all-reduce ON)" ;;
-    pcie_p2p:nccl_only)
+    pcie_p2p:nccl_only_gated)
       echo "✓ interconnect: PCIe P2P engaged via NCCL peer transfers. vLLM auto-disabled its custom all-reduce kernel — expected at >2 PCIe-only GPUs (its gate checks NVLink, not peer access; #786), NOT a misconfiguration. P2P is still active on the NCCL path." ;;
-    nvlink:nccl_only)
+    nvlink:nccl_only_gated)
       echo "✓ interconnect: P2P engaged via NCCL peer transfers, but vLLM disabled its custom all-reduce — the NVLink mesh is not fully connected across all GPUs (vLLM requires full 1-hop connectivity at world>2). Peer transfers remain active." ;;
     nvlink:*)
       echo "⚠ interconnect WARN: an NVLink bridge is present on this host but the serving container ${state} — the bridge is idle. On modern vLLM the NVLink win is workload-shaped: small on decode (~3-5%) but large on prefill / long-context (+35-49%) (BENCHMARKS #698; the ~15% #77 figure was the older v7.72.2 image). Boot via launch.sh/switch.sh (auto-detects) or set NVLINK_MODE=force_on; if auto-detect misses on your rig, please file it. Full guide: docs/PCIE_P2P.md" ;;

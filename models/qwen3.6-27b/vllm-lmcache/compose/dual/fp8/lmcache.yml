@@ -131,6 +131,7 @@ services:
       - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - DISABLE_CUSTOM_ALL_REDUCE=${DISABLE_CUSTOM_ALL_REDUCE:-0}
       # Opt-in transfer check: VLLM_SKIP_P2P_CHECK=0 makes vLLM PROVE peer access by
       # moving bytes (report.sh reads the cache). Bare passthrough — absent unless set.
       # docs/PCIE_P2P.md §7.
@@ -169,7 +170,11 @@ services:
       - |
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
-        if [ "$${_NVLINK_ENABLED:-0}" = "0" ]; then
+        # ⚠️ Keyed on the TRANSPORT, not _NVLINK_ENABLED. That name now carries the
+        # custom-all-reduce decision (#1332), so DISABLE_CUSTOM_ALL_REDUCE=1 would
+        # otherwise trip this allocator branch on a rig whose peer path is fine.
+        # detect_nvlink.sh exports NCCL_P2P_DISABLE=1 exactly when the transport is off.
+        if [ "$${NCCL_P2P_DISABLE:-0}" = "1" ]; then
           # detect_nvlink sets expandable_segments on PCIe — incompatible with LMCacheMPConnector.
           unset PYTORCH_CUDA_ALLOC_CONF
         fi
@@ -207,7 +212,7 @@ services:
         else
           echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
         fi
-        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+        if [ "$${_CUSTOM_AR_ENABLED:-$${_NVLINK_ENABLED:-0}}" = "1" ]; then
           exec vllm serve "$$@" "$${SPEC_ARGS[@]}"
         else
           exec vllm serve --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}"

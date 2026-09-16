@@ -101,6 +101,7 @@ services:
       - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - DISABLE_CUSTOM_ALL_REDUCE=${DISABLE_CUSTOM_ALL_REDUCE:-0}
       # Opt-in transfer check: VLLM_SKIP_P2P_CHECK=0 makes vLLM PROVE peer access by
       # moving bytes (report.sh reads the cache). Bare passthrough — absent unless set.
       # docs/PCIE_P2P.md §7.
@@ -140,7 +141,7 @@ services:
         # (the common 2×3090 case) custom all-reduce is disabled — this is the shipped,
         # stock-driver path (no patched P2P required). An NVLink rig keeps custom-AR ON.
         source /etc/club3090/detect_nvlink.sh
-        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+        if [ "$${_CUSTOM_AR_ENABLED:-$${_NVLINK_ENABLED:-0}}" = "1" ]; then
           exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@"
         else
           exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@"

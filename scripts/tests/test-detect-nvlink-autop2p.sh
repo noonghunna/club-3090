@@ -7,6 +7,13 @@
 # nvidia-smi is mocked (no real GPUs); FAKE_GPUS / FAKE_LINK / FAKE_P2P drive it.
 set -euo pipefail
 
+# ⚠️ Pin the knob, like NVLINK_MODE. Nothing else scrubs it, so an operator with
+# DISABLE_CUSTOM_ALL_REDUCE exported in their shell — which our own boot warning
+# tells them to do — would red this suite for reasons unrelated to the code
+# under test (#1332 review).
+export DISABLE_CUSTOM_ALL_REDUCE=0
+
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DETECT="${ROOT_DIR}/scripts/detect_nvlink.sh"
 MOCK_DIR="$(mktemp -d)"

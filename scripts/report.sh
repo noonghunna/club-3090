@@ -1168,12 +1168,18 @@ else
     # head -200) so a late line on a 3-4 GPU boot isn't missed, and fall back to
     # the live container env. ALWAYS prints something so a reviewer never has to
     # guess whether P2P was engaged (the gap that forced asks on #446 / #488).
-    nvlink_boot=$(docker logs "$CONTAINER" 2>&1 | command grep -E '\[nvlink\]' | head -8)
+    # Displayed to the user AND fed to the classifier. head -8 would drop the
+    # STATE line on a restarted container (several boots of trail in one log),
+    # silently downgrading classification to the legacy prose path; keep the
+    # last 8 so the current boot's record survives (#1332 review).
+    nvlink_boot=$(docker logs "$CONTAINER" 2>&1 | command grep -E '\[nvlink\]' | tail -8)
     p2p_env=$(docker exec "$CONTAINER" env 2>/dev/null | command grep -E '^(NCCL_P2P|NVLINK_MODE|NCCL_CUMEM)=' | sort)
     # vLLM's runtime custom-AR veto (world>2 without NVLink — its gate never
     # consults peer access). Fed to the classifier so the verdict can't claim
     # "custom all-reduce ON" that vLLM already vetoed (#786).
-    vllm_ar_gate=$(docker logs "$CONTAINER" 2>&1 | command grep -m1 'Custom allreduce is disabled' || true)
+    # ⚠️ NO -m1: the classifier needs the CURRENT boot's veto, and -m1 returns the
+    # FIRST in the log, which after a restart belongs to an earlier boot (#1332).
+    vllm_ar_gate=$(docker logs "$CONTAINER" 2>&1 | command grep -E 'Custom allreduce is disabled|disable_custom_all_reduce=True' || true)
     echo "**Interconnect / P2P engagement:**"
     if [[ -n "$nvlink_boot" || -n "$p2p_env" || -n "$vllm_ar_gate" ]]; then
       echo '```'
@@ -1187,8 +1193,16 @@ else
     # Cross-referenced VERDICT (capability x engagement — the #488/#158 matrix).
     # Silent on single-GPU / no-capability rigs so the OK/WARN/INFO line is
     # always signal, never boilerplate.
+    # ⚠️ ONE ORDERED STREAM, not the display variables reassembled. Those are
+    # gathered separately (trail, then every veto, then env), so a veto from an
+    # EARLIER boot lands after the current boot's STATE line and the epoch slice
+    # is defeated — it condemns a healthy boot, or clears a broken one. Removing
+    # `grep -m1` above made that strictly worse by feeding every boot's vetoes.
+    # The display vars stay as they are; classification reads the log in order.
+    _p2p_class_stream="$(docker logs "$CONTAINER" 2>&1 \
+      | command grep -E '\[nvlink\]|Custom allreduce is disabled|disable_custom_all_reduce=True' || true)"
     _p2p_verdict_line="$(p2p_verdict "$(p2p_gpu_count)" "$(p2p_host_capability)" \
-      "$(printf '%s\n%s\n%s' "$nvlink_boot" "$vllm_ar_gate" "$p2p_env" | p2p_classify_engagement)")"
+      "$(printf '%s\n%s' "$_p2p_class_stream" "$p2p_env" | p2p_classify_engagement)")"
     [[ -n "$_p2p_verdict_line" ]] && { echo; echo "**Interconnect verdict:** ${_p2p_verdict_line}"; }
     # Kernel-module flavor — the WHY behind a P2P result on GeForce cards. A
     # proprietary (closed) module refuses P2P; the open modules can grant it, with
