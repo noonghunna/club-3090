@@ -121,10 +121,13 @@ p2p_classify_engagement() {
   # classifier fell through to "on" and the report asserted the OPPOSITE of what
   # was running — on precisely the configuration where that flag is the remedy for
   # silent WRONG OUTPUT over a patched peer path. Checked BEFORE the "on" match.
-  # NB the flag is injected into the entrypoint AFTER detect_nvlink.sh runs, so
-  # the [nvlink] heuristic cannot see it either way — only the engine's own log can.
+  # NB the vLLM FLAG is injected into the entrypoint AFTER detect_nvlink.sh runs,
+  # so the [nvlink] heuristic cannot see that either way — only the engine's own
+  # log can. What the trail CAN see is DISABLE_CUSTOM_ALL_REDUCE, the operator
+  # knob added in #1332, which detect_nvlink.sh resolves itself — hence the third
+  # pattern. All three mean the same state: kernel off, transport untouched.
   case "$text" in
-    *"disable_custom_all_reduce=True"*|*"--disable-custom-all-reduce"*)
+    *"disable_custom_all_reduce=True"*|*"--disable-custom-all-reduce"*|*"custom all-reduce OFF by operator request"*)
       # Same refinement the veto branch needs: custom-AR off says nothing about
       # whether the PEER TRANSPORT is also off. If P2P itself is disabled this is
       # plain "off", not "custom-AR off but P2P live". Dropping this check made

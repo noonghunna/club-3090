@@ -23,11 +23,32 @@
 #                for a rig whose probe is stricter than reality — but we never
 #                claim "engaged" without evidence. See club-3090 #290, #688.
 #
+# DISABLE_CUSTOM_ALL_REDUCE=1 — ORTHOGONAL operator override: keep the peer
+#   TRANSPORT exactly as resolved above, but turn vLLM's own custom all-reduce
+#   kernel off. This is the #922 mitigation, and until #1332 the only way to
+#   reach it was editing a shipped compose — NVLINK_MODE=force_off drops the
+#   transport too and throws away the prefill half of the win (a measured
+#   +10.7% prefill / -8.6% TTFT on the reporting rig). Three rigs have now been
+#   harmed by the custom kernel over a PATCHED PCIe peer path — two with silent
+#   wrong output (#922), one with a hard machine reset under sustained decode
+#   (#1332) — while other rigs run it clean, so this stays an opt-in, not a
+#   default. Transport and kernel are two decisions; this is the second one.
+#   Exports _CUSTOM_AR_ENABLED (0/1) — that, not _NVLINK_ENABLED, is what a
+#   compose must gate --disable-custom-all-reduce on.
+#
 # On every path that ends in PCIe P2P (not NVLink) we also check BAR1 against VRAM
 # and warn when the aperture is too small to back the patched driver's static-BAR1
 # mapping — the one failure mode that HANGS NCCL instead of degrading. See #873.
 
 NVLINK_MODE="${NVLINK_MODE:-auto}"
+# A typo here must never silently resolve to "kernel stays on" — that is the
+# dangerous direction (it is the arm that reset a machine in #1332), and a knob
+# whose failure is indistinguishable from its success is not a knob. Hard-error,
+# same contract as an invalid NVLINK_MODE.
+case "${DISABLE_CUSTOM_ALL_REDUCE:-0}" in
+  0|1) ;;
+  *) echo "[nvlink] ERROR: invalid DISABLE_CUSTOM_ALL_REDUCE='${DISABLE_CUSTOM_ALL_REDUCE}' (must be 0 or 1)" >&2; exit 1 ;;
+esac
 _P2P_LEVEL=NVL   # NCCL_P2P_LEVEL used when _NVLINK_ENABLED=1 (overridden by pcie_p2p)
 _GPU_COUNT=$(nvidia-smi -L 2>/dev/null | command grep -c 'GPU' || echo 0)
 
@@ -40,7 +61,13 @@ _GPU_COUNT=$(nvidia-smi -L 2>/dev/null | command grep -c 'GPU' || echo 0)
 # cards, so 4x 3090 = 2 separate bridges = never a full mesh. P2P/NVLink still
 # runs via NCCL in both cases. The auditor (p2p-state.sh) keys on both wordings.
 _ar_claim() {
-  if [ "${_GPU_COUNT:-0}" -gt 2 ] && [ "${_P2P_LEVEL:-NVL}" != "NVL" ]; then
+  if [ "${DISABLE_CUSTOM_ALL_REDUCE:-0}" = "1" ]; then
+    # Must NOT contain the literal "custom all-reduce ON" — p2p_classify_engagement
+    # keys "on" off that substring, and the whole point of this branch is that the
+    # kernel is off. (The classifier also sees vLLM's own disable_custom_all_reduce=True
+    # and that check runs first, but the boot trail must not say the opposite either.)
+    printf 'custom all-reduce OFF by operator request (DISABLE_CUSTOM_ALL_REDUCE=1; peer transport stays up — #922/#1332)'
+  elif [ "${_GPU_COUNT:-0}" -gt 2 ] && [ "${_P2P_LEVEL:-NVL}" != "NVL" ]; then
     printf 'custom all-reduce engine-gated (vLLM disables its custom kernel at >2 PCIe-only GPUs — P2P runs via NCCL; #786)'
   elif [ "${_GPU_COUNT:-0}" -gt 2 ] && [ "${_NVLINK_PARTIAL:-0}" -eq 1 ]; then
     printf 'custom all-reduce engine-gated (NVLink mesh not fully connected — pairwise bridges; vLLM requires full 1-hop connectivity at world>2, so its kernel is off and NVLink/P2P runs via NCCL; #786)'
@@ -167,10 +194,14 @@ case "$NVLINK_MODE" in
       LINK=$(nvidia-smi topo -m 2>/dev/null | awk '/^GPU0/{print $3}')
       if [[ "$LINK" =~ ^NV[0-9]+$ ]]; then
         _NVLINK_ENABLED=1
-        echo "[nvlink] detected NVLink ($LINK) between GPU0-GPU1 — enabling NVLink mode"
+        echo "[nvlink] detected NVLink ($LINK) between GPU0-GPU1 — enabling NVLink mode ($(_ar_claim))"
       elif _pcie_p2p_available; then
         _NVLINK_ENABLED=1; _P2P_LEVEL="${NCCL_P2P_LEVEL:-PHB}"
-        echo "[nvlink] PCIe topology ($LINK) but nvidia-smi reports P2P=OK (patched driver / shared root complex) — auto-enabling PCIe P2P (NCCL_P2P_LEVEL=$_P2P_LEVEL, custom all-reduce ON)"
+        # $(_ar_claim), NOT a hardcoded "custom all-reduce ON": this is the exact
+        # rig shape (2 GPUs, patched PCIe P2P) where DISABLE_CUSTOM_ALL_REDUCE is
+        # the #922/#1332 mitigation, and a trail that asserts the kernel is on
+        # while it is off is the #924 false-verdict bug all over again.
+        echo "[nvlink] PCIe topology ($LINK) but nvidia-smi reports P2P=OK (patched driver / shared root complex) — auto-enabling PCIe P2P (NCCL_P2P_LEVEL=$_P2P_LEVEL, $(_ar_claim))"
       else
         _NVLINK_ENABLED=0
         echo "[nvlink] PCIe topology ($LINK), P2P not available (topo -p2p: no OK) — using PCIe mode (no P2P; for a patched driver on a P2P-capable layout this auto-enables, or set NVLINK_MODE=pcie_p2p to force)"
@@ -190,6 +221,18 @@ esac
 # _NVLINK_ENABLED=1 means a fast P2P interconnect is available (NVLink OR patched PCIe
 # P2P) — P2P stays on and the compose entrypoint enables custom all-reduce. The level is
 # NVL for NVLink, PHB (or the user's value) for pcie_p2p.
+# ── The two decisions, split ────────────────────────────────────────────────
+# _NVLINK_ENABLED answers "is the peer TRANSPORT up?"; _CUSTOM_AR_ENABLED answers
+# "does vLLM run its own all-reduce kernel on top?". They were fused into one
+# variable until #1332, which is why there was no way to keep the transport and
+# drop the kernel. Default preserves today's behaviour exactly.
+if [ "${DISABLE_CUSTOM_ALL_REDUCE:-0}" = "1" ]; then
+  _CUSTOM_AR_ENABLED=0
+else
+  _CUSTOM_AR_ENABLED="$_NVLINK_ENABLED"
+fi
+export _CUSTOM_AR_ENABLED
+
 if [ "$_NVLINK_ENABLED" -eq 1 ]; then
   export NCCL_P2P_LEVEL="${_P2P_LEVEL:-NVL}"
   unset NCCL_P2P_DISABLE 2>/dev/null || true
