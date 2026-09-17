@@ -51,6 +51,8 @@ services:
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8111}}:8000"
     volumes:
+      - fa2-kernels:/opt/club3090/fa2-artifacts:ro
+      - ../../../patches/fa2-fp8kv-sm86:/etc/club3090/fa2:ro
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
       # subsequent boots reuse the compiled graphs.
@@ -94,6 +96,8 @@ services:
       # only that dequant fix. Anchor drift → boot refused.
       - ../../../patches/vllm-51581-dflash-dense-kv:/etc/club3090/dflash-dense-kv:ro
     environment:
+      - FA2_ARTIFACT_ID=${FA2_ARTIFACT_ID:-731d1942112a7cf35be4f0add0919072c06cac47e3bad4f674ff0157edad0e3f}
+      - TP=${TP:-4}
       # Drafter toggle — docker only forwards what is declared here. The DEFAULT
       # lives in the entrypoint, not in these lines, so it cannot drift.
       - SPEC_N=${SPEC_N:-}
@@ -160,6 +164,9 @@ services:
       # PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
     shm_size: "16gb"
+    depends_on:
+      vllm-qwen38-27b-multi4-ultramax-kernels:
+        condition: service_completed_successfully
     ipc: host
     deploy:
       resources:
@@ -184,6 +191,8 @@ services:
         bash /etc/club3090/gdn-async-order/install.sh || exit 1
         bash /etc/club3090/dflash-dense-kv/install.sh || exit 1
         FI_PINQ_LIB_ALL="${FI_PINQ_LIB_ALL:-0}" bash /etc/club3090/flashinfer-decode-pin/install.sh || exit 1
+        bash /etc/club3090/fa2/install.sh || exit 1
+        source /etc/club3090/fa2-runtime.env
         # -- Drafter toggle: the same contract on every club-3090 compose --------
         #   SPEC_N=<n>  drafter depth (this compose defaults to 3); SPEC_N=0 disables
         #   SPEC=off    back-compat alias for SPEC_N=0
@@ -341,3 +350,12 @@ services:
       - 0.0.0.0
       - --port
       - "8000"
+
+  vllm-qwen38-27b-multi4-ultramax-kernels:
+    image: ${FA2_KERNEL_IMAGE:-ghcr.io/antonprokopyev/fa2-fp8kv-sm86@sha256:da040941fa048fd5fdfce520503341c0beda4ce41436a1c1fecaf3f8a99777c7}
+    restart: "no"
+    volumes:
+      - fa2-kernels:/export
+
+volumes:
+  fa2-kernels:

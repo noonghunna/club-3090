@@ -3962,7 +3962,7 @@ entries:
     requires_homogeneous_arch: true
     required_engine_features: []
     default_port: 8110
-    kvcalc_key: "SKIP"
+    kvcalc_key: SKIP
     status: experimental
     status_note: "ULTRAMAX: FP8 weights, DFlash2 n=7, FLASH_ATTN and FP8 KV at 262144 context. Prebuilt kernel/plugin image; no serving-time CUDA build. Fixed KV bytes bypass gpu_memory_utilization. SM86 tested; SM89/SM120 build targets with runtime validation pending; SM90/SM100 use native FlashAttention. Experimental; --force."
     weights_companions:

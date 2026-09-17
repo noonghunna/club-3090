@@ -62,6 +62,9 @@ services:
     # `docker inspect --format '{{.RestartCount}}'`. RestartCount is the tell.
     restart: ${CLUB3090_RESTART:-unless-stopped}
     shm_size: "16gb"
+    depends_on:
+      vllm-qwen38-27b-multi4-ultrafast-kernels:
+        condition: service_completed_successfully
     ipc: host
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8102}}:8000"
@@ -73,6 +76,8 @@ services:
               count: all
               capabilities: [gpu]
     volumes:
+      - fa2-kernels:/opt/club3090/fa2-artifacts:ro
+      - ../../../patches/fa2-fp8kv-sm86:/etc/club3090/fa2:ro
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
       # W4A8 int8-activation patches — NO-OP unless VLLM_MARLIN_INPUT_DTYPE=int8.
       - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
@@ -110,6 +115,8 @@ services:
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
     environment:
+      - FA2_ARTIFACT_ID=${FA2_ARTIFACT_ID:-731d1942112a7cf35be4f0add0919072c06cac47e3bad4f674ff0157edad0e3f}
+      - TP=${TP:-4}
       # Drafter toggle — docker only forwards what is declared here. The DEFAULT
       # lives in the entrypoint, not in these lines, so it cannot drift.
       - SPEC_N=${SPEC_N:-}
@@ -184,6 +191,8 @@ services:
         bash /etc/club3090/gdn-async-order/install.sh || exit 1
         bash /etc/club3090/dflash-dense-kv/install.sh || exit 1
         FI_PINQ_LIB_ALL="${FI_PINQ_LIB_ALL:-0}" bash /etc/club3090/flashinfer-decode-pin/install.sh || exit 1
+        bash /etc/club3090/fa2/install.sh || exit 1
+        source /etc/club3090/fa2-runtime.env
         echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
         AR=""
         # Gate on _CUSTOM_AR_ENABLED, not _NVLINK_ENABLED: the transport being up
@@ -324,3 +333,12 @@ services:
       - 0.0.0.0
       - --port
       - "8000"
+
+  vllm-qwen38-27b-multi4-ultrafast-kernels:
+    image: ${FA2_KERNEL_IMAGE:-ghcr.io/antonprokopyev/fa2-fp8kv-sm86@sha256:da040941fa048fd5fdfce520503341c0beda4ce41436a1c1fecaf3f8a99777c7}
+    restart: "no"
+    volumes:
+      - fa2-kernels:/export
+
+volumes:
+  fa2-kernels:
