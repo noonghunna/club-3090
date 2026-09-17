@@ -78,8 +78,22 @@ per_token_bytes = num_growing_layers
                 × k_v_tensors            ← 2 for K and V stored separately; 1 when K=V tied
                 × bytes_per_kv_element   ← see KV-format table below
 
-kv_pool_per_card = (per_token_bytes / TP) × max_ctx × max_num_seqs
+kv_pool_per_card = (per_token_bytes / min(TP, num_kv_heads)) × max_ctx × max_num_seqs
 ```
+
+⚠️ **The divisor is `min(TP, num_kv_heads)`, not `TP`.** vLLM shards KV heads across
+tensor-parallel ranks but clamps at one head per rank:
+
+```python
+self.num_kv_heads = max(1, self.total_num_kv_heads // tp_size)   # vllm 0.29.0
+```
+
+Once `TP` exceeds `num_kv_heads` the heads **replicate** (vLLM's own comment: *"Number of KV
+heads is less than TP size, so we replicate the KV heads across multiple tensor parallel
+GPUs"*), so per-card KV stops shrinking. Dividing by `TP` past that point over-predicts the
+pool by `TP / num_kv_heads` — in the dangerous direction, predicting PASS where reality is
+FAIL. Example: qwen3.8-27b has 4 KV heads, so TP=8 gives the **same** per-card KV as TP=4;
+only the weights keep shrinking. Implemented as `_kv_tp_divisor()` in `tools/kv-calc.py`.
 
 For hybrid architectures (DeltaNet, SWA), only the **growing** attention layers contribute to this formula. Fixed-window or recurrent-state layers contribute a separate, context-independent term (see per-model sections).
 
@@ -323,6 +337,26 @@ drafter's own KV-bearing layers when one is loaded.
 > ⚠️ Turning the drafter off entirely also frees its weights and speculative buffers, so the **total**
 > context gain is far larger than the per-token rate implies: **+48.6% KV tokens at identical K**
 > (−33% context for having MTP on). Full detail in `learnings/sglang-engine.md`, 2026-09-15.
+
+> ⚠️⚠️ **That 17/16 slope is SGLang-specific — vLLM measures more than twice the cost.**
+> Measured 2026-09-17 on vLLM v0.29.0, `vllm/qwen38-27b-dual-fast`, 2× RTX 3090, TP=2, read from
+> the engine's own `GPU KV cache size:` line: MTP n=4 on → **508,356 tok**; `SPEC_N=0`
+> (`speculative_config=None`) → **590,577 tok**. That is **−13.9%**, not the −6.25% the 17/16
+> layer ratio predicts.
+>
+> The reason is that vLLM's token figure is **not** `pool_bytes / per_token_bytes`. It is
+> `int(num_blocks / blocks_per_request × max_model_len)`, where `blocks_per_request` sums over all
+> KV groups after (a) **hybrid group padding** — layer counts padded to
+> `group_size = min(#layers per type)`, (b) **mamba snapshot blocks** costing `(2 + n_spec)` per
+> group per request, and (c) **window-bounded** drafter SWA layers rather than per-token ones.
+> Worked example: `dual-ultramax` pins `--kv-cache-memory-bytes 6,335,076,762` **per GPU** and
+> measures 267,493 tok — of which ~4.32 GB is real attention, **~1.08 GB is pure padding**,
+> ~0.76 GB mamba snapshots, ~0.04 GB drafter.
+>
+> ⇒ **kv-calc models per-token bytes, not vLLM's block accounting**, so it carries the 6.25%
+> slope. That is an accepted limitation of a directional estimator (±1.5 GB band) — but do **not**
+> calibrate kv-calc against raw vLLM token lines without the group/mamba accounting or the
+> discrepancy gets baked in (`bootlog_solve.py` currently does exactly that).
 
 The table below is the **base model (16 layers, no drafter)**. Multiply by **1.0625** for built-in
 MTP, or **1.3125** for the DFlash2 drafter.

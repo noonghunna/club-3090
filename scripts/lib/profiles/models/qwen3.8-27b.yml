@@ -52,7 +52,7 @@ attention_k_eq_v: false
 # shipped slugs (2 llama.cpp + 2 vLLM) carry kvcalc_key="SKIP" anyway — the vLLM
 # pair deliberately so, matching the qwen3.6-27b fp8 tier, because kv-calc cannot
 # model this attention layout and a prediction row would be fiction.
-kv_calc_supported: false
+kv_calc_supported: true
 # ⚠️ MODEL-level capability, NOT a per-slug promise. FLIPPED false -> true
 # 2026-08-14 when the official FP8 safetensors variant was added: that checkpoint
 # carries the vision tower IN-REPO (the FP8 quant explicitly SKIPS every

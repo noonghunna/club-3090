@@ -134,6 +134,19 @@ def _load_model_specs_from_yaml(profiles):
     # weight-only on Ampere). No MTP head in the checkpoint (safetensors header
     # scan 2026-07-03: 0 mtp tensors) — mtp_n_default is inert (drafter=None).
     a1 = profiles.models["agents-a1"]
+    # Qwen3.8-27B: geometry byte-identical to qwen3.6-27b (hidden 5120, 64 layers =
+    # 48 GDN + 16 full-attn, 24 attn heads, 4 KV heads, head_dim 256,
+    # attention_k_eq_v false, mtp 1) -> rides the SAME qwen3-next-hybrid KV math.
+    # model_family is that INTERNAL KV-family tag, NOT its ModelProfile family
+    # ("qwen35-dense", the vLLM arch name) -- same pattern as gemma-4-12b above.
+    # Its default_weight_variant is a GGUF (unsloth-iq4xs) which is not a vLLM
+    # weight path, so weights_total_gb is pinned to the AutoRound INT4 the speed
+    # tiers actually serve; fp8 (fidelity tiers) and nvfp4 ride their own keys.
+    # ⚠️ valid_tp includes 8 with only 4 KV heads -- legal (vLLM asserts
+    # tp_size % num_kv_heads == 0 and replicates), and the FIRST priced model to
+    # exceed num_kv_heads, which is what makes _kv_tp_divisor load-bearing.
+    q38 = profiles.models["qwen3.8-27b"]
+    q38spec = {"model_id": q38.id, "model_family": qwen.family, **{k: getattr(q38, k) for k in q_fields}, "valid_tp": list(q38.valid_tp), "weights_total_gb": _weight_size(q38, "autoround-int4"), "weights_int4_gb": _weight_size(q38, "autoround-int4"), "weights_nvfp4_gb": _weight_size(q38, "nvfp4"), "weights_int8_gb": _weight_size(q38, "fp8"), "mamba_state_bytes": 4, "chunk_size": 256, "mtp_n_default": profiles.drafters["qwen-mtp-builtin"].n_default}
     a1spec = {"model_id": a1.id, "model_family": a1.family, **{k: getattr(a1, k) for k in qm_fields}, "valid_tp": list(a1.valid_tp), "weights_total_gb": _weight_size(a1, a1.default_weight_variant), "mamba_state_bytes": 4, "chunk_size": 256, "mtp_n_default": profiles.drafters["qwen-mtp-builtin"].n_default}
     # Qwen-AgentWorld-35B-A3B: same Qwen3-Next MoE geometry and KV math,
     # with its own AWQ INT4 footprint. The config's inherited MTP declaration
@@ -142,6 +155,7 @@ def _load_model_specs_from_yaml(profiles):
     agentworld_spec = {"model_id": agentworld.id, "model_family": agentworld.family, **{k: getattr(agentworld, k) for k in qm_fields}, "valid_tp": list(agentworld.valid_tp), "weights_total_gb": _weight_size(agentworld, agentworld.default_weight_variant), "mamba_state_bytes": 4, "chunk_size": 256, "mtp_n_default": profiles.drafters["qwen-mtp-builtin"].n_default}
     return {
         "qwen3.6-27b": qspec,
+        "qwen3.8-27b": q38spec,
         "qwen3.6-35b-a3b": qmspec,
         "agents-a1": a1spec,
         "qwen-agentworld-35b-a3b": agentworld_spec,
@@ -547,6 +561,7 @@ GENERIC_DENSE_ACTIVATION_FLOOR_GB = 1.5         # ≥ Gemma dense constant activ
 # =============================================================================
 COMPOSE_ALIAS_TEXT = {
     "qwen3.6-27b": "minimal=vllm/minimal dual=vllm/dual nvfp4-single=vllm/qwen-27b-single-nvfp4 nvfp4-dual=vllm/qwen-27b-dual-nvfp4",
+    "qwen3.8-27b": "dual-fast=vllm/qwen38-27b-dual-fast dual-superfast=vllm/qwen38-27b-dual-superfast dual-ultrafast=vllm/qwen38-27b-dual-ultrafast dual-max=vllm/qwen38-27b-dual-max dual-supermax=vllm/qwen38-27b-dual-supermax multi4-fast=vllm/qwen38-27b-multi4-fast multi4-superfast=vllm/qwen38-27b-multi4-superfast multi4-ultrafast=vllm/qwen38-27b-multi4-ultrafast multi4-max=vllm/qwen38-27b-multi4-max multi4-supermax=vllm/qwen38-27b-multi4-supermax multi4-ultramax=vllm/qwen38-27b-multi4-ultramax multi8-fast=vllm/qwen38-27b-multi8-fast multi8-superfast=vllm/qwen38-27b-multi8-superfast multi8-ultrafast=vllm/qwen38-27b-multi8-ultrafast multi8-max=vllm/qwen38-27b-multi8-max multi8-supermax=vllm/qwen38-27b-multi8-supermax multi8-ultramax=vllm/qwen38-27b-multi8-ultramax",
     "qwen3.6-35b-a3b": "qwen-a3b-preview-single=vllm/qwen-a3b-preview-single qwen-35b-a3b-dual=vllm/qwen-35b-a3b-dual nvfp4-single=vllm/qwen-35b-a3b-single-nvfp4 nvfp4-dual=vllm/qwen-35b-a3b-dual-nvfp4",
     "agents-a1": "agents-a1-dual=vllm/agents-a1-dual",
     "qwen-agentworld-35b-a3b": "dual=vllm/qwen-agentworld-35b-a3b-dual-awq-int4",
@@ -664,6 +679,11 @@ def _weights_per_card_gb(spec, tp, weights_variant="default"):
         # the community Hopper/Blackwell slugs (vllm/qwen-27b-*-nvfp4).
         if weights_variant == "nvfp4":
             return spec["weights_nvfp4_gb"] / tp
+        # fp8 lives here: fp8 and int8 are both 8-bit, so the fidelity tiers
+        # (official Qwen FP8 weights) ride --weights-variant int8. Guarded on key
+        # presence so qwen3.6-27b, which ships no int8/fp8 spec key, is unaffected.
+        if weights_variant == "int8" and "weights_int8_gb" in spec:
+            return spec["weights_int8_gb"] / tp
         return spec["weights_total_gb"] / tp
     elif spec["model_family"] == "qwen3-next-moe":
         # vLLM shards attention + MoE expert weights across TP ranks, so
@@ -733,6 +753,28 @@ def _kv_bearing_layers(spec, mtp_n: int = 0) -> int:
     return layers
 
 
+def _kv_tp_divisor(kv_heads, tp):
+    """Effective TP divisor for ATTENTION KV.
+
+    vLLM shards KV heads across TP ranks but clamps at >=1 head per rank:
+        self.num_kv_heads = max(1, self.total_num_kv_heads // tp_size)
+    (vllm/model_executor/models/qwen3_next.py:296 and 72 other model files in
+    v0.29.0; the else-branch comment reads "Number of KV heads is less than TP
+    size, so we replicate the KV heads across multiple tensor parallel GPUs").
+
+    So once tp exceeds num_kv_heads the heads REPLICATE and per-card KV stops
+    shrinking -- dividing by tp past that point over-predicts the pool by
+    tp/num_kv_heads, in the dangerous direction (predicts PASS where reality is
+    FAIL). The effective divisor is min(tp, kv_heads).
+
+    Identity for every currently-priced model (all have max(valid_tp) <=
+    num_kv_heads), so this is future-proofing, not a behaviour change.
+    NOTE: applies to attention KV only. GDN/recurrent state IS sharded by tp
+    (vllm/model_executor/layers/mamba/mamba_utils.py:274-277) -- do not clamp it.
+    """
+    return max(1, min(int(tp), int(kv_heads)))
+
+
 def kv_pool_per_card_bytes(spec, kv_format, max_ctx, max_num_seqs, tp, mtp_n=0):
     """Per-card KV pool bytes (growing portion only).
 
@@ -765,7 +807,7 @@ def kv_pool_per_card_bytes(spec, kv_format, max_ctx, max_num_seqs, tp, mtp_n=0):
             * bpe
         )
         effective_ctx = max_ctx + mtp_n * 32
-        growing = (per_token / tp) * effective_ctx * max_num_seqs
+        growing = (per_token / _kv_tp_divisor(spec["num_kv_heads"], tp)) * effective_ctx * max_num_seqs
         return growing, 0.0
 
     elif spec["model_family"] == "qwen3-next-moe":
@@ -779,7 +821,7 @@ def kv_pool_per_card_bytes(spec, kv_format, max_ctx, max_num_seqs, tp, mtp_n=0):
             * bpe
         )
         effective_ctx = max_ctx + mtp_n * 32
-        growing = (per_token / tp) * effective_ctx * max_num_seqs
+        growing = (per_token / _kv_tp_divisor(spec["num_kv_heads"], tp)) * effective_ctx * max_num_seqs
         recurrent_per_stream = (
             spec["num_gdn_layers"]
             * (
@@ -817,7 +859,7 @@ def kv_pool_per_card_bytes(spec, kv_format, max_ctx, max_num_seqs, tp, mtp_n=0):
                 * bpe
             )
         # No MTP draft-token bump on Gemma — drafter is a separate model
-        growing = (per_token_growing / tp) * max_ctx * max_num_seqs
+        growing = (per_token_growing / _kv_tp_divisor(spec.get("num_global_kv_heads", spec["num_kv_heads"]), tp)) * max_ctx * max_num_seqs
 
         # Sliding-window fixed term — 50 layers × window × head_dim × 1 × bpe
         sliding_fixed_total = (
@@ -841,7 +883,7 @@ def kv_pool_per_card_bytes(spec, kv_format, max_ctx, max_num_seqs, tp, mtp_n=0):
             * 1
             * bpe
         )
-        growing = (per_token_growing / tp) * max_ctx * max_num_seqs
+        growing = (per_token_growing / _kv_tp_divisor(spec.get("num_global_kv_heads", spec["num_kv_heads"]), tp)) * max_ctx * max_num_seqs
         sliding_fixed_total = (
             spec["num_sliding_attn_layers"]
             * spec["num_kv_heads"]
@@ -867,7 +909,7 @@ def kv_pool_per_card_bytes(spec, kv_format, max_ctx, max_num_seqs, tp, mtp_n=0):
             * 2  # K + V stored independently (conservative; no K==V tying)
             * bpe
         )
-        growing = (per_token / tp) * max_ctx * max_num_seqs
+        growing = (per_token / _kv_tp_divisor(spec["num_kv_heads"], tp)) * max_ctx * max_num_seqs
         return growing, 0.0
 
     raise ValueError(f"Unknown model_family: {spec['model_family']}")
