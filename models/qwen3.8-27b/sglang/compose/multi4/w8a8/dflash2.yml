@@ -1,0 +1,183 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
+#              Avesed INT8 **W8A8** export (INT8 weights + dynamic INT8 activations,
+#              compressed-tensors / llm-compressor W8A8 recipe, vision kept fp16).
+#   Engine:    SGLang STOCK v0.5.19 (`lmsysorg/sglang:v0.5.19`) — NO PATCHES.
+#              The W8A8 checkpoint auto-detects its own compressed-tensors config;
+#              no `--quantization` flag and no overlay is required on this pin.
+#   Topology:  4x GPU (TP=4) — NOT the reference rig.
+#   Drafter:   DFlash2 EXTERNAL block-drafter, UNQUANTIZED, 8 draft tokens.
+#              `incoai/Qwen3.8-27B-DFlash2` — the benched drafter (HF-mirrored,
+#              byte-identical, at `z-lab/Qwen3.8-27B-DFlash2`). Not wired into
+#              setup.sh — fetch the checkpoint manually (see the DRAFT note in
+#              the command block).
+#   KV:        bf16.
+#   Vision:    tower present (the benched verify-full scored vision 4/4).
+#   Max ctx:   262144 (full arch max).
+#   Cache:     HiCache hierarchical L2 host-RAM tier, ratio 1.5, page_first_direct /
+#              direct io (L2 only, NO L3 storage backend).
+#   Genesis:   N/A — Genesis is a vLLM construct.
+#   Status:    🧪 Experimental, DISK-ONLY (community submission, not a shipped slug).
+#              ⛔ 4-CARD IS COMMUNITY-VALIDATED BY DESIGN — the maintainer rig has
+#              two 3090s, so TP=4 can never boot there. The first community boot
+#              on 4 cards IS the validation.
+#
+#   ⭐ NUMBERS (from the author's report-full run, discussion #1288, 2026-09-13,
+#     at the 220 W power cap then in effect): verify-full 10/10, verify-stress 8/8
+#     (ceiling 91% of 262K, VRAM flat), soak PASS, bench 146.6 narrative / 270.8
+#     code decode (c=1), prefill ~5,058 t/s peak @4K, DFlash2 accept_len 5.28–6.16
+#     (mean 5.69). bench-ultimate combined decode 146.6 → 1,811 t/s (c=1 → c=16),
+#     peak 1.605 tok/W @878 W. ⚠️ ALL cap-bound at 220 W — NOT comparable to a
+#     stock-power baseline.
+#
+#   ⭐ INTERCONNECT IS LOAD-BEARING. This ran with `NCCL_P2P_LEVEL=SYS`. A
+#     single-variable control with NCCL left at NVL ran ~1.5–1.8x slower on
+#     prefill, so most of the c=1 prefill here is interconnect-driven, not
+#     engine-driven. Anyone reproducing at c=1 must match the interconnect, or
+#     the prefill numbers will not reproduce.
+#
+#   ⭐ HiCache L2 (L2 only, no L3) is verified-valid on this pin in source:
+#     `hicache_storage_backend=None` is the normal path; `--hicache-host-memory-mode
+#     cache` is the persistent L2 tier (not `buffer_only`, which would require an L3
+#     backend). No hicache x DFlash2 and no hicache x hybrid-GDN assert. On this
+#     hybrid-GDN model SGLang transfers the mamba/SSM recurrent state to the host
+#     tier with the attention KV (the thing a naive MHA-only prefix cache gets
+#     wrong).
+# ===========================================================================
+services:
+  sglang-qwen38-27b-w8a8-multi4:
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.19}
+    container_name: ${ESTATE_CONTAINER:-sglang-qwen38-27b-w8a8-multi4}
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    init: true
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8160}}:30000"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    ipc: host
+    shm_size: "16gb"
+    environment:
+      - SPEC_N
+      - CONTEXT_LENGTH
+      - MEM_FRACTION
+      - KV_CACHE_DTYPE
+      - MAX_RUNNING_REQUESTS
+      - MAMBA_SSM_DTYPE
+      - DRAFTER_DIR
+      - DRAFT_QUANT
+      - HICACHE_RATIO
+      - HICACHE_IO_BACKEND
+      - HICACHE_MEM_LAYOUT
+      - NCCL_P2P_LEVEL
+      - ENABLE_THINKING
+      - REASONING_EFFORT
+      - TEMP
+      - TOP_P
+      - TOP_K
+      - MIN_P
+      - PRESENCE_PENALTY
+      - REPEAT_PENALTY
+      - CHUNKED_PREFILL_SIZE
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-0,1,2,3}']
+              capabilities: [gpu]
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        M=/models/qwen3.8-27b-int8-w8a8
+        # ⚠️ SPEC_N=0 removes the speculative flags entirely rather than passing a
+        # zero — the same rule the MTP sibling and the GLM composes use.
+        # ⚠️ SPEC_N here is the DFLASH BLOCK SIZE (= vLLM's n + 1), not EAGLE steps.
+        # Leave it EMPTY to let SGLang infer it from the drafter config.
+        # ⚠️ DRAFT_QUANT is load-bearing: serving_hook.py:629 defaults the draft
+        # quantization to the TARGET's when unset. The W8A8 target is
+        # compressed-tensors and the drafter is unquantized, so `unquant`
+        # (which resolves to None) is required — do not let it inherit.
+        D="${DRAFTER_DIR:-/models/incoai_Qwen3.8-27B-DFlash2}"
+        _n="${SPEC_N-}"
+        case "$$_n" in *[!0-9]*) echo "[spec] SPEC_N='$$_n' is not a non-negative integer (leave EMPTY to infer)" >&2; exit 1 ;; esac
+        SPEC=()
+        if [ "$$_n" = "0" ]; then
+          echo "[spec] drafter OFF (SPEC_N=0)" >&2
+        else
+          if [ ! -d "$$D" ]; then
+            echo "[spec] drafter not found at $$D" >&2
+            echo "[spec] Fetch the unquantized incoai DFlash2 drafter (NOT in setup.sh):" >&2
+            echo "[spec]   huggingface-cli download incoai/Qwen3.8-27B-DFlash2" >&2
+            echo "[spec] (HF-mirrored, byte-identical, at z-lab/Qwen3.8-27B-DFlash2)" >&2
+            exit 1
+          fi
+          # ⚠️⚠️ --speculative-draft-model-quantization IS LOAD-BEARING: without
+          # it SGLang inherits the TARGET's quantization (serving_hook.py:629).
+          # The W8A8 target is compressed-tensors; the unquantized drafter must
+          # NOT inherit that.
+          SPEC=(--speculative-algorithm DFLASH
+                --speculative-draft-model-path "$$D"
+                --speculative-draft-model-quantization "${DRAFT_QUANT:-unquant}")
+          if [ -n "$$_n" ]; then
+            SPEC+=(--speculative-dflash-block-size "$$_n")
+          fi
+        fi
+        # --- sampler row + thinking default (mirrors the vLLM tiers) ---
+        # ⚠️⚠️ The BUILT-IN template does `reasoning_effort|default('xhigh')`
+        # (the SLOWEST rung). The vLLM tiers pin `low` (2026-08-16) so the two
+        # engines serve the same reasoning depth by default. Ladder is low /
+        # medium / xhigh — there is NO `high` rung here (no high->xhigh mapping
+        # in the checkpoint's built-in template).
+        _think="${ENABLE_THINKING:-true}"
+        _temp="${TEMP:-}"
+        if [ "$$_think" = "true" ]; then
+          : "$${_temp:=1.0}" "$${TOP_P:=0.95}" "$${PRESENCE_PENALTY:=0.0}"
+          echo "[sampler] thinking row (ENABLE_THINKING=true): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+        else
+          : "$${_temp:=0.7}" "$${TOP_P:=0.80}" "$${PRESENCE_PENALTY:=1.5}"
+          echo "[sampler] instruct row (ENABLE_THINKING=false): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+        fi
+        _reff="${REASONING_EFFORT:-low}"
+        case "$$_reff" in low|medium|xhigh) : ;; *) echo "[sampler] REASONING_EFFORT='$$_reff' must be low|medium|xhigh" >&2; exit 1 ;; esac
+        echo "[sampler] reasoning_effort=$$_reff (template default would be xhigh)" >&2
+        SAMPLER=(--default-chat-template-kwargs "{\\"enable_thinking\\": $$_think, \\"reasoning_effort\\": \\"$$_reff\\"}"
+                 --sampling-defaults model
+                 --preferred-sampling-params "{\\"temperature\\": $$_temp, \\"top_p\\": $${TOP_P}, \\"top_k\\": $${TOP_K:-20}, \\"min_p\\": $${MIN_P:-0.0}, \\"presence_penalty\\": $${PRESENCE_PENALTY}, \\"repetition_penalty\\": $${REPEAT_PENALTY:-1.0}}")
+        exec python3 -m sglang.launch_server \\
+          --model-path "$$M" \\
+          --tp-size 4 \\
+          --kv-cache-dtype "${KV_CACHE_DTYPE:-bf16}" \\
+          --mamba-ssm-dtype "${MAMBA_SSM_DTYPE:-bfloat16}" \\
+          --chunked-prefill-size "${CHUNKED_PREFILL_SIZE:-2048}" \\
+          --context-length "${CONTEXT_LENGTH:-262144}" \\
+          --mem-fraction-static "${MEM_FRACTION:-0.82}" \\
+          --max-mamba-cache-size "${MAX_MAMBA_CACHE:-80}" \\
+          --max-running-requests "${MAX_RUNNING_REQUESTS:-16}" \\
+          --enable-mixed-chunk \\
+          --radix-eviction-policy slru \\
+          --mamba-max-states-per-path "${MAMBA_MAX_STATES_PER_PATH:-1}" \\
+          --enable-metrics \\
+          --enable-hierarchical-cache \\
+          --hicache-ratio "${HICACHE_RATIO:-1.5}" \\
+          --hicache-host-memory-mode cache \\
+          --hicache-mem-layout "${HICACHE_MEM_LAYOUT:-page_first_direct}" \\
+          --hicache-io-backend "${HICACHE_IO_BACKEND:-direct}" \\
+          --hicache-write-policy write_through \\
+          --hicache-storage-prefetch-policy timeout \\
+          --mm-feature-transport cpu \\
+          --enable-fp32-lm-head \\
+          --trust-remote-code \\
+          "$${SAMPLER[@]}" \\
+          --reasoning-parser "${REASONING_PARSER:-qwen3}" \\
+          --tool-call-parser "${TOOL_CALL_PARSER:-qwen3_coder}" \\
+          --host 0.0.0.0 --port 30000 \\
+          --served-model-name qwen3.8-27b \\
+          "$${SPEC[@]}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:30000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 60
+      start_period: 900s

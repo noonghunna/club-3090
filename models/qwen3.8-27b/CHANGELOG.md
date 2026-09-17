@@ -2,6 +2,22 @@
 
 Dated history for Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-09-14 — SGLang W8A8 TP=4 (community, disk-only): add `multi4/w8a8/dflash2.yml`
+
+Adds @A1RM4X's stock-SGLang **INT8 W8A8** TP=4 DFlash2 compose as a **disk-only**
+(community-submission, not a shipped slug) entry under `sglang/compose/multi4/w8a8/`.
+No patch overlay — the Avesed W8A8 checkpoint auto-detects its compressed-tensors
+config on the v0.5.19 pin, so the disk-only gate set applies (disk-compose count
+137 → 138; no registry/drafter/model/engine wiring, no `patches.yml` entry).
+
+Benched via `report-full` at the 220 W cap on 4× 3090 (NVLink (0,2)/(1,3) only,
+`NCCL_P2P_LEVEL=SYS`): verify-full 10/10 · verify-stress 8/8 (ceiling 91% of
+262K, VRAM flat) · soak PASS · bench 146.6 narrative / 270.8 code decode (c=1),
+prefill ~5,058 t/s peak @4K · DFlash2 accept_len 5.28–6.16. bench-ultimate decode
+scales to 1,811 t/s code combined @c=16, peak 1.605 tok/W. **All numbers are
+cap-bound (220 W) and `NCCL_P2P_LEVEL=SYS`-dependent — not stock-power, and the
+c=1 prefill will not reproduce without matching interconnect.** Full context: [discussion #1288](https://github.com/noonghunna/club-3090/discussions/1288).
+
 ## 2026-09-13 — ULTRAMAX: prebuilt FP8 KV kernels and native FlashAttention plugin
 
 Fold the FA2 FP8 KV configuration into the existing `ultramax` slug and
