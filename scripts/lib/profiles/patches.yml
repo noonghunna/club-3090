@@ -1309,3 +1309,61 @@ patches:
       ref: jb-seo/club-3090 (0004-autoround-w4a8.patch, cut against SGLang v0.5.18)
       status: ours
       drop_when: "SGLang lands AutoRound W4A8 with the K%128/N%64 shape guard natively in the AutoRoundConfig eligibility gate — then this re-cut + guard is retired (keep the compose, drop the mount)."
+
+  # ---------------------------------------------------------------------------
+  # SGLang HiCache L2 / mamba radix-cache patches — v0.5.19
+  #
+  # Two independent fail-closed engine patches, applied together by install.sh.
+  # #39342 is the one that is load-bearing for the concurrent-session flag set
+  # this compose ships; #33713 is the match-side companion for the mamba
+  # host-tier loadback path. Neither patch is a no-op: both are applied
+  # fail-closed at boot and the compose refuses to start if either cannot
+  # apply cleanly.
+  # ---------------------------------------------------------------------------
+  - id: qwen38-sglang-hicache-mamba-v0519
+    model: [qwen3.8-27b]
+    status: unverified
+    files:
+      - models/qwen3.8-27b/sglang/patches/sglang-hicache-mamba-v0.5.19
+    load_bearing_when: []
+    note: >-
+      Disk-only SGLang compose (no registry entry). The patch is load-bearing
+      for models/qwen3.8-27b/sglang/compose/multi4/autoround-int4/dflash2-hicache.yml
+      — the only slug in the repo that ships HiCache L2 + mixed-chunk + slru
+      + mamba-max-states-per-path 1 on SGLang v0.5.19 for a hybrid-GDN model.
+      Without the #39342 patch that exact flag set crashes the engine (stale
+      mamba slot donated into the unified radix tree under a mismatched key).
+      The #33713 patch is applied as the match-side companion for the mamba
+      host-tier loadback path; it is NOT the evict-fork fix and is
+      HYPOTHESIS-ONLY on this GDN model.
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/sglang/patches/sglang-hicache-mamba-v0.5.19/install.sh
+      mounted_at: /etc/club3090/hicache-mamba
+      invoke: "bash /etc/club3090/hicache-mamba/install.sh"
+      invoked_before: sglang-launch
+      wired_at: [volumes, entrypoint]
+    drift_guard:
+      kind: marker
+      check: >-
+        install.sh runs both apply scripts and then re-runs --check on each;
+        either failing (anchor drift, half-patched state, missing file) makes
+        install.sh exit 1, and the compose entrypoint propagates that failure
+        so the container refuses to boot. A re-pinned image that drops any of
+        the anchors the scripts expect will hard-fail rather than silently
+        serve with a broken cache.
+      on_fail: refuse-to-boot
+    capability: sglang-hicache-l2-mixed-chunk
+    upstream:
+      ref: sgl-project/sglang#39342 + sgl-project/sglang#33713
+      status: ours
+      drop_when: >-
+        SGLang lands a fixed mamba radix-cache donation path under mixed-chunk
+        retraction (#39342) AND the mamba host-leaf match walk is corrected
+        (#33713) natively. At that point the patches are retired; the compose
+        and its HiCache flags stay.
