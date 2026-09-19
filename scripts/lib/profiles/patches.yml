@@ -419,6 +419,54 @@ patches:
       also_implemented_by: "gratex/Qwen3.8-27B-DFlash2-W4A16-g128-sym-GPTQ ships scripts/apply_dense_kv_fix.py with a BROADER _dense_kv_rows covering FP8 (per-tensor/channel/shard/block), GPTQ/AWQ, NVFP4 and MXFP4; ours covers compressed-tensors W4A16/W8A16 only. Borrow from it if an fp8 drafter is ever adopted. It also confirms GGUF/bitsandbytes/MLX drafters are unsupported on this path."
       drop_when: "vLLM merges a #51581 fix AND the vllm-stable pin moves past it -> remove the 12 dflash2 compose mounts + entrypoint calls and retire this row. Verify by booting a dflash2 slug on the new pin with the mount REMOVED and reading accept-len (a corrupt fused-KV path presents as a merely slow drafter, so boot-success alone is NOT sufficient evidence)."
     status: verified
+  - id: vllm-dflash2-mamba-align-offload
+    # vllm#53505 (CLOSED completed 2026-08-30): DFlash2 + prefix-cache / KV
+    # connector corrupts the mamba recurrent state. The upstream fix (commit
+    # fa5017a5, "Scope prefix-cache last-block drop to eagle-family drafters")
+    # landed on main 2026-09-10 -- ONE DAY AFTER the v0.29.0 cut, so it is NOT in
+    # vllm/vllm-openai:v0.29.0 and not yet in any released tag (v0.29.1rc0 is 27
+    # commits behind it). This is the same intent PR #54165 carried (still open);
+    # fa5017a5 is what actually shipped to main. Without it, use_eagle() is True
+    # for dflash/dspark, so _mamba_block_aligned_split backs the last cache
+    # position off by one block and the final block-aligned mamba snapshot never
+    # materializes -> every prefix-cache / offload-tier lookup converges to 0
+    # ("stores but never serves a hit"). This is the vLLM blocker for KV-cache
+    # offload (RAM / LMCache) with DFlash2 on v0.29.0.
+    # Adapted for v0.29.0 (older than fa5017a5's parent, which already had
+    # use_eagle_block_drop()): the drop is still INLINE in
+    # _mamba_block_aligned_split gated on self.use_eagle, so this adds
+    # use_eagle_preserves_target_kv_cache() to SpecDecodingConfig and scopes the
+    # inline back-off to it. Same two files, same effect.
+    model: [qwen3.8-27b]
+    files:
+      - models/qwen3.8-27b/vllm/patches/vllm-dflash2-mamba-align-offload/install.sh
+      - models/qwen3.8-27b/vllm/patches/vllm-dflash2-mamba-align-offload/dflash2-mamba-align-offload.patch
+      - models/qwen3.8-27b/vllm/patches/vllm-dflash2-mamba-align-offload/_check_applied.py
+    load_bearing_when:
+      - composes: [vllm/qwen38-27b-dual-ultramax]
+        reason: "vllm#53505 (closed 2026-08-30): DFlash2 + prefix-cache / KV connector leaves the mamba recurrent state off a block boundary, so prefix-cache and offload lookups converge to 0. fa5017a5 (the fix) is not in the v0.29.0 tag. Load-bearing for any KV-cache offload (RAM / LMCache) on the dual ultramax DFlash2 tier; also corrects the GPU prefix-hit path. #48375 (pr48375) is NOT sufficient -- different code path."
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/vllm/patches/vllm-dflash2-mamba-align-offload/install.sh
+      mounted_at: /etc/club3090/dflash2-mamba-align
+      invoke: bash /etc/club3090/dflash2-mamba-align/install.sh
+      invoked_before: vllm-serve
+    drift_guard:
+      kind: boot
+      check: "Entrypoint runs install.sh before serve; boot log '[dflash2-mamba-align] applied fa5017a5 port (DFlash2 mamba-align offload fix)' (first boot) or '[dflash2-mamba-align] fa5017a5 port already present' (idempotent). Anchor drift -> REFUSE (exit 1), fail-closed. Anchors verified against pristine vllm/vllm-openai:v0.29.0 source (apply + py_compile both files + reverse dry-run + sequential apply after vllm-dflash2-backport)."
+    capability: dflash2-mamba-align-offload
+    foundational: false
+    upstream:
+      ref: "vllm-project/vllm@fa5017a5f93e029e58e7d41f906ea6e5adaee323 (commit, landed main 2026-09-10)"
+      status: "shipped-to-main-not-yet-released (absent from v0.29.0 tag; v0.29.1rc0 is 27 commits behind it)"
+      also_implemented_by: "PR #54165 (open) is the same intent; #48375 (pr48375, mounted separately) is a different code path and NOT sufficient for vllm#53505."
+      drop_when: "A released vLLM tag contains fa5017a5 (watch v0.29.1 / v0.30.0). Confirm use_eagle_preserves_target_kv_cache() is present in that tag's config/speculative.py (reverse-apply of this patch should then be clean), then remove the dual dflash2 mount + entrypoint call and retire this row. Re-run a DFlash2 prefix-hit probe (assert vllm:prefix_cache_hits_total, never the flag) on the new pin before dropping."
+    status: verified
   - id: vllm-pr48375-mamba-drop-eagle-block
     # qwen3.8-27b added 2026-08-14: its two vLLM "max" composes ship the SAME
     # MTP + prefix-caching pair on the same Qwen3-Next hybrid family, and mount

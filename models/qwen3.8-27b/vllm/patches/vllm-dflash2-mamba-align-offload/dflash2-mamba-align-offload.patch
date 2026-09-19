@@ -1,0 +1,88 @@
+DFlash2 mamba-align offload/prefix-cache hit fix on vLLM 0.29.0.
+
+Port of upstream vLLM commit fa5017a5 ("[Spec Decode] Scope prefix-cache
+last-block drop to eagle-family drafters (DFlash2 offload fix)"), which landed
+on vLLM main 2026-09-10 -- ONE DAY AFTER the v0.29.0 cut (09-09). It is NOT in
+vllm/vllm-openai:v0.29.0 (verified: use_eagle_preserves_target_kv_cache() has
+0 occurrences in the v0.29.0 tag's speculative.py) and not yet in any released
+tag (v0.29.1rc0 is still 27 commits behind it).
+
+Why (vllm#53505, CLOSED completed 2026-08-30):
+  In v0.29.0, Scheduler._mamba_block_aligned_split() backs the last cache
+  position off by one mamba block whenever self.use_eagle is true. use_eagle()
+  returns True for dflash/dspark too, so DFlash2 receives the EAGLE
+  volatile-trailing-block drop: the mamba recurrent state never materializes at
+  the final block boundary, and EVERY prefix-cache and offload-tier lookup
+  converges to 0 ("stores but never serves a hit"). The fix gates that back-off
+  on eagle-family drafters only (eagle/eagle3/mtp). DFlash/DSpark draft from
+  their OWN KV cache and never write target blocks, so they must not back off.
+
+This is the vLLM half the FIELD_NOTES row "0.28.0 + #54165" did via a local
+port of PR #54165 (still OPEN). fa5017a5 is the same intent shipped to main.
+#48375 (mounted separately) is NOT sufficient -- it is single_type_kv_cache_
+manager only, a different code path.
+
+Adapted for v0.29.0 (older than fa5017a5's parent, which already had
+use_eagle_block_drop()): the drop is still INLINE in _mamba_block_aligned_split
+gated on self.use_eagle, so this patch (a) adds
+use_eagle_preserves_target_kv_cache() to SpecDecodingConfig and (b) scopes the
+inline back-off to it. Same files, same effect.
+
+Verified: clean patch -p1 dry-run + real apply + py_compile both files +
+reverse dry-run, AND sequential apply after vllm-dflash2-backport.patch.
+Drop when a released vLLM tag contains fa5017a5 (watch v0.29.1/0.30.0).
+
+----
+--- a/v1/core/sched/scheduler.py
++++ b/v1/core/sched/scheduler.py
+@@ -255,6 +255,12 @@
+         )
+         speculative_config = vllm_config.speculative_config
+         self.use_eagle = False
++        # Only eagle-family drafters share (and look ahead into) the
++        # target's full-attention KV cache groups. DFlash/DSpark draft
++        # from their own KV cache and never write target blocks
++        # (vllm#53505). Scopes the mamba-align last-block back-off.
++        # Port of upstream fa5017a5 (not yet in v0.29.0).
++        self.use_eagle_preserves_target_kv_cache = False
+         self.num_spec_tokens = vllm_config.num_speculative_tokens
+         self.num_lookahead_tokens = vllm_config.num_lookahead_tokens
+         # Positions past the computed tokens that the drafter reads mid-prefill.
+@@ -273,6 +279,9 @@
+                     vllm_num_speculative_tokens=self.num_spec_tokens,
+                 )
+             self.use_eagle = speculative_config.use_eagle()
++            self.use_eagle_preserves_target_kv_cache = (
++                speculative_config.use_eagle_preserves_target_kv_cache()
++            )
+             if self.use_eagle:
+                 self.num_prefill_lookahead = (
+                     self.num_spec_tokens
+@@ -414,7 +423,10 @@
+         # Eagle, FullAttn prunes the last matching block, so back off one
+         # block to avoid a Mamba cache miss.
+         last_cache_position = request.num_tokens - request.num_tokens % block_size
+-        if self.use_eagle:
++        # Only eagle-family drafters prune the last matching block; DFlash/DSpark
++        # never write target blocks (vllm#53505), so backing off orphans the final
++        # block-aligned mamba snapshot and collapses prefix-cache/offload hits to 0.
++        if self.use_eagle_preserves_target_kv_cache:
+             last_cache_position = max(last_cache_position - block_size, 0)
+ 
+         end = start + num_new_tokens
+--- a/config/speculative.py
++++ b/config/speculative.py
+@@ -1846,6 +1846,13 @@
+         # TODO(ben): Refactor this so the naming is clearer
+         return self.method in ("eagle", "eagle3", "mtp", "dflash", "dspark")
+ 
++    def use_eagle_preserves_target_kv_cache(self) -> bool:
++        # Only eagle-family drafters share (and look ahead into) the target's
++        # full-attention KV cache groups; DFlash/DSpark draft from their own KV
++        # cache and never write target blocks (vllm#53505). Port of upstream
++        # fa5017a5 (not yet in v0.29.0).
++        return self.method in ("eagle", "eagle3", "mtp")
++
+     def use_dflash(self) -> bool:
+         return self.method == "dflash"
+ 
