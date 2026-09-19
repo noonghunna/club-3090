@@ -167,13 +167,29 @@ services:
         ROW=(--reasoning "$$_r" --temp "$$_t" --top-p "$$_p" --presence-penalty "$$_pp"
              --top-k "$${TOP_K:-20}" --min-p "$${MIN_P:-0.0}")
         # -- Reasoning knobs: all six --reasoning-* flags reachable ------------------
-        # ⭐ BUDGET DEFAULTS TO 8192 HERE (maintainer call 2026-09-19), unlike the
-        # llama-cpp siblings which keep llama.cpp's own -1. Semantics confirmed from
-        # BOTH binaries' --help: "-1 unrestricted, 0 immediate end, N>0 token budget".
-        # ⚠️⚠️ Exhaustion force-closes the thinking block. The MESSAGE below is what
-        # makes that visible — upstream defaults it to EMPTY, which is why a truncated
-        # trace otherwise reads as a confident short answer. If quality drops after a
-        # budget change, suspect the budget before the model.
+        # ⭐ BUDGET 8192 — KEPT DELIBERATELY, AND IT IS KNOWN TO TRUNCATE. Maintainer
+        # call 2026-09-19 after the measurement below; 32768 was considered and declined.
+        # Method: two boots of this compose differing ONLY in REASONING_BUDGET. The -1
+        # arm gives each prompt's NATURAL trace length; lengths come from the server's
+        # own /tokenize (the cap is in TOKENS, and math tokenizes nothing like prose);
+        # truncation is detected by the exhaustion MARKER, never inferred from length.
+        #   prompt                     natural   @8192    truncated?
+        #   competition-math enum      18,895    8,197    YES — 231% of budget
+        #   constraint-propagation      3,314    3,570    no  — 40% of budget
+        #   step-by-step derivation     3,497    4,662    no  — 43% of budget
+        # ⇒ Long ENUMERATION/SEARCH prompts overrun this budget by >2x. Ordinary
+        # multi-step reasoning uses ~40%. The trade accepted here is: bound the tail,
+        # lose fidelity on the heaviest prompts. Raise it per-run with REASONING_BUDGET
+        # (e.g. 32768 clears the observed max by ~73%), or -1 for unrestricted.
+        # ⚠️⚠️ THE TRUNCATED RUN RETURNED finish_reason=stop AND A CONFIDENT 1,264-TOKEN
+        # ANSWER. Nothing in the response said its reasoning was cut off mid-enumeration.
+        # The ONLY evidence was the marker below — which is why the budget and the
+        # message ship together and NEITHER should be removed without the other.
+        # ⛔ NOT MEASURED: whether the truncated answer was actually WRONG. We know the
+        # chain was cut; we never graded the output. Do not assume truncation == error.
+        # ⚠️ Sample is THREE prompts, natural lengths ONE boot each.
+        # ⚠️ A client max_tokens BELOW the budget makes the cap inert — the length limit
+        # binds first and no marker appears.
         ROW+=(--reasoning-budget "$${REASONING_BUDGET:-8192}")
         ROW+=(--reasoning-budget-message "$${REASONING_BUDGET_MESSAGE:-[reasoning budget exhausted]}")
         case "$${REASONING_PRESERVE:-}" in
