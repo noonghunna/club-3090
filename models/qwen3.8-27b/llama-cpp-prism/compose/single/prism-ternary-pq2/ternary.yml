@@ -167,30 +167,39 @@ services:
         ROW=(--reasoning "$$_r" --temp "$$_t" --top-p "$$_p" --presence-penalty "$$_pp"
              --top-k "$${TOP_K:-20}" --min-p "$${MIN_P:-0.0}")
         # -- Reasoning knobs: all six --reasoning-* flags reachable ------------------
-        # ⭐ BUDGET 8192 — KEPT DELIBERATELY, AND IT IS KNOWN TO TRUNCATE. Maintainer
-        # call 2026-09-19 after the measurement below; 32768 was considered and declined.
-        # Method: two boots of this compose differing ONLY in REASONING_BUDGET. The -1
-        # arm gives each prompt's NATURAL trace length; lengths come from the server's
-        # own /tokenize (the cap is in TOKENS, and math tokenizes nothing like prose);
-        # truncation is detected by the exhaustion MARKER, never inferred from length.
-        #   prompt                     natural   @8192    truncated?
-        #   competition-math enum      18,895    8,197    YES — 231% of budget
-        #   constraint-propagation      3,314    3,570    no  — 40% of budget
-        #   step-by-step derivation     3,497    4,662    no  — 43% of budget
-        # ⇒ Long ENUMERATION/SEARCH prompts overrun this budget by >2x. Ordinary
-        # multi-step reasoning uses ~40%. The trade accepted here is: bound the tail,
-        # lose fidelity on the heaviest prompts. Raise it per-run with REASONING_BUDGET
-        # (e.g. 32768 clears the observed max by ~73%), or -1 for unrestricted.
-        # ⚠️⚠️ THE TRUNCATED RUN RETURNED finish_reason=stop AND A CONFIDENT 1,264-TOKEN
-        # ANSWER. Nothing in the response said its reasoning was cut off mid-enumeration.
-        # The ONLY evidence was the marker below — which is why the budget and the
-        # message ship together and NEITHER should be removed without the other.
-        # ⛔ NOT MEASURED: whether the truncated answer was actually WRONG. We know the
-        # chain was cut; we never graded the output. Do not assume truncation == error.
-        # ⚠️ Sample is THREE prompts, natural lengths ONE boot each.
+        # ⭐ BUDGET 16384 — raised from 8192 (maintainer, 2026-09-19). Method: boots of
+        # this compose differing ONLY in REASONING_BUDGET; lengths from the server's own
+        # /tokenize (the cap is in TOKENS, and math tokenizes nothing like prose);
+        # truncation detected by the exhaustion MARKER, never inferred from length;
+        # max_tokens set far above the budget so the CAP, not the length limit, binds.
+        #   prompt shape                  budget   reasoning   truncated?
+        #   competition-math enumeration      -1      18,895   (natural length)
+        #   same prompt                     8192       8,197   YES — marker fired
+        #   same prompt                    16384      13,013   no  — fits
+        #   constraint-propagation puzzle     -1       3,314   (natural)
+        #   step-by-step derivation           -1       3,497   (natural)
+        # ⚠️⚠️ TRACE LENGTH IS NOT A FIXED PROPERTY OF A PROMPT. The SAME enumeration
+        # prompt drew 18,895 uncapped and 13,013 under the 16384 cap — a ~31% spread at
+        # temperature 1.0. So a budget does not 'fit' or 'not fit' a prompt; it fits some
+        # FRACTION of that prompt's draws. 16384 cleared this draw and would NOT have
+        # cleared the 18,895 one. Do not read a single non-truncated run as proof the
+        # budget is sufficient — that is the same one-draw error that has bitten decode
+        # measurements on this stack.
+        # The shape that overruns is ENUMERATION/SEARCH, not 'hard' prompts generally:
+        # a 25-attribute logic puzzle and a quicksort-expectation derivation both sat at
+        # ~20% of this budget.
+        # ⚠️⚠️ TRUNCATION IS INVISIBLE WITHOUT THE MARKER. At 8192 the truncated run
+        # returned finish_reason=stop AND a confident 1,264-token answer, with nothing in
+        # the response saying its reasoning was cut mid-enumeration. The ONLY evidence
+        # was the message below ⇒ budget and message ship TOGETHER, and NEITHER should be
+        # removed without the other (upstream defaults the message to EMPTY).
+        # ⛔ NOT MEASURED: whether a truncated answer is actually WRONG. The chain was
+        # cut; the output was never graded. Do not read 'truncated' as 'incorrect'.
         # ⚠️ A client max_tokens BELOW the budget makes the cap inert — the length limit
         # binds first and no marker appears.
-        ROW+=(--reasoning-budget "$${REASONING_BUDGET:-8192}")
+        # ⚠️ RUNAWAY GUARD, not a latency bound: at ~45 tok/s, 16384 thinking tokens is
+        # ~6 minutes before the cap fires.
+        ROW+=(--reasoning-budget "$${REASONING_BUDGET:-16384}")
         ROW+=(--reasoning-budget-message "$${REASONING_BUDGET_MESSAGE:-[reasoning budget exhausted]}")
         case "$${REASONING_PRESERVE:-}" in
           1|on|true|yes)   ROW+=(--reasoning-preserve) ;;
