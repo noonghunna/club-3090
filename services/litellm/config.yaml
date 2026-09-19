@@ -31,25 +31,25 @@ model_list:
 
   - model_name: gemma-4-12b-int8
     litellm_params:
-      model: openai/gemma-4-12b-int8
+      model: hosted_vllm/gemma-4-12b-int8
       api_base: http://host.docker.internal:8038/v1
       api_key: EMPTY
 
   - model_name: gemma-4-31b
     litellm_params:
-      model: openai/gemma-4-31b
+      model: hosted_vllm/gemma-4-31b
       api_base: http://host.docker.internal:8032/v1
       api_key: EMPTY
 
   - model_name: gemma-4-31b-autoround
     litellm_params:
-      model: openai/gemma-4-31b-autoround
+      model: hosted_vllm/gemma-4-31b-autoround
       api_base: http://host.docker.internal:8032/v1
       api_key: EMPTY
 
   - model_name: gemma-4-31b-qat-awq-int4
     litellm_params:
-      model: openai/gemma-4-31b-qat-awq-int4
+      model: hosted_vllm/gemma-4-31b-qat-awq-int4
       api_base: http://host.docker.internal:8032/v1
       api_key: EMPTY
 
@@ -61,19 +61,19 @@ model_list:
 
   - model_name: qwen3.6-27b
     litellm_params:
-      model: openai/qwen3.6-27b
+      model: hosted_vllm/qwen3.6-27b
       api_base: http://host.docker.internal:8010/v1
       api_key: EMPTY
 
   - model_name: qwen3.6-27b-autoround
     litellm_params:
-      model: openai/qwen3.6-27b-autoround
+      model: hosted_vllm/qwen3.6-27b-autoround
       api_base: http://host.docker.internal:8010/v1
       api_key: EMPTY
 
   - model_name: qwen3.6-35b-a3b-autoround
     litellm_params:
-      model: openai/qwen3.6-35b-a3b-autoround
+      model: hosted_vllm/qwen3.6-35b-a3b-autoround
       api_base: http://host.docker.internal:8051/v1
       api_key: EMPTY
 
@@ -85,13 +85,13 @@ model_list:
 
   - model_name: qwen3.8-27b  # status: experimental
     litellm_params:
-      model: openai/qwen3.8-27b
+      model: hosted_vllm/qwen3.8-27b
       api_base: http://host.docker.internal:8091/v1
       api_key: EMPTY
 
   - model_name: qwen3.8-27b-fp8  # status: experimental
     litellm_params:
-      model: openai/qwen3.8-27b-fp8
+      model: hosted_vllm/qwen3.8-27b-fp8
       api_base: http://host.docker.internal:8091/v1
       api_key: EMPTY
 
@@ -109,7 +109,7 @@ model_list:
   # Still hand-maintained: agents-a1 is not yet gateway-flagged in compose_registry.
   - model_name: agents-a1
     litellm_params:
-      model: openai/agents-a1
+      model: hosted_vllm/agents-a1
       api_base: http://host.docker.internal:8072/v1
       api_key: EMPTY
 

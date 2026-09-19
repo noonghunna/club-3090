@@ -196,7 +196,7 @@ def _unquote(tok):
     if m:
         return m.group(1) or m.group(2) or ""
     return tok
-routes = []  # (model, port, name, status) — sorted + deduped before emission
+routes = []  # (model, port, name, status, provider) — sorted + deduped before emission
 for model in sorted(gw_by_model):
     entries = gw_by_model[model]
     slug = canonical_slug(model, entries)
@@ -225,7 +225,14 @@ for model in sorted(gw_by_model):
             f"or --alias in {entry['compose_path']}) — a gateway route needs a name"
         )
     for n in names:
-        routes.append((model, port, n, entry.get("status", "production")))
+        # Self-hosted vLLM -> hosted_vllm provider: its param whitelist
+        # includes reasoning_effort/thinking, so reasoning-capable clients
+        # can pass them through. The generic openai provider omits those
+        # params (400 for such clients). llama.cpp backends do not parse
+        # reasoning_effort, so keep openai there (drop_params discards it
+        # safely instead of the backend rejecting it).
+        prov = "hosted_vllm" if str(entry.get("engine", "")).startswith("vllm") else "openai"
+        routes.append((model, port, n, entry.get("status", "production"), prov))
 seen = set()
 deduped = []
 for r in sorted(routes, key=lambda t: (t[0], t[1], t[2])):
@@ -235,7 +242,7 @@ for r in sorted(routes, key=lambda t: (t[0], t[1], t[2])):
     deduped.append(r)
 
 chunks = []
-for _model, port, name, status in deduped:
+for _model, port, name, status, prov in deduped:
     head = f"  - model_name: {name}"
     # Non-functional scene (experimental/incubating/…: --force to launch)?
     # Still emit — gateway clients hit whatever is serving — but annotate the
@@ -245,7 +252,7 @@ for _model, port, name, status in deduped:
     chunks.append("\n".join([
         head,
         "    litellm_params:",
-        f"      model: openai/{name}",
+        f"      model: {prov}/{name}",
         f"      api_base: http://host.docker.internal:{port}/v1",
         "      api_key: EMPTY",
     ]))
