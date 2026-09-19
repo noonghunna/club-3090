@@ -7,17 +7,20 @@
 #              embeddings/lm_head and shares the target's.)
 #   Topology:  Dual 3090 PCIe (TP=2, no NVLink; NVLINK_MODE=auto detects)
 #   Drafter:   DFlash2 EXTERNAL block-drafter n=7 (syv-ai W4A16, 1.2 GiB, method=dflash).
-#              vLLM PR#52816 backport, vendored. SPEC_N=<n> sets width; SPEC_N=0 off.
-#   KV:        bf16 — MANDATORY here. The DFlash2 drafter's block attention is
-#              non-causal and needs FLASH_ATTN; on Ampere (sm_86) FLASH_ATTN accepts
-#              ONLY bf16/fp16 KV (fp8-KV-in-kernel is FA3/Hopper-only). fp8 KV would
-#              force FlashInfer and cost ~40% decode.
+#              Native model classes since vLLM v0.29.0 (vllm#52816 merged 2026-08-21).
+#              SPEC_N=<n> sets width; SPEC_N=0 off.
+#   KV:        fp8 e4m3 — the shipped config since 2026-09-14 (#1274): the FA2 fp8-KV
+#              plugin registers an FP8 KV extension THROUGH the FLASH_ATTN API, lifting
+#              the sm_86 "bf16/fp16 KV only" constraint that made bf16 mandatory on this
+#              tier before it (without the plugin, fp8 KV forced FlashInfer, measured
+#              74/138 vs bf16/FA2's 132/227 — ~40% slower decode).
 #   Vision:    ✅ tower present (input-only, text out); untested on this tier.
 #   Template:  native + club-3090 alias — the model's own chat_template.jinja
 #              with `high` remapped to `xhigh` (patches/qwen38-reasoning-effort-template)
-#   Max ctx:   204800 (~200K) — MEASURED bf16/FA2 ceiling on 2×3090 @0.90 util
-#              (KV pool 212,977 tok; hard ceiling ~213K). NOT the 262K arch max:
-#              bf16 KV can't fit 262K here (needs ~10.93 GiB vs ~9.1 available).
+#   Max ctx:   262144 — the ARCHITECTURAL ceiling, and the shipped default (fp8 KV pool
+#              421,970 tok = 1.61× concurrency @0.90 util). The pre-#1274 bf16/FA2
+#              config was capped at 204800 (~200K; pool 212,977 tok, hard ceiling ~213K)
+#              — see the history block below. MAX_MODEL_LEN still overrides for both.
 #   Genesis:   none
 #   Status:    🧪 Experimental
 # ⛔⛔ #1096 RETRACTED 2026-09-08 — THERE IS NO ACCUMULATED-CTX DECODE CLIFF. The collapse
@@ -33,7 +36,8 @@
 # ⚠️ What DOES survive: vllm#35387 — a real spec tax that scales with drafter DEPTH, not
 #    context (29K: no-spec 57.0 -> n=1 40.6 / n=2 36.0 / n=3 32.7 tok/s), profiled to the
 #    cudagraph downgrade FULL_AND_PIECEWISE -> PIECEWISE. A steady tax, not a cliff.
-#   Best for:  ⭐ ULTRAFAST decode — the throughput tier (~227 code / ~132 narr TPS).
+#   Best for:  ⭐ ULTRAFAST decode — the throughput tier (~220 code / ~123 narr TPS on
+#              the shipped fp8-KV config; ~227/~132 were the pre-#1274 bf16 figures).
 # ---------------------------------------------------------------------------
 # THE "ULTRAFAST" TIER — DFlash2 external drafter on the INT4 target.
 # vs the FAST tier (mtp.yml, built-in MTP n=4): DFlash2 ~doubles code decode
@@ -42,15 +46,17 @@
 # the Avuja checkpoint (#1052 / vllm#52873): the collapse soak ran clean to 21k gen
 # with zero crashes, where built-in MTP dies ~14.5k.
 #
-# ⭐ WHY bf16 KV + FLASH_ATTN (and why 200K, not 262K):
-#   syv-ai's card mandates FLASH_ATTN + bf16 KV (non-causal block attention). On
-#   Ampere sm_86 FLASH_ATTN supports ONLY bf16/fp16 KV — flash_attn_supports_kv_
-#   cache_dtype('fp8_e4m3') returns False (fp8-in-kernel is FA3/Hopper/Blackwell).
-#   fp8 KV therefore forces FlashInfer, measured at 74/138 vs bf16/FA2's 132/227
-#   (~40% slower). We keep FLASH_ATTN; the price is context — bf16 KV is 2× fp8, so
-#   the ceiling is ~213K tokens. This model is a GDN hybrid (only the few full-
-#   attention layers cache KV), which is why 200K fits on bf16 at all. For the full
-#   262K arch max, use the fast (MTP/fp8) tier.
+# HISTORY — why this tier was bf16 KV @ 200K (2026-08-20 → 2026-09-14):
+#   syv-ai's card mandates FLASH_ATTN (non-causal block attention). On Ampere sm_86
+#   stock FLASH_ATTN supports ONLY bf16/fp16 KV — flash_attn_supports_kv_cache_dtype
+#   ('fp8_e4m3') returns False (fp8-in-kernel is FA3/Hopper/Blackwell) — so fp8 KV
+#   forced FlashInfer, measured 74/138 vs bf16/FA2's 132/227 (~40% slower). And bf16
+#   KV is 2× fp8, so the pool capped at ~213K tokens (204800 shipped; this GDN hybrid
+#   caches KV on only the few full-attention layers, which is why 200K fit at all).
+#   The 2026-09-14 #1274 FA2 fp8-KV plugin (@AntonProkopyev) dissolved that trade:
+#   an FP8 KV extension THROUGH the FLASH_ATTN API (prebuilt sm_86 kernels,
+#   digest-pinned, extracted by the one-shot sidecar below) — so this file ships fp8
+#   KV + the full 262K arch max at 122.7/219.5 decode: the config in the block below.
 #
 # ⚠️ MAX_NUM_SEQS=1 (single-stream) — the drafter + 24 GB leaves no room for a
 #   second stream. For concurrency: SPEC_N=0 and raise MAX_NUM_SEQS.
@@ -96,12 +102,16 @@
 #   but the collapse soak was crash-free to 21k gen. Treat that as "not observed",
 #   not "immune"; SPEC_N=0 is the mitigation. docs/UPSTREAM.md.
 #
-# VALIDATED (TP=2, Frozenlock checkpoint, 2026-08-20):
-#   ✅ verify-full 9/9 · bench 132 narr / 227 code TPS (3 warm + 5) · collapse soak
-#      clean to 21k gen (0 crashes) · bf16/FA2 @200K boots + serves (KV pool
-#      212,977 tok, 20.4 GiB/card).
-#   ❌ No NIAH at 200K, no 8-pack, no n-sweep past the n=7 default. TP=4/8 unbooted
-#      (2-GPU rig — community-validated by design).
+# VALIDATED (TP=2, Frozenlock checkpoint):
+#   2026-08-20 (bf16/FA2 @200K): ✅ verify-full 9/9 · bench 132 narr / 227 code TPS
+#      (3 warm + 5) · collapse soak clean to 21k gen (0 crashes) · KV pool 212,977
+#      tok, 20.4 GiB/card. ❌ No NIAH at 200K, no 8-pack, no n-sweep past n=7.
+#      TP=4/8 unbooted (2-GPU rig — community-validated by design).
+#   2026-09-14 (shipped fp8-KV + FA2-plugin config @262144): FOUR alternating boots,
+#      each arm reproducing within 1% — bench 122.7 narr / 219.5 code (canonical
+#      sampler, 3 warm + 5), KV pool 421,970 tok (1.61×); @10K/@90K prefill arms in
+#      the W4A8 table above (both arms pinned at 204800 so KV dtype was the only
+#      variable).
 # ⚠️ Launch requires --force (experimental).
 # ===========================================================================
 services:
@@ -335,7 +345,7 @@ services:
       - --tensor-parallel-size
       - "${TP:-2}"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-204800}"
+      - "${MAX_MODEL_LEN:-262144}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.90}"
       - --max-num-seqs
