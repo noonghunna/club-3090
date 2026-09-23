@@ -217,7 +217,7 @@ services:
       - --quantization
       - compressed-tensors
       - --dtype
-      - float16
+      - bfloat16
       - --tensor-parallel-size
       - "${TP:-2}"
       - --pipeline-parallel-size
