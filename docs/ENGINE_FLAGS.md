@@ -58,7 +58,7 @@ Two things that are **not** hardware gating but look like it: the `SPEC_N`/`SPEC
 
 ## 3. vLLM — 55 registered slugs, 11 engine ids
 
-Engine pins in play: `vllm-stable` = `v0.29.0` (the vast majority), `vllm-gemma-stable` = `v0.22.0` (6 slugs), `vllm-diffusion-gemma` = `v0.24.0` (1), `vllm-gemma4-unified` = ephemeral tag (2), `vllm-lmcache` = `lmcache/vllm-openai@sha256:663f9b2f…` (1). The 4 `vllm-nightly-*` ids and `vllm-pip-baseline`/`vllm-stable-next` have **zero** registry users. Every flag below is present in *both* `--help=all` dumps (v0.29.0 and v0.22.0) except where noted.
+Engine pins in play: `vllm-stable` = `v0.30.0` (the vast majority), `vllm-gemma-stable` = `v0.22.0` (6 slugs), `vllm-diffusion-gemma` = `v0.24.0` (1), `vllm-gemma4-unified` = ephemeral tag (2), `vllm-lmcache` = `lmcache/vllm-openai@sha256:663f9b2f…` (1). The 4 `vllm-nightly-*` ids and `vllm-pip-baseline`/`vllm-stable-next` have **zero** registry users. Every flag below is present in *both* `--help=all` dumps (v0.29.0 and v0.22.0) except where noted. **Re-checked at the v0.30.0 bump (2026-09-23):** every `--flag` and `VLLM_*` env name used by the 43 `vllm-stable` composes resolves identically in the v0.30.0 dumps (`--help=all` 2 093 lines; `vllm.envs`); the only flag v0.30.0 removed, `--enable-bf16x3-router-gemm`, has no users. The `[vllm-help 0.29]` / `[vllm-envs 0.29]` citations below were not re-derived — they name the dump each claim was read from.
 
 **Headline findings for this engine**
 
