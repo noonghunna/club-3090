@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     DeepSeek-V4-Flash-0731 (284B MoE, unsloth UD-Q8_K_XL, 151 GB)
-#   Engine:    llama.cpp (mainline server-cuda-b10236, external DSpark drafter)
+#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-mainline.yml install.spec; external DSpark drafter)
 #   Topology:  4× 24 GB PCIe (layer-split -ts 1,1,1,1)
 #   Drafter:   DSpark n=5 external (--spec-type draft-dspark) — REQUIRES b10236+
 #              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
@@ -92,7 +92,7 @@
 
 services:
   llama-cpp-deepseek-flash:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:6ac921528d613deb0fd142c654735e594a446a1c37a069eeab08d8fd974d4bec}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:52192a23c7b258044463aebba78826cdff39a7393b713edc313324b343a7b836}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-deepseek-flash-q8-multi4}"
     restart: unless-stopped
     ports:

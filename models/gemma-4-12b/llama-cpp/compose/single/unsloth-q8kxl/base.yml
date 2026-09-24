@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Gemma-4-12B-it (gemma4_unified — Unsloth UD-Q8_K_XL GGUF, 13 GB)
-#   Engine:    llama.cpp (mainline ggml-org, rolling server-cuda)
+#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-mainline.yml install.spec)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   none (no-spec). MTP needs gemma4-assistant arch (llama.cpp #23398, WIP) → mtp.yml (gated).
 #   KV:        q8_0 K + q8_0 V (FA-supported on STOCK ggml-org — no FA_ALL_QUANTS — and half of
@@ -41,7 +41,7 @@
 
 services:
   llama-cpp-gemma4-12b:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:6ac921528d613deb0fd142c654735e594a446a1c37a069eeab08d8fd974d4bec}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:52192a23c7b258044463aebba78826cdff39a7393b713edc313324b343a7b836}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-gemma4-12b}"
     restart: unless-stopped
     ports:

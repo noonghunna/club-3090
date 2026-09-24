@@ -745,7 +745,7 @@ patches:
     capability: chat-template-override
     foundational: false
     upstream:
-      ref: "ggml-org/llama.cpp#29257 (bfd73a876, merged 2026-09-22): excludes templates rendering tool calls without newlines from the Qwen3-Coder handler. Not in a published image as of 2026-09-23 (newest b11096 predates it)."
+      ref: "ggml-org/llama.cpp#29257 (bfd73a876, merged 2026-09-22): excludes templates rendering tool calls without newlines from the Qwen3-Coder handler. Published in release v0.5.0 (b11146, `server-cuda-v0.5.0`), which the llama-cpp-local pin moved to on 2026-09-23 — so drop_when is MET, but the patch stays wired until the CLI-21 first-turn probe runs on v0.5.0 without it (not run at pin time: both GPUs busy). Keeping it is safe: it only swaps the template."
       status: merged
       drop_when: "the llama-cpp-mainline pin for llamacpp/mimo9b-single-vision reaches a published ggml-org/llama.cpp image built from bfd73a876 or later: drop the volume, the --chat-template-file flag, this entry and the patch directory in that same bump, then re-run the CLI-21 first-turn probe."
     status: verified

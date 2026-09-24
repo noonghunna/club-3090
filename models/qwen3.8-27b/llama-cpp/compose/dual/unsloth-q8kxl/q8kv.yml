@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.8-27B (Unsloth Dynamic UD-Q8_K_XL GGUF, 31.5 GB)
-#   Engine:    llama.cpp (mainline server-cuda-b10236 — the shared llama-cpp-local pin)
+#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-mainline.yml install.spec)
 #   Topology:  Dual 3090 PCIe (layer-split, -sm layer -ts 0.55,0.45 — no NVLink, no
 #              all-reduce; the skew rebalances the pinned MTP draft card, see TOPOLOGY)
 #   Drafter:   MTP n=2 built-in (--spec-type draft-mtp; the head is EMBEDDED in this GGUF)
@@ -194,7 +194,7 @@
 
 services:
   llama-cpp-qwen38-27b-dual:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:6ac921528d613deb0fd142c654735e594a446a1c37a069eeab08d8fd974d4bec}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:52192a23c7b258044463aebba78826cdff39a7393b713edc313324b343a7b836}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-qwen38-27b-dual}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
