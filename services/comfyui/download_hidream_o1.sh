@@ -4,7 +4,8 @@
 #
 # HiDream-O1 is a 9B *pixel-level unified transformer* (no separate VAE / text encoder —
 # the whole HF folder is the model). It is NOT supported by ComfyUI natively; it needs the
-# `Saganaki22/HiDream_O1-ComfyUI` custom node (cloned by services/comfyui/entrypoint.sh).
+# HiDream_O1-ComfyUI custom node by Saganaki22 (pinned + fetched from mirrors by
+# services/comfyui/entrypoint.sh — the original repo is gone, #1394).
 # The Dev-2604 build runs CFG-off, 28-step. ~8.8 GB weights, ~10 GB VRAM at 1024² — single
 # RTX 3090, coexists with the Studio director on GPU0. AA #1 single-model open-weight T2I.
 #

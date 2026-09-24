@@ -61,9 +61,11 @@ isn't built for sm_86). Heaviest + slowest of the image lanes — the trade for 
 subject to `image_max_edge` (fixed 2048²).
 
 > **No native ComfyUI support** (unlike Ideogram-4). Its nodes (HiDream O1 Model Loader /
-> Conditioning / Sampler) come from the third-party **`Saganaki22/HiDream_O1-ComfyUI`** custom
-> node, cloned by `services/comfyui/entrypoint.sh` (+ an idempotent transformers-5 compat patch);
-> weights via `download_hidream_o1.sh`.
+> Conditioning / Sampler) come from the third-party **HiDream_O1-ComfyUI** custom node by
+> Saganaki22 (MIT), cloned by `services/comfyui/entrypoint.sh` (+ an idempotent transformers-5
+> compat patch); weights via `download_hidream_o1.sh`. ⚠️ The author's GitHub account is gone
+> (#1394), so the entrypoint pins the last upstream commit (`1f1dd545`) and fetches it from forks
+> that carry it — same SHA, same code.
 
 ## 🖼️ Ideogram-4 (design / logo / photo / art)
 

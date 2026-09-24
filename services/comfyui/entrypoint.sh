@@ -27,6 +27,41 @@ clone_or_update() {
     fi
 }
 
+# clone_pinned <dest> <sha> <mirror-url>... — for a node whose original repo is GONE (#1394).
+# A commit SHA names exact content, so any mirror that still carries <sha> yields the same
+# tree. Each boot resets to <sha> (as clone_or_update resets to upstream, so a local patch
+# below re-applies from a clean tree); the network is touched only when <sha> is missing.
+# If no mirror has it, WARN and continue: one lane's nodes are missing, the rest of ComfyUI
+# still boots (a hard exit under `set -e` took the whole service down).
+clone_pinned() {
+    local dest="$1" sha="$2" url
+    shift 2
+    if [ -d "$dest/.git" ] && git -C "$dest" cat-file -e "${sha}^{commit}" 2>/dev/null; then
+        git -C "$dest" remote set-url origin "$1" 2>/dev/null || true
+        git -C "$dest" reset -q --hard "$sha"
+        echo "[bootstrap] $(basename "$dest") pinned @ ${sha:0:8}"
+        return 0
+    fi
+    for url in "$@"; do
+        if [ -d "$dest/.git" ]; then
+            git -C "$dest" remote set-url origin "$url" 2>/dev/null || true
+            git -C "$dest" fetch -q origin 2>/dev/null || { echo "[bootstrap] mirror unusable: $url"; continue; }
+        elif ! git clone -q "$url" "$dest" 2>/dev/null; then
+            # (a failed clone removes only what it created; a pre-existing non-git
+            # $dest is never deleted — it just falls through to the WARN below)
+            echo "[bootstrap] mirror unusable: $url"; continue
+        fi
+        if git -C "$dest" cat-file -e "${sha}^{commit}" 2>/dev/null; then
+            git -C "$dest" reset -q --hard "$sha"
+            echo "[bootstrap] $(basename "$dest") pinned @ ${sha:0:8} from $url"
+            return 0
+        fi
+        echo "[bootstrap] mirror lacks ${sha:0:8}: $url"
+    done
+    echo "[bootstrap] WARN: no mirror carries ${sha:0:8} for $(basename "$dest") — that lane's nodes are unavailable (#1394)"
+    return 0
+}
+
 # 0. Make models/input/output/user dirs writable by the host user (uid 1000) too,
 #    so host-side hf download / file moves work after container has touched them as root.
 chmod -R a+rwX /workspace/ComfyUI/models /workspace/ComfyUI/input /workspace/ComfyUI/output /workspace/ComfyUI/user 2>/dev/null || true
@@ -111,7 +146,12 @@ clone_or_update https://github.com/pollockjj/ComfyUI-MultiGPU.git "$NODES/ComfyU
 # subprocess/eval/network beyond an opt-in HF model downloader (unused — weights are pre-fetched
 # by download_hidream_o1.sh). Its requirements (torch/transformers/diffusers/...) are floor-pins
 # already satisfied by the base image, so the loop below is a no-op and does NOT touch torch 2.7.0.
-clone_or_update https://github.com/Saganaki22/HiDream_O1-ComfyUI.git "$NODES/HiDream_O1-ComfyUI"
+# ⚠️ Written by Saganaki22 (MIT), whose GitHub account is GONE (#1394) — so it is PINNED to the
+# last upstream commit (1f1dd545, tree dcef1f00, what the reference rig runs) and fetched from
+# forks that carry it, clone-verified 2026-09-24. It used to track upstream's tip.
+clone_pinned "$NODES/HiDream_O1-ComfyUI" 1f1dd545faa3ea436aa2fc89f2a555f0cbc88651 \
+    https://github.com/d01/HiDream_O1-ComfyUI.git \
+    https://github.com/yuanjun55/HiDream_O1-ComfyUI.git
 # transformers 5.x compat: the HiDream node calls create_causal_mask(input_embeds=, cache_position=),
 # but transformers 5.x renamed input_embeds->inputs_embeds and dropped cache_position from that
 # signature. Idempotently fix the one call site so the model runs on our image's transformers.
