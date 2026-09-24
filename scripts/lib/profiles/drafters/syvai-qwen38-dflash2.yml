@@ -4,6 +4,7 @@ display_name: syv-ai Qwen3.8-27B DFlash2 (W4A16)
 spec_method: dflash
 model_compat:
   - qwen3.8-27b
+  - thinkingcap-qwen3.8-27b   # fine-tune of qwen3.8-27b, identical text_config (2026-09-23)
 n_default: 7
 n_max: 15
 download:

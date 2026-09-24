@@ -334,9 +334,9 @@ check(llama_with == {"llamacpp/qwen38-27b-single-iq4xs",
                      # rather than holding a third private copy in its entrypoint.
                      "llamacpp/mimo9b-single-vision"},
       f"the llama.cpp per-mode-sampler slugs carry sampler_profiles (got {sorted(llama_with)})")
-check(all(k.split("/", 1)[1].startswith(("qwen38-27b-", "qwen38-flash-next-", "mimo9b-"))
+check(all(k.split("/", 1)[1].startswith(("qwen38-27b-", "thinkingcap38-27b-", "qwen38-flash-next-", "mimo9b-"))
           for k in with_profiles),
-      "only qwen3.8-27b / qwen3.8-flash-next / mimo9b slugs carry sampler_profiles today")
+      "only qwen3.8-27b (+ its ThinkingCap replicas) / qwen3.8-flash-next / mimo9b slugs carry sampler_profiles today")
 
 for slug, entry in sorted(with_profiles.items()):
     profiles = entry["sampler_profiles"]

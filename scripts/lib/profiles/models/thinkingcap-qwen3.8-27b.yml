@@ -1,0 +1,161 @@
+schema_version: 1
+id: thinkingcap-qwen3.8-27b
+display_name: ThinkingCap Qwen3.8-27B
+description: "ThinkingCap-Qwen3.8-27B — bottlecapai's reasoning fine-tune of Qwen3.8-27B (same hybrid arch: 16 full-attention + 48 linear-attention layers, embedded MTP, full VLM) at 262K ctx. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
+family: qwen35-dense
+# ThinkingCap-Qwen3.8-27B (bottlecapai, released 2026-09-23) is a FINE-TUNE of Qwen/Qwen3.8-27B:
+# its config.json text_config is IDENTICAL to Qwen3.8-27B (diffed 2026-09-23), so every architecture
+# fact below is copied verbatim from qwen3.8-27b.yml. What differs is weights + license:
+#   LICENSE: PolyForm Small Business 1.0.0 + BottleCap's personal-use grant (Qwen3.6 ThinkingCap was
+#   Apache-2.0). Commercial use by a non-small-business organization needs a BottleCap license.
+# The 29 slugs are REPLICAS of the qwen3.8-27b autoround-int4 (Frozenlock) + fp8 slugs.
+# ─── copied from qwen3.8-27b.yml ───────────────────────────────────────────────
+# Qwen/Qwen3.8-27B — architectures: ["Qwen3_5ForConditionalGeneration"],
+# model_type: qwen3_5 (text_config.model_type: qwen3_5_text). Same arch CLASS as
+# Tess-4-27B, hence the same `qwen35-dense` family tag ("dense" = non-MoE in this
+# repo's tag vocabulary; the ATTENTION is hybrid). Chosen over
+# `qwen3-next-hybrid` (qwen3.6-27b's tag) because the tag tracks the registered
+# arch class (qwen35 / Qwen3_5For…), not the marketing version. Both tags are
+# already in llama-cpp-local.supported_model_families, so the choice does not
+# change what loads — only what the catalog claims.
+#
+# ⚠️ HYBRID ATTENTION, not uniform GQA. config.json declares layer_types as
+# linear_attention x64 PLUS full_attention_interval: 4 — the interval is what
+# governs: every 4th layer is full attention => 16 full-attention (KV-growing)
+# layers + 48 linear-attention (DeltaNet-style, recurrent-state) layers.
+# The attn fields below describe the 16 FULL-ATTENTION layers ONLY. Naive
+# 64-layer KV math overestimates the pool ~4x — the same trap documented for
+# Tess-4-27B and Qwen3.6-27B. See docs/KV_MATH.md "General KV cache formula".
+#
+# NOT MoE: config.json carries no num_experts / num_experts_per_tok, so the MoE
+# block is deliberately absent (all params resident, dense FFN).
+hidden_size: 5120
+num_hidden_layers: 64
+num_attn_layers: 16          # derived: 64 / full_attention_interval(4)
+num_gdn_layers: 48           # derived: 64 - 16 (linear_attention layers)
+mtp_num_hidden_layers: 1     # built-in MTP head is a KV-BEARING layer (+6.25% per-token KV; measured 2026-09-15)
+num_attn_heads: 24
+num_kv_heads: 4
+head_dim_attn: 256           # config.json text_config.head_dim
+intermediate_size: 17408
+linear_num_k_heads: 16       # config.json text_config.linear_num_key_heads
+linear_num_v_heads: 48       # config.json text_config.linear_num_value_heads
+# FILLED IN 2026-08-14 from the FP8 safetensors repo's own config.json, exactly as
+# the earlier "fill them in when the safetensors repo is pulled" note asked. These
+# are READ, not copied from the Qwen3.6 profile — they happen to match it, which is
+# a finding rather than an assumption. They only feed the DeltaNet recurrent-state
+# term (single-digit MB — see KV_MATH.md).
+linear_k_head_dim: 128       # config.json text_config.linear_key_head_dim
+linear_v_head_dim: 128       # config.json text_config.linear_value_head_dim
+linear_conv_kernel_dim: 4    # config.json text_config.linear_conv_kernel_dim
+max_ctx_supported: 262144    # config.json text_config.max_position_embeddings
+# Qwen3-Next-family convention: K and V are stored separately. NOT read from
+# config.json (it is not a config field) and NOT yet confirmed against a boot
+# log — nothing has booted. If a first boot reports a KV pool 2x smaller than the
+# formula predicts, this is the field to flip (see ADDING_MODELS.md Step 5).
+attention_k_eq_v: false
+# HYBRID (KV on 16 of 64 layers) — tools/kv-calc.py has no hybrid model for this
+# family, exactly as for tess-4-27b. C12 (KV projection) is skipped; ALL FOUR
+# shipped slugs (2 llama.cpp + 2 vLLM) carry kvcalc_key="SKIP" anyway — the vLLM
+# pair deliberately so, matching the qwen3.6-27b fp8 tier, because kv-calc cannot
+# model this attention layout and a prediction row would be fiction.
+# NOT wired into tools/kv-calc.py for this id (kv-calc registers models by id); every slug
+# carries kvcalc_key=SKIP. The arch is identical to qwen3.8-27b, so wiring it is mechanical.
+kv_calc_supported: false
+# ⚠️ MODEL-level capability, NOT a per-slug promise. FLIPPED false -> true
+# 2026-08-14 when the official FP8 safetensors variant was added: that checkpoint
+# carries the vision tower IN-REPO (the FP8 quant explicitly SKIPS every
+# visual.blocks.* module) together with preprocessor_config.json and
+# video_preprocessor_config.json, so vLLM can serve images/video from it with no
+# separate projector download. Per variant, as of today:
+#   fp8            -> vision-capable (tower + preprocessors present). ⚠️ NEVER
+#                     EXERCISED: no image or video request has been served.
+#   unsloth-iq4xs  -> TEXT-ONLY: the GGUF repo's mmproj-{BF16,F16}.gguf were not
+#   unsloth-q8kxl     pulled, so neither llama.cpp compose mounts a projector.
+#                     Enabling vision there still needs a third download plus a
+#                     `kind: mmproj` weights entry and a `-vision.yml` compose
+#                     (see the qwen3.6-27b gguf_mmproj_f16 entry for the shape).
+vision_capable: true
+weights:
+  # Our own AutoRound INT4 (no INT4 of ThinkingCap exists upstream) — built 2026-09-23 with the Tess
+  # "shot 2" recipe; packed-layout twin of Frozenlock's qwen3.8 INT4, so the Frozenlock composes serve
+  # it by weight swap. Validated on vllm/thinkingcap38-27b-dual-fast (see learnings).
+  autoround-int4:
+    path: thinkingcap-qwen3.8-27b-autoround-int4
+    local_subdir: thinkingcap-qwen3.8-27b-autoround-int4
+    size_gb: 19.0
+    format: autoround
+    status: experimental
+    hf_repo: wasifb/ThinkingCap-Qwen3.8-27B-AutoRound-W4A16
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+    manual_note: "club-3090 self-built AutoRound INT4 of bottlecapai/ThinkingCap-Qwen3.8-27B: W4A16 int4 g128 sym, auto_round:auto_gptq packing; mtp.fc + GDN in_proj_a/b + lm_head + vision BF16, MTP layer linears int4 (RTN via auto-round's missing-tensor path). auto-round 0.14.2, iters 200, nsamples 512, seqlen 2048, enable_alg_ext, pile-10k calibration (recipe also in club3090_build_recipe.json). Gated repo (auto-approve) — accept the PolyForm terms on HF first. 19.02 GB."
+  # bottlecapai's own FP8 — the official Qwen FP8 format (e4m3, 128x128 blocks, dynamic act) EXCEPT the
+  # whole MTP head is BF16 (+0.37 GB vs Qwen/Qwen3.8-27B-FP8; diffed 2026-09-23, all 21 differing
+  # tensors are mtp.*). Serves the max/supermax/ultramax replicas.
+  fp8:
+    path: thinkingcap-qwen3.8-27b-fp8
+    local_subdir: thinkingcap-qwen3.8-27b-fp8
+    size_gb: 31.3
+    format: fp8
+    status: experimental
+    hf_repo: bottlecapai/ThinkingCap-Qwen3.8-27B-FP8
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+    manual_note: "bottlecapai/ThinkingCap-Qwen3.8-27B-FP8: quant_method fp8, fmt e4m3, activation_scheme dynamic, weight_block_size [128,128]; vision tower, MTP head, lm_head and GDN in_proj_a/b BF16. Gated (auto-approve). 20 files, 31.3 GB (size-verified 2026-09-23)."
+  # ─── DFlash2 drafters: copied from qwen3.8-27b.yml — SAME local_subdir, so they are shared on disk ───
+  # DFlash2 external drafter (syv-ai) — REQUIRED by the 12 super*/ultra* DFlash2
+  # slugs (kind: draft, not a target). Shared across BOTH int4 and fp8 targets:
+  # the drafter is base-arch-keyed (5120/248320), not target-quant-specific.
+  # Fetch with WITH_DFLASH_DRAFT=1 (setup.sh). local_subdir matches the compose
+  # DRAFTER path (/root/.cache/huggingface/qwen3.8-27b-dflash2-w4a16).
+  dflash2:
+    path: qwen3.8-27b-dflash2-w4a16
+    local_subdir: qwen3.8-27b-dflash2-w4a16
+    size_gb: 1.2
+    format: compressed-tensors
+    status: experimental
+    hf_repo: syvai/Qwen3.8-27B-DFlash2-W4A16
+    engine: vllm
+    kind: draft
+    verify_glob: "*.safetensors"
+    setup_env: WITH_DFLASH_DRAFT=1
+  # ⭐ BF16 reference DFlash2 drafter (z-lab, the originating lab). SAME WEIGHTS as
+  # `dflash2` above — identical param count / dflash_config / tensor names — but
+  # UNQUANTIZED. Required by the SGLang DFlash2 composes: on SGLang the
+  # compressed-tensors variant silently drafts garbage (accept len 1.03 vs 3.71).
+  # Measured 2026-09-10; see drafters/zlab-qwen38-dflash2.yml for the full A/B.
+  dflash2-zlab:
+    path: qwen3.8-27b-dflash2-zlab-bf16
+    format: bf16
+    local_subdir: qwen3.8-27b-dflash2-zlab-bf16
+    hf_repo: z-lab/Qwen3.8-27B-DFlash2
+    # MEASURED on disk 2026-09-11: 3,849,114,690 bytes = 3.85 GB decimal (3.58 GiB).
+    # The setup.sh disk gate wants the DECIMAL figure. This was ABSENT, so setup.sh
+    # could not size the download — and this is the drafter EVERY sgl/ super* slug
+    # needs. Its sibling `dflash2` (syvai W4A16, 1.2 GB) is what setup.dflash points
+    # at, i.e. what WITH_DFLASH_DRAFT=1 fetches: correct for the vLLM tiers, and on
+    # SGLang it silently drafts garbage (sglang#39087). Fetch this one explicitly:
+    #   WEIGHT_KEY=qwen3.8-27b:dflash2-zlab bash scripts/setup.sh qwen3.8-27b
+    size_gb: 3.85
+
+default_weight_variant: autoround-int4
+compatible_drafters:
+  - qwen-mtp-builtin
+  - syvai-qwen38-dflash2
+  - zlab-qwen38-dflash2
+# Same validity list as qwen3.8-27b.yml (24 attn heads divide 1/2/4/8; see the reasoning there).
+valid_tp:
+  - 1
+  - 2
+  - 4
+  - 8
+requires_genesis: false
+
+# setup.sh default = the INT4 fast tier (19 GB, dual-card); FP8: WEIGHT_KEY=thinkingcap-qwen3.8-27b:fp8.
+setup:
+  primary: autoround-int4
+  # DFlash2 drafter for the super*/ultra* slugs (WITH_DFLASH_DRAFT=1) — shared with qwen3.8-27b.
+  dflash: dflash2

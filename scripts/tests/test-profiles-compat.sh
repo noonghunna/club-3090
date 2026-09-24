@@ -35,7 +35,7 @@ p = load_profiles()
 assert len(p.hardware) == 11  # +dgx-spark (#576 follow-up), +rtx-a6000 (#948 thread)
 _p = __import__("pathlib").Path
 _nloc = lambda d: len(list(_p(d).glob("*.yml"))) if _p(d).is_dir() else 0
-assert len(p.models) - _nloc("scripts/lib/profiles-local/models.d") == 22   # +inkling-small, +qwen3.8-27b, +glm-5.3-flash, +qwen3.8-flash-next, +deepseek-v4-flash-vision-exp, +mimo-v2.6-9b
+assert len(p.models) - _nloc("scripts/lib/profiles-local/models.d") == 23   # +inkling-small, +qwen3.8-27b, +glm-5.3-flash, +qwen3.8-flash-next, +deepseek-v4-flash-vision-exp, +mimo-v2.6-9b, +thinkingcap-qwen3.8-27b
 assert len(p.workloads) == 5
 _p = __import__("pathlib").Path
 _nloc = lambda d: len(list(_p(d).glob("*.yml"))) if _p(d).is_dir() else 0
@@ -551,7 +551,7 @@ from scripts.lib.profiles.compat import load_profiles
 p = load_profiles()  # raises UnknownProfileKeyError on any unknown key
 _p = __import__("pathlib").Path
 _nloc = lambda d: len(list(_p(d).glob("*.yml"))) if _p(d).is_dir() else 0
-assert len(p.models) - _nloc("scripts/lib/profiles-local/models.d") == 22
+assert len(p.models) - _nloc("scripts/lib/profiles-local/models.d") == 23
 PY
 
 run_test "strict keys: typo'd top-level model key fails naming file + closest key" <<'PY'

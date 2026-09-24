@@ -1,0 +1,208 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     ThinkingCap-Qwen3.8-27B (bottlecapai's reasoning fine-tune of Qwen3.8-27B) —
+#              bottlecapai/ThinkingCap-Qwen3.8-27B-FP8 (e4m3, 128x128 blocks, dynamic act —
+#              the official Qwen FP8 format EXCEPT the whole MTP head stays BF16: +0.37 GB,
+#              ~+0.19 GB/card at TP=2 vs the sibling). ~31.2 GB.
+#              ⚠️ REPLICA of `vllm/qwen38-27b-dual-ultramax`: same compose except weights path, served
+#              name (thinkingcap38-27b), service/container name and port. Everything
+#              else in this header is the SIBLING's text — its numbers are for BASE
+#              Qwen3.8 (Frozenlock INT4 / official FP8), NOT for ThinkingCap.
+#   Topology:  Dual NVIDIA GPUs, Linux x86-64 (TP=2, homogeneous SM)
+#   Drafter:   DFlash2 W4A16 n=7; FlashAttention and FP8 KV
+#   KV:        fp8_e4m3; BF16 compute on the FA2 extension path
+#   Vision:    yes; one image up to about 4 MP, no video
+#   Max ctx:   262144
+#   Genesis:   none
+#   Status:    🐣 Incubating
+#   Caveats:   New model 2026-09-23. NOT BOOTED — copied from the sibling, unvalidated.
+#              LICENSE: PolyForm Small Business 1.0.0 + BottleCap's personal-use grant — commercial
+#              use by an organization that is not a small business needs a BottleCap license.
+#              ⚠️ fp8 max tiers run near the 24 GB edge; the BF16 MTP head adds ~0.19 GB/card —
+#              boot-check free VRAM at 262K before trusting the sibling's ctx/mem_util.
+#              DFlash2 drafter was trained on BASE Qwen3.8 — its acceptance on ThinkingCap is
+#              the thing to check (see learnings/thinkingcap-qwen3.8-27b.md).
+#   Best for:  ULTRAMAX — FP8 weights, DFlash2 and FlashAttention
+# ---------------------------------------------------------------------------
+# Sibling          Tier      KV          Attention         Default context
+# dflash2-fp8.yml  supermax  fp8_e4m3    FlashInfer        147456
+# dflash2.yml      ultramax  fp8_e4m3    FlashAttention    262144
+#
+# SM86 is tested. SM89/SM120 are build targets; physical-GPU validation is
+# pending. SM90/SM100 retain stock native FlashAttention. Other SMs are refused.
+# The init image provides compiled kernels and the plugin wheel. Serving boot
+# verifies ABI and checksums without downloading or compiling FA2 sources.
+# Normal vLLM torch.compile/Triton warmup remains.
+# Fixed KV bytes bypass utilization-based profiling. Capacity comes from that
+# reservation. Measured minimum free VRAM is 1021 MiB, below the 1024 MiB
+# stress margin. See the patch README and REVIEW_VALIDATION.md for scope.
+# Requires-homogeneous-arch: true
+# ===========================================================================
+services:
+  vllm-thinkingcap38-27b-dual-ultramax:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}
+    container_name: ${ESTATE_CONTAINER:-vllm-thinkingcap38-27b-dual-ultramax}
+    user: "0:${DOCKER_GID:-1000}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    depends_on:
+      vllm-thinkingcap38-27b-dual-ultramax-kernels:
+        condition: service_completed_successfully
+    ipc: host
+    shm_size: "16gb"
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8160}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface:ro
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+      - fa2-kernels:/opt/club3090/fa2-artifacts:ro
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      - ../../../../../qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86:/etc/club3090/fa2:ro
+      - ../../../../../qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja:/root/.cache/huggingface/thinkingcap-qwen3.8-27b-fp8/chat_template.jinja:ro
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
+      - ../../../../../qwen3.8-27b/vllm/patches/vllm-51581-dflash-dense-kv:/etc/club3090/dflash-dense-kv:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - CUDA_VISIBLE_DEVICES
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
+      - ENABLE_THINKING=${ENABLE_THINKING:-true}
+      - TEMP=${TEMP:-}
+      - TEMPERATURE=${TEMPERATURE:-}
+      - TOP_P=${TOP_P:-}
+      - TOP_K=${TOP_K:-}
+      - MIN_P=${MIN_P:-}
+      - PRESENCE_PENALTY=${PRESENCE_PENALTY:-}
+      - REPEAT_PENALTY=${REPEAT_PENALTY:-}
+      - FA2_ARTIFACT_ID=${FA2_ARTIFACT_ID:-731d1942112a7cf35be4f0add0919072c06cac47e3bad4f674ff0157edad0e3f}
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - DISABLE_CUSTOM_ALL_REDUCE=${DISABLE_CUSTOM_ALL_REDUCE:-0}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_USE_DEEP_GEMM
+      - VLLM_USE_FLASHINFER_SAMPLER=0
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_ENFORCE_EAGER
+      - NCCL_CUMEM_ENABLE=0
+      # Set to 0 only after proving PCIe peer access on the host.
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - NCCL_P2P_LEVEL
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      - OMP_NUM_THREADS=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        umask 0002
+        _alloc_conf="$${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+        source /etc/club3090/detect_nvlink.sh
+        AR_ARGS=()
+        # The detector also enables PCIe P2P. Custom all-reduce in this profile
+        # requires NVLink; NCCL peer access remains available on PCIe.
+        if [ "$${_CUSTOM_AR_ENABLED:-$${_NVLINK_ENABLED:-0}}" != 1 ] || [ "$${NCCL_P2P_LEVEL:-}" != NVL ]; then
+          AR_ARGS=(--disable-custom-all-reduce)
+          export PYTORCH_CUDA_ALLOC_CONF="$$_alloc_conf"
+          echo "[fa2] custom all-reduce disabled; preserving the requested allocator"
+        fi
+        export PYTHONUTF8="$${PYTHONUTF8:-1}"
+        bash /etc/club3090/pr48375/install.sh
+        bash /etc/club3090/gdn-async-order/install.sh
+        bash /etc/club3090/dflash-dense-kv/install.sh
+        bash /etc/club3090/fa2/install.sh
+        source /etc/club3090/fa2-runtime.env
+        # FA2 kernel envelope (#1358): with fp8 KV and more than one sequence, cap
+        # each request's prefill chunk at the kernel's max_q (2048); refuse a
+        # max-model-len past its max_k. A no-op for this file's shipped defaults.
+        source /etc/club3090/fa2/envelope.sh
+        fa2_envelope "$$@" || exit 1
+        set -- "$${FA2_ARGS[@]}"
+        _spec_n="$${SPEC_N:-7}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] Fix: SPEC_N must be a non-negative integer." >&2; exit 1 ;;
+        esac
+        DRAFTER=/root/.cache/huggingface/qwen3.8-27b-dflash2-w4a16
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"method\":\"dflash\",\"model\":\"$$DRAFTER\",\"num_speculative_tokens\":$$_spec_n,\"attention_backend\":\"FLASH_ATTN\",\"kv_cache_dtype\":\"fp8_e4m3\"}")
+        fi
+        _temp="$${TEMP:-$${TEMPERATURE:-}}"
+        if [ "$${ENABLE_THINKING:-true}" = true ]; then
+          : "$${_temp:=1.0}" "$${TOP_P:=0.95}" "$${PRESENCE_PENALTY:=0.0}"
+        else
+          : "$${_temp:=0.7}" "$${TOP_P:=0.80}" "$${PRESENCE_PENALTY:=1.5}"
+        fi
+        # presence_penalty must also be sent by clients; vLLM ignores this
+        # field in override-generation-config (same contract as siblings).
+        SAMPLER_ARGS=(--override-generation-config "{\"temperature\":$$_temp,\"top_p\":$${TOP_P},\"top_k\":$${TOP_K:-20},\"min_p\":$${MIN_P:-0.0},\"presence_penalty\":$${PRESENCE_PENALTY},\"repetition_penalty\":$${REPEAT_PENALTY:-1.0}}")
+        exec vllm serve "$${AR_ARGS[@]}" $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/thinkingcap-qwen3.8-27b-fp8
+      - --served-model-name
+      - thinkingcap38-27b
+      - thinkingcap38-27b-fp8
+      - --quantization
+      - fp8
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "2"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      # Fixed KV bytes bypass utilization-based memory profiling. This is the
+      # reservation control; gpu_memory_utilization would not constrain it.
+      - --kv-cache-memory-bytes
+      - "${KV_CACHE_MEMORY_BYTES:-6335076762}"
+      - --max-num-seqs
+      - "1"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-2048}"
+      - --long-prefill-token-threshold
+      - "0"
+      - --kv-cache-dtype
+      - fp8_e4m3
+      - --attention-backend
+      # The plugin registers its FP8 extension through the FLASH_ATTN API.
+      - FLASH_ATTN
+      - --limit-mm-per-prompt
+      - '{"image":1,"video":0}'
+      - --mm-processor-kwargs
+      - '{"size":{"longest_edge":4194304,"shortest_edge":65536}}'
+      - --compilation-config
+      - '{"cudagraph_capture_sizes":[1,2,4,8],"max_cudagraph_capture_size":8}'
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": ${ENABLE_THINKING:-true}, "reasoning_effort": "${REASONING_EFFORT:-low}"}'
+      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
+      - --enable-chunked-prefill
+      - "${PROMPT_TOKENS_DETAILS_ARG:---enable-prompt-tokens-details}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+  vllm-thinkingcap38-27b-dual-ultramax-kernels:
+    image: ${FA2_KERNEL_IMAGE:-ghcr.io/antonprokopyev/fa2-fp8kv-sm86@sha256:da040941fa048fd5fdfce520503341c0beda4ce41436a1c1fecaf3f8a99777c7}
+    restart: "no"
+    volumes:
+      - fa2-kernels:/export
+
+volumes:
+  fa2-kernels:

@@ -502,6 +502,26 @@ LeaderboardModel1's ThinkingCap — a **Qwen3.6-27B (qwen3_5) VL reasoning fine-
 
 ---
 
+## ThinkingCap-Qwen3.8-27B
+
+bottlecapai's **reasoning fine-tune of Qwen3.8-27B** (released 2026-09-23; identical `text_config` to Qwen3.8-27B).
+Served on our own **AutoRound INT4** ([wasifb/ThinkingCap-Qwen3.8-27B-AutoRound-W4A16](https://huggingface.co/wasifb/ThinkingCap-Qwen3.8-27B-AutoRound-W4A16),
+Frozenlock-layout twin) and bottlecap's FP8, as replicas of the Qwen3.8 slugs. ⚠️ PolyForm Small Business license.
+Each ThinkingCap arm sits next to a Frozenlock (base Qwen3.8) reference taken on the same rig, power cap and image that day.
+
+### Dual-card (2× RTX 3090) — vLLM v0.30.0
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `dual/autoround-int4/mtp.yml` (`vllm/thinkingcap38-27b-dual-fast`, MTP n=4, W4A8) | @noonghunna (2× 3090 PCIe, **230 W**) | fp8_e4m3 | 262144 | **74.0 / 101.0** | 1720 @10K / 1246 @90K | — | 2026-09-23 | 🐣 Incubating. verify-full PASS; MTP accept 3.6–5.0; a 20K-token forced generation held accept 2.7–4.0 (no #1052-class collapse). Frozenlock same day: 75.5 / 106.5, 1710 / 1266. |
+| `dual/autoround-int4/dflash2-fp8.yml` (`vllm/thinkingcap38-27b-dual-superfast`, DFlash2 n=7) | @noonghunna (2× 3090 PCIe, **230 W**) | fp8_e4m3 | 262144 | **80.0 / 157.6** | 1768 @10K / 1295 @90K | — | 2026-09-23 | 🐣 Incubating. verify-full PASS; DFlash2 accept 2.9–6.4 — the base-trained drafter converts on the fine-tune. Frozenlock control, same session: 84.0 / 154.0, 1779 / 1300. |
+| `dual/autoround-int4/dflash2.yml` (`vllm/thinkingcap38-27b-dual-ultrafast`, DFlash2 n=7, W4A8, fp8 KV + FA2 plugin) | @noonghunna (2× 3090 PCIe, **230 W**) | fp8_e4m3 | 262144 | **108.3 / 198.9** | 1778 @10K / 1376 @90K | — | 2026-09-24 | 🐣 Incubating. Booted through `switch.sh`; verify-full PASS; accept 5.0–6.7. Frozenlock same day: 108.8 / 191.5 and 111.1 / 196.6. |
+
+All three are one fresh boot each at the 230 W cap, so compare them only with each other and the same-day references.
+The other 26 replicas (FP8 tiers, SGLang, multi-card) are unbooted, and the 8-pack is pending.
+
+---
+
 ## See also
 
 - [docs/SINGLE_CARD.md](docs/SINGLE_CARD.md) — single-card variant picker

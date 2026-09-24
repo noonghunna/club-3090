@@ -1,0 +1,308 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     ThinkingCap-Qwen3.8-27B (bottlecapai's reasoning fine-tune of Qwen3.8-27B) —
+#              club-3090 self-built AutoRound INT4 (W4A16 int4 g128 sym, shot-2 recipe:
+#              iters 200, nsamples 512, alg_ext) — packed-layout twin of Frozenlock's
+#              Qwen3.8 INT4 (mtp.fc BF16, MTP layer int4). HF:
+#              wasifb/ThinkingCap-Qwen3.8-27B-AutoRound-W4A16 (gated, auto-approve). ~19.0 GB.
+#              ⚠️ REPLICA of `vllm/qwen38-27b-multi4-superfast`: same compose except weights path, served
+#              name (thinkingcap38-27b), service/container name and port. Everything
+#              else in this header is the SIBLING's text — its numbers are for BASE
+#              Qwen3.8 (Frozenlock INT4 / official FP8), NOT for ThinkingCap.
+#   Topology:  4× 3090 PCIe (TP=4, no NVLink)
+#              ⛔ 4-CARD IS COMMUNITY-VALIDATED BY DESIGN (2-GPU rig). On-rig proxy =
+#              vllm/qwen38-27b-dual-superfast; transfers on topology only.
+#   Drafter:   DFlash2 EXTERNAL block-drafter n=7 (syv-ai W4A16, method=dflash).
+#   KV:        fp8_e4m3 → FlashInfer (fp8 KV can't use FLASH_ATTN on Ampere).
+#   Vision:    ✅ tower present (input-only); untested on this tier.
+#   Template:  native + club-3090 alias — the model's own chat_template.jinja
+#              with `high` remapped to `xhigh` (patches/qwen38-reasoning-effort-template)
+#   Max ctx:   262144 (full arch max — fp8 KV is 2× smaller than bf16, so unlike the
+#              ultrafast/bf16 tier this fits the full 262K).
+#   Genesis:   none
+#   Status:    🐣 Incubating
+#   Caveats:   New model 2026-09-23. NOT BOOTED — copied from the sibling, unvalidated.
+#              LICENSE: PolyForm Small Business 1.0.0 + BottleCap's personal-use grant — commercial
+#              use by an organization that is not a small business needs a BottleCap license.
+#              DFlash2 drafter was trained on BASE Qwen3.8 — its acceptance on ThinkingCap is
+#              the thing to check (see learnings/thinkingcap-qwen3.8-27b.md).
+#   Best for:  DFlash2 on the FAST envelope — full 262K + concurrency. (Immune to the #52873 acceptance-collapse, NOT the #1096 ctx cliff — see below.)
+# ---------------------------------------------------------------------------
+# SUPERFAST = the FAST tier (int4, fp8 KV, 262K) with MTP → DFlash2. vs fast/MTP:
+# +~30% code, same narrative, and structurally sidesteps the built-in-MTP collapse
+# (#1052 / vllm#52873). vs ultrafast (bf16/FA2, ~200K, 132/227): superfast keeps the
+# full 262K + fp8 concurrency headroom at a decode cost (fp8 KV forces FlashInfer,
+# not FLASH_ATTN — see learnings/qwen3.8-27b.md). Measured on-rig (dual, int4+fp8+
+# W4A8+DFlash2, 2026-08-20): verify-full 9/9, ~74 narr / ~139 code TPS.
+# ⚠️ Spec-decode exposed to OPEN vllm#50021; SPEC_N=0 mitigates. Launch --force.
+# ===========================================================================
+services:
+  vllm-thinkingcap38-27b-multi4-superfast:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}
+    container_name: "${ESTATE_CONTAINER:-vllm-thinkingcap38-27b-multi4-superfast}"
+    user: "0:${DOCKER_GID:-1000}"
+    # Repo contract (test-compose-restart-policy): every shipped vLLM compose uses
+    # the reboot-surviving knob so launch.sh-as-a-service returns after a reboot.
+    # ⚠️ WHEN DEBUGGING A BOOT FAILURE SET CLUB3090_RESTART=no. Under
+    # `unless-stopped` a failing container restart-loops and reports "Up 1 second"
+    # forever, which reads as "still booting" rather than "crashed" — that cost a
+    # 61-restart loop here on 2026-08-15 before anyone checked
+    # `docker inspect --format '{{.RestartCount}}'`. RestartCount is the tell.
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    shm_size: "16gb"
+    ipc: host
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8162}}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # W4A8 int8-activation patches — NO-OP unless VLLM_MARLIN_INPUT_DTYPE=int8.
+      - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
+      # Lets a spec-decode drafter attach on this hybrid (mamba/eagle block drop).
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
+      # club-3090 GDN+MTP async spec-order fix — closes the async wild-write race
+      # (our #1052 / upstream #52873 + #50021 thread). Ours, not an upstream PR;
+      # validated 3/3 boots on the reference 2×3090. Anchor drift → boot refused.
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
+      - ../../../../../qwen3.8-27b/vllm/patches/vllm-flashinfer-decode-pin:/etc/club3090/flashinfer-decode-pin:ro
+      # DFlash2 model classes are NATIVE since vLLM v0.29.0 (vllm#52816, merged
+      # 2026-08-21) so the old dflash2 backport is gone. What is NOT upstream is
+      # vllm#51581 (OPEN): the fused-KV slice `a.qkv_proj.weight[a.q_size:]` has no
+      # quantization awareness, so a W4A16 drafter either AttributeErrors at load
+      # or — worse — slices packed rows and corrupts SILENTLY. This mount restores
+      # only that dequant fix. Anchor drift → boot refused.
+      - ../../../../../qwen3.8-27b/vllm/patches/vllm-51581-dflash-dense-kv:/etc/club3090/dflash-dense-kv:ro
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      # Chat template: the model's OWN, plus seven lines mapping the standard
+      # OpenAI/Anthropic rung `high` onto `xhigh`. Qwen3.8's ladder is
+      # low/medium/xhigh with NO `high`, and the stock template
+      # raise_exception()s on anything else, so a client sending the standard top
+      # rung gets HTTP 500 while /v1/models still returns 200. Observed live via
+      # /v1/messages?beta=true.
+      # ⭐ MOUNTED OVER the checkpoint's own chat_template.jinja: vLLM auto-loads
+      # the template from the model dir, so this needs NO --chat-template arg
+      # (the same wiring style as the carnice override -- see patches.yml).
+      # That is deliberate, not incidental: upstream edits the args list
+      # constantly (11 commits touched these composes in the last 7 days), and
+      # every edit there collides with an inserted flag. The volumes block is
+      # quiet by comparison, so wiring here is what keeps this patch rebasable.
+      # DATA-ONLY mount, not an engine-code overlay, so the engine's overlay-free
+      # contract is unaffected. See patches.yml qwen38-reasoning-effort-template.
+      - ../../../../../qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja:/root/.cache/huggingface/thinkingcap-qwen3.8-27b-autoround-int4/chat_template.jinja:ro
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+    environment:
+      # Drafter toggle — docker only forwards what is declared here. The DEFAULT
+      # lives in the entrypoint, not in these lines, so it cannot drift.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
+      # Sampler env passthrough (#984/#1014): the ENTRYPOINT — not compose
+      # interpolation, which has no if/else — derives --override-generation-config
+      # from the model-card row matching ENABLE_THINKING, so these must reach the
+      # container. Absent -> empty -> the entrypoint's `:=` row default applies;
+      # an explicit value crosses unchanged and still wins over both rows.
+      - ENABLE_THINKING=${ENABLE_THINKING:-true}
+      - TEMP=${TEMP:-}
+      - TOP_P=${TOP_P:-}
+      - TOP_K=${TOP_K:-}
+      - MIN_P=${MIN_P:-}
+      - PRESENCE_PENALTY=${PRESENCE_PENALTY:-}
+      - REPEAT_PENALTY=${REPEAT_PENALTY:-}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      # Orthogonal to NVLINK_MODE: keep the peer TRANSPORT, drop vLLM's custom
+      # all-reduce kernel (#922 mitigation, #1332). Interpolated rather than bare
+      # so it resolves from .env as well as the shell, and so the container never
+      # sees the EMPTY string — detect_nvlink.sh validates this against {0,1} and
+      # an empty value would hard-error every boot.
+      - DISABLE_CUSTOM_ALL_REDUCE=${DISABLE_CUSTOM_ALL_REDUCE:-0}
+      - VLLM_SKIP_P2P_CHECK
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      # ⭐ W4A8 (int8 activations) SHIPS ON — set W4A8=0 for the W4A16 path.
+      - W4A8=${W4A8:-1}
+      # ⚠️⚠️ WHY A SEPARATE BOOLEAN INSTEAD OF `${VLLM_MARLIN_INPUT_DTYPE:-int8}`:
+      # vLLM VALIDATES this variable against a closed set and raises on anything
+      # else — INCLUDING THE EMPTY STRING:
+      #   ValueError: Invalid value '' for VLLM_MARLIN_INPUT_DTYPE.
+      #                Valid options: ['int8', 'fp8'].
+      # (verified against the pinned image, 2026-08-16). So there is NO value that
+      # means "off" — only ABSENCE means off. A `${VAR:-int8}` default would make
+      # W4A16 unreachable: every attempt to disable it would either re-substitute
+      # int8 or kill every worker at load_model. Hence W4A8=0/1 gates whether the
+      # var is exported at all, and this stays a BARE pass-through so an explicit
+      # host value still wins.
+      - VLLM_MARLIN_INPUT_DTYPE
+    entrypoint:
+      - bash
+      - -c
+      - |
+        umask 0002
+        set -e
+        source /etc/club3090/detect_nvlink.sh
+        # ⚠️ THIS MUST RUN BEFORE install.sh, NOT AFTER. install.sh only hard-FAILS
+        # on a patch-apply error when VLLM_MARLIN_INPUT_DTYPE is already set; if we
+        # exported it afterwards, a failed patch would downgrade to a WARNING and we
+        # would serve a HALF-WIRED int8 config — the exact thing that guard exists
+        # to prevent.
+        if [ -z "$${VLLM_MARLIN_INPUT_DTYPE:-}" ] && [ "$${W4A8:-1}" != "0" ]; then
+          export VLLM_MARLIN_INPUT_DTYPE=int8
+        fi
+        bash /etc/club3090/w4a8/install.sh
+        bash /etc/club3090/pr48375/install.sh || exit 1
+        bash /etc/club3090/gdn-async-order/install.sh || exit 1
+        bash /etc/club3090/dflash-dense-kv/install.sh || exit 1
+        FI_PINQ_LIB_ALL="${FI_PINQ_LIB_ALL:-0}" bash /etc/club3090/flashinfer-decode-pin/install.sh || exit 1
+        echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
+        AR=""
+        # Gate on _CUSTOM_AR_ENABLED, not _NVLINK_ENABLED: the transport being up
+        # and the custom kernel running are two decisions, and DISABLE_CUSTOM_ALL_REDUCE=1
+        # keeps the first while dropping the second (#1332). Falls back to
+        # _NVLINK_ENABLED so the gate is correct even against a detect_nvlink.sh
+        # that predates the split.
+        [ "$${_CUSTOM_AR_ENABLED:-$${_NVLINK_ENABLED:-0}}" = "1" ] || AR="--disable-custom-all-reduce"
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  drafter depth (this compose defaults to 4); SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Turning the drafter off is the documented mitigation for vllm#50021 and must
+        # never require editing this file. A non-numeric SPEC_N is a hard error, so a
+        # typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-7}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets DFlash2 draft width; SPEC_N=0 (SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        DRAFTER=/root/.cache/huggingface/qwen3.8-27b-dflash2-w4a16
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"method\":\"dflash\",\"model\":\"$$DRAFTER\",\"num_speculative_tokens\":$$_spec_n}")
+          echo "[spec] DFlash2 EXTERNAL drafter ON - n=$$_spec_n ($$DRAFTER)" >&2
+        else
+          echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off)" >&2
+        fi
+        # -- Sampler follows the reasoning mode ----------------------------------
+        # The card publishes TWO sampler rows (see the header); ENABLE_THINKING
+        # now selects the row — one variable instead of the four-variable ritual
+        # (#1014). `:=` defaults: an explicit TEMP / TOP_P / PRESENCE_PENALTY
+        # from .env or shell STILL WINS in both branches. top_k / min_p are
+        # identical across the rows and stay mode-independent.
+        _temp="$${TEMP:-}"
+        # ⚠️ presence_penalty IS SILENTLY DROPPED — it is in the JSON below for
+        # intent, but vLLM never applies it. get_diff_sampling_param()
+        # (config/model.py) filters --override-generation-config through a fixed
+        # allowlist — repetition_penalty, temperature, top_k, top_p, min_p,
+        # max_new_tokens — with no penalties in it, and ChatCompletionRequest
+        # declares `presence_penalty: float | None = 0.0`, a hard default that is
+        # always present in the request and therefore always wins. So the instruct
+        # row's presence_penalty=1.5 resolves to 0.0 server-side. SGLang has the
+        # identical gap (same allowlist, same hard default): presence_penalty is a
+        # CLIENT-SIDE parameter on BOTH engines. That is what the model card's own
+        # non-thinking example does, and what its "support for sampling parameters
+        # varies according to inference frameworks" note is warning about.
+        # Everything else in the row DOES land — verified 2026-09-11 by resolving a
+        # bare request through to_sampling_params() inside the pinned image.
+        if [ "$${ENABLE_THINKING:-true}" = "true" ]; then
+          : "$${_temp:=1.0}" "$${TOP_P:=0.95}" "$${PRESENCE_PENALTY:=0.0}"
+          echo "[sampler] thinking row (ENABLE_THINKING=true): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+        else
+          : "$${_temp:=0.7}" "$${TOP_P:=0.80}" "$${PRESENCE_PENALTY:=1.5}"
+          echo "[sampler] instruct row (default): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+        fi
+        SAMPLER_ARGS=(--override-generation-config "{\"temperature\":$$_temp,\"top_p\":$${TOP_P},\"top_k\":$${TOP_K:-20},\"min_p\":$${MIN_P:-0.0},\"presence_penalty\":$${PRESENCE_PENALTY},\"repetition_penalty\":$${REPEAT_PENALTY:-1.0}}")
+        exec vllm serve $$AR "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/thinkingcap-qwen3.8-27b-autoround-int4
+      - --served-model-name
+      - thinkingcap38-27b
+      - --quantization
+      - auto_round
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-4}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      - --max-num-seqs
+      # ⚠️ 2 here (dual is 1): at TP=4 freed weights SHOULD leave room for the
+      # drafter + 2 streams — UNTESTED on 2 GPUs. OOM -> lower this or SPEC_N=0.
+      - "${MAX_NUM_SEQS:-2}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      # Head-of-line-blocking mitigation (Zylone's vLLM tip; qwen3.6 dual-fast precedent).
+      # Interleaves a long prefill with concurrent decodes so a short/agentic request
+      # isn't starved. Valid range [block_size ~1600, max-num-batched-tokens 8192);
+      # 4096 = qwen3.6's measured 2.7x short-TTFT point (5.8x at 2048).
+      # ⚠️ INERT at max_num_seqs=1 (the shipped default) — preparatory for concurrency.
+      # LONG_PREFILL_TOKEN_THRESHOLD=0 disables.
+      - --long-prefill-token-threshold
+      - "${LONG_PREFILL_TOKEN_THRESHOLD:-4096}"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
+      - --trust-remote-code
+      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
+      - --enable-chunked-prefill
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --default-chat-template-kwargs
+      # ⭐ reasoning_effort default = low (2026-08-16). It is a PER-REQUEST OpenAI
+      # control, so this is only the fallback for callers that send nothing — any
+      # agent still picks its own level per request.
+      # ⚠️ ACTIVE on every request since the 2026-09-01 thinking flip. The template
+      # only reads reasoning_effort inside `if enable_thinking is undefined or true`,
+      # so it goes INERT only under ENABLE_THINKING=false.
+      # ⚠️ low is an ACTIVE instruction, not "less of medium" — it injects
+      # "Keep your thinking brief and focused, moving directly to the conclusion
+      # without unnecessary elaboration." The three levels are NOT a scale with a
+      # middle: medium has NO branch and injects nothing (the un-nudged baseline),
+      # xhigh adds "think carefully, validate assumptions, consider alternatives"
+      # which is what makes it slow and timeout-prone. REASONING_EFFORT=medium if
+      # you want the model un-nudged rather than pushed toward brevity.
+      # ⚠️ Valid values are xhigh | medium | low, plus `high`, which THIS REPO
+      # maps onto XHIGH via the patched chat template mounted above. Upstream
+      # Qwen has no `high` rung and its stock template RAISES on it; the mapping
+      # is the whole point of that mount. medium is the UN-NUDGED baseline (no
+      # branch, no injected preamble), deliberately NOT xhigh — a client sending
+      # the standard top rung gets the neutral setting, not the slowest one.
+      # Anything OUTSIDE that set still RAISES at template render (HTTP 400).
+      - '{"enable_thinking": ${ENABLE_THINKING:-true}, "reasoning_effort": "${REASONING_EFFORT:-low}"}'
+      # SAMPLER moved INTO the entrypoint (#984/#1014): at boot it derives
+      # --override-generation-config from the model-card row matching
+      # ENABLE_THINKING (THINKING by default since 2026-09-01; instruct when
+      # false); explicit
+      # TEMP/TOP_P/PRESENCE_PENALTY still win. Both rows: "SAMPLER" header above.
+      # prompt_tokens_details in the OpenAI `usage` block (#1246, @zhanmu-tw).
+      # Populates usage.prompt_tokens_details.cached_tokens — how much of the
+      # prompt the prefix cache served — instead of the `null` clients get by
+      # default. Pure response-shaping: _make_prompt_tokens_details() reads
+      # counters the engine already keeps, so it costs nothing in the inference
+      # path; it is off upstream only because vLLM defaults the flag to False.
+      # Opt out: PROMPT_TOKENS_DETAILS_ARG=--no-enable-prompt-tokens-details
+      - "${PROMPT_TOKENS_DETAILS_ARG:---enable-prompt-tokens-details}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
