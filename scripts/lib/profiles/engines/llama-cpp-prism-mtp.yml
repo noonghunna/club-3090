@@ -9,32 +9,19 @@ stability: experimental
 install:
   method: docker_image
   # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
-  # Built 2026-09-18 by WRAPPING upstream's own release tarball —
-  # `llama-prism-b10685-7dffb15-bin-linux-cuda-12.8-x64.tar.gz` from
-  # PrismML-Eng/llama.cpp release `prism-b10685-7dffb15` — NOT from source.
+  # This image is OURS and SOURCE-BUILT, so a retag would silently change what every
+  # user runs with no registry-visible signal — hence the digest, verified by a real
+  # registry round-trip (local tag removed, then pulled back by digest).
+  #   2026-09-24  PrismML-Eng/llama.cpp tag prism-b10735-842b188 + ONE open PR (#189),
+  #               built FROM the llama-cpp-prism b10735 image. #205 and #216 merged
+  #               upstream and ship in b10735, so their vendored diffs were DROPPED.
+  #               Recipe: models/qwen3.8-27b/llama-cpp-prism/patches/prism-mtp-b10735/.
+  #               Tag b10735-pr189 points at this digest.
+  #   2026-09-19  prism-b10709-9a9394a + #205 + #216 + #189 (previous pin, digest 7f859a60…)
   #
-  # ⚠️ THE NEWEST TAG IS NOT THE RIGHT ONE. `prism-b10687-5d80cff` (2026-09-17)
-  # ships WINDOWS assets only — three cudart zips, no Linux archive at all. The
-  # previous tag `prism-b10685-7dffb15` carries the full Linux matrix
-  # (cuda-12.4 / 12.8 / 13.3, ubuntu-x64/arm64, rocm, vulkan). Check the asset
-  # list before bumping, not just the tag date.
-  #
-  # ⚠️ CUDA **12.8**, deliberately. This rig's host is CUDA 13.2, and a host-run
-  # cu12 binary dies with `libcudart.so.12: cannot open shared object file`.
-  # 12.8 is also what our other serving images use, so the base image supplies
-  # the matching libcudart. Do NOT swap to the cuda-13.3 tarball to "match the
-  # host" — the container is the runtime, not the host.
-  #
-  # ⚠️ `libgomp1` is INSTALLED BY THE IMAGE and is REQUIRED. The CUDA runtime
-  # base does not carry it, and without it EVERY binary in the tarball fails at
-  # exec with `libgomp.so.1: cannot open shared object file`. Found by booting.
-  # ⚠️ DIGEST-pinned, like the llama-cpp-prism sibling — not the mutable tag it was
-  # first written with. This image is OURS and source-built from three OPEN PRs, so
-  # a retag would silently change what every user runs with no registry-visible
-  # signal. Pushed + verified pullable 2026-09-19 (local tag removed first, then
-  # fetched back by digest, so it is a real registry round-trip and not a cache hit).
-  # Tag b10709-pr205-189-216 points at this same digest today.
-  spec: ghcr.io/noonghunna/llamacpp-prism-mtp@sha256:7f859a6050b32895b2a177590545febad5008b4529db40335fab4765a8b37f48
+  # ⚠️ CUDA **12.8**, deliberately — see the llama-cpp-prism sibling. The container is
+  # the runtime, not this rig's CUDA 13.2 host.
+  spec: ghcr.io/noonghunna/llamacpp-prism-mtp@sha256:cd299c55f9dd8e12bbd609733208b4eb07b96905b43fa226a2c8c145282a3ca4
 
 # ---------------------------------------------------------------------------
 # WHY A SEPARATE ENGINE RATHER THAN A FLAG ON AN EXISTING ONE
@@ -102,9 +89,12 @@ supported_kv_formats:
                           # boot, never from upstream's docs.
 
 supported_drafters: [mtp_gguf]
-  # ⭐ mtp_gguf ONLY, and only because vendored PR #205 makes it loadable. The
-  # `llama-cpp-prism` sibling correctly declares [] — on the stock release this
-  # drafter cannot start at all (llama_verify_hadamard_graph refuses the graph).
+  # ⭐ mtp_gguf ONLY — it needs PrismML #205, which this engine vendored until
+  # 2026-09-24 and which now ships upstream in prism-b10735-842b188. Before that the
+  # stock release could not start this drafter (llama_verify_hadamard_graph refused
+  # the graph). The `llama-cpp-prism` sibling (now ALSO b10735) still declares [] —
+  # not because it can't, but because nobody has measured an MTP boot on it yet.
+  # That boot, not the release notes, is what moves mtp_gguf onto the sibling.
   # ⚠️ This field holds spec_method VALUES, not drafter ids. Added on a MEASURED
   # boot (1.84x at n=4, acceptance 58-95%), not on the assumption that it works.
   # ⛔ EMPTY, AND FOR THE BONSAI PACKS IT IS NOT EVEN AVAILABLE — VERIFIED IN THE
@@ -129,18 +119,22 @@ required_overlays: []
 vendored_overlays:
   # ⚠️⚠️ UNLIKE THE `llama-cpp-prism` SIBLING, THIS IS NOT UPSTREAM'S BINARY. That
   # profile documents `vendored_overlays: GENUINELY EMPTY — we patch nothing`.
-  # This one is SOURCE-BUILT from PrismML-Eng/llama.cpp at tag prism-b10709-9a9394a
-  # with three OPEN upstream PRs applied. Each carries a drop trigger: when the PR
-  # merges AND ships in a prism release, drop it and re-point at the stock tarball.
-  # The entire reason this profile exists is that #205 has not shipped yet.
+  # This one is SOURCE-BUILT from PrismML-Eng/llama.cpp at tag prism-b10735-842b188
+  # with the one still-OPEN upstream PR applied (#189). Each entry carries a drop
+  # trigger: when the PR merges AND ships in a prism release, drop it. When the last
+  # one drops, delete this profile and fold the slug back onto `llama-cpp-prism`.
+  # 2026-09-24: #205 and #216 fired their triggers (merged + shipped in b10735) and
+  # were dropped — the entries stay as history. #205 was the reason this profile
+  # existed; only #189's crash guard keeps it alive now.
   - id: prism-pr205-mtp-hadamard
-    image_baked: true   # compiled into the binary at build time, not a mounted overlay
-    vendored_diff: models/qwen3.8-27b/llama-cpp-prism/patches/prism-mtp-b10709
+    image_baked: true   # now upstream code in the pinned image — nothing vendored
     source: https://github.com/PrismML-Eng/llama.cpp/pull/205
     files: [src/models/qwen35.cpp]
     diff: '+14/-0'
-    local_status: vendored
-    upstream: open
+    local_status: dropped
+    upstream: merged
+    upstream_merged_in_version: prism-b10735-842b188
+    dropped: 2026-09-24 — merged upstream 2026-09-21, ships in prism-b10735-842b188; vendored diff deleted
     why: >
       Without it `--spec-type draft-mtp` cannot START on a Hadamard-folded target:
       the MTP graph does its own ggml_get_rows on token_embd and never restores the
@@ -149,13 +143,14 @@ vendored_overlays:
       gfx1100/ROCm and sm_89/Ada in the PR thread.
     drop_trigger: merged upstream AND present in a prism release tarball
   - id: prism-pr216-gdn-ampere-gate
-    image_baked: true   # compiled into the binary at build time, not a mounted overlay
-    vendored_diff: models/qwen3.8-27b/llama-cpp-prism/patches/prism-mtp-b10709
+    image_baked: true   # now upstream code in the pinned image — nothing vendored
     source: https://github.com/PrismML-Eng/llama.cpp/pull/216
     files: [ggml/src/ggml-cuda/gated_delta_net.cu]
     diff: '+5/-2'
-    local_status: vendored
-    upstream: open
+    local_status: dropped
+    upstream: merged
+    upstream_merged_in_version: prism-b10735-842b188
+    dropped: 2026-09-24 — merged upstream 2026-09-23, ships in prism-b10735-842b188; vendored diff deleted
     why: >
       gated_delta_net_cuda's cols_per_warp=4 layout was gated to
       GGML_CUDA_CC_DGX_SPARK; this widens it to >= AMPERE. MEASURED +8.6% prefill
@@ -164,7 +159,7 @@ vendored_overlays:
     drop_trigger: merged upstream AND present in a prism release tarball
   - id: prism-pr189-shortq-fa-quantv
     image_baked: true   # compiled into the binary at build time, not a mounted overlay
-    vendored_diff: models/qwen3.8-27b/llama-cpp-prism/patches/prism-mtp-b10709
+    vendored_diff: models/qwen3.8-27b/llama-cpp-prism/patches/prism-mtp-b10735
     source: https://github.com/PrismML-Eng/llama.cpp/pull/189
     files: [ggml/src/ggml-cuda/fattn.cu]
     diff: '+6/-0'

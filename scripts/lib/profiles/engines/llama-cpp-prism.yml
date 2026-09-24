@@ -9,15 +9,19 @@ stability: experimental
 install:
   method: docker_image
   # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
-  # Built 2026-09-18 by WRAPPING upstream's own release tarball —
-  # `llama-prism-b10685-7dffb15-bin-linux-cuda-12.8-x64.tar.gz` from
-  # PrismML-Eng/llama.cpp release `prism-b10685-7dffb15` — NOT from source.
+  # Built by WRAPPING upstream's own release tarball — NOT from source. Recipe:
+  # models/qwen3.8-27b/llama-cpp-prism/image/Dockerfile (checked in 2026-09-24;
+  # the b10685 image's recipe existed only in its layers).
+  #   2026-09-24  prism-b10735-842b188  `llama-prism-b10735-842b188-bin-linux-cuda-12.8-x64.tar.gz`
+  #               sha256 5cbac526…5998e (= the release asset's published digest).
+  #               Ships PrismML #205 (MTP Hadamard) + #216 (Ampere GDN layout), so
+  #               the MTP GGUF now loads on this stock engine too.
+  #   2026-09-18  prism-b10685-7dffb15  (previous pin, digest 919ee810…)
   #
-  # ⚠️ THE NEWEST TAG IS NOT THE RIGHT ONE. `prism-b10687-5d80cff` (2026-09-17)
-  # ships WINDOWS assets only — three cudart zips, no Linux archive at all. The
-  # previous tag `prism-b10685-7dffb15` carries the full Linux matrix
-  # (cuda-12.4 / 12.8 / 13.3, ubuntu-x64/arm64, rocm, vulkan). Check the asset
-  # list before bumping, not just the tag date.
+  # ⚠️ THE NEWEST TAG IS NOT ALWAYS BUILDABLE. `prism-b10687-5d80cff` (2026-09-17)
+  # shipped WINDOWS assets only — three cudart zips, no Linux archive at all.
+  # Check the release's asset list for `linux-cuda-12.8-x64` before bumping, not
+  # just the tag date.
   #
   # ⚠️ CUDA **12.8**, deliberately. This rig's host is CUDA 13.2, and a host-run
   # cu12 binary dies with `libcudart.so.12: cannot open shared object file`.
@@ -28,7 +32,7 @@ install:
   # ⚠️ `libgomp1` is INSTALLED BY THE IMAGE and is REQUIRED. The CUDA runtime
   # base does not carry it, and without it EVERY binary in the tarball fails at
   # exec with `libgomp.so.1: cannot open shared object file`. Found by booting.
-  spec: ghcr.io/noonghunna/llamacpp-prism@sha256:919ee810d4764f43ee6b88afa7dc23c67e61579ac59f198a1f29d691232d6a96
+  spec: ghcr.io/noonghunna/llamacpp-prism@sha256:20c43cb73ad3075cb689770682a7cde3c9dc0df2d16ba585986de9d69ddaec62
 
 # ---------------------------------------------------------------------------
 # WHY A SEPARATE ENGINE RATHER THAN A FLAG ON AN EXISTING ONE
@@ -45,8 +49,8 @@ install:
 # matching activation transform emits plausible nonsense rather than an error.
 # ⇒ Never point a Bonsai slug at llama-cpp-local / llamacpp-club3090 / ik-llama.
 #
-# ⭐ Its base is mainline **b10685**, ~10 builds off llamacpp-club3090-v1.6's
-# b10675 — so the ternary kernels and our moe-cache deltas sit on nearly the
+# ⭐ Its base is mainline **b10735** (was b10685 until 2026-09-24), ~60 builds off
+# llamacpp-club3090-v1.6's b10675 — so the ternary kernels and our moe-cache deltas sit on nearly the
 # same substrate and are plausibly combinable later. Not attempted, and not
 # needed for Bonsai: that model is DENSE (qwen35-dense, 64 blocks, no experts)
 # and fits one 3090 whole, so there is nothing for an expert cache to do.
