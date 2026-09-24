@@ -1219,6 +1219,61 @@ if [[ "$SAMPLING_FROM_SERVER" == "1" ]]; then
   CLI_ARGS+=(--sampling-from-server)
   echo "[quality-test] sampling: inherited from server (non-canonical)"
 fi
+# ---- #1396: record the sampling in effect and the rig with the results --------
+# vLLM and SGLang expose no sampling-defaults endpoint and nothing recorded the
+# topology, so reports from different rigs could not be compared. run_context.py
+# reads what the engine APPLIES (its own startup log lines, not our flags) plus
+# the GPUs the container sees; benchlocal-cli stores them in the results JSON and
+# prints them on the header and the Results Card. The engine family comes from
+# engine-kind.sh (#1282). On --resume the journal already holds the first
+# session's values, so nothing is re-read. A user's own `-- --run-meta k=v` is
+# appended later and wins per key.
+if [[ -z "$RESUME" && -n "${CONTAINER:-}" && "${CONTAINER}" != "none" ]] \
+   && command -v docker >/dev/null 2>&1 && docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  if benchlocal-cli run --help 2>/dev/null | command grep -q -- "--run-meta"; then
+    # shellcheck source=lib/engine-kind.sh
+    source "${ROOT_DIR}/scripts/lib/engine-kind.sh"
+    _rc_kind="$(engine_kind_from_container "$CONTAINER")"
+    if [[ "$_rc_kind" == "unknown" ]]; then
+      _rc_kind="$(engine_kind_from_image "$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)")"
+    fi
+    _rc_flags=(--engine "$_rc_kind" --container "$CONTAINER" --emit-args)
+    [[ "$SAMPLING_FROM_SERVER" == "1" ]] || _rc_flags+=(--no-server-defaults)
+    _rc_err="$(mktemp)"
+    _rc_args=()
+    _rc_rc=0
+    _rc_out="$(python3 "${ROOT_DIR}/scripts/lib/run_context.py" "${_rc_flags[@]}" 2>"$_rc_err")" || _rc_rc=$?
+    if [[ "$_rc_rc" == "0" ]]; then
+      [[ -n "$_rc_out" ]] && mapfile -t _rc_args <<<"$_rc_out"
+      CLI_ARGS+=("${_rc_args[@]+"${_rc_args[@]}"}")
+      _rc_rig=""; _rc_has_defaults=0; _rc_i=0
+      while [[ $_rc_i -lt ${#_rc_args[@]} ]]; do
+        case "${_rc_args[$_rc_i]}" in
+          --run-meta)        _rc_rig+="${_rc_rig:+ · }${_rc_args[$((_rc_i+1))]}" ;;
+          --server-defaults) _rc_has_defaults=1 ;;
+        esac
+        _rc_i=$((_rc_i+2))
+      done
+      echo "[quality-test] rig (${_rc_kind}): ${_rc_rig:-nothing resolved}"
+      if [[ "$SAMPLING_FROM_SERVER" == "1" ]]; then
+        if [[ "$_rc_has_defaults" == "1" ]]; then
+          echo "[quality-test] sampling: server defaults resolved from the ${_rc_kind} boot log (recorded with the results)"
+        elif [[ "$_rc_kind" != "llamacpp" ]]; then
+          echo "[quality-test] sampling: could not resolve the server's defaults from the boot log — the report will say 'not exposed'" >&2
+        fi
+      fi
+      command grep -E '^\[run-context\]' "$_rc_err" >&2 || true
+    else
+      echo "[quality-test] WARN: could not resolve the rig/sampling context (#1396); the report will lack it:" >&2
+      sed 's/^/[quality-test]   /' "$_rc_err" >&2
+    fi
+    rm -f "$_rc_err"
+  else
+    echo "[quality-test] WARN: this benchlocal-cli predates --run-meta/--server-defaults (#1396) — the report" >&2
+    echo "[quality-test]   will not record the rig or the server's sampling. Upgrade:" >&2
+    echo "[quality-test]   pip install --upgrade git+https://github.com/noonghunna/benchlocal-cli.git" >&2
+  fi
+fi
 if [[ "$ENABLE_THINKING" == "1" ]]; then
   CLI_ARGS+=(--enable-thinking)
   echo "[quality-test] thinking: enabled for every pack (non-canonical)"
@@ -1546,6 +1601,10 @@ elif tm == "force-off":
     suffix_parts.append("thinking OFF")
 if d.get("sampling_source") == "server":
     suffix_parts.append("sampling=server")
+# #1396: the topology the scores were measured on (run_meta, from run_context.py).
+tp = (d.get("run_meta") or {}).get("tp")
+if tp:
+    suffix_parts.append(f"tp={tp}")
 validity = d.get("thinking_validity") or {}
 if validity:
     statuses = {o.get("status") for o in validity.values()}

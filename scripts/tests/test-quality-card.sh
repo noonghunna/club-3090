@@ -77,7 +77,7 @@ chmod +x "${tmp_bin}/curl"
 # Mock benchlocal-cli: logs its full argv, honours --save-json and
 # --report-out (unless BENCHLOCAL_MOCK_SKIP_REPORT=1), parameterizes the
 # results-JSON schema (BENCHLOCAL_MOCK_OLD_SCHEMA=1) and thinking_validity
-# (BENCHLOCAL_MOCK_VALIDITY), and can fail the thinking-on arm
+# (BENCHLOCAL_MOCK_VALIDITY) and run_meta.tp (BENCHLOCAL_MOCK_TP), and can fail the thinking-on arm
 # (BENCHLOCAL_MOCK_FAIL_THINKING=1) to exercise leg-failure propagation.
 cat > "${tmp_bin}/benchlocal-cli" <<'MOCK_BENCHLOCAL'
 #!/usr/bin/env bash
@@ -104,8 +104,10 @@ if [[ -n "$json_out" ]]; then
 JSON
   else
     validity="${BENCHLOCAL_MOCK_VALIDITY:-ok}"
+    run_meta=""
+    [[ -n "${BENCHLOCAL_MOCK_TP:-}" ]] && run_meta="\"run_meta\":{\"tp\":\"${BENCHLOCAL_MOCK_TP}\",\"gpus\":\"4x RTX 3090\"},"
     cat > "$json_out" <<JSON
-{"thinking_mode":"force-off","sampling_source":"server",
+{"thinking_mode":"force-off","sampling_source":"server",${run_meta}
  "thinking_validity":{"toolcall-15":{"status":"${validity}"}},
  "packs":[{"pack_id":"toolcall-15","status":"ok","passed":14,"total":15,"score":0.933,"version":"1.0.1"}]}
 JSON
@@ -158,6 +160,13 @@ assert_contains "$qline" "$(date +%Y-%m-%d))"
 # score portion unchanged
 assert_contains "$qline" "toolcall-15 14/15 (93%)"
 
+# #1396: the topology rides on the suffix when the results JSON carries it
+out="$(PATH="${tmp_bin}:$PATH" BENCHLOCAL_MOCK_LOG="$tmp_log" \
+  BENCHLOCAL_MOCK_TP=4 PREFLIGHT_NO_AUTODETECT=1 \
+  URL=http://mock MODEL=mock-model bash "$WRAPPER" --quick 2>&1)"
+qline="$(grep -m1 '^Quality:   ' <<<"$out")"
+assert_contains "$qline" "(--quick, thinking OFF, sampling=server, tp=4, validity=valid, packs tc1.0.1, "
+
 # CONTAMINATED validity propagates loudly
 out="$(PATH="${tmp_bin}:$PATH" BENCHLOCAL_MOCK_LOG="$tmp_log" \
   BENCHLOCAL_MOCK_VALIDITY=contaminated PREFLIGHT_NO_AUTODETECT=1 \
@@ -175,6 +184,7 @@ assert_not_contains "$qline" "packs " "no packs stamp without version data"
 assert_not_contains "$qline" "sampling="
 assert_not_contains "$qline" "validity="
 assert_not_contains "$qline" "thinking "
+assert_not_contains "$qline" "tp="
 
 # ---------------------------------------------------------------------------
 echo "--- 3. --both-modes orchestration (stubbed inner runs) ---"

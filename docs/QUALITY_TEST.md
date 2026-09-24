@@ -604,8 +604,11 @@ The line documents what the compose was tested on — **against which pack versi
 |---|---|
 | `thinking OFF / ON` | reasoning gate forced off/on for every pack (absent = pack defaults) |
 | `sampling=server` | `--sampling-from-server`: sampling inherited from the serving config (absent = canonical pack-default temp=0) |
+| `tp=N` | tensor-parallel size the scores were measured at (#1396) — from the engine's own startup dump; absent on llama.cpp and on results that predate it |
 | `validity=valid / CONTAMINATED` | #126 thinking-validity check: CONTAMINATED means a requested arm did not reason as asked — do not trust that leg |
 | `packs tc1.0.1·if1.0.0·…` | exact per-pack versions, compact ids (`tc`=toolcall-15, `if`=instructfollow-15, `so`=structoutput-15, `de`=dataextract-15, `rm`=reasonmath-15, `bf`=bugfind-15, `hm`=hermesagent-20, `cli`=cli-40) |
+
+**The rig and the sampling in effect are recorded with the results (#1396).** When the wrapper can see the serving container, `scripts/lib/run_context.py` reads what the engine *applied* — not the flags we passed it — and hands it to benchlocal-cli (`--run-meta`, and `--server-defaults` under `--sampling-from-server`). The results JSON gains `run_meta` + `server_defaults_source`, and the summary header and Results Card gain a `Rig:` line (engine, TP/PP, quant, KV, spec, max ctx, GPUs × model, power cap, PCIe, NVLink) and a `Sampling:` line. It reads the engine's post-processing log lines deliberately: vLLM silently drops `presence_penalty` from `--override-generation-config`, and SGLang's `--preferred-sampling-params` is inert on `/v1/chat/completions` (sglang#39096) — reporting either flag would record sampling that never ran. llama.cpp is untouched (benchlocal-cli reads `GET /props`). Needs a benchlocal-cli with those flags; an older one gets a one-line upgrade warning and the run proceeds unchanged.
 
 Never hand-write a `packs v1.0.x` wildcard — the eight packs span six distinct versions. For richer provenance (per-pack latency p50/p95, variance under `--repeat`, benchlocal-cli version), pass `--report md --report-out card.md` and link the generated Results Card v2 next to the Quality line.
 
