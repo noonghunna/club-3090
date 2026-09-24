@@ -101,7 +101,13 @@
 #     can still OOM. seqs=8 is validated at short/moderate context only.
 #   → If you OOM under long-context concurrency: lower MAX_NUM_SEQS, or SPEC_N=0
 #     (drops the drafter → ~+27% batch aggregate anyway), or W4A8=0.
-#   → The drafter also costs ~13% of the KV pool (652,346 -> 567,737 tokens).
+#   → The drafter also costs ~15% of the KV pool — MEASURED 2026-09-24 on vLLM v0.30.0, this
+#     compose, 2x 3090 (the old 652,346 -> 567,737 figure never reproduced):
+#       fp32 SSM, graph estimate on (pre-2026-09-24 default)   493,873 tok  1.88x
+#       bf16 SSM only                                          520,291 tok  1.98x
+#       bf16 SSM + graph estimate off  ← THE DEFAULT NOW       549,063 tok  2.09x  (2 x 262K)
+#       SPEC_N=0 (drafter off, fp32 SSM)                       584,550 tok  2.23x
+#     MAMBA_SSM_CACHE_DTYPE=float32 / VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 revert each.
 #
 # ⚠️ GPU_MEMORY_UTILIZATION IS 0.90 HERE, NOT THE TIER'S 0.92 — DELIBERATE, AND
 #   THE OPPOSITE TRADE FROM WHAT IT LOOKS LIKE. The knob is a ceiling on what
@@ -216,6 +222,13 @@ services:
       - ASYNC_SCHED=${ASYNC_SCHED:-}
       - MAMBA_BLOCK_SIZE=${MAMBA_BLOCK_SIZE:-}
       - MAMBA_CACHE_DTYPE=${MAMBA_CACHE_DTYPE:-}
+      - MAMBA_SSM_CACHE_DTYPE=${MAMBA_SSM_CACHE_DTYPE:-}
+      # CUDA-graph memory ESTIMATE off by default on this tier (2026-09-24): v0.30.0 reserves
+      # 0.5 GiB for graphs that actually take 0.1 GiB (410% over). Off returns ~0.49 GiB/card to
+      # the KV pool — with bf16 SSM that is what clears 2 full-context sessions (1.98x -> 2.09x).
+      # vLLM warns graph memory is then unaccounted: full verify-stress passed with it (tool-
+      # prefill OOM probe, 240,661-token fill, 1.87 GB free flat). Set =1 to restore the estimate.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS:-0}
       # Sampler env passthrough (#984/#1014): the ENTRYPOINT — not compose
       # interpolation, which has no if/else — derives --override-generation-config
       # from the model-card row matching ENABLE_THINKING, so these must reach the
@@ -317,10 +330,21 @@ services:
         esac
         # -- Mamba/GDN cache knobs (hybrid-model KV headroom) --
         #   MAMBA_BLOCK_SIZE=<tokens>  checkpoint SSM state every N tokens (align mode; multiple of 8)
-        #   MAMBA_CACHE_DTYPE=bfloat16 store conv+ssm state in bf16 instead of fp32
+        #   MAMBA_CACHE_DTYPE=bfloat16 the CONV state only, on this model. ⚠️ It does NOT move the
+        #                              SSM state: for Qwen3.5-family models vLLM copies the HF config's
+        #                              mamba_ssm_dtype (float32) into --mamba-ssm-cache-dtype whenever
+        #                              that is `auto` (Qwen3_5ForConditionalGenerationConfig) — so this
+        #                              knob alone left the SSM fp32 while its comment said conv+ssm.
+        #   MAMBA_SSM_CACHE_DTYPE      the SSM state. DEFAULT bfloat16 on this dual slug (2026-09-24):
+        #                              halves the per-request SSM snapshots — (2+SPEC_N) per request in
+        #                              align mode, charged to the KV pool — and the profiled activation
+        #                              peak. Set float32 (or auto = the model's float32) to revert.
         MAMBA_ARGS=()
         if [ -n "$${MAMBA_BLOCK_SIZE:-}" ]; then MAMBA_ARGS+=(--mamba-block-size "$${MAMBA_BLOCK_SIZE}"); echo "[mamba] block size $${MAMBA_BLOCK_SIZE}" >&2; fi
         if [ -n "$${MAMBA_CACHE_DTYPE:-}" ]; then MAMBA_ARGS+=(--mamba-cache-dtype "$${MAMBA_CACHE_DTYPE}"); echo "[mamba] cache dtype $${MAMBA_CACHE_DTYPE}" >&2; fi
+        _ssm_dt="$${MAMBA_SSM_CACHE_DTYPE:-bfloat16}"
+        if [ "$$_ssm_dt" != "auto" ]; then MAMBA_ARGS+=(--mamba-ssm-cache-dtype "$$_ssm_dt"); fi
+        echo "[mamba] ssm cache dtype $$_ssm_dt" >&2
         # -- Sampler follows the reasoning mode ----------------------------------
         # The card publishes TWO sampler rows (see the header); ENABLE_THINKING
         # now selects the row — one variable instead of the four-variable ritual
