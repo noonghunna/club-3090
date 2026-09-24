@@ -418,6 +418,56 @@ fi  # RENDER present
 
 fi  # HAVE_COMPOSE
 
+# --- 2h. SGLang startup dump: BOTH shapes yield real values -----------------
+# SGLang <= v0.5.19 logs `server_args=ServerArgs(key=value, ...)`; v0.5.20 logs
+# a dict, `server_args={'key': value, ...}`. The key=value regex read only the
+# first, so on v0.5.20 every report rendered "elided to 0 keys" — and no leg in
+# this file ever fed a boot log, so nothing noticed. The dict fixture also
+# plants a NESTED tp_size BEFORE the top-level one: a regex over the dict text
+# would report 99; only a real parse reports 2. (Outside the HAVE_COMPOSE gate:
+# the dump read needs no `docker compose`.)
+RC_CONTAINER="sgl-myrig"
+RC_INSPECT="${TMP}/sgl-dump.json"
+python3 - "$RC_INSPECT" <<'PY'
+import json, sys
+json.dump({
+    "Config": {
+        "Image": "lmsysorg/sglang:v0.5.20",
+        "Entrypoint": ["/bin/bash", "-c"],
+        "Cmd": ["exec python3 -m sglang.launch_server --model-path /models/x --tp-size 2\n"],
+        "Env": [],
+        "Labels": {},
+    },
+    "State": {"Status": "running"},
+}, open(sys.argv[1], "w", encoding="utf-8"))
+PY
+RC_LOGS="${TMP}/sgl-v0520.log"
+cat > "$RC_LOGS" <<'LOG'
+[2026-09-24 01:50:02] server_args={'model_path': '/models/x', 'model_loader_extra_config': {'tp_size': 99}, 'tp_size': 2, 'quantization': 'auto-round', 'kv_cache_dtype': 'fp8_e4m3', 'context_length': 262144, 'speculative_algorithm': 'DFLASH', 'speculative_num_draft_tokens': 8, 'mamba_ssm_dtype': None}
+[2026-09-24 01:51:40] KV Cache is allocated. #tokens: 206635
+LOG
+run_report --container "$RC_CONTAINER"
+SEC="$(section_of "$REPORT_OUT")"
+dump "sglang-dict-dump" "$SEC"
+has   "v0.5.20 dict dump: the dump was read"        "$SEC" "server_args (elided to"
+hasnt "v0.5.20 dict dump: not an empty elision"     "$SEC" "elided to 0 keys"
+has   "v0.5.20 dict dump: top-level tp_size"        "$SEC" "tp_size=2"
+hasnt "v0.5.20 dict dump: nested tp_size ignored"   "$SEC" "tp_size=99"
+has   "v0.5.20 dict dump: string value"             "$SEC" "kv_cache_dtype='fp8_e4m3'"
+has   "v0.5.20 dict dump: spec algorithm"           "$SEC" "speculative_algorithm='DFLASH'"
+has   "v0.5.20 dict dump: None value kept"          "$SEC" "mamba_ssm_dtype=None"
+RC_LOGS="${TMP}/sgl-v0519.log"
+cat > "$RC_LOGS" <<'LOG'
+[2026-09-10 01:50:02] server_args=ServerArgs(model_path='/models/x', tp_size=2, quantization='auto-round', kv_cache_dtype='fp8_e4m3', context_length=262144, speculative_algorithm='DFLASH')
+LOG
+run_report --container "$RC_CONTAINER"
+SEC="$(section_of "$REPORT_OUT")"
+dump "sglang-serverargs-dump" "$SEC"
+hasnt "v0.5.19 ServerArgs dump: not an empty elision" "$SEC" "elided to 0 keys"
+has   "v0.5.19 ServerArgs dump: tp_size"              "$SEC" "tp_size=2"
+has   "v0.5.19 ServerArgs dump: string value"         "$SEC" "kv_cache_dtype='fp8_e4m3'"
+RC_LOGS=""
+
 # ===========================================================================
 # Layer 3 — the failure paths must be DISTINCT, never an empty-looking block
 # ===========================================================================

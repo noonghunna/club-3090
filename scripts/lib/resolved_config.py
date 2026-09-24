@@ -73,6 +73,7 @@ as disabling PATH/HOST/USER redaction, and no report has ever carried engine env
 at all, so holding the line here regresses nothing.
 """
 
+import ast
 import hashlib
 import json
 import os
@@ -583,8 +584,14 @@ _DUMP_PATTERNS = {
     "llamacpp": (r"^system_info:", r"^build:", r"^main: ", r"llama_context:",
                  r"llama_kv_cache", r"^srv .*params"),
 }
-# The keys worth surfacing from a one-line `server_args=ServerArgs(...)` dump
-# (~8 KB on one line — see the size argument in #1265).
+# The keys worth surfacing from SGLang's one-line `server_args=` dump (~8 KB on
+# one line — see the size argument in #1265). The dump has two shapes:
+#   SGLang <= v0.5.19   server_args=ServerArgs(tp_size=2, kv_cache_dtype='fp8_e4m3', ...)
+#   SGLang >= v0.5.20   server_args={'tp_size': 2, 'kv_cache_dtype': 'fp8_e4m3', ...}
+# The key=value regex below only reads the first; on v0.5.20 it matched ZERO
+# keys, so every SGLang report rendered an empty "elided to 0 keys" block. The
+# dict shape is parsed exactly (dict_after) rather than regexed, so a nested
+# dict that reuses a key name can't be mistaken for the top-level value.
 _SGLANG_KEYS = (
     "model_path", "quantization", "tp_size", "context_length", "mem_fraction_static",
     "chunked_prefill_size", "kv_cache_dtype", "attention_backend", "mamba_ssm_dtype",
@@ -593,6 +600,61 @@ _SGLANG_KEYS = (
     "speculative_num_steps", "speculative_eagle_topk", "reasoning_parser",
     "tool_call_parser", "served_model_name",
 )
+
+
+def dict_after(text, marker):
+    """The Python-literal dict that starts after `marker` on the same line, or None.
+
+    Balanced-brace scan (quote-aware) + ast.literal_eval — never eval. Shared
+    with run_context.py (#1396), which reads the same SGLang and vLLM dumps.
+    """
+    i = text.find(marker)
+    if i < 0:
+        return None
+    start = text.find("{", i + len(marker))
+    if start < 0 or "\n" in text[i:start]:
+        return None
+    depth, quote, esc = 0, "", False
+    for j in range(start, len(text)):
+        ch = text[j]
+        if quote:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == quote:
+                quote = ""
+            continue
+        if ch in "'\"":
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    value = ast.literal_eval(text[start:j + 1])
+                except (ValueError, SyntaxError):
+                    return None
+                return value if isinstance(value, dict) else None
+        elif ch == "\n":
+            return None
+    return None
+
+
+def _sglang_server_args(ln):
+    """[(key, rendered value)] for _SGLANG_KEYS, from either dump shape."""
+    parsed = dict_after(ln, "server_args=")
+    found = []
+    for key in _SGLANG_KEYS:
+        if parsed is not None:
+            if key in parsed:
+                found.append((key, repr(parsed[key])))
+            continue
+        m = re.search(r"\b%s=('[^']*'|\"[^\"]*\"|[^,)\s]+)" % re.escape(key), ln)
+        if m:
+            found.append((key, m.group(1)))
+    return found
 
 
 # The startup dump is at the HEAD of the boot log, but a long-lived engine's log
@@ -660,11 +722,7 @@ def engine_dump(container, kind, full):
     out_lines = []
     for ln in hits:
         if kind == "sglang" and "server_args=" in ln:
-            found = []
-            for key in _SGLANG_KEYS:
-                m = re.search(r"\b%s=('[^']*'|\"[^\"]*\"|[^,)\s]+)" % re.escape(key), ln)
-                if m:
-                    found.append("%s=%s" % (key, m.group(1)))
+            found = ["%s=%s" % kv for kv in _sglang_server_args(ln)]
             out_lines.append("server_args (elided to %d keys; --engine-args for the full dump):" % len(found))
             out_lines.extend("  " + f for f in found)
         else:

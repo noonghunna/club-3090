@@ -52,6 +52,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from resolved_config import dict_after  # noqa: E402 — one server_args/non-default-args parser for both
+
 # The keys each engine lets the SERVER set (vLLM get_diff_sampling_param /
 # SGLang get_default_sampling_params — the same allowlist on both).
 SERVER_SETTABLE = ("temperature", "top_p", "top_k", "min_p", "repetition_penalty")
@@ -66,42 +69,6 @@ SMI_FIELDS = "index,uuid,name,power.limit,pcie.link.gen.max,pcie.link.width.curr
 
 
 # ---------------------------------------------------------------- parsing (pure)
-
-def dict_after(text: str, marker: str) -> dict | None:
-    """The Python-literal dict that starts after `marker` on the same line, or None."""
-    i = text.find(marker)
-    if i < 0:
-        return None
-    start = text.find("{", i + len(marker))
-    if start < 0 or "\n" in text[i:start]:
-        return None
-    depth, quote, esc = 0, "", False
-    for j in range(start, len(text)):
-        ch = text[j]
-        if quote:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == quote:
-                quote = ""
-            continue
-        if ch in "'\"":
-            quote = ch
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    value = ast.literal_eval(text[start:j + 1])
-                except (ValueError, SyntaxError):
-                    return None
-                return value if isinstance(value, dict) else None
-        elif ch == "\n":
-            return None
-    return None
-
 
 def _numeric(obj: object, keys) -> dict:
     if isinstance(obj, str):
