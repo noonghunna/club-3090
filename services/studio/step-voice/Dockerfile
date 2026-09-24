@@ -30,10 +30,13 @@ RUN for url in ${NODE_MIRRORS}; do \
 # The repo's requirements.txt pins transformers==4.53.3 + the audio/whisper/onnx deps. torch +
 # torchaudio come from the base image (satisfy the >= floors). gradio is unused by the server but
 # harmless. + aiohttp for the HTTP layer.
-RUN pip install --no-cache-dir -r /opt/step/requirements.txt
+# constraints.txt holds the EXACT versions of the validated image: requirements.txt only floors
+# most deps, so without it every fresh build silently resolved newer ones than we tested.
+COPY constraints.txt /opt/constraints.txt
+RUN pip install --no-cache-dir -c /opt/constraints.txt -r /opt/step/requirements.txt
 # Deps the repo's requirements.txt omits but the CosyVoice2 vocoder needs (found at model-load):
 # einops (decoder_dit), ffmpeg-python (audio I/O), rotary_embedding_torch (mossformer path). + aiohttp.
-RUN pip install --no-cache-dir aiohttp einops ffmpeg-python rotary_embedding_torch
+RUN pip install --no-cache-dir -c /opt/constraints.txt aiohttp einops ffmpeg-python rotary_embedding_torch
 
 COPY server.py /opt/server.py
 

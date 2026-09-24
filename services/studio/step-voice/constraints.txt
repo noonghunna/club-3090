@@ -1,0 +1,87 @@
+# Exact versions of every package the step-voice build installs on top of the base image —
+# the `pip freeze` delta of the image the voice lane has served on since June 2026
+# (studio-step-voice:latest, built 2026-06-25), which is the validated stack.
+#
+# WHY: the node's requirements.txt pins only transformers (4.53.3 — 4.54+ = silent audio) and
+# gradio, and floors the rest; the extra RUN line floors nothing at all. So every fresh build
+# silently took newer deps than the one we validated (a Sept rebuild drifted onnxruntime
+# 1.26 -> 1.30, accelerate 1.14 -> 1.15, numba 0.65 -> 0.67, ...).
+# Base-image packages (torch, torchaudio, …) are NOT listed: the FROM tag fixes them, and some
+# freeze as `@ file://` paths that a constraints file cannot express.
+#
+# Used as `pip install -c constraints.txt …`, so it only fixes versions — it installs nothing
+# by itself. To bump a dependency: rebuild with the new version here, run the /clone smoke test
+# (real speech, not silence), then regenerate this list from the new image's `pip freeze`.
+accelerate==1.14.0
+aiofiles==24.1.0
+aiohappyeyeballs==2.6.2
+aiohttp==3.14.1
+aiosignal==1.4.0
+annotated-doc==0.0.4
+annotated-types==0.7.0
+antlr4-python3-runtime==4.9.3
+anyio==4.13.0
+audioread==3.1.0
+einops==0.8.2
+fastapi==0.136.3
+ffmpeg-python==0.2.0
+ffmpy==1.0.0
+flatbuffers==25.12.19
+frozenlist==1.8.0
+future==1.0.0
+gradio==5.49.1
+gradio_client==1.13.3
+groovy==0.1.2
+h11==0.16.0
+hf-xet==1.5.1
+httpcore==1.0.9
+httpx==0.28.1
+huggingface_hub==0.36.2
+HyperPyYAML==1.2.3
+joblib==1.5.3
+lazy-loader==0.5
+librosa==0.11.0
+llvmlite==0.47.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+multidict==6.7.1
+narwhals==2.22.1
+numba==0.65.1
+omegaconf==2.3.1
+onnxruntime==1.26.0
+openai-whisper==20250625
+orjson==3.11.9
+pandas==2.3.3
+pooch==1.9.0
+propcache==0.5.2
+protobuf==7.35.0
+pydantic==2.11.10
+pydantic_core==2.33.2
+pydub==0.25.1
+python-dateutil==2.9.0.post0
+python-multipart==0.0.32
+regex==2026.5.9
+rich==15.0.0
+rotary-embedding-torch==0.8.9
+ruff==0.15.17
+safehttpx==0.1.7
+safetensors==0.8.0
+scikit-learn==1.9.0
+scipy==1.17.1
+semantic-version==2.10.0
+sentencepiece==0.2.1
+shellingham==1.5.4
+soundfile==0.14.0
+soxr==1.1.0
+starlette==0.52.1
+threadpoolctl==3.6.0
+tiktoken==0.13.0
+tokenizers==0.21.4
+tomlkit==0.13.3
+transformers==4.53.3
+typer==0.26.7
+typing-inspection==0.4.2
+tzdata==2026.2
+uvicorn==0.49.0
+websockets==15.0.1
+yarl==1.24.2
