@@ -3813,7 +3813,7 @@ entries:
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false
@@ -3844,7 +3844,7 @@ entries:
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false
@@ -3875,7 +3875,7 @@ entries:
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false
@@ -3906,7 +3906,7 @@ entries:
     drafter: zlab-qwen38-dflash2
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false
@@ -3937,7 +3937,7 @@ entries:
     drafter: zlab-qwen38-dflash2
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false
@@ -3968,7 +3968,7 @@ entries:
     drafter: zlab-qwen38-dflash2
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false
@@ -5815,7 +5815,7 @@ entries:
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false
@@ -5877,7 +5877,7 @@ entries:
     drafter: zlab-qwen38-dflash2
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false
@@ -5908,7 +5908,7 @@ entries:
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false
@@ -5970,7 +5970,7 @@ entries:
     drafter: zlab-qwen38-dflash2
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false
@@ -6032,7 +6032,7 @@ entries:
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false
@@ -6094,7 +6094,7 @@ entries:
     drafter: zlab-qwen38-dflash2
     spec_method: null
     kv_format: fp8_e4m3
-    act_format: 16bit
+    act_format: int8
     act8_capable: false
     offload: null
     moe_cache: false

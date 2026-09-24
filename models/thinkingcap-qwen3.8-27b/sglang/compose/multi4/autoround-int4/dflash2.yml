@@ -207,15 +207,17 @@
 #   = more all-reduce on a slow bus; that is the cost side of this trade.
 # ---------------------------------------------------------------------------
 #   ---------------------------------------------------------------------------
-#   ⭐ W4A8 (int8 activations) — OPT-IN, and the patch IS VENDORED AND MOUNTED
-#   BY DEFAULT (see the w4a8 mount below). `W4A8=1` is all you need.
+#   ⭐ W4A8 (int8 activations) — ON BY DEFAULT since 2026-09-19 (maintainer decision;
+#   it was opt-in before). The patch IS VENDORED AND MOUNTED BY DEFAULT (see the w4a8
+#   mount below). `W4A8=0` reverts to W4A16.
 #
-#   It is OFF by default because it is a PREFILL optimisation: ~+44% prefill at
-#   ~flat code decode on THIS (DFlash2) tier, where the MTP tier pays ~-11%.
-#   MEASURED on the reference rig 2026-09-11 — table below. Turn it on when you
-#   are prefill-bound (long prompts, agent work, high TTFT). Even here, where
-#   decode is ~flat, it is not free: it is a numeric-format trade, and the same
-#   shape the fp8-KV and NVFP4 paths make — cheaper format buys prefill.
+#   It is a PREFILL optimisation: ~+44% prefill at ~flat code decode on THIS
+#   (DFlash2) tier (MEASURED on the reference rig 2026-09-11 — table below). The
+#   MTP tier pays more: -8.4% narrative / -5.5% code in the repeat-boot table in
+#   the entrypoint W4A8 block. Keep it on when you are prefill-bound (long
+#   prompts, agent work, high TTFT); set W4A8=0 to revert. Even here, where decode
+#   is ~flat, it is not free: it is a numeric-format trade, the same shape the
+#   fp8-KV and NVFP4 paths make — cheaper format buys prefill.
 #
 #   The patch is @A1RM4X's re-cut of jb-seo's AutoRound W4A8 patch
 #   (club-3090#1226, vendored via #1248 on 2026-09-11) at
@@ -386,7 +388,7 @@ services:
         # load-back kv=0 mamba=0 and cache_source="host" never even instantiated).
         # It costs ~HICACHE_GB x TP of host RAM for nothing. Re-test when #33713
         # merges. See learnings/sglang-engine.md 2026-09-14.
-        # --- W4A8 opt-in (patch from club-3090#1226; not vendored here) ---
+        # --- W4A8 (club-3090#1226 patch, vendored + mounted; DEFAULT ON, W4A8=0 reverts) ---
         # ⭐ DEFAULT-ON since 2026-09-19 (was 0). ⚠️ THE NUMBERS BELOW ARE THE MTP
         # SLUG'S — sgl/qwen38-27b-dual-fast, v0.5.20, 2 interleaved boots per arm:
         #                    W4A16    W4A8      delta

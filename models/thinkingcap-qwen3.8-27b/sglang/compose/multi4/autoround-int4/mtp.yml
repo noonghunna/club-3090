@@ -243,13 +243,15 @@
 #   = more all-reduce on a slow bus; that is the cost side of this trade.
 # ---------------------------------------------------------------------------
 #   ---------------------------------------------------------------------------
-#   ⭐ W4A8 (int8 activations) — OPT-IN, and the patch IS VENDORED AND MOUNTED
-#   BY DEFAULT (see the w4a8 mount below). `W4A8=1` is all you need.
+#   ⭐ W4A8 (int8 activations) — ON BY DEFAULT since 2026-09-19 (maintainer decision;
+#   it was opt-in before). The patch IS VENDORED AND MOUNTED BY DEFAULT (see the w4a8
+#   mount below). `W4A8=0` reverts to W4A16.
 #
-#   It is OFF by default because it is a PREFILL optimisation that costs decode:
-#   ~+44% prefill for ~-11% code decode on the MTP tier — MEASURED on the
-#   reference rig 2026-09-11, table below. Turn it on when you are
-#   prefill-bound (long prompts, agent work, high TTFT); leave it off when you
+#   It is a PREFILL optimisation that costs decode. The current trade is the
+#   repeat-boot measurement in the entrypoint W4A8 block (sgl/qwen38-27b-dual-fast,
+#   v0.5.20): +49% prefill@10K for -8.4% narrative / -5.5% code decode. It
+#   supersedes the 2026-09-11 single-boot read in the table below. Keep it on when
+#   you are prefill-bound (long prompts, agent work, high TTFT); set W4A8=0 when you
 #   are decode-bound. That is the same trade the fp8-KV and NVFP4 paths make —
 #   the cheaper numeric format buys prefill and costs tokens/s.
 #
@@ -393,7 +395,7 @@ services:
         # load-back kv=0 mamba=0 and cache_source="host" never even instantiated).
         # It costs ~HICACHE_GB x TP of host RAM for nothing. Re-test when #33713
         # merges. See learnings/sglang-engine.md 2026-09-14.
-        # --- W4A8 opt-in (patch from club-3090#1226; not vendored here) ---
+        # --- W4A8 (club-3090#1226 patch, vendored + mounted; DEFAULT ON, W4A8=0 reverts) ---
         # ⭐ DEFAULT-ON since 2026-09-19 (was 0). MEASURED on this rig,
         # sgl/qwen38-27b-dual-fast, sglang v0.5.20, TWO fresh boots per arm,
         # INTERLEAVED, bench.sh 3 warm + 5 measured:
