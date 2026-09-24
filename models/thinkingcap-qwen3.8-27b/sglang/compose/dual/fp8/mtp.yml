@@ -18,7 +18,7 @@
 #   Max ctx:   163840 — ⚠️ NOT the 262144 architectural ceiling. VRAM-bound and
 #              MEASURED: the pool holds 157,875 tokens at mem-fraction 0.92.
 #   Genesis:   N/A — Genesis is a vLLM construct.
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Caveats:   New model 2026-09-23. NOT BOOTED — copied from the sibling, unvalidated.
 #              LICENSE: PolyForm Small Business 1.0.0 + BottleCap's personal-use grant — commercial
 #              use by an organization that is not a small business needs a BottleCap license.

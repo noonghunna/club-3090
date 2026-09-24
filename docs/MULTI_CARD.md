@@ -53,16 +53,16 @@ or not yet at all. If you have the hardware, your run is the validation:
 |  | `vllm/qwen38-27b-multi4-ultrafast` | 🧪 experimental | 262144 | [multi4/autoround-int4/dflash2.yml](../models/qwen3.8-27b/vllm/compose/multi4/autoround-int4/dflash2.yml) | [#1076](https://github.com/noonghunna/club-3090/discussions/1076) |  |
 |  | `vllm/qwen38-27b-multi4-ultramax` | 🧪 experimental | 262144 | [multi4/fp8/dflash2.yml](../models/qwen3.8-27b/vllm/compose/multi4/fp8/dflash2.yml) | [#1076](https://github.com/noonghunna/club-3090/discussions/1076) |  |
 | **Qwen3.8-Flash-Next (MoE, Qwen)** | `llamacpp-club3090/qwen38-flash-next-multi4-q4kxl-moecache` | 🧪 experimental | 204800 | [multi4/unsloth-ud-q4kxl/moecache.yml](../models/qwen3.8-flash-next/llamacpp-club3090/compose/multi4/unsloth-ud-q4kxl/moecache.yml) | [#1117](https://github.com/noonghunna/club-3090/discussions/1117) | host RAM ≥ 110 GB |
-| **ThinkingCap Qwen3.8-27B** | `sgl/thinkingcap38-27b-multi4-fast` | 🐣 incubating | 262144 | [multi4/autoround-int4/mtp.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi4/autoround-int4/mtp.yml) | — |  |
-|  | `sgl/thinkingcap38-27b-multi4-max` | 🐣 incubating | 262144 | [multi4/fp8/mtp.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi4/fp8/mtp.yml) | — |  |
-|  | `sgl/thinkingcap38-27b-multi4-superfast` | 🐣 incubating | 262144 | [multi4/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi4/autoround-int4/dflash2.yml) | — |  |
-|  | `sgl/thinkingcap38-27b-multi4-supermax` | 🐣 incubating | 262144 | [multi4/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi4/fp8/dflash2.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi4-fast` | 🐣 incubating | 262144 | [multi4/autoround-int4/mtp.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/autoround-int4/mtp.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi4-max` | 🐣 incubating | 262144 | [multi4/fp8/mtp.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/fp8/mtp.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi4-superfast` | 🐣 incubating | 262144 | [multi4/autoround-int4/dflash2-fp8.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/autoround-int4/dflash2-fp8.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi4-supermax` | 🐣 incubating | 262144 | [multi4/fp8/dflash2-fp8.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/fp8/dflash2-fp8.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi4-ultrafast` | 🐣 incubating | 262144 | [multi4/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/autoround-int4/dflash2.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi4-ultramax` | 🐣 incubating | 262144 | [multi4/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/fp8/dflash2.yml) | — |  |
+| **ThinkingCap Qwen3.8-27B** | `sgl/thinkingcap38-27b-multi4-fast` | 🧪 experimental | 262144 | [multi4/autoround-int4/mtp.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi4/autoround-int4/mtp.yml) | — |  |
+|  | `sgl/thinkingcap38-27b-multi4-max` | 🧪 experimental | 262144 | [multi4/fp8/mtp.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi4/fp8/mtp.yml) | — |  |
+|  | `sgl/thinkingcap38-27b-multi4-superfast` | 🧪 experimental | 262144 | [multi4/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi4/autoround-int4/dflash2.yml) | — |  |
+|  | `sgl/thinkingcap38-27b-multi4-supermax` | 🧪 experimental | 262144 | [multi4/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi4/fp8/dflash2.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi4-fast` | 🧪 experimental | 262144 | [multi4/autoround-int4/mtp.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/autoround-int4/mtp.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi4-max` | 🧪 experimental | 262144 | [multi4/fp8/mtp.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/fp8/mtp.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi4-superfast` | 🧪 experimental | 262144 | [multi4/autoround-int4/dflash2-fp8.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/autoround-int4/dflash2-fp8.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi4-supermax` | 🧪 experimental | 262144 | [multi4/fp8/dflash2-fp8.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/fp8/dflash2-fp8.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi4-ultrafast` | 🧪 experimental | 262144 | [multi4/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/autoround-int4/dflash2.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi4-ultramax` | 🧪 experimental | 262144 | [multi4/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/fp8/dflash2.yml) | — |  |
 
 35 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table multi4 -->
@@ -89,16 +89,16 @@ or not yet at all. If you have the hardware, your run is the validation:
 |  | `vllm/qwen38-27b-multi8-ultrafast` | 🧪 experimental | 262144 | [multi8/autoround-int4/dflash2.yml](../models/qwen3.8-27b/vllm/compose/multi8/autoround-int4/dflash2.yml) | [#1076](https://github.com/noonghunna/club-3090/discussions/1076) |  |
 |  | `vllm/qwen38-27b-multi8-ultramax` | 🧪 experimental | 262144 | [multi8/fp8/dflash2.yml](../models/qwen3.8-27b/vllm/compose/multi8/fp8/dflash2.yml) | [#1076](https://github.com/noonghunna/club-3090/discussions/1076) |  |
 | **Qwen3.8-Flash-Next (MoE, Qwen)** | `llamacpp-club3090/qwen38-flash-next-multi8-q4kxl-moecache` | 🧪 experimental | 204800 | [multi8/unsloth-ud-q4kxl/moecache.yml](../models/qwen3.8-flash-next/llamacpp-club3090/compose/multi8/unsloth-ud-q4kxl/moecache.yml) | [#1117](https://github.com/noonghunna/club-3090/discussions/1117) | host RAM ≥ 110 GB |
-| **ThinkingCap Qwen3.8-27B** | `sgl/thinkingcap38-27b-multi8-fast` | 🐣 incubating | 262144 | [multi8/autoround-int4/mtp.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi8/autoround-int4/mtp.yml) | — |  |
-|  | `sgl/thinkingcap38-27b-multi8-max` | 🐣 incubating | 262144 | [multi8/fp8/mtp.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi8/fp8/mtp.yml) | — |  |
-|  | `sgl/thinkingcap38-27b-multi8-superfast` | 🐣 incubating | 262144 | [multi8/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi8/autoround-int4/dflash2.yml) | — |  |
-|  | `sgl/thinkingcap38-27b-multi8-supermax` | 🐣 incubating | 262144 | [multi8/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi8/fp8/dflash2.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi8-fast` | 🐣 incubating | 262144 | [multi8/autoround-int4/mtp.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/autoround-int4/mtp.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi8-max` | 🐣 incubating | 262144 | [multi8/fp8/mtp.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/fp8/mtp.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi8-superfast` | 🐣 incubating | 262144 | [multi8/autoround-int4/dflash2-fp8.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/autoround-int4/dflash2-fp8.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi8-supermax` | 🐣 incubating | 262144 | [multi8/fp8/dflash2-fp8.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/fp8/dflash2-fp8.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi8-ultrafast` | 🐣 incubating | 262144 | [multi8/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/autoround-int4/dflash2.yml) | — |  |
-|  | `vllm/thinkingcap38-27b-multi8-ultramax` | 🐣 incubating | 262144 | [multi8/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/fp8/dflash2.yml) | — |  |
+| **ThinkingCap Qwen3.8-27B** | `sgl/thinkingcap38-27b-multi8-fast` | 🧪 experimental | 262144 | [multi8/autoround-int4/mtp.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi8/autoround-int4/mtp.yml) | — |  |
+|  | `sgl/thinkingcap38-27b-multi8-max` | 🧪 experimental | 262144 | [multi8/fp8/mtp.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi8/fp8/mtp.yml) | — |  |
+|  | `sgl/thinkingcap38-27b-multi8-superfast` | 🧪 experimental | 262144 | [multi8/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi8/autoround-int4/dflash2.yml) | — |  |
+|  | `sgl/thinkingcap38-27b-multi8-supermax` | 🧪 experimental | 262144 | [multi8/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi8/fp8/dflash2.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi8-fast` | 🧪 experimental | 262144 | [multi8/autoround-int4/mtp.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/autoround-int4/mtp.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi8-max` | 🧪 experimental | 262144 | [multi8/fp8/mtp.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/fp8/mtp.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi8-superfast` | 🧪 experimental | 262144 | [multi8/autoround-int4/dflash2-fp8.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/autoround-int4/dflash2-fp8.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi8-supermax` | 🧪 experimental | 262144 | [multi8/fp8/dflash2-fp8.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/fp8/dflash2-fp8.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi8-ultrafast` | 🧪 experimental | 262144 | [multi8/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/autoround-int4/dflash2.yml) | — |  |
+|  | `vllm/thinkingcap38-27b-multi8-ultramax` | 🧪 experimental | 262144 | [multi8/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi8/fp8/dflash2.yml) | — |  |
 
 27 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table multi8 -->

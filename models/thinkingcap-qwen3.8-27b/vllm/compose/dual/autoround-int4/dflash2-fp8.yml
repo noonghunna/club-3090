@@ -18,7 +18,7 @@
 #   Max ctx:   262144 (full arch max — fp8 KV is 2× smaller than bf16, so unlike the
 #              ultrafast/bf16 tier this fits the full 262K).
 #   Genesis:   none
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Caveats:   New model 2026-09-23. BOOTED 2026-09-23 on the reference rig (2x 3090 PCIe, 230 W, vLLM v0.30.0) via an equivalent compose, and through switch.sh on THIS slug 2026-09-24 (verify-full PASS both times); decode 80.0 narrative / 157.6 code tok/s vs 84.0 / 154.0 for the Frozenlock sibling in the same session; prefill 1,768 @10K / 1,295 @90K; DFlash2 accept 2.9-6.4 (sibling 4.1-6.1) — the base-trained drafter converts on the fine-tune. Quality (8-pack) not yet run.
 #              LICENSE: PolyForm Small Business 1.0.0 + BottleCap's personal-use grant — commercial
 #              use by an organization that is not a small business needs a BottleCap license.

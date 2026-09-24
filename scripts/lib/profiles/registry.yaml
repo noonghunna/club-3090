@@ -4831,7 +4831,7 @@ entries:
     required_engine_features: []
     default_port: 8155
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of vllm/qwen38-27b-dual-fast (same compose; only weights, served name, container and port differ). BOOTED 2026-09-23 on the reference rig (2x 3090 PCIe, 230 W, vLLM v0.30.0) via an equivalent compose (verify-full 10/10), and through switch.sh on THIS slug 2026-09-24: verify-full 9/10 — the one fail is the 2+2 reasoning-length heuristic (41 chars < its 50-char floor): ThinkingCap's token-efficient thinking, engaged and extracted correctly, not a serving fault; decode 74.0 narrative / 101.0 code tok/s; prefill 1,720 @10K / 1,246 @90K; MTP accept len 3.6-5.0 at n=4; a 20K-token forced generation held accept 2.7-4.0 with 0 restarts (no #1052-class collapse). Quality (8-pack) not yet run. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -4877,7 +4877,7 @@ entries:
     required_engine_features: []
     default_port: 8156
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of vllm/qwen38-27b-dual-superfast (same compose; only weights, served name, container and port differ). BOOTED 2026-09-23 on the reference rig (2x 3090 PCIe, 230 W, vLLM v0.30.0) via an equivalent compose, and through switch.sh on THIS slug 2026-09-24 (verify-full PASS both times); decode 80.0 narrative / 157.6 code tok/s vs 84.0 / 154.0 for the Frozenlock sibling in the same session; prefill 1,768 @10K / 1,295 @90K; DFlash2 accept 2.9-6.4 (sibling 4.1-6.1) — the base-trained drafter converts on the fine-tune. Quality (8-pack) not yet run. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -4923,7 +4923,7 @@ entries:
     required_engine_features: []
     default_port: 8157
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of vllm/qwen38-27b-dual-ultrafast (same compose; only weights, served name, container and port differ). BOOTED 2026-09-24 on the reference rig (2x 3090 PCIe, 230 W, vLLM v0.30.0) through switch.sh on THIS slug: verify-full PASS; decode 108.3 narrative / 198.9 code tok/s vs 108.8/191.5 and 111.1/196.6 for the Frozenlock sibling (two boots, same day); prefill 1,778 @10K / 1,376 @90K; DFlash2 accept 5.0-6.7 on bench traffic; FA2 fp8-KV plugin verified. Quality (8-pack) not yet run. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -4976,7 +4976,7 @@ entries:
     required_engine_features: []
     default_port: 8158
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of vllm/qwen38-27b-dual-max (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5022,7 +5022,7 @@ entries:
     required_engine_features: []
     default_port: 8159
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of vllm/qwen38-27b-dual-supermax (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5068,7 +5068,7 @@ entries:
     required_engine_features: []
     default_port: 8160
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of vllm/qwen38-27b-dual-ultramax (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions:
       - dflash2
@@ -5122,7 +5122,7 @@ entries:
     required_engine_features: []
     default_port: 8161
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of vllm/qwen38-27b-multi4-fast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5168,7 +5168,7 @@ entries:
     required_engine_features: []
     default_port: 8162
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of vllm/qwen38-27b-multi4-superfast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5214,7 +5214,7 @@ entries:
     required_engine_features: []
     default_port: 8163
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of vllm/qwen38-27b-multi4-ultrafast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5260,7 +5260,7 @@ entries:
     required_engine_features: []
     default_port: 8164
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of vllm/qwen38-27b-multi4-max (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5306,7 +5306,7 @@ entries:
     required_engine_features: []
     default_port: 8165
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of vllm/qwen38-27b-multi4-supermax (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5352,7 +5352,7 @@ entries:
     required_engine_features: []
     default_port: 8166
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of vllm/qwen38-27b-multi4-ultramax (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5398,7 +5398,7 @@ entries:
     required_engine_features: []
     default_port: 8167
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of vllm/qwen38-27b-multi8-fast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5444,7 +5444,7 @@ entries:
     required_engine_features: []
     default_port: 8168
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of vllm/qwen38-27b-multi8-superfast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5490,7 +5490,7 @@ entries:
     required_engine_features: []
     default_port: 8169
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of vllm/qwen38-27b-multi8-ultrafast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5536,7 +5536,7 @@ entries:
     required_engine_features: []
     default_port: 8170
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of vllm/qwen38-27b-multi8-max (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5582,7 +5582,7 @@ entries:
     required_engine_features: []
     default_port: 8171
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of vllm/qwen38-27b-multi8-supermax (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5628,7 +5628,7 @@ entries:
     required_engine_features: []
     default_port: 8172
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of vllm/qwen38-27b-multi8-ultramax (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5674,7 +5674,7 @@ entries:
     required_engine_features: []
     default_port: 8173
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of sgl/qwen38-27b-dual-fast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5704,7 +5704,7 @@ entries:
     required_engine_features: []
     default_port: 8174
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of sgl/qwen38-27b-dual-max (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5734,7 +5734,7 @@ entries:
     required_engine_features: []
     default_port: 8175
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of sgl/qwen38-27b-dual-superfast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5764,7 +5764,7 @@ entries:
     required_engine_features: []
     default_port: 8176
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of sgl/qwen38-27b-multi4-fast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5794,7 +5794,7 @@ entries:
     required_engine_features: []
     default_port: 8177
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of sgl/qwen38-27b-multi4-max (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5824,7 +5824,7 @@ entries:
     required_engine_features: []
     default_port: 8178
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of sgl/qwen38-27b-multi4-superfast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5854,7 +5854,7 @@ entries:
     required_engine_features: []
     default_port: 8179
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of sgl/qwen38-27b-multi4-supermax (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5884,7 +5884,7 @@ entries:
     required_engine_features: []
     default_port: 8184
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of sgl/qwen38-27b-multi8-fast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5914,7 +5914,7 @@ entries:
     required_engine_features: []
     default_port: 8185
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of sgl/qwen38-27b-multi8-max (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5944,7 +5944,7 @@ entries:
     required_engine_features: []
     default_port: 8186
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the autoround-int4 weights — REPLICA of sgl/qwen38-27b-multi8-superfast (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false
@@ -5974,7 +5974,7 @@ entries:
     required_engine_features: []
     default_port: 8187
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "ThinkingCap-Qwen3.8-27B (bottlecapai reasoning fine-tune) on the fp8 weights — REPLICA of sgl/qwen38-27b-multi8-supermax (same compose; only weights, served name, container and port differ). NOT BOOTED — copied from the sibling, unvalidated. PolyForm Small Business 1.0.0 + BottleCap personal-use grant."
     weights_companions: []
     gateway: false

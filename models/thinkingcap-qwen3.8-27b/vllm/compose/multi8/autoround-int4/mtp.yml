@@ -37,7 +37,7 @@
 #              with `high` remapped to `xhigh` (patches/qwen38-reasoning-effort-template)
 #   Max ctx:   262144 — architectural ceiling, NOT measured on this checkpoint
 #   Genesis:   none
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Caveats:   New model 2026-09-23. NOT BOOTED — copied from the sibling, unvalidated.
 #              LICENSE: PolyForm Small Business 1.0.0 + BottleCap's personal-use grant — commercial
 #              use by an organization that is not a small business needs a BottleCap license.

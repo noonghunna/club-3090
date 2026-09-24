@@ -2,7 +2,7 @@
 
 Dated history for ThinkingCap-Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
-## 2026-09-24 — Onboard ThinkingCap-Qwen3.8-27B: 29 incubating replicas of the Qwen3.8 INT4 and FP8 slugs
+## 2026-09-24 — Onboard ThinkingCap-Qwen3.8-27B: 29 experimental replicas of the Qwen3.8 INT4 and FP8 slugs
 
 bottlecapai released ThinkingCap-Qwen3.8-27B, a reasoning fine-tune of Qwen3.8-27B, on 2026-09-23. Its
 `text_config` and chat template are identical to Qwen3.8-27B's, so the model serves from copies of the
@@ -16,7 +16,7 @@ which keeps the MTP head in BF16 (+0.37 GB over the official Qwen FP8).
 
 Each of the 29 slugs (`thinkingcap38-27b-<topology>-<tier>`) is a copy of its `qwen38-27b-…` sibling.
 Only the weights path, served name (`thinkingcap38-27b`), service and container names, and port differ.
-The patch mounts point at the Qwen3.8 tree. Every slug starts 🐣 incubating, with no gateway route.
+The patch mounts point at the Qwen3.8 tree. Every slug ships 🧪 experimental, like its Qwen3.8 sibling, with no gateway route.
 
 Booted on 2× 3090 at 230 W with vLLM v0.30.0, one fresh boot each:
 - `vllm/thinkingcap38-27b-dual-fast`: 74.0 / 101.0 tok/s against Frozenlock's 75.5 / 106.5. MTP acceptance held at

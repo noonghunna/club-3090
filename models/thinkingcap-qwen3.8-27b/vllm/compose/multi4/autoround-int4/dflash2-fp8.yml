@@ -20,7 +20,7 @@
 #   Max ctx:   262144 (full arch max — fp8 KV is 2× smaller than bf16, so unlike the
 #              ultrafast/bf16 tier this fits the full 262K).
 #   Genesis:   none
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Caveats:   New model 2026-09-23. NOT BOOTED — copied from the sibling, unvalidated.
 #              LICENSE: PolyForm Small Business 1.0.0 + BottleCap's personal-use grant — commercial
 #              use by an organization that is not a small business needs a BottleCap license.

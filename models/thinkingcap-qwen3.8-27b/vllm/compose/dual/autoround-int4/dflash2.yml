@@ -26,7 +26,7 @@
 #              config was capped at 204800 (~200K; pool 212,977 tok, hard ceiling ~213K)
 #              — see the history block below. MAX_MODEL_LEN still overrides for both.
 #   Genesis:   none
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Caveats:   New model 2026-09-23. BOOTED 2026-09-24 on the reference rig (2x 3090 PCIe, 230 W, vLLM v0.30.0) through switch.sh on THIS slug: verify-full PASS; decode 108.3 narrative / 198.9 code tok/s vs 108.8/191.5 and 111.1/196.6 for the Frozenlock sibling (two boots, same day); prefill 1,778 @10K / 1,376 @90K; DFlash2 accept 5.0-6.7 on bench traffic; FA2 fp8-KV plugin verified. Quality (8-pack) not yet run.
 #              LICENSE: PolyForm Small Business 1.0.0 + BottleCap's personal-use grant — commercial
 #              use by an organization that is not a small business needs a BottleCap license.
