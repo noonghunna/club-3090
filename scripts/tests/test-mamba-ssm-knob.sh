@@ -12,7 +12,8 @@
 # `MAMBA_SSM_CACHE_DTYPE` → `--mamba-ssm-cache-dtype` is the lever that works (+11.2% KV pool on the
 # dual-fast tier, measured 2026-09-24). This guard keeps it wired, keeps the comment honest, and runs
 # each compose's REAL entrypoint block to prove the default and the override resolve as documented:
-#   every compose (14): default bfloat16 (2026-09-24), `auto` reverts to the model's float32.
+#   every Qwen3.8-family vLLM compose (14 MTP + 24 DFlash): default bfloat16, `auto` reverts
+#   to the model's float32, and every `exec vllm serve` line actually passes MAMBA_ARGS.
 #   the CUDA-graph memory estimate is off by default on the two dual-fast composes ONLY.
 set -uo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -24,8 +25,10 @@ DUAL_FAST=(
   models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml
   models/thinkingcap-qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml
 )
-mapfile -t FILES < <(command grep -rlE 'MAMBA_CACHE_DTYPE' models/*/vllm/compose --include=*.yml | command grep -v _archive | sort)
-[[ ${#FILES[@]} -gt 0 ]] || { echo "✗ no compose carries MAMBA_CACHE_DTYPE — the file set this guard covers is gone" >&2; exit 1; }
+# Every Qwen3.8-family vLLM compose — MTP (14) and DFlash (24). Coverage is asserted, not assumed:
+# a new tier that forgets the knob would otherwise simply fall outside this guard's file set.
+mapfile -t FILES < <(ls models/qwen3.8-27b/vllm/compose/*/*/*.yml models/thinkingcap-qwen3.8-27b/vllm/compose/*/*/*.yml 2>/dev/null | command grep -v _archive | sort)
+[[ ${#FILES[@]} -gt 0 ]] || { echo "✗ no Qwen3.8-family vLLM compose found — the file set this guard covers is gone" >&2; exit 1; }
 
 # The real block: from `MAMBA_ARGS=()` to the ssm-dtype line, compose `$$` unescaped to `$`.
 block_of() { awk '/MAMBA_ARGS=\(\)/{f=1} f{print} f&&/mamba-ssm-cache-dtype|ssm cache dtype/&&/echo/{exit}' "$1" | sed 's/\$\$/$/g'; }
@@ -38,6 +41,9 @@ is_dual_fast() { local d; for d in "${DUAL_FAST[@]}"; do [[ "$d" == "$1" ]] && r
 for f in "${FILES[@]}"; do
   command grep -qE '^      - MAMBA_SSM_CACHE_DTYPE=\$\{MAMBA_SSM_CACHE_DTYPE:-\}$' "$f" \
     || fail "$f: MAMBA_SSM_CACHE_DTYPE not declared in environment: (docker would not forward it)"
+  # Delivery: a computed MAMBA_ARGS that no exec line passes is a silent no-op.
+  ex="$(command grep -c 'exec vllm serve' "$f")"; mx="$(command grep -c 'exec vllm serve.*MAMBA_ARGS\[@\]' "$f")"
+  [[ "$ex" -gt 0 && "$ex" == "$mx" ]] || fail "$f: $mx of $ex 'exec vllm serve' lines pass MAMBA_ARGS"
   command grep -q -- '--mamba-ssm-cache-dtype' "$f" || fail "$f: --mamba-ssm-cache-dtype not wired in the entrypoint"
   command grep -q 'store conv+ssm state in bf16' "$f" && fail "$f: still claims MAMBA_CACHE_DTYPE moves the SSM state"
   unset_args="$(resolve "$f")"
@@ -72,4 +78,4 @@ if [[ "$fails" -gt 0 ]]; then
   echo "test-mamba-ssm-knob: $fails failure(s) across ${#FILES[@]} composes" >&2
   exit 1
 fi
-echo "test-mamba-ssm-knob: ok (${#FILES[@]} composes default bfloat16; ${#DUAL_FAST[@]} dual-fast with the graph estimate off)"
+echo "test-mamba-ssm-knob: ok (${#FILES[@]} Qwen3.8-family composes default bfloat16; ${#DUAL_FAST[@]} dual-fast with the graph estimate off)"

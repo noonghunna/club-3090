@@ -114,6 +114,7 @@ services:
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
     environment:
+      - MAMBA_SSM_CACHE_DTYPE=${MAMBA_SSM_CACHE_DTYPE:-}
       - FA2_ARTIFACT_ID=${FA2_ARTIFACT_ID:-731d1942112a7cf35be4f0add0919072c06cac47e3bad4f674ff0157edad0e3f}
       - TP=${TP:-4}
       # Drafter toggle — docker only forwards what is declared here. The DEFAULT
@@ -220,6 +221,16 @@ services:
           exit 1 ;;
         esac
         DRAFTER=/root/.cache/huggingface/qwen3.8-27b-dflash2-w4a16
+        # -- SSM state dtype (club-3090 #1406 follow-up, 2026-09-24) ----------------
+        #   MAMBA_SSM_CACHE_DTYPE  DEFAULT bfloat16. For Qwen3.5-family models vLLM copies the HF
+        #                          config's mamba_ssm_dtype (float32) into --mamba-ssm-cache-dtype
+        #                          whenever that is `auto`, so the SSM state is fp32 unless this is
+        #                          set. bf16 halves the per-request SSM state charged to the KV pool.
+        #                          Set float32 (or auto = the model's float32) to revert.
+        MAMBA_ARGS=()
+        _ssm_dt="$${MAMBA_SSM_CACHE_DTYPE:-bfloat16}"
+        if [ "$$_ssm_dt" != "auto" ]; then MAMBA_ARGS+=(--mamba-ssm-cache-dtype "$$_ssm_dt"); fi
+        echo "[mamba] ssm cache dtype $$_ssm_dt" >&2
         SPEC_ARGS=()
         if [ "$$_spec_n" -gt 0 ]; then
           SPEC_ARGS=(--speculative-config "{\"method\":\"dflash\",\"model\":\"$$DRAFTER\",\"num_speculative_tokens\":$$_spec_n}")
@@ -256,7 +267,7 @@ services:
           echo "[sampler] instruct row (default): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
         fi
         SAMPLER_ARGS=(--override-generation-config "{\"temperature\":$$_temp,\"top_p\":$${TOP_P},\"top_k\":$${TOP_K:-20},\"min_p\":$${MIN_P:-0.0},\"presence_penalty\":$${PRESENCE_PENALTY},\"repetition_penalty\":$${REPEAT_PENALTY:-1.0}}")
-        exec vllm serve $$AR "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
+        exec vllm serve $$AR "$$@" "$${SPEC_ARGS[@]}" "$${MAMBA_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
       - --
     command:
       - --model
