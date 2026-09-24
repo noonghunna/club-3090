@@ -488,7 +488,7 @@ Migtissera's Qwen3.5-based dense 27B instruct/agentic fine-tune (`migtissera/Tes
 
 ## ThinkingCap-Qwen3.6-27B
 
-LeaderboardModel1's ThinkingCap — a **Qwen3.6-27B (qwen3_5) VL reasoning fine-tune**, AutoRound W4A16, served **W4A8** (int8 activations via `VLLM_MARLIN_INPUT_DTYPE=int8` + the shared `qwen-w4a8-int8-act` patches). Same `qwen35-dense` hybrid (48 linear + 16 full-attn, 64 total) + **working built-in MTP head** as Tess (`mtp.fc`@BF16). Vision-capable base, shipped **text-only**.
+bottlecapai's ThinkingCap — a **Qwen3.6-27B (qwen3_5) VL reasoning fine-tune**, AutoRound W4A16 (quantized by LeaderboardModel1), served **W4A8** (int8 activations via `VLLM_MARLIN_INPUT_DTYPE=int8` + the shared `qwen-w4a8-int8-act` patches). Same `qwen35-dense` hybrid (48 linear + 16 full-attn, 64 total) + **working built-in MTP head** as Tess (`mtp.fc`@BF16). Vision-capable base, shipped **text-only**.
 
 ### Dual-card (2× RTX 3090) — vLLM
 

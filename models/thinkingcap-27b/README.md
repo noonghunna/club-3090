@@ -1,6 +1,6 @@
 # ThinkingCap-Qwen3.6-27B — on 2× RTX 3090
 
-**Run [LeaderboardModel1's ThinkingCap-Qwen3.6-27B](https://huggingface.co/LeaderboardModel1/ThinkingCap-Qwen3.6-27B-AutoRound-W4A16-Tuning) — a reasoning fine-tune of Qwen3.6-27B — served as W4A8 (int8 activations) with built-in MTP, full 262K context, on 2× RTX 3090s.**
+**Run [bottlecapai's ThinkingCap-Qwen3.6-27B](https://huggingface.co/bottlecapai/ThinkingCap-Qwen3.6-27B) — a reasoning fine-tune of Qwen3.6-27B, in [LeaderboardModel1's AutoRound W4A16 quant](https://huggingface.co/LeaderboardModel1/ThinkingCap-Qwen3.6-27B-AutoRound-W4A16-Tuning) — served as W4A8 (int8 activations) with built-in MTP, full 262K context, on 2× RTX 3090s.**
 
 > **Top-of-class 27B W4 quality.** 8-pack **113/150 think-off · 120/150 think-on** — beats Tess-4-27B W4A16 (108/115) and the Qwen fast tier (109) on *both* legs, strongest on reasoning (InstructFollow 15/15, BugFind 15/15 think-on).
 
