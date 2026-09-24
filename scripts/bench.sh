@@ -2267,5 +2267,12 @@ fi
 # container and skip cleanly via the guard's own unavailable path.
 if [[ -z "${BENCH_MOCK:-}" ]]; then
   restart_guard_check "${_RESTARTS_BEFORE:-}" "${CONTAINER:-}" "bench" || _RESTART_RC=$?
-  [[ "${_RESTART_RC:-0}" == "1" ]] && exit 90
+  # ⚠️ An `if`, NOT `[[ … ]] && exit 90`. This is the script's LAST command, so the
+  # bare `&&` form's status IS bench.sh's exit code — and it is 1 whenever there
+  # was no restart. Every clean bench exited 1 from 39343b46 (2026-09-20) until this
+  # was fixed, and report.sh rendered each one FAIL. test-engine-restart-guard runs
+  # this exact block (the mock path above skips it, which is how it went unseen).
+  if [[ "${_RESTART_RC:-0}" == "1" ]]; then
+    exit 90
+  fi
 fi

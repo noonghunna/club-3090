@@ -105,5 +105,28 @@ out="$(CONTAINER=none restart_guard_snapshot)"
 if [[ -z "$out" ]]; then ok "snapshot: empty for CONTAINER=none"
 else bad "snapshot: empty for CONTAINER=none" "got '$out'"; fi
 
+# --- 8. bench.sh's CALLER: a clean run must exit 0 ---------------------------
+# The guard function above was correct all along; bench.sh's use of it was not.
+# Its tail was `[[ "${_RESTART_RC:-0}" == "1" ]] && exit 90` as the script's LAST
+# command, so a run with NO restart exited 1 — every clean bench, from 39343b46
+# until the fix, and report.sh rendered each one FAIL. No test saw it: the
+# BENCH_MOCK path skips this block entirely. So run bench.sh's REAL tail (from the
+# #1076 marker to EOF) under bench.sh's own `set -euo pipefail`, with the guard
+# stubbed to each of its three verdicts, BENCH_MOCK unset.
+BENCH_TAIL="$(awk '/^# ---- #1076: did the engine restart during this bench/{f=1} f' "$ROOT_DIR/scripts/bench.sh")"
+if [[ -z "$BENCH_TAIL" ]]; then
+  bad "bench.sh tail" "the #1076 marker is gone from scripts/bench.sh — this leg can no longer find the block it guards"
+else
+  for case in "0:0:clean run" "2:0:guard unavailable" "1:90:engine restarted"; do
+    guard_rc="${case%%:*}"; rest="${case#*:}"; want="${rest%%:*}"; label="${rest#*:}"
+    got=0
+    env -u BENCH_MOCK bash -c "set -euo pipefail
+restart_guard_check() { return $guard_rc; }
+$BENCH_TAIL" >/dev/null 2>&1 || got=$?
+    if [[ "$got" == "$want" ]]; then ok "bench.sh tail: $label ⇒ exit $want"
+    else bad "bench.sh tail: $label" "got exit $got, expected $want"; fi
+  done
+fi
+
 printf '\n  PASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
