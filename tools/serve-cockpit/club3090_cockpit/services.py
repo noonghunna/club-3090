@@ -5621,6 +5621,10 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
         # Weight-offload backend (catalog offload column) — same pattern;
         # "" when the contract didn't carry it (resident/older emit) → shows "—".
         object.__setattr__(row, "offload", str(d.get("offload") or ""))
+        # KV-cache offload tier the compose exposes ("opt-in" / "") — a different
+        # axis from `offload`; the offload column shows it only when the slug's
+        # weights are resident.
+        object.__setattr__(row, "kv_offload", str(d.get("kv_offload") or ""))
         # DYNAMIC expert-cache axis, orthogonal to `offload` (which is the
         # residency-capability axis). The offload COLUMN renders static/dynamic
         # from this; without it every CPU-offload slug reads "static".

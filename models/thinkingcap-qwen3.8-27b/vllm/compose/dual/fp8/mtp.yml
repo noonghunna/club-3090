@@ -341,6 +341,9 @@ services:
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
       - ../../../../../qwen3.8-27b/vllm/patches/vllm-flashinfer-decode-pin:/etc/club3090/flashinfer-decode-pin:ro
+      # KV offload disk tier (used only with KV_OFFLOAD_DISK=1). Default = the repo's gitignored
+      # kv-offload/; override with KV_OFFLOAD_DIR (an ABSOLUTE host path) in .env or the shell.
+      - ${KV_OFFLOAD_DIR:-../../../../../../kv-offload}:/kv-offload
     environment:
       # Drafter toggle — docker only forwards what is declared here. The DEFAULT
       # lives in the entrypoint, not in these lines, so it cannot drift.
@@ -398,6 +401,9 @@ services:
       - MAMBA_BLOCK_SIZE=${MAMBA_BLOCK_SIZE:-}
       - MAMBA_CACHE_DTYPE=${MAMBA_CACHE_DTYPE:-}
       - MAMBA_SSM_CACHE_DTYPE=${MAMBA_SSM_CACHE_DTYPE:-}
+      # KV offload tiers (off by default; see the entrypoint block).
+      - KV_OFFLOAD_GB=${KV_OFFLOAD_GB:-}
+      - KV_OFFLOAD_DISK=${KV_OFFLOAD_DISK:-}
       # DeepGEMM (vLLM's fp8-GEMM path) is built for Hopper (sm_90) + datacenter
       # Blackwell. Consumer Blackwell (5090 / PRO 6000 / GB10, sm_120/121) has no
       # recipe and hard-fails "recipe not found" at boot (disc #571).
@@ -523,10 +529,49 @@ services:
         _ssm_dt="$${MAMBA_SSM_CACHE_DTYPE:-bfloat16}"
         if [ "$$_ssm_dt" != "auto" ]; then MAMBA_ARGS+=(--mamba-ssm-cache-dtype "$$_ssm_dt"); fi
         echo "[mamba] ssm cache dtype $$_ssm_dt" >&2
+        # -- KV offload: prefix-cache tiers BELOW the GPU pool (off by default) ------------------
+        #   These never enlarge the GPU pool or live concurrency. Prompt blocks are COPIED down as they
+        #   are computed; when the GPU later drops a prefix, a returning request reloads it instead of
+        #   re-prefilling (dual-fast, v0.30.0: 80K-token prompt 59.4 s cold -> 1.5 s from RAM).
+        #   KV_OFFLOAD_GB       unset = off. GiB of host RAM for the first tier, TOTAL across both GPUs.
+        #                       Pinned at boot (reserved even when idle). Size it ABOVE the GPU KV pool
+        #                       (~36 KiB/token here): a smaller tier only mirrors what the GPU holds.
+        #                       vLLM's native OffloadingConnector: pinned RAM, async DMA.
+        #   KV_OFFLOAD_DISK=1   add a disk tier below RAM at /kv-offload (vLLM's fs secondary tier).
+        #                       Host dir = KV_OFFLOAD_DIR (default: the repo's gitignored kv-offload/).
+        #                       Survives restarts and model swaps (same config = same subdir).
+        #                       ⚠️ the fs tier has NO size cap — it grows until the disk is full,
+        #                       and its files are root-owned. Point KV_OFFLOAD_DIR at a dedicated volume.
+        #   vLLM rejects any KV connector with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True, so it is
+        #   dropped whenever offload is on.
+        OFFLOAD_ARGS=()
+        case "$${KV_OFFLOAD_DISK:-0}" in
+          0|1) ;;
+          *) echo "[kv-offload] KV_OFFLOAD_DISK='$$KV_OFFLOAD_DISK' — use 1 (disk tier on) or 0." >&2; exit 1 ;;
+        esac
+        if [ "$${KV_OFFLOAD_DISK:-0}" = "1" ] && [ -z "$${KV_OFFLOAD_GB:-}" ]; then
+          echo "[kv-offload] KV_OFFLOAD_DISK=1 needs KV_OFFLOAD_GB: every disk read stages through the RAM tier." >&2; exit 1
+        fi
+        if [ -n "$${KV_OFFLOAD_GB:-}" ]; then
+          case "$$KV_OFFLOAD_GB" in
+            *[!0-9.]*|.*|*.|*.*.*) echo "[kv-offload] KV_OFFLOAD_GB='$$KV_OFFLOAD_GB' is not a number of GiB." >&2; exit 1 ;;
+          esac
+          case "$${PYTORCH_CUDA_ALLOC_CONF:-}" in
+            *expandable_segments:True*) echo "[kv-offload] dropping PYTORCH_CUDA_ALLOC_CONF=$$PYTORCH_CUDA_ALLOC_CONF (vLLM rejects it with a KV connector)" >&2; unset PYTORCH_CUDA_ALLOC_CONF ;;
+          esac
+          _disk=""; if [ "$${KV_OFFLOAD_DISK:-0}" = "1" ]; then _disk=/kv-offload; fi
+          if [ -n "$$_disk" ]; then
+            _cpu_bytes="$$(python3 -c 'import sys; print(int(float(sys.argv[1]) * (1 << 30)))' "$$KV_OFFLOAD_GB")"
+            OFFLOAD_ARGS=(--kv-transfer-config "{\"kv_connector\":\"OffloadingConnector\",\"kv_role\":\"kv_both\",\"kv_connector_extra_config\":{\"spec_name\":\"TieringOffloadingSpec\",\"cpu_bytes_to_use\":$$_cpu_bytes,\"secondary_tiers\":[{\"type\":\"fs\",\"root_dir\":\"$$_disk\"}]}}")
+          else
+            OFFLOAD_ARGS=(--kv-offloading-size "$$KV_OFFLOAD_GB" --kv-offloading-backend native)
+          fi
+          echo "[kv-offload] $$KV_OFFLOAD_GB GiB host RAM (OffloadingConnector), disk tier $${_disk:-off}" >&2
+        fi
         if [ "$${_CUSTOM_AR_ENABLED:-$${_NVLINK_ENABLED:-0}}" = "1" ]; then
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}" "$${ASYNC_ARGS[@]}" "$${MAMBA_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}" "$${ASYNC_ARGS[@]}" "$${MAMBA_ARGS[@]}" "$${OFFLOAD_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
         else
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}" "$${ASYNC_ARGS[@]}" "$${MAMBA_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}" "$${ASYNC_ARGS[@]}" "$${MAMBA_ARGS[@]}" "$${OFFLOAD_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
         fi
       - --
     command:

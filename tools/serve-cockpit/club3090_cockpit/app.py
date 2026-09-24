@@ -287,11 +287,21 @@ def _offload_label(e: "CatalogEntry") -> str:
     distinguished nothing while hiding the cache axis entirely.
 
     Non-CPU-offload backends ("uva" / "prefetch") still render their own value.
+
+      * ``kv opt``   — weights are resident, but the compose exposes an OPTIONAL
+                       KV-cache offload tier (registry ``kv_offload`` == "opt-in":
+                       KV_OFFLOAD_GB host RAM, KV_OFFLOAD_DISK=1 adds disk). Off by
+                       default. A different axis from weight placement, shown here
+                       because no slug has both and a second column would be empty
+                       for all but five rows.
+
     "—" for a fully-resident slug or when the contract didn't carry it.
     """
     raw = (getattr(e.row, "offload", "") or "")
     if raw in ("residency", "tensor-override"):
         return "static" if raw == "residency" else "dynamic"
+    if not raw and (getattr(e.row, "kv_offload", "") or "") == "opt-in":
+        return "kv opt"
     return raw or "—"
 
 

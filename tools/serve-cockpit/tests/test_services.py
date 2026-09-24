@@ -816,6 +816,24 @@ class TestLoadCatalog:
         assert getattr(bare, "vision") is False
         assert getattr(bare, "act_format") == ""  # older emit → column shows "—"
 
+    def test_kv_offload_facet_and_offload_column_label(self):
+        """The registry ``kv_offload`` facet ("opt-in" on the five Qwen3.8-family dual
+        MTP slugs) attaches to the row and renders "kv opt" in the offload column —
+        but only when the weights are resident: weight placement keeps priority."""
+        from types import SimpleNamespace
+        from club3090_cockpit.app import _offload_label
+
+        kv = _variant_row_from_dict({"slug": "vllm/qwen38-27b-dual-fast", "port": 8113,
+                                     "offload": None, "kv_offload": "opt-in"})
+        assert getattr(kv, "kv_offload") == "opt-in"
+        assert _offload_label(SimpleNamespace(row=kv)) == "kv opt"
+        bare = _variant_row_from_dict({"slug": "x/y", "port": 1})
+        assert getattr(bare, "kv_offload") == ""  # older emit / not wired
+        assert _offload_label(SimpleNamespace(row=bare)) == "—"
+        both = _variant_row_from_dict({"slug": "x/moe", "port": 2,
+                                       "offload": "residency", "kv_offload": "opt-in"})
+        assert _offload_label(SimpleNamespace(row=both)) == "static"
+
     def test_variant_row_from_dict_attaches_sampler_profiles(self):
         """#1014 L2→L3: the per-mode model-card sampler rows join at emit and
         attach to the row (same pattern as the facets above) — the serve-confirm

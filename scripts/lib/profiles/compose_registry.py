@@ -37,6 +37,10 @@ STATUS_VALUES = (
     "deprecated",      # 🗑️ Deprecated — kept for reference; flagged for removal.
 )
 
+# `kv_offload` values: None = not wired; "opt-in" = the compose exposes the
+# KV-offload knob, off by default.
+KV_OFFLOAD_VALUES = (None, "opt-in")
+
 # Statuses that launch without --force. Everything else is "(NA)".
 FUNCTIONAL_STATUSES = frozenset({"production", "caveats"})
 
@@ -112,6 +116,13 @@ def _entry(
     # "host RAM" column so a user sees it BEFORE selecting a slug, rather than
     # discovering it at launch refusal. None = fully VRAM-resident, nothing to warn about.
     host_ram_gb=None,
+    # KV-cache offload tier the compose EXPOSES (distinct from `offload`, which is
+    # WEIGHT placement). None = not wired. "opt-in" = the compose carries the
+    # KV_OFFLOAD_GB / KV_OFFLOAD_DISK knob (vLLM native OffloadingConnector: a
+    # host-RAM prefix-cache tier, optional disk tier below it), OFF by default.
+    # Surfaced as "kv opt-in" in the c3 catalog offload column; test-kv-offload-knob
+    # asserts it matches the compose exactly (registry <-> OFFLOAD_ARGS).
+    kv_offload=None,
     chat_template="native",
     tp,
     max_ctx,
@@ -199,6 +210,10 @@ def _entry(
     category=None,
     weights_companions=None,
 ):
+    if kv_offload not in KV_OFFLOAD_VALUES:
+        raise ValueError(
+            f"{compose_path}: kv_offload={kv_offload!r} not in {KV_OFFLOAD_VALUES}"
+        )
     if status not in STATUS_VALUES:
         raise ValueError(
             f"{compose_path}: status={status!r} not in {STATUS_VALUES}"
@@ -217,6 +232,7 @@ def _entry(
         "offload": offload,
         "moe_cache": bool(moe_cache),
         "host_ram_gb": host_ram_gb,
+        "kv_offload": kv_offload,
         "chat_template": chat_template,
         "tp": tp,
         "pp": 1,

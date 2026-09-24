@@ -34,6 +34,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 1
     max_ctx: 32768
@@ -64,6 +65,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 262144
@@ -94,6 +96,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 262144
@@ -124,6 +127,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 262144
@@ -154,6 +158,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 262144
@@ -184,6 +189,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 262144
@@ -214,6 +220,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 4
     max_ctx: 262144
@@ -244,6 +251,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 4
     max_ctx: 262144
@@ -274,6 +282,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 1
     max_ctx: 65536
@@ -306,6 +315,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 262144
@@ -338,6 +348,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 1
     max_ctx: 200000
@@ -368,6 +379,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 1
     max_ctx: 200000
@@ -398,6 +410,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 200000
@@ -428,6 +441,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 1
     max_ctx: 150000
@@ -459,6 +473,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 1
     max_ctx: 200000
@@ -489,6 +504,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 1
     max_ctx: 163840
@@ -520,6 +536,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 200000
@@ -550,6 +567,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 102400
@@ -583,6 +601,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 163840
@@ -613,6 +632,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 163840
@@ -643,6 +663,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -673,6 +694,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 200000
@@ -703,6 +725,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 122880
@@ -733,6 +756,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 180000
@@ -763,6 +787,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 200000
@@ -793,6 +818,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 196608
@@ -823,6 +849,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -854,6 +881,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 163840
@@ -884,6 +912,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 262144
@@ -914,6 +943,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 196608
@@ -944,6 +974,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 196608
@@ -974,6 +1005,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 196608
@@ -1004,6 +1036,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -1034,6 +1067,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 1
     max_ctx: 8192
@@ -1065,6 +1099,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 2
     max_ctx: 131072
@@ -1095,6 +1130,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 2
     max_ctx: 262144
@@ -1126,6 +1162,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 2
     max_ctx: 229376
@@ -1157,6 +1194,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 4
     max_ctx: 262144
@@ -1187,6 +1225,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 2
     max_ctx: 262144
@@ -1218,6 +1257,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 2
     max_ctx: 262144
@@ -1248,6 +1288,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 1
     max_ctx: 262144
@@ -1278,6 +1319,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 1
     max_ctx: 262144
@@ -1308,6 +1350,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 262144
@@ -1338,6 +1381,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 262144
@@ -1368,6 +1412,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 128000
@@ -1401,6 +1446,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -1432,6 +1478,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 65536
@@ -1462,6 +1509,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -1493,6 +1541,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 196608
@@ -1524,6 +1573,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 1
     max_ctx: 176000
@@ -1554,6 +1604,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 2
     max_ctx: 262144
@@ -1584,6 +1635,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: gemma-canonical
     tp: 2
     max_ctx: 262144
@@ -1614,6 +1666,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 1
     max_ctx: 8192
@@ -1644,6 +1697,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 262144
@@ -1674,6 +1728,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 1
     max_ctx: 131072
@@ -1706,6 +1761,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 262144
@@ -1738,6 +1794,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 262144
@@ -1770,6 +1827,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -1800,6 +1858,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 262144
@@ -1830,6 +1889,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 131072
@@ -1861,6 +1921,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 121
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -1893,6 +1954,7 @@ entries:
     offload: residency
     moe_cache: true
     host_ram_gb: 99
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -1925,6 +1987,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 121
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 262144
@@ -1957,6 +2020,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 142
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -1991,6 +2055,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 142
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 204800
@@ -2025,6 +2090,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 142
+    kv_offload: null
     chat_template: native
     tp: 8
     max_ctx: 204800
@@ -2059,6 +2125,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2093,6 +2160,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 204800
@@ -2127,6 +2195,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 8
     max_ctx: 204800
@@ -2161,6 +2230,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2195,6 +2265,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 204800
@@ -2229,6 +2300,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 8
     max_ctx: 204800
@@ -2263,6 +2335,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 145
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2297,6 +2370,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 145
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 204800
@@ -2331,6 +2405,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 145
+    kv_offload: null
     chat_template: native
     tp: 8
     max_ctx: 204800
@@ -2365,6 +2440,7 @@ entries:
     offload: residency
     moe_cache: false
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2399,6 +2475,7 @@ entries:
     offload: residency
     moe_cache: false
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 204800
@@ -2433,6 +2510,7 @@ entries:
     offload: residency
     moe_cache: false
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 8
     max_ctx: 204800
@@ -2467,6 +2545,7 @@ entries:
     offload: residency
     moe_cache: false
     host_ram_gb: 145
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2501,6 +2580,7 @@ entries:
     offload: residency
     moe_cache: false
     host_ram_gb: 145
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 204800
@@ -2535,6 +2615,7 @@ entries:
     offload: residency
     moe_cache: false
     host_ram_gb: 145
+    kv_offload: null
     chat_template: native
     tp: 8
     max_ctx: 204800
@@ -2569,6 +2650,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2618,6 +2700,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 204800
@@ -2667,6 +2750,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 110
+    kv_offload: null
     chat_template: native
     tp: 8
     max_ctx: 204800
@@ -2716,6 +2800,7 @@ entries:
     offload: cpu-moe-split
     moe_cache: false
     host_ram_gb: 96
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2748,6 +2833,7 @@ entries:
     offload: cpu-moe-split
     moe_cache: false
     host_ram_gb: 118
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2780,6 +2866,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 156
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 204800
@@ -2813,6 +2900,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 156
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2845,6 +2933,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 156
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 204800
@@ -2877,6 +2966,7 @@ entries:
     offload: tensor-override
     moe_cache: true
     host_ram_gb: 156
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2910,6 +3000,7 @@ entries:
     offload: residency
     moe_cache: false
     host_ram_gb: 146
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2943,6 +3034,7 @@ entries:
     offload: residency
     moe_cache: false
     host_ram_gb: 86
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 204800
@@ -2976,6 +3068,7 @@ entries:
     offload: residency
     moe_cache: false
     host_ram_gb: 120
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 204800
@@ -3009,6 +3102,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -3039,6 +3133,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 131072
@@ -3071,6 +3166,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: froggeric
     tp: 2
     max_ctx: 262144
@@ -3102,6 +3198,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -3133,6 +3230,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 4
     max_ctx: 200000
@@ -3165,6 +3263,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -3197,6 +3296,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 262144
@@ -3244,6 +3344,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 262144
@@ -3274,6 +3375,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -3304,6 +3406,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 131072
@@ -3334,6 +3437,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 131072
@@ -3364,6 +3468,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 262144
@@ -3411,6 +3516,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 262144
@@ -3460,6 +3566,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 1
     max_ctx: 262144
@@ -3509,6 +3616,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: native
     tp: 2
     max_ctx: 262144
@@ -3555,6 +3663,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 2
     max_ctx: 163840
@@ -3585,6 +3694,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 4
     max_ctx: 262144
@@ -3615,6 +3725,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 8
     max_ctx: 262144
@@ -3645,6 +3756,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 4
     max_ctx: 262144
@@ -3675,6 +3787,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 8
     max_ctx: 262144
@@ -3705,6 +3818,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 2
     max_ctx: 262144
@@ -3735,6 +3849,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 4
     max_ctx: 262144
@@ -3765,6 +3880,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 8
     max_ctx: 262144
@@ -3795,6 +3911,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 2
     max_ctx: 262144
@@ -3825,6 +3942,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 4
     max_ctx: 262144
@@ -3855,6 +3973,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 8
     max_ctx: 262144
@@ -3885,6 +4004,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: opt-in
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 262144
@@ -3931,6 +4051,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -3977,6 +4098,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -4023,6 +4145,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 147456
@@ -4069,6 +4192,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -4115,6 +4239,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -4161,6 +4286,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 262144
@@ -4215,6 +4341,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -4261,6 +4388,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -4307,6 +4435,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: opt-in
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 262144
@@ -4353,6 +4482,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -4399,6 +4529,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -4445,6 +4576,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 262144
@@ -4491,6 +4623,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -4537,6 +4670,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -4583,6 +4717,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 262144
@@ -4636,6 +4771,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -4682,6 +4818,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -4728,6 +4865,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 1
     max_ctx: 65536
@@ -4774,6 +4912,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: opt-in
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 262144
@@ -4820,6 +4959,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: opt-in
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 262144
@@ -4866,6 +5006,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 262144
@@ -4912,6 +5053,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 262144
@@ -4965,6 +5107,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: opt-in
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 262144
@@ -5011,6 +5154,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 147456
@@ -5057,6 +5201,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 2
     max_ctx: 262144
@@ -5111,6 +5256,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -5157,6 +5303,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -5203,6 +5350,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -5249,6 +5397,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -5295,6 +5444,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -5341,6 +5491,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 4
     max_ctx: 262144
@@ -5387,6 +5538,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -5433,6 +5585,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -5479,6 +5632,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -5525,6 +5679,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -5571,6 +5726,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -5617,6 +5773,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: qwen38-reasoning-effort
     tp: 8
     max_ctx: 262144
@@ -5663,6 +5820,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 2
     max_ctx: 262144
@@ -5693,6 +5851,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 2
     max_ctx: 163840
@@ -5723,6 +5882,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 2
     max_ctx: 262144
@@ -5753,6 +5913,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 4
     max_ctx: 262144
@@ -5783,6 +5944,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 4
     max_ctx: 262144
@@ -5813,6 +5975,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 4
     max_ctx: 262144
@@ -5843,6 +6006,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 4
     max_ctx: 262144
@@ -5873,6 +6037,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 8
     max_ctx: 262144
@@ -5903,6 +6068,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 8
     max_ctx: 262144
@@ -5933,6 +6099,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 8
     max_ctx: 262144
@@ -5963,6 +6130,7 @@ entries:
     offload: null
     moe_cache: false
     host_ram_gb: null
+    kv_offload: null
     chat_template: null
     tp: 8
     max_ctx: 262144

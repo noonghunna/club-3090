@@ -86,6 +86,9 @@ VARIANT_KEYS = {
     # c3 catalog offload column: weight-offload backend — None (resident, the
     # default) / "uva" / "residency" / "tensor-override" / "prefetch".
     "offload", "host_ram_gb",
+    # KV-cache offload tier the compose exposes: None / "opt-in" (shown as
+    # "kv opt" in the same c3 column; a different axis from weight offload).
+    "kv_offload",
     # Per-mode model-card sampler rows (#1014 L2→L3) — {"instruct": …,
     # "thinking": …} when the card publishes them (qwen38-27b today), else null.
     "sampler_profiles",

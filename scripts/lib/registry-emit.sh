@@ -777,6 +777,10 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # Minimum HOST RAM (GB) for weight-offload slugs — a HARD GATE, surfaced so
             # c3 can show it BEFORE selection rather than at launch refusal.
             "host_ram_gb": (REG.get(d["slug"], {}) or {}).get("host_ram_gb"),
+            # KV-cache offload tier the compose exposes — None (not wired) / "opt-in"
+            # (KV_OFFLOAD_GB knob, off by default). A different axis from `offload`
+            # (weight placement); c3 shows it as "kv opt" in the same column.
+            "kv_offload": (REG.get(d["slug"], {}) or {}).get("kv_offload"),
             # Weights quant_label + FORMAT from the model profile (catalog
             # Weights column fallbacks) — see _weights_meta() above.
             "weights_quant_label": _weights_meta(

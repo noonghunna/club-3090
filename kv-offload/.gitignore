@@ -1,0 +1,5 @@
+# KV offload disk tier (gitignored runtime cache - KV blocks, can grow to hundreds of GB).
+# Mounted at /kv-offload by the Qwen3.8-family dual vLLM composes; the tier is only ENABLED when
+# KV_OFFLOAD_DIR is set (point that at a dedicated volume - the native fs tier has no size cap).
+*
+!.gitignore
