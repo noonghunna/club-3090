@@ -634,6 +634,9 @@ services:
         # ⚠️ HARD FLOOR: K >= 5 or the engine refuses to boot (max_num_reqs=0), and the
         # concurrency clamp is C = K // 5, so K=10 admits C=2. K=5 buys only ~11K more
         # tokens (~6%) while leaving 2 usable prefix slots — not worth it.
+        # --mamba-radix-cache-strategy: env seam, default auto (no-op — resolves
+        # to extra_buffer on both rigs). Sets k (slots/request) + r (clamp
+        # divisor); see the k/r note in this header + docs/engines/SGLANG.md.
         exec python3 -m sglang.launch_server \
           --model-path "$$M" \
           --tp-size 2 \
@@ -641,6 +644,7 @@ services:
           --quantization "${QUANTIZATION:-fp8}" \
           --kv-cache-dtype "${KV_CACHE_DTYPE:-fp8_e4m3}" \
           --mamba-ssm-dtype "${MAMBA_SSM_DTYPE:-bfloat16}" \
+          --mamba-radix-cache-strategy "${MAMBA_RADIX_CACHE_STRATEGY:-auto}" \
           --chunked-prefill-size "${CHUNKED_PREFILL_SIZE:-2048}" \
           --attention-backend "${ATTENTION_BACKEND:-flashinfer}" \
           --context-length "${CONTEXT_LENGTH:-163840}" \

@@ -565,6 +565,9 @@ services:
         # `cached_tokens: 0` explicitly. A consumer that reads a missing field as
         # "nothing was reused" cannot tell no-reuse from reporting-off — the same
         # misreading, one layer up. Read absent as UNKNOWN, not 0.
+        # --mamba-radix-cache-strategy: env seam, default auto (no-op — resolves
+        # to extra_buffer on both rigs). Sets k (slots/request) + r (clamp
+        # divisor); see the k/r note in this header + docs/engines/SGLANG.md.
         exec python3 -m sglang.launch_server \
           --model-path "$$M" \
           --tp-size 2 \
@@ -572,6 +575,7 @@ services:
           --quantization auto-round \
           --kv-cache-dtype "${KV_CACHE_DTYPE:-fp8_e4m3}" \
           --mamba-ssm-dtype "${MAMBA_SSM_DTYPE:-bfloat16}" \
+          --mamba-radix-cache-strategy "${MAMBA_RADIX_CACHE_STRATEGY:-auto}" \
           --chunked-prefill-size "${CHUNKED_PREFILL_SIZE:-2048}" \
           --attention-backend "${ATTENTION_BACKEND:-flashinfer}" \
           --context-length "${CONTEXT_LENGTH:-262144}" \
