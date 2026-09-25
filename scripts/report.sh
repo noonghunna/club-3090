@@ -1052,9 +1052,9 @@ if [[ -z "$CONTAINER" ]] && have docker && docker info >/dev/null 2>&1; then
 fi
 
 # Engine class — drives which probes run inside the container body. Inferred
-# from container name; user can override with ENGINE_KIND=vllm|llamacpp env var.
+# from container name; user can override with ENGINE_KIND=<engine-family> env var.
 case "${ENGINE_KIND:-}" in
-  vllm|llamacpp|sglang|unknown) ;;  # respect user override (sglang: club-3090#1261)
+  vllm|llamacpp|sglang|exllamav3|unknown) ;;  # respect user override (sglang: club-3090#1261)
   *)
     # Prefix arms live in scripts/lib/engine-kind.sh (club-3090#1282).
     ENGINE_KIND="$(engine_kind_from_container "$CONTAINER")"
@@ -1208,9 +1208,14 @@ else
     # Silent on single-GPU / no-capability rigs so the OK/WARN/INFO line is
     # always signal, never boilerplate. The normalized stream remains ordered,
     # so the classifier can isolate the current vLLM or SGLang boot.
-    _p2p_verdict_line="$(p2p_verdict "$(p2p_gpu_count)" "$(p2p_host_capability)" \
-      "$(printf '%s\n%s' "$_p2p_class_stream" "$p2p_env" | p2p_classify_engagement)")"
-    [[ -n "$_p2p_verdict_line" ]] && { echo; echo "**Interconnect verdict:** ${_p2p_verdict_line}"; }
+    if [[ "$ENGINE_KIND" == "exllamav3" ]]; then
+      echo
+      echo "**Interconnect verdict:** ℹ driver P2P capability is reported above; ExLlamaV3 layer-split transport does not use NCCL/custom all-reduce, so the shared engagement verdict is not applicable."
+    else
+      _p2p_verdict_line="$(p2p_verdict "$(p2p_gpu_count)" "$(p2p_host_capability)" \
+        "$(printf '%s\n%s' "$_p2p_class_stream" "$p2p_env" | p2p_classify_engagement)")"
+      [[ -n "$_p2p_verdict_line" ]] && { echo; echo "**Interconnect verdict:** ${_p2p_verdict_line}"; }
+    fi
     # Kernel-module flavor — the WHY behind a P2P result on GeForce cards. A
     # proprietary (closed) module refuses P2P; the open modules can grant it, with
     # `topo -p2p rw` above the functional proof. Only meaningful multi-GPU.

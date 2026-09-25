@@ -2154,6 +2154,18 @@ bench_interconnect_block() {
     *)        echo "  layer 1  driver P2P grant : REFUSED — topo -p2p reports no all-pairs OK; kernel module: ${flavor}" ;;
   esac
 
+  # ExLlamaV3 uses layer-split CUDA transfers, not NCCL collectives or a
+  # custom all-reduce kernel. The driver capability probe above still applies,
+  # but the NCCL/custom-AR layers and their shared verdict classifier do not.
+  # Reporting them as "unknown" would incorrectly suggest that interconnect
+  # setup failed (the same TabbyAPI-vs-llama.cpp classification trap as #1366).
+  if [[ "$ENGINE_KIND" == "exllamav3" ]]; then
+    echo "  layer 2  NCCL use         : n/a — ExLlamaV3 layer-split does not use NCCL collectives"
+    echo "  layer 3  engine custom-AR : n/a — ExLlamaV3 layer-split; no custom all-reduce kernel"
+    echo "  verdict  : ℹ interconnect capability is reported above; ExLlamaV3's layer-split transport is engine-specific and is not measured by the NCCL/custom-AR probes"
+    return 0
+  fi
+
   # Gather the ordered engine evidence once. p2p_engine_log_evidence keeps
   # vLLM and SGLang on the same classifier contract while reducing SGLang's
   # enormous server_args dict to a short boot marker.

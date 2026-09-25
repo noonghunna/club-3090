@@ -493,6 +493,9 @@ command grep -q 'moe_cache_cap=8192' <<<"$(cap_moe_cache_config "$ARGV")" \
 # third signal for a server whose argv we cannot read.
 command grep -q 'n-cpu-moe' <<<"$(cap_offload_detected 'llama-server --n-cpu-moe 20')" \
   || fail "--n-cpu-moe must trigger offload detection"
+# ExLlamaV3 uses a different spelling for its CPU-resident expert split.
+command grep -q 'cpu-moe-split-experts' <<<"$(cap_offload_detected 'python main.py --cpu-moe-split-experts 144')" \
+  || fail "--cpu-moe-split-experts must trigger offload detection"
 CAP_LOG="$TMP/end.log" && command grep -q 'CUDA_Host' <<<"$(cap_offload_detected '')" \
   || fail "a CUDA_Host model buffer line must trigger offload detection"
 echo "  ✓ argv/env fingerprint: KV type, offload signals (x3), moe-cache cap"

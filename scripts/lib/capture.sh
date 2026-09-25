@@ -308,21 +308,44 @@ cap_kv_type() {
 # ---------------------------------------------------------------------------
 # CPU-offload detection (item 3 — the gate for every moe-cache capture)
 # ---------------------------------------------------------------------------
-# Two independent signals, either is sufficient:
-#   argv     -ot / --override-tensor / --n-cpu-moe / --cpu-moe
-#   boot log a "CUDA_Host model buffer" allocation (weights parked in host RAM)
+# Signals are engine-specific, but all mean that at least part of the MoE
+# weights is resident outside GPU VRAM:
+#   llama.cpp argv  -ot / --override-tensor / --n-cpu-moe / --cpu-moe
+#   ExLlamaV3 argv  --cpu-moe-split-experts / --cpu-moe-threads
+#   boot log       a "CUDA_Host model buffer" allocation
+# For containerized TabbyAPI, the Python server argv is not visible in the host
+# /proc namespace, so inspect the container command as a last resort. This is
+# important for Qwen3.8-Flash-Next: its CPU-MoE path is configured with
+# --cpu-moe-split-experts, not any llama.cpp spelling.
 # Echoes the reason; returns 0 when offload is active.
 cap_offload_detected() {
-  local argv="${1:-}"
+  local argv="${1:-}" inspect_argv=""
   if [[ -n "$argv" ]]; then
     local f
-    for f in -ot --override-tensor --n-cpu-moe --cpu-moe -ncmoe; do
+    for f in -ot --override-tensor --n-cpu-moe --cpu-moe -ncmoe \
+             --cpu-moe-split-experts --cpu-moe-threads; do
       if cap_argv_has "$argv" "$f"; then echo "argv ${f}"; return 0; fi
+    done
+  fi
+  if [[ -z "$argv" && -n "${CONTAINER:-}" && "${CONTAINER:-}" != "none" ]] \
+     && cap_have docker && docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    # Config.Cmd/Entrypoint are JSON, but a literal flag match is sufficient and
+    # avoids depending on jq (the launcher path is stdlib-only).
+    inspect_argv="$(docker inspect "$CONTAINER" 2>/dev/null || true)"
+    for f in --cpu-moe-split-experts --cpu-moe-threads; do
+      if printf '%s\n' "$inspect_argv" | command grep -qF -- "\"$f\""; then
+        echo "container argv ${f}"; return 0
+      fi
     done
   fi
   if [[ -n "$CAP_LOG" && -r "$CAP_LOG" ]] \
      && command grep -qE 'CUDA_Host +model buffer|CPU +model buffer size' "$CAP_LOG" 2>/dev/null; then
     echo "boot log (CUDA_Host model buffer)"
+    return 0
+  fi
+  if [[ -n "$CAP_LOG" && -r "$CAP_LOG" ]] \
+     && command grep -qE 'cpu[-_]moe[-_]split[-_]experts|cpu[-_]moe[-_]threads|CPU-MoE' "$CAP_LOG" 2>/dev/null; then
+    echo "boot log (CPU-MoE/offload marker)"
     return 0
   fi
   return 1
