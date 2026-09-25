@@ -69,6 +69,36 @@ r="$(echo '' | p2p_classify_engagement)"
 r="$(printf '%s\n%s' '[nvlink] NVLINK_MODE=force_off — forcing PCIe mode (P2P off)' 'NCCL_P2P_LEVEL=PHB' | p2p_classify_engagement)"
 [[ "$r" == "off" ]] || fail "trail-over-env precedence (got $r)"
 
+# SGLang v0.5.20 has no [nvlink] STATE line, but its runtime gives us
+# stronger engine evidence: NCCL's loaded version and the custom communicator's
+# successful initialization. These are real pinned-image wordings.
+_sgl_raw=$(cat <<'EOF'
+[2026-09-25 02:37:55] server_args={'tp_size': 2, 'disable_custom_all_reduce': False}
+[2026-09-25 02:38:08 TP0] sglang is using nccl==2.30.7
+[2026-09-25 02:38:26 TP0] All Reduce config: symmetric_memory = 20.01 MB, local_buffer = 2.00 MB, multicast = False, pull = True
+EOF
+)
+_sgl_evidence="$(printf '%s\n' "$_sgl_raw" | p2p_engine_log_evidence)"
+assert_contains "$_sgl_evidence" "[sglang] BOOT disable_custom_all_reduce=False"
+assert_contains "$_sgl_evidence" "sglang is using nccl==2.30.7"
+assert_contains "$_sgl_evidence" "All Reduce config:"
+r="$(printf '%s\n' "$_sgl_evidence" | p2p_classify_engagement)"
+[[ "$r" == "on" ]] || fail "SGLang All Reduce config -> custom AR on (got $r)"
+# A request to enable is not runtime proof: without the init line it stays unknown.
+r="$(printf '%s' "[sglang] BOOT disable_custom_all_reduce=False" | p2p_classify_engagement)"
+[[ "$r" == "unknown" ]] || fail "SGLang requested-on without init proof -> unknown (got $r)"
+# The final boot marker owns the lines after it. Never leak an earlier success
+# into an operator-disabled restart.
+r="$(printf '%s\n%s' "$_sgl_evidence" "[sglang] BOOT disable_custom_all_reduce=True" | p2p_classify_engagement)"
+[[ "$r" == "nccl_only_operator" ]] || fail "latest SGLang operator-disabled boot wins (got $r)"
+# SGLang copied the same topology/P2P gates but names its classes differently.
+r="$(printf '%s\n' '[sglang] BOOT disable_custom_all_reduce=False' 'CustomAllReduceV2 is disabled because your platform lacks GPU P2P capability or P2P test failed. To silence this warning, specify disable_custom_all_reduce=True explicitly.' | p2p_classify_engagement)"
+[[ "$r" == "nccl_only_degraded" ]] || fail "SGLang P2P veto -> degraded (got $r)"
+r="$(printf '%s\n' '[sglang] BOOT disable_custom_all_reduce=False' "CustomAllreduce is disabled because it's not supported on more than two PCIe-only GPUs." | p2p_classify_engagement)"
+[[ "$r" == "nccl_only_gated" ]] || fail "SGLang topology veto -> gated (got $r)"
+unset _sgl_raw _sgl_evidence
+echo "  ✓ SGLang runtime: NCCL + custom-AR init classified; restart epoch and vetoes preserved"
+
 # ── 3. capability probes via faked nvidia-smi ────────────────────────────────
 mk_smi() { cat > "$TMP/nvidia-smi" <<EOF
 #!/usr/bin/env bash

@@ -2130,7 +2130,7 @@ bench_interconnect_block() {
   declare -F p2p_gpu_count >/dev/null || return 0
   command -v nvidia-smi >/dev/null 2>&1 || return 0
 
-  local ngpu cap flavor eng_text nccl_line l3 verdict
+  local ngpu cap flavor eng_text nccl_line nccl_runtime l3 verdict
   ngpu="$(p2p_gpu_count 2>/dev/null || echo 0)"
 
   echo ""
@@ -2154,9 +2154,20 @@ bench_interconnect_block() {
     *)        echo "  layer 1  driver P2P grant : REFUSED — topo -p2p reports no all-pairs OK; kernel module: ${flavor}" ;;
   esac
 
+  # Gather the ordered engine evidence once. p2p_engine_log_evidence keeps
+  # vLLM and SGLang on the same classifier contract while reducing SGLang's
+  # enormous server_args dict to a short boot marker.
+  eng_text=""
+  if [[ "${CONTAINER:-}" != "none" ]] && command -v docker >/dev/null 2>&1 \
+     && docker inspect "${CONTAINER}" >/dev/null 2>&1; then
+    eng_text="$(docker logs "$CONTAINER" 2>&1 | p2p_engine_log_evidence || true)"
+  fi
+
   # ---- layer 2: NCCL use ---------------------------------------------------
   # Container env first (the serving process's RESOLVED value, post-entrypoint),
-  # then the bare-metal server's /proc environ, then our own.
+  # then the bare-metal server's /proc environ. SGLang also logs successful
+  # NCCL initialization; report it even when transport policy is left at the
+  # engine default and therefore has no NCCL_* env override.
   nccl_line=""
   if [[ "${CONTAINER:-}" != "none" ]] && command -v docker >/dev/null 2>&1 \
      && docker inspect "${CONTAINER}" >/dev/null 2>&1; then
@@ -2173,23 +2184,19 @@ bench_interconnect_block() {
       [[ -n "$got" ]] && nccl_line="${nccl_line}${nccl_line:+ }${v}=${got}"
     done
   fi
-  if [[ -n "$nccl_line" ]]; then
+  nccl_runtime="$(printf '%s\n' "$eng_text" | command grep -F 'sglang is using nccl==' | tail -n 1 \
+    | sed -n 's/.*\(sglang is using nccl==[^[:space:]]*\).*/\1/p')"
+  if [[ -n "$nccl_runtime" && -n "$nccl_line" ]]; then
+    echo "  layer 2  NCCL use         : initialized — ${nccl_runtime}; policy: ${nccl_line}"
+  elif [[ -n "$nccl_runtime" ]]; then
+    echo "  layer 2  NCCL use         : initialized — ${nccl_runtime}; P2P policy: engine default (no NCCL_P2P*/NVLINK_MODE override)"
+  elif [[ -n "$nccl_line" ]]; then
     echo "  layer 2  NCCL use         : ${nccl_line}"
   else
     echo "  layer 2  NCCL use         : no NCCL_P2P*/NVLINK_MODE in the serving environment (engine default)"
   fi
 
   # ---- layer 3: engine custom-AR -------------------------------------------
-  # The classifier wants the same text report.sh feeds it: the [nvlink] decision
-  # trail + vLLM's own gate line + the resolved env.
-  eng_text=""
-  if [[ "${CONTAINER:-}" != "none" ]] && command -v docker >/dev/null 2>&1 \
-     && docker inspect "${CONTAINER}" >/dev/null 2>&1; then
-    # ⚠️ NO head/-m1. The classifier slices the log to the CURRENT BOOT using the
-    # last [nvlink] STATE line; taking the FIRST matches hands it an older boot's
-    # record and it reports the wrong rig (#1332 review). Feed the log in order.
-    eng_text="$(docker logs "$CONTAINER" 2>&1 | command grep -E '\[nvlink\]|Custom allreduce is disabled|disable_custom_all_reduce=True' || true)"
-  fi
   if [[ "$ENGINE_KIND" == "llamacpp" || "${CONTAINER:-}" == "none" ]]; then
     # llama.cpp/ik-llama split layers across cards with plain copies — there is
     # no custom all-reduce kernel to engage or veto. Saying "off" would read as
@@ -2197,14 +2204,14 @@ bench_interconnect_block() {
     l3="engine: ${ENGINE_KIND/llamacpp/llama.cpp} — custom-AR n/a"
   else
     case "$(printf '%s\n%s' "$eng_text" "$nccl_line" | p2p_classify_engagement 2>/dev/null || echo unknown)" in
-      on)        l3="ENGAGED — engine reports its custom all-reduce ON" ;;
+      on)        l3="ENGAGED — engine initialized its custom all-reduce kernel" ;;
       nccl_only_operator) l3="custom-AR OFF (operator), P2P LIVE — --disable-custom-all-reduce / DISABLE_CUSTOM_ALL_REDUCE=1. Peer transfers still go via NCCL. Healthy, deliberate" ;;
-      nccl_only_gated)    l3="custom-AR OFF (engine-gated), P2P LIVE — vLLM's NVLink-only gate at world>2 (#786). Peer transfers still go via NCCL. Healthy" ;;
+      nccl_only_gated)    l3="custom-AR OFF (engine-gated), P2P LIVE — the vLLM/SGLang NVLink-only gate at world>2 (#786). Peer transfers still go via NCCL. Healthy" ;;
       nccl_only_degraded) l3="⚠️ custom-AR OFF (P2P BROKEN) — the engine refused its kernel because peer access is missing or its P2P TEST FAILED. NOT an operator choice and NOT healthy; the grant can be advertised while transfers fail (#873). Run scripts/p2p-validate.sh" ;;
       nccl_only_nolib)    l3="custom-AR unavailable — this image has no custom all-reduce library. Peer transfers still go via NCCL" ;;
       off)       l3="OFF — the serving container resolved to PCIe/no-P2P mode" ;;
       requested) l3="REQUESTED but UNVERIFIED — P2P forced on without a driver grant (#688)" ;;
-      *)         l3="unknown — no [nvlink] boot line and no engine gate line in the log" ;;
+      *)         l3="unknown — no current-boot custom all-reduce initialization or veto line" ;;
     esac
   fi
   echo "  layer 3  engine custom-AR : ${l3}"

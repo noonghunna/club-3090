@@ -462,12 +462,29 @@ for want in "kv=q8_0" "threads=24" "ngl=99" "split=1,1" "ubatch=2048"; do
   command grep -q -- "$want" <<<"$fp" || fail "argv fingerprint missing $want: $fp"
 done
 [[ "$(cap_kv_type "$ARGV")" == "q8_0 (source: argv)" ]] || fail "KV type not read from argv"
+cat > "$TMP/sglang-kv.log" <<'EOF'
+[old boot] server_args={'kv_cache_dtype': 'fp8_e5m2'}
+[old boot] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 100
+[current boot] server_args={'tp_size': 2, 'kv_cache_dtype': 'fp8_e4m3'}
+EOF
+CAP_PROPS_TRIED=1; CAP_PROPS=""; CAP_LOG="$TMP/sglang-kv.log"
+v="$(cap_kv_type '' || true)"
+[[ "$v" == "fp8_e4m3 (source: SGLang server_args)" ]] \
+  || fail "SGLang KV type must come from the latest server_args boot, got: '$v'"
+printf '%s\n' '[boot] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 177667' \
+  > "$TMP/sglang-kv-allocation.log"
+CAP_LOG="$TMP/sglang-kv-allocation.log"
+v="$(cap_kv_type '' || true)"
+[[ "$v" == "torch.float8_e4m3fn (source: SGLang allocation log)" ]] \
+  || fail "SGLang allocation-log KV dtype not captured, got: '$v'"
 # With no -ctk/-ctv the llama.cpp default is f16 — a fact the reader can act on,
 # where "unavailable" is not. Only inferred once the engine family is identified.
-CAP_LOG="$TMP/end.log" v="$(cap_kv_type 'llama-server -m /m/x.gguf -ngl 99' || true)"
+CAP_LOG="$TMP/end.log"
+v="$(cap_kv_type 'llama-server -m /m/x.gguf -ngl 99' || true)"
 [[ "$v" == "f16 (engine default; no -ctk/-ctv in argv)" ]] \
   || fail "a llama.cpp run with no KV flag should report the engine default, got: '$v'"
-CAP_LOG="" CAP_PROPS_TRIED=1 CAP_PROPS="" v="$(cap_kv_type '' 2>/dev/null || echo UNAVAILABLE)"
+CAP_LOG=""; CAP_PROPS_TRIED=1; CAP_PROPS=""
+v="$(cap_kv_type '' 2>/dev/null || echo UNAVAILABLE)"
 [[ "$v" == "UNAVAILABLE" ]] || fail "with no argv and no identifiable engine, KV must stay unavailable, got: '$v'"
 command grep -q 'argv -ot' <<<"$(cap_offload_detected "$ARGV")" || fail "-ot must trigger offload detection"
 command grep -q 'moe_cache_cap=8192' <<<"$(cap_moe_cache_config "$ARGV")" \

@@ -269,6 +269,19 @@ cap_kv_type() {
   v="$(cap_props_get "default_generation_settings.params.cache_type_k" || true)"
   [[ -n "$v" ]] && { echo "$v (source: /props)"; return 0; }
   if [[ -n "$CAP_LOG" && -r "$CAP_LOG" ]]; then
+    # SGLang runs under python inside Docker, so its argv is not normally visible
+    # through the host /proc scan. Its server_args dump is the current boot's
+    # resolved configuration and appears before allocation. Prefer the LAST dump
+    # so a restarted container cannot leak an earlier boot's KV type.
+    v="$(command grep -E 'server_args=.*kv_cache_dtype' "$CAP_LOG" 2>/dev/null | tail -1 \
+         | sed -nE "s/.*['\"]kv_cache_dtype['\"][[:space:]]*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/p" || true)"
+    [[ -n "$v" ]] && { echo "$v (source: SGLang server_args)"; return 0; }
+    # Some SGLang versions omit the dict dump but still announce the dtype when
+    # the cache is allocated. Keep the framework's exact runtime spelling
+    # (for example torch.float8_e4m3fn) rather than guessing an alias.
+    v="$(command grep -oE 'KV Cache is allocated\. dtype: [^,[:space:]]+' "$CAP_LOG" 2>/dev/null \
+         | tail -1 | sed -E 's/.*dtype: //' || true)"
+    [[ -n "$v" ]] && { echo "$v (source: SGLang allocation log)"; return 0; }
     v="$(command grep -oE 'type_k *= *[A-Za-z0-9_]+|cache_type_k *= *[A-Za-z0-9_]+' "$CAP_LOG" 2>/dev/null \
          | tail -1 | sed -E 's/.*= *//' || true)"
     [[ -n "$v" ]] && { echo "$v (source: boot log)"; return 0; }

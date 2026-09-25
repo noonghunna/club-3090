@@ -1188,37 +1188,26 @@ else
     # guess whether P2P was engaged (the gap that forced asks on #446 / #488).
     # Displayed to the user AND fed to the classifier. head -8 would drop the
     # STATE line on a restarted container (several boots of trail in one log),
-    # silently downgrading classification to the legacy prose path; keep the
-    # last 8 so the current boot's record survives (#1332 review).
-    nvlink_boot=$(docker logs "$CONTAINER" 2>&1 | command grep -E '\[nvlink\]' | tail -8)
-    p2p_env=$(docker exec "$CONTAINER" env 2>/dev/null | command grep -E '^(NCCL_P2P|NVLINK_MODE|NCCL_CUMEM)=' | sort)
-    # vLLM's runtime custom-AR veto (world>2 without NVLink — its gate never
-    # consults peer access). Fed to the classifier so the verdict can't claim
-    # "custom all-reduce ON" that vLLM already vetoed (#786).
-    # ⚠️ NO -m1: the classifier needs the CURRENT boot's veto, and -m1 returns the
-    # FIRST in the log, which after a restart belongs to an earlier boot (#1332).
-    vllm_ar_gate=$(docker logs "$CONTAINER" 2>&1 | command grep -E 'Custom allreduce is disabled|disable_custom_all_reduce=True' || true)
+    # silently downgrading classification to the legacy prose path. The shared
+    # normalizer also emits a compact SGLang BOOT marker for the same isolation.
+    _p2p_class_stream="$(docker logs "$CONTAINER" 2>&1 | p2p_engine_log_evidence || true)"
+    nvlink_boot="$(printf '%s\n' "$_p2p_class_stream" | command grep -F '[nvlink]' | tail -8)"
+    p2p_env="$(docker exec "$CONTAINER" env 2>/dev/null | command grep -E '^(NCCL_P2P|NVLINK_MODE|NCCL_CUMEM)=' | sort)"
+    engine_ar_runtime="$(printf '%s\n' "$_p2p_class_stream" | command grep -E 'Custom allreduce is disabled|CustomAllreduce is disabled|CustomAllReduceV2 is disabled|disable_custom_all_reduce=True|\[sglang\]|sglang is using nccl==|All Reduce config:' || true)"
     echo "**Interconnect / P2P engagement:**"
-    if [[ -n "$nvlink_boot" || -n "$p2p_env" || -n "$vllm_ar_gate" ]]; then
+    if [[ -n "$nvlink_boot" || -n "$p2p_env" || -n "$engine_ar_runtime" ]]; then
       echo '```'
       [[ -n "$nvlink_boot" ]] && echo "$nvlink_boot"
-      [[ -n "$vllm_ar_gate" ]] && { echo "# vLLM runtime:"; echo "$vllm_ar_gate"; }
+      [[ -n "$engine_ar_runtime" ]] && { echo "# engine runtime:"; echo "$engine_ar_runtime"; }
       [[ -n "$p2p_env" ]] && { echo "# resolved container env:"; echo "$p2p_env"; }
       echo '```'
     else
-      echo "_No \`[nvlink]\` boot line or NCCL_P2P/NVLINK_MODE env found — P2P engagement undetermined (single-GPU, a non-NCCL engine like llama.cpp, or an entrypoint predating detect_nvlink.sh)._"
+      echo "_No \`[nvlink]\` boot line, engine all-reduce line, or NCCL_P2P/NVLINK_MODE env found — P2P engagement undetermined (single-GPU, a non-NCCL engine like llama.cpp, or an entrypoint predating detect_nvlink.sh)._"
     fi
     # Cross-referenced VERDICT (capability x engagement — the #488/#158 matrix).
     # Silent on single-GPU / no-capability rigs so the OK/WARN/INFO line is
-    # always signal, never boilerplate.
-    # ⚠️ ONE ORDERED STREAM, not the display variables reassembled. Those are
-    # gathered separately (trail, then every veto, then env), so a veto from an
-    # EARLIER boot lands after the current boot's STATE line and the epoch slice
-    # is defeated — it condemns a healthy boot, or clears a broken one. Removing
-    # `grep -m1` above made that strictly worse by feeding every boot's vetoes.
-    # The display vars stay as they are; classification reads the log in order.
-    _p2p_class_stream="$(docker logs "$CONTAINER" 2>&1 \
-      | command grep -E '\[nvlink\]|Custom allreduce is disabled|disable_custom_all_reduce=True' || true)"
+    # always signal, never boilerplate. The normalized stream remains ordered,
+    # so the classifier can isolate the current vLLM or SGLang boot.
     _p2p_verdict_line="$(p2p_verdict "$(p2p_gpu_count)" "$(p2p_host_capability)" \
       "$(printf '%s\n%s' "$_p2p_class_stream" "$p2p_env" | p2p_classify_engagement)")"
     [[ -n "$_p2p_verdict_line" ]] && { echo; echo "**Interconnect verdict:** ${_p2p_verdict_line}"; }
