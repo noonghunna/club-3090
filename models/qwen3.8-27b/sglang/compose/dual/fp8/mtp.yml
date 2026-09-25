@@ -460,7 +460,12 @@ services:
             export SGLANG_HICACHE_FILE_BACKEND_MIN_FREE_SPACE=20Gi
             # SGLang caps each GPU's files separately (and each model's), so split the total.
             if [ -n "$${KV_OFFLOAD_DISK_GB:-}" ]; then export SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE="$$(( KV_OFFLOAD_DISK_GB * 1024 / 2 ))Mi"; fi
-            OFFLOAD_ARGS+=(--hicache-storage-backend file)
+            # wait_complete, not SGLang's default `timeout` prefetch policy. The default gives a storage
+            # prefetch 2 s + 0.1 s per 1K tokens, then silently re-prefills. On a large tier directory
+            # (~850K files per GPU) reading a 40K prompt back took 7.4 s against a 5.9 s budget, so
+            # every disk hit was thrown away (2026-09-25). Waiting for pages already found on disk
+            # always beats a re-prefill at ~1,500 tok/s.
+            OFFLOAD_ARGS+=(--hicache-storage-backend file --hicache-storage-prefetch-policy wait_complete)
             _disk="/kv-offload, cap $${KV_OFFLOAD_DISK_GB:-none} GiB, keeps 20 GiB free"
           fi
           echo "[kv-offload] $$KV_OFFLOAD_GB GiB host RAM (HiCache, $$_per_gpu GB per GPU), SSM states per path 1, eviction $${RADIX_EVICTION_POLICY:-slru}, disk tier $$_disk" >&2

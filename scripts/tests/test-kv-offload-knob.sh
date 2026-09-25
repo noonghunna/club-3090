@@ -118,8 +118,8 @@ for f in "${SFILES[@]}"; do
   out="$(sresolve "$f" KV_OFFLOAD_GB=64 RADIX_EVICTION_POLICY=lru)"
   [[ "$out" == *"--mamba-max-states-per-path"* && "$out" != *slru* ]] || fail "$f: an explicit RADIX_EVICTION_POLICY must not be overridden with slru (got: ${out//$'\n'/ })"
   out="$(sresolve "$f" KV_OFFLOAD_GB=64 KV_OFFLOAD_DISK=1 KV_OFFLOAD_DISK_GB=3)"
-  [[ "$out" == *$'--hicache-storage-backend\nfile'* && "$out" == *"DIR=/kv-offload MAX=1536Mi MINFREE=20Gi"* ]] \
-    || fail "$f: KV_OFFLOAD_DISK=1 + DISK_GB=3 did not resolve to the file backend at /kv-offload, 1536Mi per GPU, 20Gi floor (got: ${out//$'\n'/ })"
+  [[ "$out" == *$'--hicache-storage-backend\nfile\n--hicache-storage-prefetch-policy\nwait_complete'* && "$out" == *"DIR=/kv-offload MAX=1536Mi MINFREE=20Gi"* ]] \
+    || fail "$f: KV_OFFLOAD_DISK=1 + DISK_GB=3 did not resolve to the file backend at /kv-offload with wait_complete prefetch, 1536Mi per GPU, 20Gi floor (got: ${out//$'\n'/ })"
   for bad in "KV_OFFLOAD_GB=64G" "KV_OFFLOAD_GB=1" "KV_OFFLOAD_DISK=1" "KV_OFFLOAD_GB=64 KV_OFFLOAD_DISK=yes" \
              "KV_OFFLOAD_GB=64 KV_OFFLOAD_DISK_GB=3" "KV_OFFLOAD_GB=64 KV_OFFLOAD_DISK=1 KV_OFFLOAD_DISK_GB=2.5"; do
     # shellcheck disable=SC2086

@@ -139,6 +139,11 @@ Shipped as the opt-in `KV_OFFLOAD_GB` knob (plus `KV_OFFLOAD_DISK` / `KV_OFFLOAD
 (`cache_source="storage"`, prefetch hit 100%). `KV_OFFLOAD_DISK_GB` caps it (split per GPU; measured 1.43 GiB
 per GPU under a 1.5 GiB cap after 3 sessions, LRU eviction). ⚠️ About **one file per token per GPU** (a 40K session
 = ~89K files), all root-owned; the cap is per model; a 20 GiB free-space floor is always set.
+⚠️ **The knob sets `--hicache-storage-prefetch-policy wait_complete`, deliberately.** SGLang's default `timeout`
+policy gives a storage prefetch `2 s + 0.1 s per 1K tokens` and then silently re-prefills. On a large tier directory
+(~850K files per GPU) a 40K prompt took 7.4 s to read back against a 5.9 s budget, so every disk hit was discarded;
+with `wait_complete` the same directory served it in 7.38 s vs 28.7 s cold (2026-09-25). A fresh directory read back
+in 4.6 s, already ~80% of the default budget. `scripts/kv-offload-probe.py --disk` checks a tier end to end.
 
 **GPU pool (`MAX_MAMBA_CACHE_SIZE`, dual-fast pair).** Default K=20 since 2026-09-25 (was auto-fit 63): 548,520
 tokens holds two full 262,144-token sessions (measured: two concurrent ~261.9K prompts, both needles recalled).
