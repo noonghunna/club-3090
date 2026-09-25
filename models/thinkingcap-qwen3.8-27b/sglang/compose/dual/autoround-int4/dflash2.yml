@@ -568,6 +568,15 @@ services:
         # --mamba-radix-cache-strategy: env seam, default auto (no-op — resolves
         # to extra_buffer on both rigs). Sets k (slots/request) + r (clamp
         # divisor); see the k/r note in this header + docs/engines/SGLANG.md.
+        # Validate the seam value before use: no_buffer would crash-loop on this
+        # pin (v0.5.20 mamba_hook asserts --disable-overlap-schedule for it, which
+        # these composes do not expose), so it hard-fails with a readable line
+        # instead of a bare assertion.
+        case "${MAMBA_RADIX_CACHE_STRATEGY:-auto}" in
+          auto|extra_buffer|extra_buffer_lazy) : ;;
+          no_buffer) echo "[mrcs] MAMBA_RADIX_CACHE_STRATEGY=no_buffer needs --disable-overlap-schedule, which these composes do not expose; use auto, extra_buffer, or extra_buffer_lazy" >&2; exit 1 ;;
+          *) echo "[mrcs] MAMBA_RADIX_CACHE_STRATEGY='${MAMBA_RADIX_CACHE_STRATEGY:-auto}' must be auto, extra_buffer, or extra_buffer_lazy" >&2; exit 1 ;;
+        esac
         exec python3 -m sglang.launch_server \
           --model-path "$$M" \
           --tp-size 2 \
