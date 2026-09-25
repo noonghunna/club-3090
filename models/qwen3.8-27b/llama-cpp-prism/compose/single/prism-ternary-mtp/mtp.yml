@@ -180,15 +180,18 @@ services:
         # llama.cpp's last-wins is DEPRECATED upstream and warns.
         if [ -n "$${INSTRUCT:-}" ]; then
           _r="$${REASONING:-off}"; _t="$${TEMP:-$${TEMPERATURE:-0.7}}"
-          _p="$${TOP_P:-0.80}";    _pp="$${PRESENCE_PENALTY:-1.5}"
-          echo "[sampler] INSTRUCT row: reasoning=$$_r temp=$$_t top_p=$$_p presence=$$_pp" >&2
+          _p="$${TOP_P:-0.80}";    _pp="$${PRESENCE_PENALTY:-1.5}"; _mp="$${MIN_P:-0.0}"
+          echo "[sampler] INSTRUCT row: reasoning=$$_r temp=$$_t top_p=$$_p min_p=$$_mp presence=$$_pp" >&2
         else
           _r="$${REASONING:-on}";  _t="$${TEMP:-$${TEMPERATURE:-1.0}}"
-          _p="$${TOP_P:-0.95}";    _pp="$${PRESENCE_PENALTY:-0.0}"
-          echo "[sampler] THINKING row (default): reasoning=$$_r temp=$$_t top_p=$$_p presence=$$_pp" >&2
+          # min_p 0.05 on the THINKING row: the Bonsai 2 card and PrismML's own start_llama_server.sh both
+          # pass it ("scored at least as well as 0.0 and followed instructions more reliably"). The base
+          # Qwen3.8-27B card says 0.0, which is why the vLLM/SGLang composes keep 0.0. MIN_P= still wins.
+          _p="$${TOP_P:-0.95}";    _pp="$${PRESENCE_PENALTY:-0.0}"; _mp="$${MIN_P:-0.05}"
+          echo "[sampler] THINKING row (default): reasoning=$$_r temp=$$_t top_p=$$_p min_p=$$_mp presence=$$_pp" >&2
         fi
         ROW=(--reasoning "$$_r" --temp "$$_t" --top-p "$$_p" --presence-penalty "$$_pp"
-             --top-k "$${TOP_K:-20}" --min-p "$${MIN_P:-0.0}")
+             --top-k "$${TOP_K:-20}" --min-p "$$_mp")
         # -- Reasoning knobs: all six --reasoning-* flags reachable ------------------
         # ⭐ BUDGET DEFAULTS TO 8192 HERE (maintainer call 2026-09-19), unlike the
         # llama-cpp siblings which keep llama.cpp's own -1. Semantics confirmed from
