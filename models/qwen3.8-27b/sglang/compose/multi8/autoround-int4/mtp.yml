@@ -385,15 +385,15 @@ services:
         # v0.5.19 — passing it hard-fails the boot with "unrecognized arguments".
         # Verified by booting, not by reading docs. Add it when the pin moves.
         #
-        # ⛔ NO HiCache KNOB — DELIBERATELY. `--enable-hierarchical-cache` on a
-        # hybrid GDN model allocates host pools, backs up to them, retains them,
-        # and then NEVER serves a host hit: upstream sgl-project/sglang#33713
-        # (open) prunes the MAMBA node from the radix tree on device eviction
-        # instead of downgrading it, so the host bytes are orphaned. Measured
-        # here twice on 2026-09-14 (backup ok, dropped=0, host 37% free, yet
-        # load-back kv=0 mamba=0 and cache_source="host" never even instantiated).
-        # It costs ~HICACHE_GB x TP of host RAM for nothing. Re-test when #33713
-        # merges. See learnings/sglang-engine.md 2026-09-14.
+        # ⚠️ NO HiCache KNOB ON THIS SLUG YET — but HiCache is not broken on the v0.5.20
+        # pin: stock v0.5.20 serves host hits (2026-09-25 control run; the 2026-09-14
+        # write-only result was on v0.5.19). The one v0.5.20 miss (80K prompts) was
+        # HOST SSM-POOL OVERFLOW, not sgl#33713: stock SGLang writes one SSM checkpoint
+        # per ~2,048 prompt tokens and --hicache-size splits by device-pool bytes, so a
+        # few long sessions fill the host SSM side and LRU drops their state while their
+        # KV stays. --mamba-max-states-per-path 1 prevents it; sgl/qwen38-27b-dual-fast
+        # ships that as the opt-in KV_OFFLOAD_GB knob. Not wired here until this slug is
+        # probed on its own. See learnings/sglang-engine.md 2026-09-25.
         # --- W4A8 (club-3090#1226 patch, vendored + mounted; DEFAULT ON, W4A8=0 reverts) ---
         # ⭐ DEFAULT-ON since 2026-09-19 (was 0). MEASURED on this rig,
         # sgl/qwen38-27b-dual-fast, sglang v0.5.20, TWO fresh boots per arm,

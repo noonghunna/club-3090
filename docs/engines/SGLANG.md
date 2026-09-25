@@ -23,7 +23,7 @@ described the 2026-05 Qwen3.6-27B investigation. That is now [archived below](#a
 | Tiers | `fast` (MTP n=4) · `superfast` (DFlash2) · `max`/`supermax` (fp8 weights) |
 | cuda-graph on Ampere | ✅ **works** — captures decode to bs=24 (the 2026-05 hang is gone) |
 | Concurrency | `--max-running-requests 1` shipped; the engine clamps to `K // r` regardless |
-| HiCache | ⛔ **broken for hybrid GDN** — upstream #33713, do not enable |
+| HiCache | ✅ **works on v0.5.20 with `--mamba-max-states-per-path 1`** (host SSM-pool overflow otherwise) — opt-in `KV_OFFLOAD_GB` on `sgl/qwen38-27b-dual-fast` only |
 | W4A8 | opt-in, vendored (#1226/#1248), off by default |
 
 ---
@@ -101,24 +101,52 @@ caches grow with it.
 
 ---
 
-## ⛔ HiCache — do not enable on hybrid GDN
+## HiCache — works on v0.5.20; the trap is host SSM-pool capacity
 
-`--enable-hierarchical-cache` allocates host pools, backs up to them, retains them, and **never
-serves a host hit**. Measured twice on 2026-09-14: backup succeeded for both `pool="kv"` and
-`pool="mamba"`, `hicache_dropped_tokens_total = 0`, 37% of the host pool free — and yet
-`load_back_tokens_total = 0` for both pools, with `cached_tokens_total{cache_source="host"}` never
-even instantiated.
+On the v0.5.20 pin, stock `--enable-hierarchical-cache` serves prefix hits back from host RAM on hybrid
+GDN. 2026-09-25, `sgl/qwen38-27b-dual-fast`: a 40K prompt evicted from the GPU came back in 0.19 s vs
+26 s cold (`cached_tokens_total{cache_source="host"}`, `load_back_tokens` kv + mamba). What breaks it is
+**capacity on the host SSM side**:
 
-Root cause: **[sgl-project/sglang#33713](https://github.com/sgl-project/sglang/issues/33713)**
-(open). On device eviction `_evict_host_leaf` consults only the FULL component's `host_value`, so a
-node whose MAMBA component already committed to host is pruned from the radix tree wholesale
-instead of downgraded — the host bytes are orphaned.
+- stock SGLang backs up one SSM checkpoint (~37 MB per GPU) per ~2,048 prompt tokens;
+- `--hicache-size` is split between host KV and host SSM **in proportion to the device pools**, so at a
+  large device pool (dual-fast at the old auto-fit K=63: 451,633 tokens) the host SSM side holds only
+  ~240 checkpoints, about 6
+  long sessions;
+- past that, LRU drops the oldest session's SSM state while its KV stays on host, and that prefix can
+  never match again (80K prompts, 2026-09-25: 0 host hits; first misread as #33713).
 
-⚠️ **No workaround on this pin.** The `hi_mamba_radix_cache` path the issue calls unaffected does
-not exist in v0.5.19, and `--radix-cache-backend` resolves only externally registered plugins.  ⚠️ RE-CHECK: verified on v0.5.19; pin moved to v0.5.20 2026-09-19, NOT re-tested.
-Enabling it costs `HICACHE_GB × TP` of host RAM (the flag is **per rank**) for nothing.
+`--mamba-max-states-per-path 1` cuts a session to ~3 host checkpoints: on the shipped 451K pool, 12 × 40K
+sessions pushed off the GPU all came back from host (0.3-3.1 s vs 26 s cold). `slru` keeps re-used
+prefixes ahead of one-shot prompts. `--hicache-io-backend direct` / `--hicache-mem-layout
+page_first_direct` are not needed; nor are a patch or `--enable-mixed-chunk`. Flag set credit: @A1RM4X
+(#1340).
 
-**Re-test trigger:** #33713 merges, or the engine pin moves.
+Shipped as the opt-in `KV_OFFLOAD_GB` knob (plus `KV_OFFLOAD_DISK` / `KV_OFFLOAD_DIR` /
+`KV_OFFLOAD_DISK_GB`) on `sgl/qwen38-27b-dual-fast` only. The other sgl slugs are not probed yet.
+
+| trap | detail |
+|---|---|
+| `--hicache-size` is GB (1e9) **per rank** | the knob takes GiB total across both GPUs, like vLLM's `--kv-offloading-size`, and converts |
+| host RAM runs above the setting | `KV_OFFLOAD_GB=64` → 74 GiB used (pinned pools plus engine overhead) |
+| shrinking the device pool to make a probe fast | flips the split so host KV fills first, and the overflow failure disappears. A negative control must overflow the host SSM side first |
+| host hit ≠ bigger GPU pool | HiCache decides how many idle sessions come back warm; it does not raise concurrency |
+| a cached prefix ≠ a cold prefill, token for token | a host hit reproduces the GPU state exactly (6/6 identical text and first-token logprobs, host vs device), but ANY cached prefix (device or host) flips greedy near-ties vs a cold run after 0-20 tokens. Compare cached against cached, not against cold |
+
+**Disk tier** (`KV_OFFLOAD_DISK=1` → `--hicache-storage-backend file` at `/kv-offload`). 2026-09-25, dual-fast: a
+40K session written before a `docker restart` came back from disk in 4.74 s vs 26.70 s cold
+(`cache_source="storage"`, prefetch hit 100%). `KV_OFFLOAD_DISK_GB` caps it (split per GPU; measured 1.43 GiB
+per GPU under a 1.5 GiB cap after 3 sessions, LRU eviction). ⚠️ About **one file per token per GPU** (a 40K session
+= ~89K files), all root-owned; the cap is per model; a 20 GiB free-space floor is always set.
+
+**GPU pool (`MAX_MAMBA_CACHE_SIZE`, dual-fast pair).** Default K=20 since 2026-09-25 (was auto-fit 63): 548,520
+tokens holds two full 262,144-token sessions (measured: two concurrent ~261.9K prompts, both needles recalled).
+MTP accept len 3.12, decode and prefill flat, headroom unchanged (K only re-splits the budget). Don't go below ~15.
+⛔ sgl#38147 (share the MTP draft's embed/lm_head) is not a pool lever at 0.95: the duplicate it reclaims is
+the engine's runtime scratch, and reclaiming it OOMs on the first prefill's Triton autotune.
+
+⚠️ The 2026-09-14 v0.5.19 write-only result (the repro we added to #33713) was not re-examined; don't
+retro-attribute it to overflow.
 
 ---
 

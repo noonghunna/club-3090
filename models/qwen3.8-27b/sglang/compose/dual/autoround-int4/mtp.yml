@@ -10,7 +10,10 @@
 #              text_config.mtp_num_hidden_layers=1) — NOT an external drafter.
 #   KV:        fp8_e4m3 — half the bytes of bf16, which is what keeps the full context in pool.
 #   Vision:    ✅ tower present — verify-full scored 4/4 on ground truth here 2026-09-10.
-#   Max ctx:   262144 (full architectural ceiling; pool measured above it on the dual).
+#   Max ctx:   262144 (full architectural ceiling). Since 2026-09-25 (K=20) the 548,520-token
+#              pool holds TWO full-length sessions at once (MAX_RUNNING_REQUESTS=2).
+#   KV offload: opt-in, off by default — KV_OFFLOAD_GB (SGLang HiCache host RAM), plus
+#              KV_OFFLOAD_DISK / KV_OFFLOAD_DIR / KV_OFFLOAD_DISK_GB. See the entrypoint block.
 #   Genesis:   N/A — Genesis is a vLLM construct.
 #   Status:    🧪 Experimental — BOOTED + benched + verify-full PASS (2026-09-10).
 #              Held at 🧪 pending an A,B,A,B repeat-boot on MAMBA_SSM_DTYPE and a
@@ -146,9 +149,9 @@
 #   rewrote the bf16 cell to 451,633 while leaving max_mamba_cache_size at 55 —
 #   a pairing that never booted, since the new default fits K=63 — and broke the
 #   "+14,891 tokens" sentence directly below.) The shipped default moved to
-#   0.95 / max-running-requests=2 on 2026-09-15, where this compose boots K=63
-#   and a 451,633-token pool; that pairing lives in the MAMBA STATE SLOTS block
-#   below, not here.
+#   0.95 / max-running-requests=2 on 2026-09-15, where this compose booted K=63
+#   and a 451,633-token pool (K=20 and 548,520 since 2026-09-25); those pairings
+#   live in the MAMBA STATE SLOTS and SSM slot cap blocks below, not here.
 #
 #   Per-slot SSM bytes halved exactly (0.0731 -> 0.0358 GB); the solver spent the
 #   saving on slots. The only bytes actually RETURNED are the intermediate cache
@@ -257,6 +260,7 @@ services:
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
       - "${W4A8_PATCH_DIR:-../../../patches/sglang-autoround-w4a8-v0.5.19}:/etc/club3090/w4a8:ro"
+      - ${KV_OFFLOAD_DIR:-../../../../../../kv-offload}:/kv-offload
     ipc: host
     shm_size: "16gb"
     environment:
@@ -272,6 +276,11 @@ services:
       # Bare means docker forwards them ONLY when the host sets them.
       - SESSION_RADIX_CACHE
       - RADIX_EVICTION_POLICY
+      # ── Host-RAM prefix tier (opt-in, OFF by default) — see the entrypoint block ──
+      - KV_OFFLOAD_GB
+      - KV_OFFLOAD_DISK
+      - KV_OFFLOAD_DISK_GB
+      - MAX_MAMBA_CACHE_SIZE
       - MAMBA_SSM_DTYPE
       - W4A8
       - ENABLE_THINKING
@@ -339,15 +348,84 @@ services:
         # v0.5.19 — passing it hard-fails the boot with "unrecognized arguments".
         # Verified by booting, not by reading docs. Add it when the pin moves.
         #
-        # ⛔ NO HiCache KNOB — DELIBERATELY. `--enable-hierarchical-cache` on a
-        # hybrid GDN model allocates host pools, backs up to them, retains them,
-        # and then NEVER serves a host hit: upstream sgl-project/sglang#33713
-        # (open) prunes the MAMBA node from the radix tree on device eviction
-        # instead of downgrading it, so the host bytes are orphaned. Measured
-        # here twice on 2026-09-14 (backup ok, dropped=0, host 37% free, yet
-        # load-back kv=0 mamba=0 and cache_source="host" never even instantiated).
-        # It costs ~HICACHE_GB x TP of host RAM for nothing. Re-test when #33713
-        # merges. See learnings/sglang-engine.md 2026-09-14.
+        # --- SSM slot cap: MAX_MAMBA_CACHE_SIZE (default 20; "auto" = SGLang auto-fit) ------
+        # ⭐ DEFAULT K=20 since 2026-09-25 (was auto-fit K=63). Each mamba slot given up is ~2,253
+        # KV tokens, so the 43 slots K=63 kept idle become pool: 451,633 -> 548,520 tokens, enough
+        # for TWO full 262,144-token sessions. MEASURED (sgl/qwen38-27b-dual-fast, 2026-09-25): two
+        # concurrent ~261.9K prompts both completed with their needles recalled, 0 errors; MTP accept
+        # len 3.12 (3.17-3.25 at K=63); decode and prefill flat; 1.48 GB post-boot headroom (K only
+        # re-splits the budget, it does not spend headroom). Warm-prefix slots = K - 3 x
+        # MAX_RUNNING_REQUESTS = 14 at c2; a conversation past that re-prefills, or comes back from
+        # host RAM with KV_OFFLOAD_GB. ⚠️ Not below ~15: K=10 starved the drafter (accept len 2.27).
+        # ⚠️ 32 GB+ cards: context stops binding there and concurrency starts, so use
+        # MAX_MAMBA_CACHE_SIZE=auto. Same seam as sgl/qwen38-27b-dual-max (which pins K=10).
+        _k="$${MAX_MAMBA_CACHE_SIZE:-20}"
+        KCAP=()
+        case "$$_k" in
+          auto) echo "[mamba] SSM slots auto-fit (MAX_MAMBA_CACHE_SIZE=auto)" >&2 ;;
+          ""|*[!0-9]*|0) echo "[mamba] MAX_MAMBA_CACHE_SIZE='$$_k' must be a positive integer or auto" >&2; exit 1 ;;
+          *) KCAP=(--max-mamba-cache-size "$$_k"); echo "[mamba] SSM slots capped at K=$$_k (MAX_MAMBA_CACHE_SIZE=auto restores auto-fit)" >&2 ;;
+        esac
+        # --- Host-RAM prefix tier (SGLang HiCache): KV_OFFLOAD_GB, OFF by default ---
+        # The same knob, with the same meaning, as the vLLM dual MTP composes: GiB of host
+        # RAM, total across both GPUs. A prefix-cache tier BELOW the GPU pool: prompt KV
+        # and SSM checkpoints are copied down as they are computed, and a returning prefix
+        # the GPU has dropped loads back instead of re-prefilling. It does NOT enlarge the
+        # GPU pool or the number of long sessions that run at once.
+        # ⚠️ --mamba-max-states-per-path 1 is LOAD-BEARING, not tuning. Stock SGLang writes
+        # one SSM checkpoint (~37 MB per GPU) per ~2,048 prompt tokens to the host tier, and
+        # --hicache-size is split between host KV and host SSM by DEVICE-pool bytes, so at
+        # this pool the host holds only ~240 checkpoints (~6 long sessions). Past that, LRU
+        # drops the oldest session's SSM state while its KV stays on host, and that prefix
+        # can never match again (measured 2026-09-25: 0 host hits at 80K; first misread as
+        # sgl#33713). Capped at one state per path, a session keeps ~3 host checkpoints
+        # (40K prompt: 20 -> 3). Cost: the kept state sits ~900 tokens short of the prompt
+        # end, so a host hit re-prefills that tail. slru (unless RADIX_EVICTION_POLICY is
+        # set) keeps re-used prefixes ahead of one-shot prompts. No patch, no mixed-chunk.
+        # Flag set: @A1RM4X (club-3090#1340). See learnings/sglang-engine.md 2026-09-25.
+        # SGLang sizes --hicache-size in GB (1e9 bytes) PER GPU, so the GiB total is
+        # converted below.
+        # KV_OFFLOAD_DISK=1 adds HiCache's `file` backend below RAM, at /kv-offload (the
+        # KV_OFFLOAD_DIR mount; repo kv-offload/ by default). Keys carry the model name and
+        # TP rank, and the directory is re-scanned at boot, so blocks survive a container
+        # restart. Unlike vLLM's disk tier it CAN be capped: KV_OFFLOAD_DISK_GB (GiB total
+        # across both GPUs, LRU eviction past it; the cap is per model, so a second model
+        # sharing the directory gets its own), and it always keeps 20 GiB of the filesystem free.
+        OFFLOAD_ARGS=()
+        case "$${KV_OFFLOAD_DISK:-0}" in
+          0|1) ;;
+          *) echo "[kv-offload] KV_OFFLOAD_DISK='$$KV_OFFLOAD_DISK' — use 1 (disk tier on) or 0." >&2; exit 1 ;;
+        esac
+        if [ "$${KV_OFFLOAD_DISK:-0}" = "1" ] && [ -z "$${KV_OFFLOAD_GB:-}" ]; then
+          echo "[kv-offload] KV_OFFLOAD_DISK=1 needs KV_OFFLOAD_GB: every disk read stages through the RAM tier." >&2; exit 1
+        fi
+        if [ -n "$${KV_OFFLOAD_DISK_GB:-}" ]; then
+          case "$$KV_OFFLOAD_DISK_GB" in
+            *[!0-9]*|0) echo "[kv-offload] KV_OFFLOAD_DISK_GB='$$KV_OFFLOAD_DISK_GB' must be a positive whole number of GiB." >&2; exit 1 ;;
+          esac
+          [ "$${KV_OFFLOAD_DISK:-0}" = "1" ] || { echo "[kv-offload] KV_OFFLOAD_DISK_GB is set but KV_OFFLOAD_DISK is not 1." >&2; exit 1; }
+        fi
+        if [ -n "$${KV_OFFLOAD_GB:-}" ]; then
+          case "$$KV_OFFLOAD_GB" in
+            *[!0-9.]*|.*|*.|*.*.*) echo "[kv-offload] KV_OFFLOAD_GB='$$KV_OFFLOAD_GB' is not a number of GiB." >&2; exit 1 ;;
+          esac
+          _per_gpu="$$(python3 -c 'import sys; print(int(float(sys.argv[1]) * (1 << 30) / 1e9 / 2))' "$$KV_OFFLOAD_GB")"
+          if [ "$$_per_gpu" -lt 1 ]; then
+            echo "[kv-offload] KV_OFFLOAD_GB=$$KV_OFFLOAD_GB is under 1 GB per GPU." >&2; exit 1
+          fi
+          OFFLOAD_ARGS=(--enable-hierarchical-cache --hicache-size "$$_per_gpu" --mamba-max-states-per-path 1)
+          if [ -z "$${RADIX_EVICTION_POLICY:-}" ]; then OFFLOAD_ARGS+=(--radix-eviction-policy slru); fi
+          _disk=off
+          if [ "$${KV_OFFLOAD_DISK:-0}" = "1" ]; then
+            export SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR=/kv-offload
+            export SGLANG_HICACHE_FILE_BACKEND_MIN_FREE_SPACE=20Gi
+            # SGLang caps each GPU's files separately (and each model's), so split the total.
+            if [ -n "$${KV_OFFLOAD_DISK_GB:-}" ]; then export SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE="$$(( KV_OFFLOAD_DISK_GB * 1024 / 2 ))Mi"; fi
+            OFFLOAD_ARGS+=(--hicache-storage-backend file)
+            _disk="/kv-offload, cap $${KV_OFFLOAD_DISK_GB:-none} GiB, keeps 20 GiB free"
+          fi
+          echo "[kv-offload] $$KV_OFFLOAD_GB GiB host RAM (HiCache, $$_per_gpu GB per GPU), SSM states per path 1, eviction $${RADIX_EVICTION_POLICY:-slru}, disk tier $$_disk" >&2
+        fi
         # --- W4A8 (club-3090#1226 patch, vendored + mounted; DEFAULT ON, W4A8=0 reverts) ---
         # ⭐ DEFAULT-ON since 2026-09-19 (was 0). MEASURED on this rig,
         # sgl/qwen38-27b-dual-fast, sglang v0.5.20, TWO fresh boots per arm,
@@ -517,7 +595,7 @@ services:
         #     max-running-requests=2   ->  49 usable
         #     max-running-requests=4   ->  43 usable
         #     max-running-requests=8   ->  31 usable
-        #   SHIPPED DEFAULT SINCE 2026-09-15 is 0.95 / max-running-requests=2, where
+        #   DEFAULT 2026-09-15 -> 2026-09-25 was 0.95 / max-running-requests=2, where
         #   auto-fit yields K=63, so usable = 63 - 3x2 = 57 and the clamp allows C=12.
         #   MEASURED at that default: 451,633 tokens = 2 x 225,817 (86% of the 262,144
         #   ceiling), accept len 3.25 / rate 0.56, 1.47 GB post-boot headroom, 0 OOM.
@@ -525,6 +603,12 @@ services:
         #   K=10 -> 2.27. Reaching a full 2 x 262,144 needs K <= ~30 and ~20% of accept
         #   length. 86% of the ceiling is a soft limit (a longer session evicts, it does
         #   not fail), so the throughput is worth more than the last 14% of context.
+        #   ⭐ SUPERSEDED 2026-09-25 — default is now K=20 (SSM slot cap block above):
+        #   548,520 tokens holds 2 x 262,144 (measured: two concurrent ~261.9K prompts,
+        #   both needles recalled), accept len 3.12, decode and prefill flat. The "~20% of
+        #   accept length" cost above was extrapolated from K=10 (2.27: at c2 each request
+        #   reserves 5 slots, so K=10 left the drafter zero slack); K=15 measured 3.11 and
+        #   K=20 3.12. The K=35 -> 3.02 point was a single boot at the old 0.90 default.
         #   ⚠️ On 32 GB cards the scarcity INVERTS - context stops binding, concurrency
         #   starts - so raise --max-running-requests there rather than lowering K.
         #
@@ -586,6 +670,8 @@ services:
           --mem-fraction-static "${MEM_FRACTION:-0.95}" \
           --max-running-requests "${MAX_RUNNING_REQUESTS:-2}" \
           "$${CACHE[@]}" \
+          "$${OFFLOAD_ARGS[@]}" \
+          "$${KCAP[@]}" \
           --trust-remote-code \
           --enable-metrics \
           --enable-cache-report \
