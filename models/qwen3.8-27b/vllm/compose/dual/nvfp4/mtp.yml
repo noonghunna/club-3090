@@ -315,7 +315,23 @@ services:
           _disk=""; if [ "$${KV_OFFLOAD_DISK:-0}" = "1" ]; then _disk=/kv-offload; fi
           if [ -n "$$_disk" ]; then
             _cpu_bytes="$$(python3 -c 'import sys; print(int(float(sys.argv[1]) * (1 << 30)))' "$$KV_OFFLOAD_GB")"
-            OFFLOAD_ARGS=(--kv-transfer-config "{\"kv_connector\":\"OffloadingConnector\",\"kv_role\":\"kv_both\",\"kv_connector_extra_config\":{\"spec_name\":\"TieringOffloadingSpec\",\"cpu_bytes_to_use\":$$_cpu_bytes,\"secondary_tiers\":[{\"type\":\"fs\",\"root_dir\":\"$$_disk\"}]}}")
+            # vllm#57303: the tiering spec keeps /dev/shm/vllm_offload_<engine_id>.mmap NAMED until a graceful
+            # cleanup(), so an unclean stop (docker restart, or SIGKILL after the stop grace) leaks the whole RAM
+            # tier into the HOST /dev/shm (ipc: host) - 32 GiB per boot, measured 2026-09-25. Workaround until it
+            # lands: pin engine_id to this container, drop a region our own previous run leaked, and unlink the
+            # name once /health answers (every worker has mapped it by then, and mappings stay valid) - what vLLM
+            # already does for the RAM-only spec. vLLM then logs one harmless "Failed to unlink" at shutdown.
+            _eid="club3090-$${HOSTNAME:-kvoffload}"
+            _region="/dev/shm/vllm_offload_$${_eid}.mmap"
+            rm -f "$$_region"
+            ( for _i in $$(seq 1 1800); do
+                if curl -sf -o /dev/null http://127.0.0.1:8000/health; then
+                  if [ -e "$$_region" ]; then rm -f "$$_region" && echo "[kv-offload] unlinked $$_region once serving (vllm#57303 workaround; the mapping stays valid)" >&2; fi
+                  exit 0
+                fi
+                sleep 2
+              done ) &
+            OFFLOAD_ARGS=(--kv-transfer-config "{\"kv_connector\":\"OffloadingConnector\",\"kv_role\":\"kv_both\",\"engine_id\":\"$$_eid\",\"kv_connector_extra_config\":{\"spec_name\":\"TieringOffloadingSpec\",\"cpu_bytes_to_use\":$$_cpu_bytes,\"secondary_tiers\":[{\"type\":\"fs\",\"root_dir\":\"$$_disk\"}]}}")
           else
             OFFLOAD_ARGS=(--kv-offloading-size "$$KV_OFFLOAD_GB" --kv-offloading-backend native)
           fi

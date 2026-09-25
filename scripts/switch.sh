@@ -1283,6 +1283,11 @@ up_variant() {
     preflight_single_card_util "${full_dir}/${file}" "$v" || true
   fi
   gpu_preflight
+  # Orphaned engine shared-memory segments (ipc: host puts them in the HOST /dev/shm, where an unclean
+  # container stop leaves them resident — 65 GB on the reference rig 2026-09-25, incl. two 32 GiB
+  # KV-offload regions, vllm#57303). Only old, root-owned, engine-named, unmapped files; never fails
+  # the boot. CLUB3090_SHM_CLEANUP=0 disables.
+  bash "$(dirname "$0")/lib/shm-cleanup.sh" || true
 
   echo "[switch] bringing up: ${v}  (${dir}/${file})"
   export_variant_engine_pin "$v"

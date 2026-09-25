@@ -33,7 +33,7 @@ block_of() {
 resolve() {  # resolve <file> [VAR=VAL...] → "rc=<n>" line, then OFFLOAD_ARGS one per line, then PCAC=
   local f="$1"; shift
   env -i PATH="$PATH" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$@" bash -c \
-    "( $(block_of "$f")"$'\n''printf "%s\n" "${OFFLOAD_ARGS[@]+"${OFFLOAD_ARGS[@]}"}"; echo "PCAC=${PYTORCH_CUDA_ALLOC_CONF:-unset}" ); echo "rc=$?"' 2>/dev/null
+    "rm() { :; }; curl() { return 0; }; ( $(block_of "$f")"$'\n''printf "%s\n" "${OFFLOAD_ARGS[@]+"${OFFLOAD_ARGS[@]}"}"; echo "PCAC=${PYTORCH_CUDA_ALLOC_CONF:-unset}" ); echo "rc=$?"' 2>/dev/null
 }
 
 for f in "${FILES[@]}"; do
@@ -56,8 +56,16 @@ for f in "${FILES[@]}"; do
   json="$(printf '%s\n' "$out" | command grep -E '^\{')"
   printf '%s' "$json" | python3 -c 'import json,sys; c=json.load(sys.stdin); e=c["kv_connector_extra_config"]
 assert c["kv_connector"]=="OffloadingConnector" and e["spec_name"]=="TieringOffloadingSpec"
-assert e["cpu_bytes_to_use"]==64*(1<<30) and e["secondary_tiers"]==[{"type":"fs","root_dir":"/kv-offload"}]' 2>/dev/null \
-    || fail "$f: KV_OFFLOAD_DISK=1 did not resolve to a TieringOffloadingSpec fs tier (got: ${out//$'\n'/ })"
+assert e["cpu_bytes_to_use"]==64*(1<<30) and e["secondary_tiers"]==[{"type":"fs","root_dir":"/kv-offload"}]
+assert c["engine_id"].startswith("club3090-")' 2>/dev/null \
+    || fail "$f: KV_OFFLOAD_DISK=1 did not resolve to a TieringOffloadingSpec fs tier with a pinned club3090- engine_id (got: ${out//$'\n'/ })"
+  # vllm#57303 workaround: the tiering spec keeps its /dev/shm region NAMED until a graceful exit, so an
+  # unclean stop leaks KV_OFFLOAD_GB into the host /dev/shm. The entrypoint must drop our stale region and
+  # unlink the live one once /health answers; losing either brings the 32 GiB-per-boot leak back.
+  blk="$(block_of "$f")"
+  [[ "$blk" == *'_region="/dev/shm/vllm_offload_${_eid}.mmap"'* && "$blk" == *'rm -f "$_region"'* \
+     && "$blk" == *'http://127.0.0.1:8000/health'* ]] \
+    || fail "$f: disk mode lost the vllm#57303 region-unlink workaround (stale-region rm + unlink after /health)"
   for bad in "KV_OFFLOAD_GB=64G" "KV_OFFLOAD_GB=1.2.3" "KV_OFFLOAD_DISK=1" \
              "KV_OFFLOAD_GB=64 KV_OFFLOAD_DISK=yes" "KV_OFFLOAD_GB=-5"; do
     # shellcheck disable=SC2086
