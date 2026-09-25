@@ -69,7 +69,13 @@ check "report_calib: junk → unknown"    "unknown" "$(calib_engine_for_containe
 # --- 4: report.sh must RESPECT an explicit ENGINE_KIND=sglang override ------
 # Its override guard reads `case "${ENGINE_KIND:-}" in vllm|llamacpp|unknown)`,
 # so `sglang` fell through to the re-derive branch and was silently discarded.
-if command grep -qE '^\s*vllm\|llamacpp\|sglang\|unknown\)' "${ROOT}/scripts/report.sh"; then
+# ⚠️ This used to grep for the literal `vllm|llamacpp|sglang|unknown)`, so adding
+# any engine to the arm (exllamav3, club-3090#1420) failed it on a correct tree.
+# Assert membership instead: `sglang` must be one of the arm's alternatives.
+_override_arm=$(awk '/^case "\$\{ENGINE_KIND:-\}" in/ { getline; print; exit }' "${ROOT}/scripts/report.sh")
+_override_arm="${_override_arm%%)*}"
+_override_arm="${_override_arm//[[:space:]]/}"
+if [[ "|${_override_arm}|" == *"|sglang|"* ]]; then
   ok "report.sh: honours ENGINE_KIND=sglang override"
 else
   bad "report.sh: honours ENGINE_KIND=sglang override" "sglang in the override guard" "absent"
