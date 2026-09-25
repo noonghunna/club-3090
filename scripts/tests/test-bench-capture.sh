@@ -784,7 +784,11 @@ echo "  ✓ prefill warm-up lands on its token target (word-count sizing would o
 command grep -q 'RAM BANDWIDTH CEILING' "$TMP/healthy.out" \
   && fail "the STREAM calibration must be OPT-IN (it is not free)"
 run_bench healthy "$((PORT_BASE+9))" "$TMP/stream.out" ONLY=narr RUNS=1 WARMUPS=0 STREAM_CALIB=1
-if command grep -q 'RAM BANDWIDTH CEILING' "$TMP/stream.out"; then
+# Branch on the triad VALUE line, not the "RAM BANDWIDTH CEILING" header: the
+# header is printed unconditionally when STREAM_CALIB=1 (bench.sh), so it cannot
+# tell a produced ceiling from a numpy-absent degradation. The value line is
+# printed only when a ceiling was actually measured.
+if command grep -q 'triad ceiling  :' "$TMP/stream.out"; then
   command grep -qE 'triad ceiling  : [0-9.]+ GB/s  \([0-9]+ concurrent workers' "$TMP/stream.out" \
     || fail "the triad ceiling must state its worker count — a single-threaded number is not a host ceiling"
   echo "  ✓ STREAM_CALIB=1 reports a multi-worker sustained ceiling (and is off by default)"
