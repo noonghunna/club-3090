@@ -83,7 +83,7 @@
 #      unchanged by the patches: many LONG-context streams can still OOM (W4A8 +
 #      n=4); if so, lower MAX_NUM_SEQS or SPEC_N=0 (or W4A8=0) and report it.
 #
-# ⚠️⚠️ MAX_NUM_SEQS defaults to 8 (was 2): the MTP-under-concurrency ENGINE CRASH (#40756 FlashInfer decode-plan race + the async wild-write) is now fixed by vllm-flashinfer-decode-pin + vllm-gdn-mtp-async-spec-order (wired below); the dual sibling is validated crash-clean to C=32 at ~1K-tok prompts (2026-08-23). At TP=8 weights fall to ~2.3 GiB/card so per-card headroom exceeds the dual — but THIS IS UNTESTED: no 8-card host exists on the reference rig (community-validated by transfer). SEPARATE VRAM limit unchanged by the patches: many LONG-context concurrent streams can still OOM (W4A8 + n=4). If you hit it, drop MAX_NUM_SEQS or set SPEC_N=0, and please report it.
+# ⚠️⚠️ MAX_NUM_SEQS defaults to 8 (was 2): the MTP-under-concurrency ENGINE CRASH (#40756 FlashInfer decode-plan race + the async wild-write) was fixed by vllm-flashinfer-decode-pin (wired below) plus our V1-runner hoist (vllm-gdn-mtp-async-spec-order); v0.30.0 serves MTP on the V2 runner, where the hoist never ran, so it was removed 2026-09-26 (the async race is untested on V2); the dual sibling is validated crash-clean to C=32 at ~1K-tok prompts (2026-08-23). At TP=8 weights fall to ~2.3 GiB/card so per-card headroom exceeds the dual — but THIS IS UNTESTED: no 8-card host exists on the reference rig (community-validated by transfer). SEPARATE VRAM limit unchanged by the patches: many LONG-context concurrent streams can still OOM (W4A8 + n=4). If you hit it, drop MAX_NUM_SEQS or set SPEC_N=0, and please report it.
 #
 #
 # ⚠️⚠️ CONSUMER BLACKWELL (5090, sm_120) — READ BEFORE RUNNING THIS THERE.
@@ -154,7 +154,6 @@ services:
       - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
       # Lets the MTP drafter attach on this hybrid (mamba/eagle block drop).
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
-      - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
       - ../../../../../qwen3.8-27b/vllm/patches/vllm-flashinfer-decode-pin:/etc/club3090/flashinfer-decode-pin:ro
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       # Chat template: the model's OWN, plus seven lines mapping the standard
@@ -180,6 +179,9 @@ services:
       # lives in the entrypoint, not in these lines, so it cannot drift.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
+      # Draft sampling for the drafter (see SPEC_ARGS below). Bare on purpose:
+      # unset keeps the compose default instead of arriving EMPTY.
+      - DRAFT_SAMPLE_METHOD
       # Sampler env passthrough (#984/#1014): the ENTRYPOINT — not compose
       # interpolation, which has no if/else — derives --override-generation-config
       # from the model-card row matching ENABLE_THINKING, so these must reach the
@@ -243,7 +245,6 @@ services:
         fi
         bash /etc/club3090/w4a8/install.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
-        bash /etc/club3090/gdn-async-order/install.sh || exit 1
         FI_PINQ_LIB_ALL="${FI_PINQ_LIB_ALL:-0}" bash /etc/club3090/flashinfer-decode-pin/install.sh || exit 1
         echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
         AR=""
@@ -266,10 +267,23 @@ services:
           echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
           exit 1 ;;
         esac
+        # Draft sampling. `probabilistic` samples each draft token at the request's
+        # temperature and keeps the draft logits for the rejection test, so a draft
+        # is accepted with probability min(1, p/q) instead of p(draft): more tokens
+        # accepted per step whenever temperature > 0, with the same output
+        # distribution (the target model still decides). vLLM defaults to `greedy`.
+        # Checked in the v0.30.0 source: the V2 runner implements it for MTP and
+        # DFlash2. `greedy` reverts; it is also what a heterogeneous draft vocab
+        # requires.
+        _dsm="$${DRAFT_SAMPLE_METHOD:-probabilistic}"
+        case "$$_dsm" in
+          greedy|probabilistic) : ;;
+          *) echo "[spec] DRAFT_SAMPLE_METHOD='$$_dsm' must be greedy or probabilistic" >&2; exit 1 ;;
+        esac
         SPEC_ARGS=()
         if [ "$$_spec_n" -gt 0 ]; then
-          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n}")
-          echo "[spec] drafter ON - mtp n=$$_spec_n" >&2
+          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n,\"draft_sample_method\":\"$$_dsm\"}")
+          echo "[spec] drafter ON - mtp n=$$_spec_n, draft sampling $$_dsm" >&2
         else
           echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
         fi

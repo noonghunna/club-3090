@@ -99,12 +99,17 @@
 #                (a) a CROSS-STREAM RACE in `synchronize_input_prep` (the next step's
 #                    `_update_states` block-table mutation raced the still-in-flight
 #                    spec-decode postprocess → stale state-block index → wild write).
-#                    ✅ PATCHED HERE by `vllm-gdn-mtp-async-spec-order` (OURS, not
-#                    upstream), installed by the entrypoint before serve; anchor drift
-#                    makes the container REFUSE TO BOOT rather than serve unpatched.
+#                    On vLLM's V1 model runner this was closed by our
+#                    `vllm-gdn-mtp-async-spec-order` (v0.27.1: 3/3 boots clean to 33–36k
+#                    generated tokens where 5/5 unpatched arms died at 6–13k). v0.30.0
+#                    serves MTP on the V2 runner, where that patched function never
+#                    runs, so the patch was inert from the 2026-09-12 pin bump and was
+#                    removed 2026-09-26. Whether V2 has the same race is untested; the
+#                    crash had already stopped reproducing on the shipped Frozenlock
+#                    checkpoint (2026-08-24).
 #                (b) vllm#50021's UNBOUNDED `num_accepted`-derived index (Site 1,
 #                    re-verified byte-identical on v0.27.1). 🔴 STILL LIVE — open
-#                    upstream, NOT vendored. The patch above does NOT bound it.
+#                    upstream, NOT vendored. Nothing we ship bounds it.
 #                ⚠️ CORRECTION (this block previously said otherwise): a #50021 merge +
 #                pin bump clears (b) ONLY. It never covered (a) — its in-kernel bounds
 #                were built and crashed 2/2.
@@ -267,13 +272,15 @@ services:
       # corrupts. Anchor drift => the install script REFUSES the boot rather
       # than half-wiring it. See patches.yml.
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
-      - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
       - ../../../patches/vllm-flashinfer-decode-pin:/etc/club3090/flashinfer-decode-pin:ro
     environment:
       # Drafter toggle — docker only forwards what is declared here. The DEFAULT
       # lives in the entrypoint, not in these lines, so it cannot drift.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
+      # Draft sampling for the drafter (see SPEC_ARGS below). Bare on purpose:
+      # unset keeps the compose default instead of arriving EMPTY.
+      - DRAFT_SAMPLE_METHOD
       # Sampler env passthrough (#984/#1014): the ENTRYPOINT — not compose
       # interpolation, which has no if/else — derives --override-generation-config
       # from the model-card row matching ENABLE_THINKING, so these must reach the
@@ -360,7 +367,6 @@ services:
         # paths break on PCIe-only multi-GPU, and that matters most at TP=4.
         source /etc/club3090/detect_nvlink.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
-        bash /etc/club3090/gdn-async-order/install.sh || exit 1
         FI_PINQ_LIB_ALL="${FI_PINQ_LIB_ALL:-0}" bash /etc/club3090/flashinfer-decode-pin/install.sh || exit 1
         # -- Drafter toggle: the same contract on every club-3090 compose --------
         #   SPEC_N=<n>  drafter depth (this compose defaults to 3); SPEC_N=0 disables
@@ -375,10 +381,23 @@ services:
           echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
           exit 1 ;;
         esac
+        # Draft sampling. `probabilistic` samples each draft token at the request's
+        # temperature and keeps the draft logits for the rejection test, so a draft
+        # is accepted with probability min(1, p/q) instead of p(draft): more tokens
+        # accepted per step whenever temperature > 0, with the same output
+        # distribution (the target model still decides). vLLM defaults to `greedy`.
+        # Checked in the v0.30.0 source: the V2 runner implements it for MTP and
+        # DFlash2. `greedy` reverts; it is also what a heterogeneous draft vocab
+        # requires.
+        _dsm="$${DRAFT_SAMPLE_METHOD:-probabilistic}"
+        case "$$_dsm" in
+          greedy|probabilistic) : ;;
+          *) echo "[spec] DRAFT_SAMPLE_METHOD='$$_dsm' must be greedy or probabilistic" >&2; exit 1 ;;
+        esac
         SPEC_ARGS=()
         if [ "$$_spec_n" -gt 0 ]; then
-          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n}")
-          echo "[spec] drafter ON - mtp n=$$_spec_n" >&2
+          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n,\"draft_sample_method\":\"$$_dsm\"}")
+          echo "[spec] drafter ON - mtp n=$$_spec_n, draft sampling $$_dsm" >&2
         else
           echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
         fi

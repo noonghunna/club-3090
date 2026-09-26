@@ -80,9 +80,12 @@
 #
 # ⚠️ CONCURRENCY — the ENGINE CRASH is fixed; a VRAM caveat remains for LONG ctx.
 #   MTP-under-concurrency used to CRASH the engine (Xid 31): the #40756 FlashInfer
-#   decode-plan race + the async wild-write. Both are now closed by the patches
-#   wired below (vllm-flashinfer-decode-pin + vllm-gdn-mtp-async-spec-order), so
-#   MAX_NUM_SEQS now DEFAULTS to **8** (was 1). Validated 2026-08-23 (2x3090,
+#   decode-plan race + the async wild-write. vllm-flashinfer-decode-pin (wired
+#   below) closes the first. The second was closed on vLLM's V1 model runner by
+#   our vllm-gdn-mtp-async-spec-order; v0.30.0 serves MTP on the V2 runner, where
+#   that patched function never runs, so it was inert from the 2026-09-12 pin bump
+#   and removed 2026-09-26. Whether V2 has the same race is untested. With that,
+#   MAX_NUM_SEQS DEFAULTS to **8** (was 1). Validated 2026-08-23 (2x3090,
 #   v0.27.1): clean to C=32 at ~1K-tok prompts, MTP accept ~2.8; spec-decode wins
 #   per-stream latency to ~C=8, batch aggregate peaks with SPEC_N=0 (~306 tok/s).
 #   ⚠️ SEPARATE, STILL-REAL LIMIT — VRAM, NOT the crash, and the patches do NOT
@@ -180,10 +183,6 @@ services:
       - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
       # Lets the MTP drafter attach on this hybrid (mamba/eagle block drop).
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
-      # club-3090 GDN+MTP async spec-order fix — closes the async wild-write race
-      # (our #1052 / upstream #52873 + #50021 thread). Ours, not an upstream PR;
-      # validated 3/3 boots on the reference 2×3090. Anchor drift → boot refused.
-      - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
       - ../../../../../qwen3.8-27b/vllm/patches/vllm-flashinfer-decode-pin:/etc/club3090/flashinfer-decode-pin:ro
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       # Chat template: the model's OWN, plus seven lines mapping the standard
@@ -212,6 +211,9 @@ services:
       # lives in the entrypoint, not in these lines, so it cannot drift.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
+      # Draft sampling for the drafter (see SPEC_ARGS below). Bare on purpose:
+      # unset keeps the compose default instead of arriving EMPTY.
+      - DRAFT_SAMPLE_METHOD
       - ASYNC_SCHED=${ASYNC_SCHED:-}
       - MAMBA_BLOCK_SIZE=${MAMBA_BLOCK_SIZE:-}
       - MAMBA_CACHE_DTYPE=${MAMBA_CACHE_DTYPE:-}
@@ -288,7 +290,6 @@ services:
         fi
         bash /etc/club3090/w4a8/install.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
-        bash /etc/club3090/gdn-async-order/install.sh || exit 1
         FI_PINQ_LIB_ALL="${FI_PINQ_LIB_ALL:-0}" bash /etc/club3090/flashinfer-decode-pin/install.sh || exit 1
         echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
         AR=""
@@ -311,10 +312,23 @@ services:
           echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
           exit 1 ;;
         esac
+        # Draft sampling. `probabilistic` samples each draft token at the request's
+        # temperature and keeps the draft logits for the rejection test, so a draft
+        # is accepted with probability min(1, p/q) instead of p(draft): more tokens
+        # accepted per step whenever temperature > 0, with the same output
+        # distribution (the target model still decides). vLLM defaults to `greedy`.
+        # Checked in the v0.30.0 source: the V2 runner implements it for MTP and
+        # DFlash2. `greedy` reverts; it is also what a heterogeneous draft vocab
+        # requires.
+        _dsm="$${DRAFT_SAMPLE_METHOD:-probabilistic}"
+        case "$$_dsm" in
+          greedy|probabilistic) : ;;
+          *) echo "[spec] DRAFT_SAMPLE_METHOD='$$_dsm' must be greedy or probabilistic" >&2; exit 1 ;;
+        esac
         SPEC_ARGS=()
         if [ "$$_spec_n" -gt 0 ]; then
-          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n}")
-          echo "[spec] drafter ON - mtp n=$$_spec_n" >&2
+          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n,\"draft_sample_method\":\"$$_dsm\"}")
+          echo "[spec] drafter ON - mtp n=$$_spec_n, draft sampling $$_dsm" >&2
         else
           echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
         fi

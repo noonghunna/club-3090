@@ -46,7 +46,6 @@ services:
       - ../../../patches/fa2-fp8kv-sm86:/etc/club3090/fa2:ro
       - ../../../patches/qwen38-reasoning-effort-template/chat_template.jinja:/root/.cache/huggingface/qwen3.8-27b-fp8/chat_template.jinja:ro
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
-      - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
       - ../../../patches/vllm-51581-dflash-dense-kv:/etc/club3090/dflash-dense-kv:ro
     environment:
       - MAMBA_SSM_CACHE_DTYPE=${MAMBA_SSM_CACHE_DTYPE:-}
@@ -54,6 +53,9 @@ services:
       - CUDA_VISIBLE_DEVICES
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
+      # Draft sampling for the drafter (see SPEC_ARGS below). Bare on purpose:
+      # unset keeps the compose default instead of arriving EMPTY.
+      - DRAFT_SAMPLE_METHOD
       - ENABLE_THINKING=${ENABLE_THINKING:-true}
       - TEMP=${TEMP:-}
       - TEMPERATURE=${TEMPERATURE:-}
@@ -104,7 +106,6 @@ services:
         fi
         export PYTHONUTF8="$${PYTHONUTF8:-1}"
         bash /etc/club3090/pr48375/install.sh
-        bash /etc/club3090/gdn-async-order/install.sh
         bash /etc/club3090/dflash-dense-kv/install.sh
         bash /etc/club3090/fa2/install.sh
         source /etc/club3090/fa2-runtime.env
@@ -130,9 +131,22 @@ services:
         _ssm_dt="$${MAMBA_SSM_CACHE_DTYPE:-bfloat16}"
         if [ "$$_ssm_dt" != "auto" ]; then MAMBA_ARGS+=(--mamba-ssm-cache-dtype "$$_ssm_dt"); fi
         echo "[mamba] ssm cache dtype $$_ssm_dt" >&2
+        # Draft sampling. `probabilistic` samples each draft token at the request's
+        # temperature and keeps the draft logits for the rejection test, so a draft
+        # is accepted with probability min(1, p/q) instead of p(draft): more tokens
+        # accepted per step whenever temperature > 0, with the same output
+        # distribution (the target model still decides). vLLM defaults to `greedy`.
+        # Checked in the v0.30.0 source: the V2 runner implements it for MTP and
+        # DFlash2. `greedy` reverts; it is also what a heterogeneous draft vocab
+        # requires.
+        _dsm="$${DRAFT_SAMPLE_METHOD:-probabilistic}"
+        case "$$_dsm" in
+          greedy|probabilistic) : ;;
+          *) echo "[spec] DRAFT_SAMPLE_METHOD='$$_dsm' must be greedy or probabilistic" >&2; exit 1 ;;
+        esac
         SPEC_ARGS=()
         if [ "$$_spec_n" -gt 0 ]; then
-          SPEC_ARGS=(--speculative-config "{\"method\":\"dflash\",\"model\":\"$$DRAFTER\",\"num_speculative_tokens\":$$_spec_n,\"attention_backend\":\"FLASH_ATTN\",\"kv_cache_dtype\":\"fp8_e4m3\"}")
+          SPEC_ARGS=(--speculative-config "{\"method\":\"dflash\",\"model\":\"$$DRAFTER\",\"num_speculative_tokens\":$$_spec_n,\"attention_backend\":\"FLASH_ATTN\",\"kv_cache_dtype\":\"fp8_e4m3\",\"draft_sample_method\":\"$$_dsm\"}")
         fi
         _temp="$${TEMP:-$${TEMPERATURE:-}}"
         if [ "$${ENABLE_THINKING:-true}" = true ]; then
