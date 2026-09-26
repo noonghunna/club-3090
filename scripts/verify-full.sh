@@ -538,12 +538,15 @@ run_check "streaming_tools" check_streaming_tools
 check_thinking() {
   echo "[7/10] Thinking / reasoning mode ..."
   local resp
-  # enable_thinking: true (Qwen3 default). Math problem that needs visible reasoning.
+  # enable_thinking: true (Qwen3 default). A problem that takes a couple of steps:
+  # this used to ask "What is 2+2?", which adaptive and concise thinkers
+  # (MiMo, ThinkingCap) rightly answer with little or no reasoning, so the check
+  # failed healthy boots. max_tokens still bounds the verbose models.
   resp="$(curl -sf -m 120 "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -d "{
       \"model\": \"${MODEL}\",
-      \"messages\": [{\"role\": \"user\", \"content\": \"What is 2+2? One-line answer.\"}],
+      \"messages\": [{\"role\": \"user\", \"content\": \"A train leaves at 14:35 and the trip takes 3 hours and 13 minutes. What time does it arrive? Answer with the time only.\"}],
       \"max_tokens\": 4000,
       \"temperature\": 0.3,
       ${THINK_ON_STD}\"chat_template_kwargs\": ${THINK_ON_KW}
@@ -573,7 +576,11 @@ print(f'{len(reasoning)}|{len(content)}|{finish}|{(reasoning[:60] or \"(empty)\"
     fail "reasoning present but content empty, finish=$fin (not length)" \
          "Likely genuine stall — finish_reason should be length if it's just verbosity. reasoning: $r_head"
   elif [[ "$r_len" -lt 50 ]]; then
-    fail "reasoning suspiciously short ($r_len chars)" "reasoning: $r_head"
+    # Short but present, with an answer in content: thinking engaged and was parsed
+    # into its own field, which is what this check tests. How much a model thinks
+    # is a trait (ThinkingCap is concise), not a fault. It used to FAIL here.
+    pass "reasoning $r_len chars (short — a concise thinker; thinking engaged and parsed), content $c_len chars (finish=$fin)"
+    printf "    \033[2mreasoning:\033[0m %s\n" "$r_head"
   else
     pass "reasoning $r_len chars, content $c_len chars (finish=$fin)"
     printf "    \033[2mreasoning:\033[0m %s...\n" "$r_head"

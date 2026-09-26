@@ -77,7 +77,7 @@ trap cleanup EXIT
 #                         REASONING appears ONLY at "xhigh" — `high` yields none.
 #                         Models Qwen3.8-27B, whose template FORCES xhigh and remaps
 #                         high -> xhigh. A probe hardcoding `high` reads this model
-#                         as "reasoning suspiciously short".
+#                         as having no reasoning.
 #   noprops:<key>       → /props 404s; completions return content ONLY when the
 #                         request's chat_template_kwargs carries <key> ("-" = never)
 cat > "$TMP/mock.py" <<'PY'
@@ -139,9 +139,10 @@ class H(BaseHTTPRequestHandler):
             eff = kw.get("reasoning_effort")
             # OFF ladder resolves at `low`; the ON ladder must climb past `high`.
             content = "OK" if eff in ("minimal", "low", "medium") else ""
-            # >=50 chars: the ON ladder applies verify-full [7]'s own bar, so a
-            # short fixture string would be rejected as "suspiciously short" and the
-            # ladder would climb PAST xhigh. The fixture must clear the gate it tests.
+            # >=50 chars: the ON ladder requires 50 chars of reasoning (stricter than
+            # verify-full [7], which passes shorter reasoning), so a short fixture
+            # string would make the ladder climb PAST xhigh. The fixture must clear
+            # the gate it tests.
             reasoning = ("step one, then step two, then step three, and finally a "
                          "conclusion that is comfortably over fifty characters"
                          ) if eff == "xhigh" else ""
@@ -295,8 +296,8 @@ expect "15. low-only mock, no opt-in -> default off-value none" "http://127.0.0.
 
 # ⭐ The Qwen3.8-27B case: OFF resolves at `low`, but REASONING only appears at
 # `xhigh` — its template forces xhigh and remaps high -> xhigh. A probe hardcoding
-# `high` on the ON side reads this as "reasoning suspiciously short" (verify [7]) and
-# blames the model. The ON ladder must climb high -> xhigh.
+# `high` on the ON side gets no reasoning at all (verify [7] fails) and blames the
+# model. The ON ladder must climb high -> xhigh.
 start_mock 'props-xhigh:Thinking effort level: {{ reasoning_effort }}'
 # OFF resolves at `minimal` — the ladder takes the FIRST working level, and minimal
 # is correctly ordered ahead of low (lower effort is closer to off).

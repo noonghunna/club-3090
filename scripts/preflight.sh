@@ -1951,13 +1951,15 @@ preflight_detect_thinking_control() {
             if [[ -z "${THINK_EFFORT_OFF_VALUE:-}" ]]; then
               THINK_CONTROL="none"
             else
-              # ⚠️ THE BAR MUST MATCH THE CONSUMER'S. verify-full [7] fails a level
-              # whose reasoning is <50 chars ("suspiciously short"). An earlier
+              # ⚠️ THE PROBE MUST NOT BE LOOSER THAN THE CONSUMER. An earlier
               # revision accepted ANY non-zero reasoning, so the ladder blessed
-              # GLM's `high` on ~11 chars and [7] then REJECTED the value the probe
-              # had just chosen — probe and check disagreeing about what "thinking
-              # is on" means. 50 is that consumer's threshold; the probe budget
-              # above is sized to clear it comfortably (96 tok >> 50 chars).
+              # GLM's `high` on ~11 chars and verify-full [7], which then failed
+              # reasoning under 50 chars, REJECTED the value the probe had just
+              # chosen. [7] now passes short-but-present reasoning (2026-09-26:
+              # concise thinkers such as ThinkingCap were failing healthy boots), so
+              # this 50-char bar is the stricter of the two, which is the safe
+              # direction: the ladder still climbs to a level where thinking really
+              # engages. The probe budget above clears it comfortably (96 tok >> 50).
               local _min_reasoning=50 _rlen
               for _lvl in high xhigh max; do
                 _rlen="$(_preflight_probe_thinking_reasoning "$url" "$model" "{\"reasoning_effort\": \"${_lvl}\"}")"

@@ -46,8 +46,8 @@
 #              pin moves past ggml-org/llama.cpp#29257 (see below); (2) with NO tools
 #              offered it answers in tool-call XML instead of a requested `<solution>`
 #              block (cli-40 one-shot 0/25, bugfind 2/15) — a model trait, not the
-#              engine; (3) verify-full [7/10] is a known harness false-fail on
-#              adaptive-thinking models (see below); (4) thinking is adaptive: with it
+#              engine; (3) verify-full [7/10] was a harness false-fail on
+#              adaptive-thinking models, fixed 2026-09-26 (see below); (4) thinking is adaptive: with it
 #              ON, three 8-pack packs reasoned on only 1-4 of 15 responses.
 #   Quality:   8-pack, thinking ON: 79/150 p@1, 94/150 p@3 (2026-09-23; IF/SO v2.0.0).
 #   Best for:  a single-card long-context vision assistant that leaves the second
@@ -79,7 +79,8 @@
 #                · 1 KNOWN-FALSE FAIL, see below
 #   VRAM         17,426 MiB idle / 17,488 MiB after verify
 #   vision       4/4 on ground truth
-#   ⚠️ [7/10] "reasoning field empty" is a HARNESS artifact, NOT a regression and
+#   ✅ FIXED 2026-09-26: [7/10] now asks a multi-step question; 0 fails on re-check.
+#   History: [7/10] "reasoning field empty" was a HARNESS artifact, NOT a regression and
 #   NOT caused by q8_0. The check asserts a non-empty reasoning field using a
 #   trivial prompt ("what is 2+2"), which an ADAPTIVE-thinking model may answer
 #   without reasoning. Probed live on this exact boot:
