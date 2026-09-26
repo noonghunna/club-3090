@@ -55,13 +55,16 @@
 # ⚠️ That ladder was measured on IQ4_NL (15.22 GiB), NOT this compose's UD-IQ4_XS
 # (~1.95 GiB smaller), so 131072 is the validated q8_0 setting here, not a proven
 # ceiling. Community run #1380 (2026-09-21, 250 W): UD-IQ4_XS, KV_TYPE=q8_0,
-# CTX_SIZE=215000, and the F16 projector kept in system RAM (`--no-mmproj-offload`
-# — no knob in this compose) filled to 197,437 tok with 869 MiB free: it fits, but
-# under verify-stress's 1 GiB margin guard. Not reproduced on the reference rig.
-# The cost is per image: a new 640×480 image (319 tok) takes 4.01 s of prompt time
-# with the projector on the CPU vs 0.59 s on the GPU (measured 2026-09-25, b10920,
-# EPYC 7543 32 vCPU; submitter: 4.78 s on 16 vCPU), and the GPU projector holds
-# ~1,180 MiB. Worth it for long text sessions with occasional images, not per-turn.
+# CTX_SIZE=215000, and the F16 projector kept in system RAM (`--no-mmproj-offload`)
+# filled to 197,437 tok with 869 MiB free: it fits, but under verify-stress's 1 GiB
+# margin guard. Not reproduced on the reference rig. The recipe on this compose:
+#   KV_TYPE=q8_0 CTX_SIZE=215000 LLAMA_ARG_MMPROJ_OFFLOAD=false
+# The cost is per image: a new 640×480 image (319 tok) takes ~1.4-1.6 s of prompt
+# time with the projector on the CPU, in bursts up to ~4 s, vs 0.6 s on the GPU
+# (measured 2026-09-26 on b10920 and b11146 alike, EPYC 7543 32-vCPU VM, steal 0;
+# the burst cause is not isolated; submitter: 4.78 s on 16 vCPU). The GPU projector
+# holds ~1,180 MiB. Worth it for long text sessions with occasional images, not
+# per-turn. (The 2026-09-25 note here said 4.01 s: those runs sat in the slow mode.)
 #
 # ---------------------------------------------------------------------------
 # Qwen3.8-27B on llama.cpp — single 3090, UD-IQ4_XS weights, q4_0 KV, 262K ctx, vision.
@@ -125,6 +128,9 @@
 #   UBATCH_SIZE      llama.cpp -ub       (default: 512 — the tight-headroom lever)
 #   KV_TYPE          K and V quant type  (default: q4_0 — sub-q8; see KV CHOICE)
 #   IMAGE_MIN_TOKENS min image tokens    (unset by default; set 1024 for grounding)
+#   LLAMA_ARG_MMPROJ_OFFLOAD  projector on GPU (unset by default = GPU); false keeps
+#                    it in system RAM: frees ~1,180 MiB; a new image then costs
+#                    ~1.5 s (bursts to ~4 s) instead of 0.6 s (#1380)
 #   NP               parallel slots      (default: 1)
 #   SERVED_NAME      --alias value       (default: qwen3.8-27b)
 #   REASONING        thinking gate       (default: ON — 2026-09-01 flip; INSTRUCT=1 opts out)
@@ -185,6 +191,13 @@ services:
       # Changed low -> medium 2026-09-19; the prism-ternary sibling already
       # defaulted to medium and documented exactly this trap.
       - LLAMA_ARG_CHAT_TEMPLATE_KWARGS=${LLAMA_ARG_CHAT_TEMPLATE_KWARGS:-{"reasoning_effort":"${REASONING_EFFORT:-medium}"}}
+      # Projector placement: LLAMA_ARG_MMPROJ_OFFLOAD=false keeps the F16 projector in
+      # system RAM (#1380). llama-server reads it natively; nothing in `command:` may
+      # pass --mmproj-offload / --no-mmproj-offload, because argv overrides the env.
+      # Bare form on purpose: `- VAR=${VAR:-}` would set it EMPTY-but-present, and
+      # llama.cpp rejects an empty boolean ("invalid boolean value"), so every
+      # default boot would die before loading the model.
+      - LLAMA_ARG_MMPROJ_OFFLOAD
       - CUDA_VISIBLE_DEVICES=${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}
     # ⚠ -np 1 is intentional on a single 24 GB card — extra slots divide throughput
     #   and each takes its own KV slice. The projector + 262K KV leave no room anyway.
