@@ -159,8 +159,9 @@
 #       ⚠️ It does NOT work on the GGUF's own embedded template: every request carrying
 #       `tools` returns HTTP 400 "Unable to generate parser for this template …
 #       CallExpression at line 163, column 57", and /props reports supports_tools:false.
-#       Reported club-3090#1250 (@paulp83); upstream ggml-org/llama.cpp#28786 (filed
-#       2026-09-11), same symptom previously unanswered on ggml-org/llama.cpp#27754.
+#       Reported club-3090#1250 (@paulp83); upstream ggml-org/llama.cpp#28786 (resolved
+#       2026-09-12 by PR #28817 — present in mainline v0.5.0 (b11146), but this fork image
+#       predates it, so the override is still required here; see docs/UPSTREAM.md).
 #       ⛔⛔ THE LINE IN THAT ERROR IS THE CRASH SITE, NOT THE CAUSE. Two earlier readings
 #       of this bug were WRONG and are recorded so nobody re-derives them:
 #         ❌ "minja cannot evaluate .items()" — GLM-4.7-Flash.jinja has the identical
