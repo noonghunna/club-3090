@@ -161,6 +161,9 @@ services:
     environment:
       # Drafter toggle - docker forwards only what is declared here.
       - SPEC_N=${SPEC_N:-}
+      # MTP_DRAFT_N_MAX is read by the entrypoint too, so the drafter ON/OFF decision and the
+      # banner default to the same depth as the flag (2), and MTP_DRAFT_N_MAX=0 disables.
+      - MTP_DRAFT_N_MAX
       - SPEC=${SPEC:-}
       # ⚠️⚠️ THE ROW VARS MUST BE DECLARED HERE OR THE FLIP SILENTLY DOES NOTHING.
       # They used to be read by docker-compose INTERPOLATION in `command:`
@@ -284,7 +287,7 @@ services:
         # -- Drafter toggle: SPEC_N=<n> depth; SPEC_N=0 (or SPEC=off) disables ----
         # Disabling REMOVES the drafter flags (n-max=0 leaves the draft context
         # allocated). A non-numeric SPEC_N is a hard error, never a silent off.
-        _spec_n="$${SPEC_N:-1}"
+        _spec_n="$${SPEC_N:-$${MTP_DRAFT_N_MAX:-2}}"
         case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
         case "$$_spec_n" in ""|*[!0-9]*)
           echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2

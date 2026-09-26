@@ -15,6 +15,7 @@
 # So this guard checks the declaration form, the argv, and the DELIVERY PATH, with a
 # NEGATIVE CONTROL: unset must leave the container without the variable.
 set -euo pipefail
+export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 

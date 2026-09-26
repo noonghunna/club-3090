@@ -94,6 +94,9 @@ services:
     environment:
       # Drafter toggle - docker forwards only what is declared here.
       - SPEC_N=${SPEC_N:-}
+      # MTP_DRAFT_N_MAX is read by the entrypoint too, so the drafter ON/OFF decision and the
+      # banner default to the same depth as the flag (2), and MTP_DRAFT_N_MAX=0 disables.
+      - MTP_DRAFT_N_MAX
       - SPEC=${SPEC:-}
     # The image ENTRYPOINT is ["/app/llama-server"] on every engine we ship
     # (mainline, ik-llama, beellama, llamacpp-club3090 — all verified). This
@@ -111,7 +114,7 @@ services:
         # model when one is named -- so the memory stays spent. Removing the
         # flags is the only clean off. A non-numeric SPEC_N is a hard error, so a
         # typo can never masquerade as a silent "drafter off".
-        _spec_n="$${SPEC_N:-1}"
+        _spec_n="$${SPEC_N:-$${MTP_DRAFT_N_MAX:-2}}"
         case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
         case "$$_spec_n" in ""|*[!0-9]*)
           echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
