@@ -114,12 +114,13 @@ derive — reuse the curated compose and swap the weights.** Three things to get
   **`-MTP` variant** (the head is embedded in the checkpoint), or drop
   `--speculative-config`.
 
-Example — abliterated Qwen3.6-27B:
+Examples — abliterated Qwen3.6-27B / Qwen3.8-27B:
 
 | You have | Reuse this curated compose | Notes |
 |---|---|---|
 | an **AWQ + MTP** variant (vLLM) | `models/qwen3.6-27b/vllm/compose/dual/awq-bf16-int4/int8.yml` | match `--quantization` (`awq` / `compressed-tensors`) to the repo |
 | a **GGUF + MTP** variant (llama.cpp) | a `llama-cpp` compose (path **B** above) | self-contained — simplest |
+| a **Qwen3.8-27B FP8** variant with the MTP head (vLLM), e.g. `munekazu/Huihui-Qwen3.8-27B-abliterated-FP8` | `models/qwen3.8-27b/vllm/compose/dual/fp8/mtp.yml` | keeps `--quantization fp8`; Qwen3.8 reports the same config arch as Qwen3.6, so the `pull.sh` refusal naming `qwen3.6-27b` is expected |
 
 ```bash
 # 1. download the quantized + MTP variant
