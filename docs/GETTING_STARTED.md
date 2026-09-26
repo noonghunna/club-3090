@@ -11,6 +11,8 @@ cd club-3090
 
 # 2. Download the model (Qwen3.6-27B, ~18 GB)
 bash scripts/setup.sh qwen3.6-27b
+#    Picked a specific slug instead? This fetches its weights plus any drafter or
+#    vision projector it needs:  bash scripts/setup.sh <slug>
 
 # 3. Boot the default config for this model on your hardware
 #    (auto-picks: single-card → vllm/minimal; dual → vllm/dual)

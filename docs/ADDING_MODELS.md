@@ -170,7 +170,8 @@ One compose per validated config at `models/<id>/<engine>/compose/<topology>/<qu
     compose_path="models/<id>/vllm/compose/dual/autoround-int4/<serving>.yml",
     default_port=8050,                 # MUST equal the compose ${PORT:-NNNN} fallback
     kvcalc_key="<model>:<kvcalc-profile>",  # vLLM only; llama family uses "SKIP"
-    weights_companions=("<id>:mmproj",),    # REQUIRED when the compose mounts a drafter/mmproj
+    weights_companions=("<id>:mmproj",),    # REQUIRED when the compose mounts a drafter/mmproj;
+                                            # `setup.sh <slug>` + the cockpit Download fetch these
     status="incubating",               # NEW MODELS START HERE
     status_note=None,                  # REQUIRED string when caveats/preview/upstream-gated/deprecated
     # ── newer kwargs ──

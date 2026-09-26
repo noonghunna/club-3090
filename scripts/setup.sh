@@ -4,6 +4,8 @@
 #
 #   bash scripts/setup.sh                # interactive model picker in a TTY
 #   bash scripts/setup.sh <model-name>   # scripted/CI positional form
+#   bash scripts/setup.sh <slug>         # everything one launch slug needs: its weights
+#                                        # + its drafter / vision projector companions
 #
 # Supported model families are DERIVED from scripts/lib/profiles/models/*.yml
 # (via weights.py `catalog --json`) — never hand-listed here. Exact repositories,
@@ -142,6 +144,7 @@ for _m in list(RECOMMENDED_DEFAULT_MODELS)[:2]:
 
 usage() {
   echo "Usage: $0 <model-name>"
+  echo "       $0 <slug>       # a launch slug's weights + its drafter / projector companions"
   echo "       $0              # interactive model picker in a TTY"
   echo ""
   echo "Run with no model name in a normal terminal to open the hardware-aware"
@@ -154,6 +157,7 @@ usage() {
   done < <(_catalog_py "[m['id'] for m in data['models']]")
   echo ""
   echo "Exact catalog entry fetch: WEIGHT_KEY=<registry-key> $0 <model-name>"
+  echo "Slug fetch without its companions: WEIGHT_EXTRA_KEYS= $0 <slug>"
   echo ""
   # These are OPTIONAL downloads, and a slug that needs one fails at switch.sh
   # time with the engine's own error — which names neither the flag nor the way
@@ -346,6 +350,7 @@ esac
 if [[ $# -gt 1 ]]; then
   echo "ERROR: setup.sh takes a single model name; got extra argument(s): ${*:2}" >&2
   echo "       setup.sh only DOWNLOADS WEIGHTS for a model — e.g. bash scripts/setup.sh ${1}" >&2
+  [[ "${2:-}" == */* ]] && echo "       To download everything a slug needs instead: bash scripts/setup.sh ${2}" >&2
   echo "       To LAUNCH a serving config (a slug such as 'vllm/gemma-31b-dual'), use:" >&2
   echo "         bash scripts/launch.sh --variant <slug>      # or: bash scripts/switch.sh <slug>" >&2
   echo "       See the slugs available for a model:  bash scripts/switch.sh --list" >&2
@@ -362,6 +367,52 @@ if [[ -z "${MODEL_NAME}" ]]; then
     echo "(Interactive picker available in a TTY shell. Use the positional form in scripts/CI.)"
     exit 1
   fi
+fi
+
+# ---------- Slug form: everything one launch slug needs ----------
+# `setup.sh <slug>` (any argument with a '/', e.g. llamacpp/qwen38-27b-single-iq4xs)
+# resolves the slug through the registry: its model, its weights variant, and its
+# `weights_companions` (a drafter or vision projector its compose mounts). Before
+# this, only the serve-cockpit's Download action knew a slug's companions, so a CLI
+# download could leave a slug that crash-loops on a missing drafter (#1247). These
+# are the same keys the cockpit builds (services.py run_weights_download).
+# Every declared companion is fetched: all drafters are default-ON, and every
+# projector is mounted unconditionally except GLM's, which is ~1 GB next to
+# 114-157 GB of weights. Explicit WEIGHT_KEY / WEIGHT_EXTRA_KEYS still win, so
+# `WEIGHT_EXTRA_KEYS= bash scripts/setup.sh <slug>` skips the companions.
+SETUP_SLUG=""
+if [[ "${MODEL_NAME}" == */* ]]; then
+  SETUP_SLUG="${MODEL_NAME}"
+  _slug_rc=0
+  _slug_env="$(CLUB3090_PROFILES_DIR="${ROOT_DIR}/scripts/lib/profiles" python3 -c '
+import os, shlex, sys
+sys.path.insert(0, os.environ["CLUB3090_PROFILES_DIR"])
+from compose_registry import get_registry
+e = get_registry().get(sys.argv[1])
+if e is None:
+    raise SystemExit(3)
+model, variant = e["model"], e["weights_variant"]
+comps = [c if ":" in c else f"{model}:{c}" for c in (e.get("weights_companions") or []) if c]
+print("_slug_model=" + shlex.quote(model))
+print("_slug_key=" + shlex.quote(model + ":" + variant))
+print("_slug_companions=" + shlex.quote(" ".join(comps)))
+print("_slug_status=" + shlex.quote(str(e.get("status") or "?")))
+' "${SETUP_SLUG}")" || _slug_rc=$?
+  if [[ "${_slug_rc}" == "3" ]]; then
+    echo "ERROR: '${SETUP_SLUG}' is not a model name or a known launch slug." >&2
+    echo "       Model names: $(_catalog_py "[', '.join(m['id'] for m in data['models'])]")" >&2
+    echo "       Launch slugs: bash scripts/switch.sh --list" >&2
+    exit 1
+  elif [[ "${_slug_rc}" != "0" ]]; then
+    echo "ERROR: could not read the launch-slug registry to resolve '${SETUP_SLUG}'." >&2
+    echo "       Install python3-yaml/PyYAML if missing, or run: python3 scripts/lib/profiles/migrate_registry_to_yaml.py --check" >&2
+    exit 1
+  fi
+  eval "${_slug_env}"
+  MODEL_NAME="${_slug_model}"
+  : "${WEIGHT_KEY:=${_slug_key}}"
+  [[ -n "${WEIGHT_EXTRA_KEYS+x}" ]] || WEIGHT_EXTRA_KEYS="${_slug_companions}"
+  echo "[slug]    ${SETUP_SLUG} (${_slug_status}) -> ${WEIGHT_KEY}${WEIGHT_EXTRA_KEYS:+ + ${WEIGHT_EXTRA_KEYS}}"
 fi
 
 declare -a BOTH_MODELS=()
@@ -484,6 +535,28 @@ if [[ "${WITH_ASSISTANT_DRAFT:-0}" == "1" ]]; then
   ALWAYS_DRAFT_KEY="${MODEL_NAME}:${SETUP_ASSISTANT_DRAFT}"
 fi
 
+# ---------- Companion artifacts (cockpit Download, setup.sh <slug>) ----------
+# A slug's `weights_companions` (a drafter / mmproj vision projector its compose
+# mounts from a separate subdir) arrive as a space/comma-separated WEIGHT_EXTRA_KEYS
+# list of fully-qualified <model>:<variant> keys: from the serve-cockpit Download
+# action, or from the slug form above.  Fetch them ALONGSIDE the core so a
+# downloaded slug actually serves — otherwise it reads "present" then fails to boot
+# for the missing companion.  Each is a normal catalog entry pulled by the
+# EXTRA_WEIGHT_KEYS loop below (after the SKIP_MODEL guard), with its own SHA verify.
+# Queued HERE, before the dump, so SETUP_DUMP_KEYS shows exactly what would download.
+_COMPANION_KEYS=()
+if [[ -n "${WEIGHT_EXTRA_KEYS:-}" ]]; then
+  read -ra _COMPANION_KEYS <<< "${WEIGHT_EXTRA_KEYS//,/ }"
+  for _ck in "${_COMPANION_KEYS[@]}"; do
+    [[ -n "${_ck}" ]] || continue
+    # A companion can also be the primary or the model's always-fetched drafter
+    # (GLM's dflash2-q4km is both): queue it once, or the disk estimate counts it twice.
+    [[ "${_ck}" == "${PRIMARY_WEIGHT_KEY}" || "${_ck}" == "${ALWAYS_DRAFT_KEY:-}" ]] && continue
+    [[ " ${EXTRA_WEIGHT_KEYS[*]:-} " == *" ${_ck} "* ]] && continue
+    EXTRA_WEIGHT_KEYS+=("${_ck}")
+  done
+fi
+
 # Debug / CI surface: print the resolved dispatch keys and exit before any
 # preflight or download. Used by scripts/tests/test-setup-registry-derived.sh
 # to assert setup.sh's derived keys agree with `weights.py catalog --json` for
@@ -497,26 +570,15 @@ if [[ "${SETUP_DUMP_KEYS:-0}" == "1" ]]; then
   echo "vision=${VISION_KEY}"
   echo "prism_eagle3=${PRISM_EAGLE3_KEY}"
   echo "extras=${EXTRA_WEIGHT_KEYS[*]:-}"
+  echo "slug=${SETUP_SLUG}"
+  echo "companions=${WEIGHT_EXTRA_KEYS:-}"
   exit 0
 fi
 
 load_weight_recipe "${PRIMARY_WEIGHT_KEY}"
 
-# ---------- Companion artifacts (cockpit Download) ----------
-# The serve-cockpit Download action reads the slug's `weights_companions` from the
-# registry (a DFlash draft model / mmproj vision projector its compose mounts from
-# a separate subdir) and passes them as a space/comma-separated WEIGHT_EXTRA_KEYS
-# list of fully-qualified <model>:<variant> keys.  Fetch them ALONGSIDE the core
-# so a downloaded slug actually serves — otherwise it reads "present" then fails
-# to boot for the missing companion.  Each is a normal catalog entry pulled by the
-# EXTRA_WEIGHT_KEYS loop below (after the SKIP_MODEL guard), with its own SHA verify.
-if [[ -n "${WEIGHT_EXTRA_KEYS:-}" ]]; then
-  read -ra _COMPANION_KEYS <<< "${WEIGHT_EXTRA_KEYS//,/ }"
-  for _ck in "${_COMPANION_KEYS[@]}"; do
-    [[ -n "${_ck}" ]] && EXTRA_WEIGHT_KEYS+=("${_ck}")
-  done
-  [[ -n "${_COMPANION_KEYS[*]:-}" ]] && echo "[model]   + companion(s): ${_COMPANION_KEYS[*]}"
-fi
+# Companions were queued above, before the SETUP_DUMP_KEYS surface.
+[[ -n "${_COMPANION_KEYS[*]:-}" ]] && echo "[model]   + companion(s): ${_COMPANION_KEYS[*]}"
 
 # ---------- MODEL_DIR resolution ----------
 # Order of precedence:
@@ -665,7 +727,7 @@ _disk_need_gb() {
   fi
 }
 
-_DISK_KEYS=("${PRIMARY_WEIGHT_KEY:-}" "${ALWAYS_DRAFT_KEY:-}")
+_DISK_KEYS=("${PRIMARY_WEIGHT_KEY:-}" "${ALWAYS_DRAFT_KEY:-}" "${EXTRA_WEIGHT_KEYS[@]}")
 [[ "${WITH_DFLASH_DRAFT:-0}" == "1" ]] && _DISK_KEYS+=("${DFLASH_KEY:-${MODEL_NAME}:dflash}")
 # WITH_VISION=1 opts into the mmproj projector (disk-gate it AND queue the download).
 [[ "${WITH_VISION:-0}" == "1" && -n "${VISION_KEY:-}" ]] && { _DISK_KEYS+=("${VISION_KEY}"); EXTRA_WEIGHT_KEYS+=("${VISION_KEY}"); }

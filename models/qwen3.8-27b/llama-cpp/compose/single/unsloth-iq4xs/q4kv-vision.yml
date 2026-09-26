@@ -142,7 +142,7 @@
 #   LLAMACPP_IMAGE   engine image        (default: the llama-cpp-local pin)
 #
 # Quick start:
-#   WEIGHT_KEY=qwen3.8-27b:unsloth-iq4xs bash scripts/setup.sh qwen3.8-27b   # + mmproj via the vision slug companion
+#   bash scripts/setup.sh llamacpp/qwen38-27b-single-iq4xs   # weights + the mmproj projector
 #   FORCE=1 bash scripts/launch.sh --variant llamacpp/qwen38-27b-single-iq4xs
 #   (or: bash scripts/switch.sh --force llamacpp/qwen38-27b-single-iq4xs)
 #   FORCE is REQUIRED while the slug is 🧪 Experimental (non-functional statuses
