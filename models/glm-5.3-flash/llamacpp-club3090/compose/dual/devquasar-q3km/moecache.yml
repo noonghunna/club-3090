@@ -91,8 +91,9 @@
 #       ⚠️ It does NOT work on the GGUF's own embedded template: every request carrying
 #       `tools` returns HTTP 400 "Unable to generate parser for this template …
 #       CallExpression at line 163, column 57", and /props reports supports_tools:false.
-#       Reported club-3090#1250 (@paulp83); upstream ggml-org/llama.cpp#28786 (filed
-#       2026-09-11), same symptom previously unanswered on ggml-org/llama.cpp#27754.
+#       Reported club-3090#1250 (@paulp83); upstream ggml-org/llama.cpp#28786 (resolved
+#       2026-09-12 by PR #28817 — present in mainline v0.5.0 (b11146), but this fork image
+#       predates it, so the override is still required here; see docs/UPSTREAM.md).
 #       ⛔⛔ THE LINE IN THAT ERROR IS THE CRASH SITE, NOT THE CAUSE. Two earlier readings
 #       of this bug were WRONG and are recorded so nobody re-derives them:
 #         ❌ "minja cannot evaluate .items()" — GLM-4.7-Flash.jinja has the identical
@@ -114,10 +115,11 @@
 #       ⚠️ NOT club-3090#1195 — that is an INTERMITTENT 500 parsing the model's OUTPUT
 #       ("Failed to parse tool call arguments as JSON", 2/25 turns, payload-dependent).
 #       Same subsystem, opposite end. Do not merge the two.
-#       ⚠️ NOT live-booted: verified by static analysis + the engine's own autoparser, not
-#       by serving 140 GiB end-to-end. Detail: patches/glm53-minja-numeric-index/README.md
+#       ✅ LIVE-VERIFIED 2026-09-12: external rig, verify-full 10/10 with the override
+#       (club-3090#1250, @paulp83) — the tool checks are green end-to-end.
+#       Detail: patches/glm53-minja-numeric-index/README.md
 #     • ⚠️ ATTRIBUTION: the MoE expert cache is **leloch's** work
-#       (github.com/leloch/llama.cpp, RFC ggml-org#24528). This slug packages
+#       (github.com/leloch/llama.cpp, RFC ggml-org/24528). This slug packages
 #       it; it does not originate it.
 #     • ⛔ REQUIRES THE v1.4 ENGINE. `glm5next` arrives via vendored
 #       ggml-org/llama.cpp#27754 (open draft, @danielhanchen). The v1.2 digest
