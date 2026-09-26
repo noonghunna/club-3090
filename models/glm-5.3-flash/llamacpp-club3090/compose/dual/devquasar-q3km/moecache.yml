@@ -119,7 +119,7 @@
 #       (club-3090#1250, @paulp83) — the tool checks are green end-to-end.
 #       Detail: patches/glm53-minja-numeric-index/README.md
 #     • ⚠️ ATTRIBUTION: the MoE expert cache is **leloch's** work
-#       (github.com/leloch/llama.cpp, RFC ggml-org/24528). This slug packages
+#       (github.com/leloch/llama.cpp, RFC ggml-org/llama.cpp discussions/24528). This slug packages
 #       it; it does not originate it.
 #     • ⛔ REQUIRES THE v1.4 ENGINE. `glm5next` arrives via vendored
 #       ggml-org/llama.cpp#27754 (open draft, @danielhanchen). The v1.2 digest
