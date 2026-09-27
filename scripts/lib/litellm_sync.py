@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 
 BEGIN = "  # === BEGIN GENERATED LOCAL BLOCK"
@@ -48,8 +49,9 @@ def registry_ports(variants: list[dict]) -> list[int]:
     return sorted({v["port"] for v in variants if v.get("port")})
 
 
-# A live route: (port, served id, context window or None).
-Live = tuple[int, str, "int | None"]
+# A live route: (port, served id, context window or None, whether Claude Code's
+# /v1/messages goes to the engine's own Anthropic endpoint — see serves_messages).
+Live = tuple[int, str, "int | None", bool]
 
 
 def probe(port: int) -> list[Live]:
@@ -61,6 +63,8 @@ def probe(port: int) -> list[Live]:
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2) as r:
             data = json.load(r).get("data") or []
+        owned_by = next((str(m["owned_by"]) for m in data if m.get("owned_by")), "")
+        native = serves_messages(port, owned_by) if data else False
         out: list[Live] = []
         for m in data:
             if not m.get("id"):
@@ -69,10 +73,54 @@ def probe(port: int) -> list[Live]:
             ml = int(ml) if isinstance(ml, int) and ml > 0 else None
             if ml is None:
                 ml = llamacpp_ctx(port)   # llama.cpp reports its window on /props instead
-            out.append((port, m["id"], ml))
+            out.append((port, m["id"], ml, native))
         return out
     except Exception:
         return []
+
+
+def engine_kind_from_owned_by(owned_by: str) -> str:
+    """The engine family, decided by scripts/lib/engine-kind.sh (#1282) — never here."""
+    lib = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine-kind.sh")
+    try:
+        out = subprocess.run(
+            ["bash", "-c", 'source "$1" && engine_kind_from_owned_by "$2"', "_", lib, owned_by],
+            capture_output=True, text=True, encoding="utf-8", timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return out.stdout.strip() or "unknown"
+
+
+def serves_messages(port: int, owned_by: str) -> bool:
+    """Whether the gateway should hand Claude Code's Anthropic /v1/messages to the
+    engine's own endpoint instead of translating it. Both must hold:
+      - the engine is SGLang, whose endpoint was checked with the Claude Code CLI:
+        thinking blocks out, replayed thinking and a mid-array system message in,
+        tool calls, 97-99 % prefix reuse on follow-ups.
+        NOT vLLM (v0.30.0): its endpoint moves every mid-array system message into
+        the leading system block unless `--chat-template` was passed — it tests
+        the flag, not the template the model loaded, and our composes mount the
+        template instead. Claude Code sends one such message per turn, so each turn
+        re-prefills the whole conversation after the system prompt (measured: the
+        new tokens grow 7.8K → 9.9K → 12.8K over three turns; 2.9K without them).
+        Fixed upstream by vllm#58754 (after v0.30.0) — add vllm here once the pin
+        carries it (docs/UPSTREAM.md). Until then vLLM stays on LiteLLM's
+        translation, which keeps the prompt append-only.
+      - this server answers /v1/messages. An empty body costs no generation: a
+        server with the endpoint rejects it (400/422), an older one 404s. A route
+        without the endpoint stays on LiteLLM's translation, which still works."""
+    if engine_kind_from_owned_by(owned_by) != "sglang":
+        return False
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/messages", data=b"{}",
+                                 headers={"content-type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=2).close()
+        return True
+    except urllib.error.HTTPError as e:
+        return e.code in (400, 422)
+    except Exception:
+        return False
 
 
 def llamacpp_ctx(port: int) -> "int | None":
@@ -93,7 +141,8 @@ def live_routes(ports: list[int]) -> list[Live]:
     # TEST SEAM. Probing real sockets makes a gate depend on whatever the rig
     # happens to be serving, which is neither deterministic nor reproducible on
     # a contributor's machine. `C3_LITELLM_FAKE_LIVE="8182=a,8091=b"` substitutes
-    # the probe result wholesale; `8113=qwen@262144` adds the context window.
+    # the probe result wholesale; `8113=qwen@262144` adds the context window,
+    # and a trailing `+messages` marks a server that serves /v1/messages itself.
     # Deliberately env-only and undocumented in --help: it is for tests, not
     # operators.
     fake = os.environ.get("C3_LITELLM_FAKE_LIVE")
@@ -102,10 +151,12 @@ def live_routes(ports: list[int]) -> list[Live]:
         for item in fake.split(","):
             if "=" in item:
                 p, rest = item.split("=", 1)
+                rest, _, flag = rest.partition("+")
                 mid, _, ml = rest.partition("@")
                 if p.strip().isdigit():
                     out.append((int(p.strip()), mid.strip(),
-                                int(ml) if ml.strip().isdigit() else None))
+                                int(ml) if ml.strip().isdigit() else None,
+                                flag.strip() == "messages"))
         return out
     found: list[Live] = []
     with cf.ThreadPoolExecutor(max_workers=32) as ex:
@@ -156,10 +207,21 @@ def port_facts(variants: list[dict]) -> dict[int, dict]:
 # ⚠️ omp's `discovery: litellm` talks the Responses API to a route whose provider
 # is `openai` (chat completions otherwise); /v1/responses is served natively by
 # vLLM, SGLang and llama.cpp — see docs/CODING_AGENTS.md.
+# Claude Code talks Anthropic /v1/messages. On an `openai` route LiteLLM translates
+# that to the engine's Responses API, and that bridge builds thinking blocks only
+# from a reasoning SUMMARY, which vLLM and SGLang never produce: Claude Code got the
+# answer but none of the model's reasoning, so it had nothing to replay. Its
+# chat-completions bridge maps reasoning both ways, but it re-routes a thinking
+# request to Responses unless the route says `supports_reasoning: false`, which
+# /model_group/info publishes (pi-setup.sh would turn thinking off). So a route on
+# an engine whose own /v1/messages holds up (today SGLang — see serves_messages)
+# lists it in `supported_endpoints`, and LiteLLM forwards the Anthropic request to
+# the engine untranslated.
+MESSAGES_ENDPOINTS = '      supported_endpoints: ["/v1/chat/completions", "/v1/responses", "/v1/messages"]'
 ROUTE_PARAMS = ["      allowed_openai_params: [reasoning_effort]"]
 
 
-def model_info(ctx: "int | None", facts: dict) -> list[str]:
+def model_info(ctx: "int | None", facts: dict, native_messages: bool = False) -> list[str]:
     """What omp's `discovery: litellm` reads from /model_group/info. Without it
     an agent falls back to a default context window and output cap: compaction
     fires far too early and busts the prefix cache, and long file writes get
@@ -172,6 +234,8 @@ def model_info(ctx: "int | None", facts: dict) -> list[str]:
         lines.append(f"      supports_reasoning: {'true' if facts['thinking'] else 'false'}")
     if facts.get("vision") not in (None, "", "no", False):
         lines.append("      supports_vision: true")
+    if native_messages:
+        lines.append(MESSAGES_ENDPOINTS)
     return lines
 
 
@@ -185,7 +249,7 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None) -> tu
     ]
     seen: set[str] = set()
     facts = facts or {}
-    for port, mid, ctx in sorted(live, key=lambda t: (t[1], t[0])):
+    for port, mid, ctx, native in sorted(live, key=lambda t: (t[1], t[0])):
         if mid in seen:
             lines.append(f"  # ⚠️ '{mid}' is also served on :{port}; keeping the first route only")
             continue
@@ -198,7 +262,7 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None) -> tu
             "      api_key: EMPTY",
             *ROUTE_PARAMS,
         ]
-        lines += model_info(ctx, facts.get(port, {})) + [""]
+        lines += model_info(ctx, facts.get(port, {}), native) + [""]
     if not live:
         lines.append("  # (nothing serving right now — no local routes)")
     return "\n".join(lines).rstrip() + "\n" + END + "\n", len(seen)

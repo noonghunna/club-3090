@@ -168,6 +168,66 @@ done
   && ok "supports_reasoning only where a slug declares a thinking profile (unknown is omitted, never false)" \
   || bad "supports_reasoning: qwen=$(route_field qwen3.8-27b model_info.supports_reasoning) sgl='$(route_field sgl-live model_info.supports_reasoning)'"
 
+# --- 15: Claude Code's /v1/messages goes to the engine's own endpoint, where it holds up
+# LiteLLM's translation of /v1/messages builds no thinking blocks from vLLM/SGLang
+# (the Responses bridge reads only a reasoning summary), so Claude Code never got
+# the model's reasoning back. `supported_endpoints` with /v1/messages makes LiteLLM
+# forward the request untranslated. Only on routes the probe marked (+messages).
+render "8113=qwen3.8-27b@262144,8142=sgl-live@163840+messages,8020=gguf-live"
+eps() { route_field "$1" model_info.supported_endpoints; }
+if [[ "$(eps sgl-live)" == *"/v1/messages"* && -z "$(eps qwen3.8-27b)" && -z "$(eps gguf-live)" ]]; then
+  ok "only a route whose engine serves /v1/messages itself gets the passthrough"
+else
+  bad "supported_endpoints: sgl-live='$(eps sgl-live)' qwen3.8-27b='$(eps qwen3.8-27b)' gguf-live='$(eps gguf-live)'"
+fi
+# …and it must never touch supports_reasoning: /model_group/info publishes it, and
+# pi-setup.sh turns thinking off on a false one.
+[[ -z "$(route_field sgl-live model_info.supports_reasoning)" ]] \
+  && ok "the passthrough leaves supports_reasoning alone" \
+  || bad "passthrough route carries supports_reasoning=$(route_field sgl-live model_info.supports_reasoning)"
+
+# --- 16: the REAL probe decides it, against stub servers (not the seam) ------------
+# One positive control and three negatives, so a probe that always says yes or
+# always says no both fail. vLLM is a negative ON PURPOSE: v0.30.0 moves Claude
+# Code's per-turn system message to the front, re-prefilling the conversation
+# every turn (vllm#58754 fixes it; see serves_messages).
+python3 - "$ROOT/scripts/lib" <<'PY2' && ok "probe: SGLang with /v1/messages → passthrough; SGLang without it, vLLM, llama.cpp → translated" || bad "probe decision wrong (see above)"
+import http.server, json, sys, threading
+sys.path.insert(0, sys.argv[1])
+import litellm_sync
+
+def stub(owned_by, messages_status):
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def _send(self, code, body):
+            data = json.dumps(body).encode()
+            self.send_response(code); self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(data))); self.end_headers(); self.wfile.write(data)
+        def do_GET(self):
+            if self.path == "/v1/models":
+                self._send(200, {"data": [{"id": "m", "owned_by": owned_by, "max_model_len": 4096}]})
+            else:
+                self._send(404, {})
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length") or 0))
+            self._send(messages_status if self.path == "/v1/messages" else 404, {"error": "stub"})
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+cases = [("sglang", 400, True), ("sglang", 404, False), ("vllm", 400, False), ("llamacpp", 400, False)]
+bad = 0
+for owned_by, status, want in cases:
+    srv = stub(owned_by, status)
+    got = litellm_sync.probe(srv.server_address[1])
+    srv.shutdown()
+    flag = got[0][3] if got else None
+    if flag is not want:
+        print(f"    owned_by={owned_by} /v1/messages→{status}: passthrough={flag}, want {want}", file=sys.stderr)
+        bad = 1
+sys.exit(bad)
+PY2
+
 # --- 12: gateway settings survive every render, including a prune -----------
 python3 - "$RUNTIME" <<'PY2' && ok "litellm_settings (request_timeout, num_retries: 0) carried into the runtime view" || bad "litellm_settings missing from the runtime view"
 import io, sys, yaml
