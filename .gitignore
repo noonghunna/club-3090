@@ -89,6 +89,9 @@ results/*
 # every checkout would conflict on a file nobody edited.
 services/litellm/config.runtime.yaml
 services/litellm/config.runtime.yaml.tmp
+# this rig's own gateway routes + their keys (see services/litellm/config.local.yaml.example)
+services/litellm/config.local.yaml
+services/litellm/local.env
 
 # gpu-mode upgrade: support-service volume backups (e.g. Qdrant before a storage migration)
 backups/

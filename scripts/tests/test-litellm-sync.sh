@@ -30,10 +30,23 @@ SYNC="scripts/lib/litellm-sync.sh"
 RUNTIME="services/litellm/config.runtime.yaml"
 BACKUP="$(mktemp)"; [[ -f "$RUNTIME" ]] && cp "$RUNTIME" "$BACKUP"
 restore() { [[ -s "$BACKUP" ]] && cp "$BACKUP" "$RUNTIME"; rm -f "$BACKUP"; }
-trap restore EXIT
+trap 'restore; rm -f "${LOCAL_CFG:-}"' EXIT
 
 # Deterministic: C3_LITELLM_FAKE_LIVE substitutes the socket probe, so the gate
 # does not depend on whatever this rig happens to be serving.
+# This rig's own routes come from a FIXTURE, never the real (gitignored)
+# services/litellm/config.local.yaml, so the gate is the same on every checkout.
+LOCAL_CFG="$(mktemp)"
+cat > "$LOCAL_CFG" <<'YAML'
+model_list:
+  # a cloud endpoint this rig uses — not on any registry port
+  - model_name: rig-cloud-model
+    litellm_params:
+      model: openai/rig-cloud-model
+      api_base: https://cloud.example.invalid/v1
+      api_key: os.environ/RIG_CLOUD_KEY
+YAML
+export C3_LITELLM_LOCAL_CONFIG="$LOCAL_CFG"
 render() { C3_LITELLM_FAKE_LIVE="$1" bash "$SYNC" --no-restart --quiet; }
 routes() { python3 -c "
 import yaml,io,sys
@@ -46,12 +59,11 @@ got="$(routes)"
 [[ "$got" == *alpha-model* && "$got" == *beta-model* ]] \
   && ok "live endpoints become routes" || bad "live routes missing (got: $got)"
 
-# --- 2: the cloud block SURVIVES ---------------------------------------------
-# A cloud endpoint is not "dead" because a local GPU is idle, and these back the
-# benchlocal quality runs. If the prune ever eats them, quality runs break with
-# no obvious cause.
-[[ "$got" == *qwen3.8-max* ]] \
-  && ok "cloud routes survive the prune" || bad "CLOUD ROUTES WERE PRUNED (got: $got)"
+# --- 2: this rig's own routes (config.local.yaml) are served and SURVIVE -----
+# A cloud endpoint is not "dead" because a local GPU is idle. If the prune ever
+# eats one, whatever depends on it breaks with no obvious cause.
+[[ "$got" == *rig-cloud-model* ]] \
+  && ok "this rig's own routes are merged in and survive the prune" || bad "LOCAL ROUTES MISSING (got: $got)"
 
 # --- 3: a registry-owned port that is NOT live gets pruned -------------------
 render "8182=alpha-model"
@@ -62,10 +74,10 @@ got="$(routes)"
 # --- 4: NOTHING live → zero local routes, cloud intact -----------------------
 render ""
 got="$(routes)"
-if [[ "$got" == *qwen3.8-max* ]] && ! command grep -q "host.docker.internal" "$RUNTIME"; then
-  ok "with nothing serving: no local routes, cloud intact"
+if [[ "$got" == *rig-cloud-model* ]] && ! command grep -q "host.docker.internal" "$RUNTIME"; then
+  ok "with nothing serving: no engine routes, this rig's own routes intact"
 else
-  bad "empty-rig render wrong" "cloud only" "$got"
+  bad "empty-rig render wrong" "this rig's own routes only" "$got"
 fi
 
 # --- 5: a route on a port we do NOT own is never touched ---------------------
@@ -163,6 +175,18 @@ d = yaml.safe_load(io.open(sys.argv[1], encoding="utf-8"))
 s = d.get("litellm_settings") or {}
 sys.exit(0 if s.get("request_timeout") and s.get("num_retries") == 0 else 1)
 PY2
+
+# --- 13: no local file → nothing added, no error ------------------------------
+C3_LITELLM_LOCAL_CONFIG="$LOCAL_CFG.absent" render "8182=alpha-model" \
+  && ! command grep -q "THIS RIG'S OWN ROUTES" "$RUNTIME" \
+  && ok "without config.local.yaml: no local block, clean render" || bad "a missing config.local.yaml must be a no-op"
+
+# --- 14: the TRACKED catalog carries no route that leaves the machine -----------
+# A cloud endpoint (and its workspace URL) is one rig's business: it belongs in the
+# gitignored config.local.yaml. In the catalog it ships to every user, and omp's
+# discovery then offers it — as the default model when modelRoles is empty.
+ext="$(command grep -nE '^[[:space:]]*api_base:[[:space:]]*https?://' services/litellm/config.yaml | command grep -v 'host.docker.internal' || true)"
+[[ -z "$ext" ]] && ok "the tracked catalog routes only to local engines" || bad "tracked config.yaml routes off-machine — move it to config.local.yaml: $ext"
 
 # --- 9: the tracked catalog view is untouched by all of this -----------------
 if git diff --quiet -- services/litellm/config.yaml; then

@@ -105,16 +105,16 @@ diff <(sed -n '1,/BEGIN GENERATED LOCAL BLOCK/p' "/tmp/litellm-generate.baseline
   || fail "content ABOVE the generated markers changed during regeneration"
 diff <(sed -n '/END GENERATED LOCAL BLOCK/,$p' "/tmp/litellm-generate.baseline.$$") \
      <(sed -n '/END GENERATED LOCAL BLOCK/,$p' "$CFG") >/dev/null \
-  || fail "hand-maintained/cloud content BELOW the markers changed during regeneration"
+  || fail "hand-maintained content BELOW the markers changed during regeneration"
 
 for needle in \
   "model_name: deepseek-v4-flash" \
   "model_name: agents-a1" \
   "model_name: gemma-4-31b-autoround" \
   "model_name: deckard-40b" \
-  "model_name: qwen3.8-max-nothink" \
-  'extra_body: {"thinking_budget": 1}' \
-  "os.environ/DASHSCOPE_API_KEY"; do
+  "litellm_settings:" \
+  "request_timeout: 1800" \
+  "services/litellm/config.local.yaml"; do
   grep -qF "$needle" "$CFG" || fail "regeneration lost non-generated content: $needle"
 done
 
@@ -209,5 +209,5 @@ LITELLM_EMIT_REGISTRY_JSON="$FIX/facts.json" LITELLM_CONFIG="$FIX/config.yaml" \
   bash "$EMIT" --check "$FIX" >/dev/null || fail "fixture --check failed after generation"
 rm -rf "$FIX"
 echo "OK: litellm-emit idempotent, --check green, hand-mutation caught, "
-echo "    cloud/hand blocks preserved, absorbed hand routes intact, status"
+echo "    hand-maintained blocks preserved, absorbed hand routes intact, status"
 echo "    annotation + #1073 serve_aliases/--alias emission verified."

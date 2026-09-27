@@ -27,6 +27,8 @@ import urllib.request
 
 BEGIN = "  # === BEGIN GENERATED LOCAL BLOCK"
 END = "  # === END GENERATED LOCAL BLOCK ==="
+LOCAL_BEGIN = "  # === BEGIN THIS RIG'S OWN ROUTES — services/litellm/config.local.yaml (not tracked) ==="
+LOCAL_END = "  # === END THIS RIG'S OWN ROUTES ==="
 
 
 def registry_variants(root: str) -> list[dict]:
@@ -231,6 +233,40 @@ def prune(text: str, reg_ports: set[str], live_ports: set[str]) -> str:
     return "\n".join(kept)
 
 
+def local_routes(root: str) -> str:
+    """This rig's own routes — cloud endpoints, private services — from the
+    gitignored services/litellm/config.local.yaml, so they never go into the
+    tracked catalog. Its `model_list:` entries are copied VERBATIM (comments kept;
+    stdlib only, like the rest of the switch path) and re-indented to match the
+    catalog. They are not on registry ports, so the prune never touches them.
+    Returns '' when there is no file or it lists no routes."""
+    path = os.environ.get("C3_LITELLM_LOCAL_CONFIG") or os.path.join(root, "services/litellm/config.local.yaml")
+    if not os.path.isfile(path):
+        return ""
+    body, inside = [], False
+    for ln in io.open(path, encoding="utf-8").read().splitlines():
+        top = bool(ln) and not ln[0].isspace() and not ln.startswith("#") and not ln.startswith("-")
+        if top:
+            inside = ln.split("#", 1)[0].strip() == "model_list:"
+            continue
+        if inside:
+            body.append(ln)
+    items = [ln for ln in body if ln.lstrip().startswith("- ")]
+    if not items:
+        print(f"[litellm-sync] WARN: {path} has no model_list entries — nothing added", file=sys.stderr)
+        return ""
+    shift = 2 - min(len(ln) - len(ln.lstrip()) for ln in items)   # catalog items sit at 2 spaces
+    fixed = []
+    for ln in body:
+        if not ln.strip():
+            fixed.append("")
+        elif shift >= 0:
+            fixed.append(" " * shift + ln)
+        else:
+            fixed.append(ln[min(-shift, len(ln) - len(ln.lstrip())):])
+    return LOCAL_BEGIN + "\n" + "\n".join(fixed).strip("\n") + "\n" + LOCAL_END + "\n"
+
+
 def mounted_runtime_path() -> "str | None":
     """Host path of the file the running `litellm` container mounts as its config."""
     try:
@@ -287,6 +323,7 @@ def main() -> int:
     block, n_routes = render_block(live, port_facts(variants))
     out = (prune(src[:b], reg_ports, live_ports)
            + block
+           + local_routes(a.root)
            + prune(src[e + len(END):], reg_ports, live_ports))
 
     cur = io.open(runtime, encoding="utf-8").read() if os.path.exists(runtime) else None

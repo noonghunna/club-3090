@@ -65,13 +65,6 @@ compose_args=(-p "$project")
 IFS=',' read -ra cfgs <<<"$files"
 for f in "${cfgs[@]}"; do compose_args+=(-f "$f"); done
 
-# Keep what the running gateway already has: the cloud key comes from the
-# environment of whoever started it, which may not be this shell.
-if [[ -z "${DASHSCOPE_API_KEY:-}" ]]; then
-  DASHSCOPE_API_KEY="$(docker inspect "$CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^DASHSCOPE_API_KEY=//p' | head -1)"
-fi
-export DASHSCOPE_API_KEY
-
 if [[ -n "$WANT" ]]; then
   export LITELLM_LOG="$WANT"
 else

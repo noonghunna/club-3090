@@ -1,0 +1,19 @@
+# This rig's own LiteLLM routes — copy to config.local.yaml (gitignored) and edit.
+#
+# scripts/lib/litellm-sync.sh (run by every switch.sh launch and teardown) copies
+# the entries under `model_list:` into the runtime view the gateway serves, after
+# the generated local routes. Use it for anything that belongs to this rig only:
+# a cloud endpoint, a private service, an alias. The tracked config.yaml stays the
+# club catalog. Keys go in local.env (gitignored), referenced as os.environ/<NAME>.
+# Apply a change with: bash scripts/lib/litellm-sync.sh
+#
+# ⚠️ omp's `discovery: litellm` lists every route the gateway serves, so a cloud
+# route here is selectable (and can become omp's default if modelRoles is empty).
+model_list:
+  - model_name: my-cloud-model
+    litellm_params:
+      model: openai/<provider-model-id>
+      api_base: https://<your-endpoint>/v1
+      api_key: os.environ/MY_CLOUD_API_KEY
+      # rpm: 110          # optional: pace below the provider's rate limit
+      # tpm: 480000
