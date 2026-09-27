@@ -394,15 +394,24 @@ token from the start. Verified on this stack:
 
 ## Claude Code
 
+⚠️ **Works on the SGLang slugs only, for now.** On the vLLM Qwen3.8 slugs, Claude
+Code's first request fails with `400 … System message must be at the beginning`.
+Claude Code (2.1.x) sends its `# Environment` block as a `system` message after the
+first user turn; LiteLLM forwards it where it is, and the Qwen3.8 template refuses
+a system message that isn't first. SGLang's request handling lets it through.
+Tracked in [#1447](https://github.com/noonghunna/club-3090/discussions/1447).
+
 Claude Code talks to the same gateway through LiteLLM's Anthropic-compatible
-`/v1/messages` endpoint. In `~/.claude/settings.json`:
+`/v1/messages` endpoint, which LiteLLM translates for the engine. In
+`~/.claude/settings.json`:
 
 ```json
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:4000",
     "ANTHROPIC_API_KEY": "sk-litellm-master-key",
-    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144"
   },
   "model": "qwen3.8-27b"
 }
@@ -413,13 +422,26 @@ Claude Code talks to the same gateway through LiteLLM's Anthropic-compatible
 - With discovery on, Claude Code lists every route the gateway serves. `model` must
   be a served id: `qwen3.8-27b` on every Qwen3.8 slug, `thinkingcap38-27b` on the
   ThinkingCap ones.
+- `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is the serving slug's context window — the
+  route's `max_input_tokens` (see *What the gateway sets*); 262144 on the dual-fast
+  slugs. Claude Code doesn't know the model, assumes 200K otherwise and compacts
+  against that. Lower it when you serve a smaller slug, or a long session runs past
+  the window.
+- `400 No connected db.` on every request means the key Claude Code sends isn't
+  the gateway's `LITELLM_MASTER_KEY`: LiteLLM looks an unknown key up in a
+  database the gateway doesn't have. Fix the key rather than removing the master
+  key — the gateway listens on every interface, so without one anyone on your
+  network can use it.
 
-Checked through the gateway on the reference rig (`sgl/qwen38-27b-dual-fast`): a
-`/v1/messages` request with tools came back as a `tool_use` block, and a
-`thinking.budget_tokens` request reached the model as a different reasoning effort
-(283 prompt tokens vs 309 at the server's default). The model's reasoning is
-**not** returned as thinking blocks on this path — only the answer and tool calls.
-A contributor runs Claude Code this way day to day (#1419).
+Checked on the reference rig with the Claude Code CLI (2.1.283) through the
+gateway: on `sgl/qwen38-27b-dual-fast` a multi-turn session with tool calls (find
+three files, read each, answer) finished in 17 s; on `vllm/qwen38-27b-dual-fast`
+the first request failed as above. With hand-built `/v1/messages` requests on the
+SGLang slug, a `thinking.budget_tokens` request reached the model as a different
+reasoning effort (283 prompt tokens vs 309 at the server's default). Past-turn
+thinking blocks do reach the model on both engines (the prompt grows by the
+block's size), but the model's reasoning is **not** returned as thinking blocks on
+this path — only the answer and tool calls.
 
 Two differences from omp: there is no counterpart to omp's key-gated cloud
 fallback — if the local model can't be reached, the request fails — and a slug
@@ -492,6 +514,8 @@ bash scripts/litellm-log.sh status
 - **An engine that stops without `switch.sh`** (a crash, a plain `docker stop`)
   stays advertised until the next sync; requests fail with a clean HTTP error.
   Re-sync with `bash scripts/lib/litellm-sync.sh`.
+- **Claude Code on the vLLM slugs** fails on its first request — see *Claude Code*
+  ([#1447](https://github.com/noonghunna/club-3090/discussions/1447)).
 - **`qwen3_coder` tool parser** drops everything after a literal `<tool_call>` in
   a reply's prose ([#1191](https://github.com/noonghunna/club-3090/issues/1191)) —
   rare in practice, but agents that *talk about* tool calling can hit it.
