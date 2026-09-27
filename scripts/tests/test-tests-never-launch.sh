@@ -46,6 +46,12 @@ NEUTRALIZERS = (
                           # helper, which prints "ARGS …" and exits — not assumed
                           # from the variable's name.
     "DRY_RUN=1", "--dry-run",
+    'PATH="$T/bin:',      # test-gpu-mode-service-upgrade: `docker` and `sudo` are
+                          # fixture-driven shims in $T/bin, prepended INLINE on each
+                          # gpu-mode call. VERIFIED, not assumed: that test refuses
+                          # to run unless `command -v docker/sudo` under that PATH
+                          # resolves to the shims, and it asserts on the shims' call
+                          # log, so a real docker would fail it rather than launch.
 )
 # Read-only sub-commands — these never reach `compose up`.
 READONLY = (

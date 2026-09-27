@@ -89,3 +89,6 @@ results/*
 # every checkout would conflict on a file nobody edited.
 services/litellm/config.runtime.yaml
 services/litellm/config.runtime.yaml.tmp
+
+# gpu-mode upgrade: support-service volume backups (e.g. Qdrant before a storage migration)
+backups/

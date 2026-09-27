@@ -149,3 +149,17 @@ if [[ -n "$running" ]]; then
 else
   echo "[update] Next:  bash scripts/launch.sh   (or bash scripts/switch.sh <variant>)"
 fi
+
+# Support services (Open WebUI, LiteLLM, Qdrant, SearXNG, spark-dashboard): a pull
+# can bump a service's pinned image, but nothing already running moves to it —
+# switch.sh, reboots and `docker restart` all keep the old image. Report drift
+# (only when there is some) and point at the one command that applies it.
+# Read-only; SVC_SUDO_FLAGS=-n so this never stops to prompt for a password.
+if [[ $DRY_RUN -eq 0 ]] && command -v docker >/dev/null 2>&1; then
+  svc_report=$(SVC_SUDO_FLAGS=-n bash "${ROOT_DIR}/scripts/gpu-mode.sh" service-images 2>/dev/null || true)
+  if [[ "$svc_report" == *"gpu-mode upgrade"* ]]; then
+    echo ""
+    echo "[update] Some running support services are behind their pinned image:"
+    echo "$svc_report"
+  fi
+fi

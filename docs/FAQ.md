@@ -505,6 +505,7 @@ Run `bash scripts/update.sh`. It does the safe sequence:
 2. `git pull --ff-only origin master` — no merge commits, no rebase ambiguity. If your branch has diverged, you'll get a clear pointer to resolve manually.
 3. Re-runs `bash scripts/setup.sh qwen3.6-27b` so any Genesis-pin bump or vendored-patch update on master gets applied to your tree.
 4. Tells you to restart your container via `bash scripts/switch.sh <variant>` — doesn't auto-restart, so you can A/B old-vs-new before bringing the new variant up.
+5. Reports any **running support service** (Open WebUI, LiteLLM, Qdrant, SearXNG, spark-dashboard) whose image is behind the version the pull just pinned. Those never move on their own — `switch.sh`, reboots and `docker restart` all keep the old image — so run **`gpu-mode upgrade`**: it recreates only the running services that are behind, and backs up Qdrant's volume to `backups/` first (its storage migrates forward and can't be rolled back; `--no-backup` skips that). `gpu-mode status` shows the same drift any time.
 
 Flags:
 - `--dry-run` — shows what would happen without changing anything.

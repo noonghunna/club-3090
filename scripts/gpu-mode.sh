@@ -172,6 +172,124 @@ stop_service() {
     compose_cmd "$1" "down" && echo "done" || echo "skipped"
 }
 
+# ── Support-service image drift (#1436 follow-up) ────────────────────────────
+# A `git pull` that bumps a service's pinned image changes nothing that is
+# already running: only `docker compose up -d` recreates a container on the new
+# image. switch.sh (its LiteLLM sync uses `docker restart`), reboots and
+# `restart: unless-stopped` all keep the OLD image. `status` reports the drift;
+# `upgrade` fixes it.
+#
+# service_image_rows prints one TAB-separated row per support service:
+#   <service> <container> <state> <pinned image> <running image>
+# state: current | drift | stopped. The pin comes from `docker compose config`
+# (so ${VAR:-default} image lines resolve, with the same .env gpu-mode uses);
+# the running image is the container's own Config.Image.
+# docker for the read-only drift checks: plain `docker` when the user can reach
+# the daemon, else sudo. SVC_SUDO_FLAGS=-n (set by update.sh) keeps sudo from
+# prompting when this runs outside an interactive gpu-mode command.
+_svc_docker() {
+    if docker info >/dev/null 2>&1; then docker "$@"; else sudo ${SVC_SUDO_FLAGS:-} docker "$@"; fi
+}
+
+service_image_rows() {
+    local svc dir env_args=() cfg pinned cname running state
+    [ -f "$CLUB3090_DIR/.env" ] && env_args=(--env-file "$CLUB3090_DIR/.env")
+    for svc in "${SERVICES[@]}"; do
+        dir="$COMPOSE_BASE/$svc"
+        [ -f "$dir/docker-compose.yml" ] || continue
+        cfg=$(cd "$dir" && docker compose "${env_args[@]}" -f docker-compose.yml config --format json 2>/dev/null) || continue
+        read -r pinned cname < <(printf '%s' "$cfg" | python3 -c '
+import json, sys
+svc = next(iter(json.load(sys.stdin)["services"].values()))
+print(svc.get("image") or "-", svc.get("container_name") or "-")' 2>/dev/null) || continue
+        [ -n "$pinned" ] && [ "$pinned" != "-" ] || continue
+        # `|| true`: gpu-mode runs under `set -e`, and a service whose container was
+        # never created makes inspect exit 1 — that must read as "stopped", not end the loop.
+        running=$(_svc_docker inspect "$cname" --format '{{.Config.Image}}' 2>/dev/null || true)
+        if [ -z "$running" ] || [ "$(_svc_docker inspect "$cname" --format '{{.State.Running}}' 2>/dev/null || true)" != "true" ]; then
+            state=stopped
+        elif [ "$running" = "$pinned" ]; then
+            state=current
+        else
+            state=drift
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\n' "$svc" "$cname" "$state" "$pinned" "${running:--}"
+    done
+}
+
+show_service_images() {
+    echo -e "${CYAN}═══ Service Images ═══${NC}"
+    local svc cname state pinned running behind=0
+    while IFS=$'\t' read -r svc cname state pinned running; do
+        case "$state" in
+            current) echo -e "  ${GREEN}✓${NC} $(printf '%-16s' "$svc") $pinned" ;;
+            drift)   echo -e "  ${YELLOW}⚠${NC} $(printf '%-16s' "$svc") running $running → pinned $pinned"; behind=$((behind + 1)) ;;
+            stopped) echo -e "  - $(printf '%-16s' "$svc") not running (pinned $pinned)" ;;
+        esac
+    done < <(service_image_rows)
+    if [ "$behind" -gt 0 ]; then
+        echo -e "  ${YELLOW}→ ${behind} running service(s) behind their pinned image: run 'gpu-mode upgrade'${NC}"
+    fi
+}
+
+# Back up a named docker volume to $CLUB3090_DIR/backups/ (gitignored). tar runs
+# inside the given image (it must have tar; qdrant's does, without gzip), and
+# the stream is compressed on the host. -S keeps sparse files small.
+backup_volume() {
+    local volume=$1 image=$2 label=$3
+    local dest="$CLUB3090_DIR/backups/${label}-$(date +%Y%m%d-%H%M%S).tar.gz"
+    mkdir -p "$CLUB3090_DIR/backups" || return 1
+    sudo docker run --rm --entrypoint tar -v "${volume}:/data:ro" "$image" -cSf - -C /data . | gzip > "$dest" \
+        && [ -s "$dest" ] && echo "$dest"
+}
+
+mode_upgrade() {
+    local no_backup=0
+    [ "${1:-}" = "--no-backup" ] && no_backup=1
+    echo -e "${CYAN}═══ Upgrade support services to their pinned images ═══${NC}"
+    echo "Recreates RUNNING support services whose image differs from the compose pin."
+    echo "Stopped services are left alone: they pick up the pin the next time a mode starts them."
+    echo ""
+    local svc cname state pinned running drifted=()
+    while IFS=$'\t' read -r svc cname state pinned running; do
+        case "$state" in
+            current) echo -e "  ${GREEN}✓${NC} $(printf '%-16s' "$svc") already on $pinned" ;;
+            stopped) echo -e "  - $(printf '%-16s' "$svc") not running — nothing to do" ;;
+            drift)   echo -e "  ${YELLOW}⚠${NC} $(printf '%-16s' "$svc") $running → $pinned"; drifted+=("$svc|$cname|$running") ;;
+        esac
+    done < <(service_image_rows)
+    echo ""
+    if [ "${#drifted[@]}" -eq 0 ]; then
+        echo "Nothing to upgrade."
+        return 0
+    fi
+    local entry volume backup
+    for entry in "${drifted[@]}"; do
+        IFS='|' read -r svc cname running <<< "$entry"
+        # Qdrant migrates its storage forward on first start and cannot be
+        # rolled back onto the same volume, so back it up (container stopped,
+        # consistent copy) unless --no-backup.
+        if [ "$svc" = "qdrant" ] && [ "$no_backup" -eq 0 ]; then
+            volume=$(sudo docker inspect "$cname" --format '{{range .Mounts}}{{if eq .Destination "/qdrant/storage"}}{{.Name}}{{end}}{{end}}' 2>/dev/null || true)
+            if [ -n "$volume" ]; then
+                printf "  ${YELLOW}■${NC} Backing up %-10s" "qdrant..."
+                sudo docker stop "$cname" >/dev/null 2>&1
+                if backup=$(backup_volume "$volume" "$running" "qdrant-data"); then
+                    echo "done → $backup"
+                else
+                    echo "FAILED — leaving qdrant on $running"
+                    sudo docker start "$cname" >/dev/null 2>&1
+                    c3_mark_start_failure "qdrant (backup)"
+                    continue
+                fi
+            fi
+        fi
+        start_service "$svc"
+    done
+    echo ""
+    show_service_images
+}
+
 # Project-specific helpers
 start_27b_dual_mtp() {
     printf "  ${GREEN}▲${NC} Starting 27b-dual-mtp..."
@@ -412,6 +530,8 @@ show_status() {
     echo ""
     echo -e "${CYAN}═══ Service Status ═══${NC}"
     sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null
+    echo ""
+    show_service_images
     echo ""
     echo -e "${CYAN}═══ Active Model(s) ═══${NC}"
     # Single source of truth for "is anything serving?" (#865). Each probe
@@ -1253,7 +1373,11 @@ usage() {
     echo "                     + Open WebUI (:8080) — image/video/music/SFX/voice lanes (alias: aistudio)"
     echo ""
     echo "  off                Stop all services"
-    echo "  status             Show running services, GPU, RAM, disk, Docker disk"
+    echo "  status             Show running services, service image drift, GPU, RAM, disk, Docker disk"
+    echo "  upgrade            Recreate running support services (Open WebUI, LiteLLM, Qdrant, SearXNG,"
+    echo "                     spark-dashboard) that are behind their pinned image — run after a"
+    echo "                     'git pull' that bumps one. Backs up Qdrant's volume to backups/ first"
+    echo "                     (its storage migrates forward); '--no-backup' skips that."
     echo ""
     echo "  GPU power cap (both 3090s; normally capped below stock for quiet/cool operation):"
     echo "  power-cap on       Re-apply the cap nvidia-power-cap.service defines (read from the"
@@ -1281,6 +1405,8 @@ case "${1:-}" in
     ai-studio|aistudio)       mode_ai_studio ;;
     off)                mode_off ;;
     status)             show_status ;;
+    upgrade)            mode_upgrade "${2:-}" ;;
+    service-images)     show_service_images ;;   # just the drift section (update.sh calls it)
     power-cap|powercap) mode_powercap "${2:-status}" ;;
     prune)              mode_prune ;;
     prune-all)          mode_prune_all ;;
