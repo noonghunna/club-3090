@@ -73,15 +73,8 @@ cd "$ROOT_DIR"
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 export LITELLM_EMIT_CHECK="$CHECK"
 
-# Path to the canonical engine-family resolver (#1282), resolved against THIS
-# file rather than the argument root -- it is code, not fixture data, and
-# test-litellm-generate runs the emitter against a synthetic root that has no
-# scripts/ tree of its own.
-export LITELLM_ENGINE_KIND_LIB="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/engine-kind.sh"
-
 python3 - "$ROOT_DIR" <<'PY'
 import difflib
-import functools
 import json
 import shlex
 import os
@@ -91,33 +84,6 @@ import sys
 from pathlib import Path
 
 root = Path(sys.argv[1]).resolve()
-
-# Engine family per engine id. This file used to decide it here with a private
-# `engine.startswith("vllm")` -- the seventh site of exactly the defect
-# scripts/lib/engine-kind.sh exists to prevent (#1282), and the arm 4 of
-# test-engine-kind-resolver.sh reds on it. The DECISION stays in the lib; this
-# only crosses the bash/python boundary, memoised so the shell-out costs one
-# call per DISTINCT engine id (2-3 in a real run), not one per route.
-_ENGINE_KIND_LIB = os.environ.get("LITELLM_ENGINE_KIND_LIB", "")
-
-
-@functools.lru_cache(maxsize=None)
-def engine_kind(engine_id: str) -> str:
-    """vllm | llamacpp | sglang | exllamav3 | unknown — never re-derived here."""
-    if not engine_id or not _ENGINE_KIND_LIB or not Path(_ENGINE_KIND_LIB).is_file():
-        return "unknown"
-    try:
-        out = subprocess.run(
-            ["bash", "-c", f'. "$1"; engine_kind_from_engine_id "$2"',
-             "_", _ENGINE_KIND_LIB, engine_id],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    # "unknown" is a VALUE, not an error (the lib's contract) — and it falls to
-    # the generic openai provider, the safe direction: litellm's openai whitelist
-    # DROPS reasoning params rather than the backend 400-ing on them.
-    return out.stdout.strip() or "unknown"
 
 from scripts.lib.profiles.compose_registry import (
     curated_default_target,
@@ -230,7 +196,7 @@ def _unquote(tok):
     if m:
         return m.group(1) or m.group(2) or ""
     return tok
-routes = []  # (model, port, name, status, provider) — sorted + deduped before emission
+routes = []  # (model, port, name, status) — sorted + deduped before emission
 for model in sorted(gw_by_model):
     entries = gw_by_model[model]
     slug = canonical_slug(model, entries)
@@ -259,14 +225,7 @@ for model in sorted(gw_by_model):
             f"or --alias in {entry['compose_path']}) — a gateway route needs a name"
         )
     for n in names:
-        # Self-hosted vLLM -> hosted_vllm provider: its param whitelist
-        # includes reasoning_effort/thinking, so reasoning-capable clients
-        # can pass them through. The generic openai provider omits those
-        # params (400 for such clients). llama.cpp backends do not parse
-        # reasoning_effort, so keep openai there (drop_params discards it
-        # safely instead of the backend rejecting it).
-        prov = "hosted_vllm" if engine_kind(str(entry.get("engine", ""))) == "vllm" else "openai"
-        routes.append((model, port, n, entry.get("status", "production"), prov))
+        routes.append((model, port, n, entry.get("status", "production")))
 seen = set()
 deduped = []
 for r in sorted(routes, key=lambda t: (t[0], t[1], t[2])):
@@ -276,19 +235,24 @@ for r in sorted(routes, key=lambda t: (t[0], t[1], t[2])):
     deduped.append(r)
 
 chunks = []
-for _model, port, name, status, prov in deduped:
+for _model, port, name, status in deduped:
     head = f"  - model_name: {name}"
     # Non-functional scene (experimental/incubating/…: --force to launch)?
     # Still emit — gateway clients hit whatever is serving — but annotate the
     # route line so operators see the gate at a glance.
     if status not in FUNCTIONAL_STATUSES:
         head += f"  # status: {status}"
+    # Same route shape as the runtime view (scripts/lib/litellm_sync.py
+    # ROUTE_PARAMS, which carries the why): the openai provider, because
+    # hosted_vllm drops `reasoning_content` from past assistant turns; and
+    # reasoning_effort allowed through, because openai otherwise 400s it.
     chunks.append("\n".join([
         head,
         "    litellm_params:",
-        f"      model: {prov}/{name}",
+        f"      model: openai/{name}",
         f"      api_base: http://host.docker.internal:{port}/v1",
         "      api_key: EMPTY",
+        "      allowed_openai_params: [reasoning_effort]",
     ]))
 generated = "\n\n".join([BEGIN_LINE, *chunks, END_LINE])
 

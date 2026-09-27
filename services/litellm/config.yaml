@@ -28,84 +28,98 @@ model_list:
       model: openai/deepseek-v4-flash
       api_base: http://host.docker.internal:8030/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: gemma-4-12b-int8
     litellm_params:
-      model: hosted_vllm/gemma-4-12b-int8
+      model: openai/gemma-4-12b-int8
       api_base: http://host.docker.internal:8038/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: gemma-4-31b
     litellm_params:
-      model: hosted_vllm/gemma-4-31b
+      model: openai/gemma-4-31b
       api_base: http://host.docker.internal:8032/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: gemma-4-31b-autoround
     litellm_params:
-      model: hosted_vllm/gemma-4-31b-autoround
+      model: openai/gemma-4-31b-autoround
       api_base: http://host.docker.internal:8032/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: gemma-4-31b-qat-awq-int4
     litellm_params:
-      model: hosted_vllm/gemma-4-31b-qat-awq-int4
+      model: openai/gemma-4-31b-qat-awq-int4
       api_base: http://host.docker.internal:8032/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: glm-5.3-flash  # status: experimental
     litellm_params:
       model: openai/glm-5.3-flash
       api_base: http://host.docker.internal:8119/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: mimo-v2.6-9b
     litellm_params:
       model: openai/mimo-v2.6-9b
       api_base: http://host.docker.internal:8094/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: qwen3.6-27b
     litellm_params:
-      model: hosted_vllm/qwen3.6-27b
+      model: openai/qwen3.6-27b
       api_base: http://host.docker.internal:8010/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: qwen3.6-27b-autoround
     litellm_params:
-      model: hosted_vllm/qwen3.6-27b-autoround
+      model: openai/qwen3.6-27b-autoround
       api_base: http://host.docker.internal:8010/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: qwen3.6-35b-a3b-autoround
     litellm_params:
-      model: hosted_vllm/qwen3.6-35b-a3b-autoround
+      model: openai/qwen3.6-35b-a3b-autoround
       api_base: http://host.docker.internal:8051/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: deckard-40b
     litellm_params:
       model: openai/deckard-40b
       api_base: http://host.docker.internal:8199/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: qwen3.8-27b  # status: experimental
     litellm_params:
-      model: hosted_vllm/qwen3.8-27b
+      model: openai/qwen3.8-27b
       api_base: http://host.docker.internal:8091/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: qwen3.8-27b-fp8  # status: experimental
     litellm_params:
-      model: hosted_vllm/qwen3.8-27b-fp8
+      model: openai/qwen3.8-27b-fp8
       api_base: http://host.docker.internal:8091/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   - model_name: qwen3.8-flash-next  # status: experimental
     litellm_params:
       model: openai/qwen3.8-flash-next
       api_base: http://host.docker.internal:8122/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]
 
   # === END GENERATED LOCAL BLOCK ===
 
@@ -115,9 +129,10 @@ model_list:
   # Still hand-maintained: agents-a1 is not yet gateway-flagged in compose_registry.
   - model_name: agents-a1
     litellm_params:
-      model: hosted_vllm/agents-a1
+      model: openai/agents-a1
       api_base: http://host.docker.internal:8072/v1
       api_key: EMPTY
+      allowed_openai_params: [reasoning_effort]   # route shape: see scripts/lib/litellm_sync.py ROUTE_PARAMS
 
   # (The old gemma-4-12b :8069 llama.cpp "chat brain" route was retired 2026-06-23 with the
   #  ai-studio consolidation — the studio uses the qwen director only.)
@@ -155,3 +170,14 @@ model_list:
       rpm: 110
       tpm: 480000
       extra_body: {"thinking_budget": 1}
+
+# Gateway-wide behaviour (hand-maintained; outside the generated blocks, so both
+# the catalog view and the runtime view litellm-sync renders carry it).
+litellm_settings:
+  # A coding agent's turn can be a long cold prefill plus a 32K-token reply at
+  # ~70 tok/s — well past a short default. The client (omp, claude) owns the real
+  # timeout; the gateway must not cut the request first.
+  request_timeout: 1800
+  # Never re-send a failed request: on a local GPU a retry repeats the whole
+  # prefill, doubling the wait, and it lands on a server that just failed.
+  num_retries: 0

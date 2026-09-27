@@ -116,6 +116,54 @@ else
       "$(command grep -E 'config.*:/app/config' services/litellm/docker-compose.yml || echo none)"
 fi
 
+# --- 10: one route shape for every engine (agent clients) --------------------
+# Two LiteLLM behaviours, both verified against a capturing stub 2026-09-27:
+#   - the `openai` provider REJECTS a top-level reasoning_effort with HTTP 400
+#     (UnsupportedParamsError) unless the route lists it in allowed_openai_params;
+#   - the `hosted_vllm` provider drops `reasoning_content` from past assistant
+#     turns — the field omp replays — so the model never sees the reasoning its
+#     client kept (Qwen3.8's template re-renders it by default).
+# So: openai everywhere, reasoning_effort allowed, no hosted_vllm, no drop_params
+# (which would silently discard the effort instead).
+render "8113=qwen3.8-27b@262144,8142=sgl-live@163840,8020=gguf-live"
+route_field() { python3 - "$RUNTIME" "$1" "$2" <<'PY2'
+import io, sys, yaml
+d = yaml.safe_load(io.open(sys.argv[1], encoding="utf-8"))
+m = next((m for m in d.get("model_list") or [] if m.get("model_name") == sys.argv[2]), None)
+cur = m
+for k in sys.argv[3].split("."):
+    cur = cur.get(k) if isinstance(cur, dict) else None
+print("" if cur is None else cur)
+PY2
+}
+for r in qwen3.8-27b sgl-live gguf-live; do
+  prov="$(route_field "$r" litellm_params.model)"; allowed="$(route_field "$r" litellm_params.allowed_openai_params)"
+  drop="$(route_field "$r" litellm_params.drop_params)"
+  if [[ "$prov" == "openai/$r" && "$allowed" == "['reasoning_effort']" && -z "$drop" ]]; then
+    ok "$r: openai provider, reasoning_effort allowed, no drop_params"
+  else
+    bad "$r route shape: model=$prov allowed_openai_params=$allowed drop_params=$drop"
+  fi
+done
+
+# --- 11: model_info from the LIVE server (what omp's discovery: litellm reads) -
+[[ "$(route_field qwen3.8-27b model_info.max_input_tokens)" == "262144" && "$(route_field sgl-live model_info.max_input_tokens)" == "163840" ]] \
+  && ok "max_input_tokens comes from each server's own max_model_len" \
+  || bad "max_input_tokens: qwen=$(route_field qwen3.8-27b model_info.max_input_tokens) sgl=$(route_field sgl-live model_info.max_input_tokens)"
+[[ "$(route_field qwen3.8-27b model_info.max_output_tokens)" == "32768" ]] \
+  && ok "max_output_tokens capped at 32768" || bad "max_output_tokens: $(route_field qwen3.8-27b model_info.max_output_tokens)"
+[[ "$(route_field qwen3.8-27b model_info.supports_reasoning)" == "True" && -z "$(route_field sgl-live model_info.supports_reasoning)" ]] \
+  && ok "supports_reasoning only where a slug declares a thinking profile (unknown is omitted, never false)" \
+  || bad "supports_reasoning: qwen=$(route_field qwen3.8-27b model_info.supports_reasoning) sgl='$(route_field sgl-live model_info.supports_reasoning)'"
+
+# --- 12: gateway settings survive every render, including a prune -----------
+python3 - "$RUNTIME" <<'PY2' && ok "litellm_settings (request_timeout, num_retries: 0) carried into the runtime view" || bad "litellm_settings missing from the runtime view"
+import io, sys, yaml
+d = yaml.safe_load(io.open(sys.argv[1], encoding="utf-8"))
+s = d.get("litellm_settings") or {}
+sys.exit(0 if s.get("request_timeout") and s.get("num_retries") == 0 else 1)
+PY2
+
 # --- 9: the tracked catalog view is untouched by all of this -----------------
 if git diff --quiet -- services/litellm/config.yaml; then
   ok "the tracked catalog view is unmodified"
