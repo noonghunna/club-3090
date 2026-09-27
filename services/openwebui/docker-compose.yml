@@ -7,7 +7,7 @@ services:
     #    the old behavior must opt back into "Legacy" (per chat/model/global).
     # Bump deliberately, re-validate the image-gen (ComfyUI) wiring when that
     # stack is next active (mutexed with dual-LLM serving).
-    image: ghcr.io/open-webui/open-webui:v0.11.3
+    image: ghcr.io/open-webui/open-webui:v0.11.4
     container_name: open-webui
     restart: unless-stopped
     ports:

@@ -1,6 +1,6 @@
 services:
   searxng:
-    image: searxng/searxng:2026.9.20-fdd8525b1
+    image: searxng/searxng:2026.9.25-12f8b6515
     container_name: searxng
     restart: unless-stopped
     ports:
