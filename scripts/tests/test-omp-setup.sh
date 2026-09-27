@@ -85,7 +85,11 @@ d = yaml.safe_load(io.open(sys.argv[1], encoding="utf-8"))
 need = [d["provider"]["appendOnlyContext"] == "on", d["compaction"]["thresholdPercent"] > 0,
         d["tools"]["artifactSpillThreshold"] <= 16, d["task"]["maxConcurrency"] >= 1,
         d["providers"]["streamFirstEventTimeoutSeconds"] >= 600,
-        all(":" in v for v in d["modelRoles"].values())]   # every role names an effort
+        all(":" in v for v in d["modelRoles"].values()),   # every role names an effort
+        # omp starts on a club model or not at all: without this, a role whose
+        # model isn't up at startup lands on ANY keyed provider (it picked a paid
+        # openrouter/openai/gpt-5.5 with only OPENROUTER_API_KEY set)
+        d.get("enabledModels") == ["club/*"]]
 sys.exit(0 if all(need) else 1)
 PY
 

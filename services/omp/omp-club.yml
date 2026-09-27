@@ -60,12 +60,22 @@ providers:
   streamFirstEventTimeoutSeconds: 900
   streamIdleTimeoutSeconds: 900
 
+# Start on a club model or not at all. If the model a role names isn't being
+# served when omp starts (engine down, slug switching), omp otherwise picks one
+# itself from ANY provider you hold a key for — with only OPENROUTER_API_KEY set
+# it started on openrouter/openai/gpt-5.5, a paid model. With this list it exits
+# with an error instead. The fallback chain below still works (tested).
+enabledModels:
+  - club/*
+
 # Cloud fallback — only when OPENROUTER_API_KEY is set; without it omp skips the
-# fallback. When the local model can't be reached, omp retries it with
-# backoff (~53 s, 12 attempts, measured), then continues on OpenRouter's free
-# hosted Qwen3.8-27B (same model), then its `openrouter/free` router, and returns
-# to local after a cooldown. Prompts leave the machine on those turns; the free
-# tier is 20 req/min and 50/day. Opt out: retry.modelFallback: false.
+# fallback. When a club request fails, omp continues on OpenRouter's free hosted
+# Qwen3.8-27B (same model), then its `openrouter/free` router, and returns to
+# local after a cooldown. Measured through the gateway: an engine that stopped
+# with its route still listed (gateway 500) got ~16 s of retries first; a route
+# the gateway no longer has — mid slug switch, or after `switch.sh --down`
+# (gateway 400) — falls back at once. Prompts leave the machine on those turns;
+# the free tier is 20 req/min and 50/day. Opt out: retry.modelFallback: false.
 retry:
   fallbackChains:                            # only with OPENROUTER_API_KEY set
     club/*:                                  # when the local model is unreachable
