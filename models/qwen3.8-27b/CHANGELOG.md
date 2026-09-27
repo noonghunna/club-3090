@@ -2,6 +2,24 @@
 
 Dated history for Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-09-27 — SGLang: a request's reasoning_effort is honoured again
+
+On every SGLang Qwen3.8 slug the client's `reasoning_effort` was ignored: the
+server default (`low`) rendered instead, whether the effort came top-level or in
+`chat_template_kwargs` — SGLang ≤ 0.5.20 lets a `--default-chat-template-kwargs`
+`reasoning_effort` override the request's own
+([sglang#38104](https://github.com/sgl-project/sglang/issues/38104)). Measured on
+`sgl/qwen38-27b-dual-fast`: `low`, `medium`, `xhigh` and `high` all rendered the
+same 41-token prompt.
+
+The SGLang composes now mount the vendored `qwen38-reasoning-effort-template` over
+the checkpoint's own and set their server default as `default_reasoning_effort`,
+which the template reads only when a request names no effort. Requests that send
+nothing still get `low` (or `REASONING_EFFORT`); requests that send an effort now get
+it, and `high` maps to `xhigh` as on the vLLM slugs. vLLM slugs render exactly as
+before. Detail: the patch's
+[`PROVENANCE.md`](vllm/patches/qwen38-reasoning-effort-template/PROVENANCE.md).
+
 ## 2026-09-13 — ULTRAMAX: prebuilt FP8 KV kernels and native FlashAttention plugin
 
 Fold the FA2 FP8 KV configuration into the existing `ultramax` slug and

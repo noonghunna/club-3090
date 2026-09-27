@@ -193,6 +193,10 @@ services:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8144}}:30000"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+      # Patched template (default_reasoning_effort + high -> xhigh), mounted over the
+      # checkpoint's own; SGLang loads it from the model dir. See the SAMPLER note
+      # below and patches.yml qwen38-reasoning-effort-template.
+      - ../../../../vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja:/models/qwen3.8-27b-autoround-int4/chat_template.jinja:ro
       - "${W4A8_PATCH_DIR:-../../../patches/sglang-autoround-w4a8-v0.5.19}:/etc/club3090/w4a8:ro"
     ipc: host
     shm_size: "16gb"
@@ -395,7 +399,8 @@ services:
         # --preferred-sampling-params FLAG BELOW. Three mechanisms, two of which bite:
         #   1. --default-chat-template-kwargs IS enforced (applied to every request
         #      unless the request overrides it) -> the thinking MODE is real, and so
-        #      is reasoning_effort.
+        #      is the default effort — carried as `default_reasoning_effort`, see the
+        #      reasoning-effort note below for why not `reasoning_effort`.
         #   2. --sampling-defaults model (pinned below) makes the engine read the
         #      checkpoint's generation_config.json, which ships temperature 1.0 /
         #      top_k 20 / top_p 0.95 — EXACTLY the card's thinking row. THAT is what
@@ -438,19 +443,24 @@ services:
           echo "[sampler]   ⚠️ presence_penalty per-request to get the instruct row." >&2
         fi
         echo "[sampler] ⚠️ presence_penalty is CLIENT-SIDE on both engines (engine allowlists drop it)" >&2
-        # ⚠️⚠️ reasoning_effort MUST travel with enable_thinking. This checkpoint's
-        # BUILT-IN template does `reasoning_effort|default('xhigh')` — the SLOWEST,
-        # longest rung — so leaving it unset serves xhigh on EVERY request. The
-        # vLLM tiers for this same model pin `low` (2026-08-16), so an unset value
-        # here would make the two engines serve DIFFERENT reasoning depth by
-        # default and stop being comparable at all.
-        # ⚠️ Ladder is low / medium / xhigh — there is NO `high` rung. The vLLM
-        # tiers mount a patched template that maps high -> xhigh; we use the
-        # checkpoint's built-in template, which has no such mapping.
+        # ⚠️⚠️ The server default MUST be set, and as `default_reasoning_effort`.
+        # The checkpoint's template does `reasoning_effort|default('xhigh')` — the
+        # SLOWEST, longest rung — so leaving it unset serves xhigh on EVERY request,
+        # while the vLLM tiers for this model default to `low` (2026-08-16).
+        # ⚠️⚠️ But NOT as `reasoning_effort`: SGLang <= 0.5.20 lets a
+        # --default-chat-template-kwargs `reasoning_effort` OVERRIDE the request's
+        # own (sglang#38104 — it pops the request value before merging defaults),
+        # so every client effort, top-level or in chat_template_kwargs, rendered as
+        # this default. Measured 2026-09-27: low / medium / xhigh / high requests all
+        # rendered the same 41-token prompt. The patched template (mounted in
+        # volumes:) reads `default_reasoning_effort` only when the request names no
+        # effort.
+        # ⚠️ Ladder is low / medium / xhigh — there is NO `high` rung; the patched
+        # template maps high -> xhigh, as on the vLLM tiers.
         _reff="${REASONING_EFFORT:-low}"
         case "$$_reff" in low|medium|xhigh) : ;; *) echo "[sampler] REASONING_EFFORT='$$_reff' must be low|medium|xhigh" >&2; exit 1 ;; esac
-        echo "[sampler] reasoning_effort=$$_reff (template default would be xhigh)" >&2
-        SAMPLER=(--default-chat-template-kwargs "{\"enable_thinking\": $$_think, \"reasoning_effort\": \"$$_reff\"}"
+        echo "[sampler] default reasoning_effort=$$_reff (a request's own effort wins; template default would be xhigh)" >&2
+        SAMPLER=(--default-chat-template-kwargs "{\"enable_thinking\": $$_think, \"default_reasoning_effort\": \"$$_reff\"}"
                  --sampling-defaults model
                  --preferred-sampling-params "{\"temperature\": $$_temp, \"top_p\": $${TOP_P}, \"top_k\": $${TOP_K:-20}, \"min_p\": $${MIN_P:-0.0}, \"presence_penalty\": $${PRESENCE_PENALTY}, \"repetition_penalty\": $${REPEAT_PENALTY:-1.0}}")
         # ⭐ MAMBA STATE SLOTS vs CONCURRENCY — measured 2026-09-13 (club-3090#1264).

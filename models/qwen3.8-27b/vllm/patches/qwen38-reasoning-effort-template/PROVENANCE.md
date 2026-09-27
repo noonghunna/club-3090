@@ -108,3 +108,40 @@ from the model dir if Qwen ships a corrected template, and re-run the drift guar
 Source: `Qwen/Qwen3.8-27B-FP8` @ `chat_template.jinja`, fetched 2026-08-16,
 re-diffed against the live upstream file 2026-08-21 — the only difference is the
 seven-line alias block at lines 48–54.
+
+## 2026-09-27 — SGLang slugs, and `default_reasoning_effort`
+
+The SGLang Qwen3.8 and ThinkingCap-Qwen3.8 slugs now mount this template too
+(ThinkingCap ships the same 8,952-byte file), and the template gains one line:
+
+```jinja
+{%- set resolved_reasoning_effort = reasoning_effort|default(default_reasoning_effort|default('xhigh')) %}
+```
+
+**Why.** SGLang ≤ 0.5.20 lets a `--default-chat-template-kwargs`
+`reasoning_effort` override the request's own
+([sglang#38104](https://github.com/sgl-project/sglang/issues/38104), fix in
+[sglang#38338](https://github.com/sgl-project/sglang/pull/38338), open):
+
+1. `_convert_to_internal_request` pops `reasoning_effort` out of the request's
+   `chat_template_kwargs` into `request.reasoning_effort`;
+2. `_process_messages` merges the server defaults with `setdefault` — the key was
+   just popped, so the default goes back in;
+3. the render does `extra_template_kwargs.update(request.chat_template_kwargs)`,
+   so the default overwrites the request's value.
+
+Measured on `sgl/qwen38-27b-dual-fast`, 2026-09-27, prompt tokens for "hi":
+`low`, `medium`, `xhigh` and even `high` — top-level or in
+`chat_template_kwargs` — all rendered the same 41-token prompt (the server
+default `low`); only `enable_thinking: false` changed it (13).
+
+The SGLang composes therefore set `default_reasoning_effort` as their server
+default, a key SGLang does not pop, and the template reads it only when the
+request names no effort. vLLM composes never pass it: rendered against the stock
+template for unset / `low` / `medium` / `xhigh` / an invalid value / thinking off,
+the output is byte-identical.
+
+**Drop the `default_reasoning_effort` line when** sglang#38338 (or an equivalent)
+ships in the pinned SGLang image — then the SGLang composes can go back to a plain
+`reasoning_effort` default. The `high` → `xhigh` alias stays under its own drop rule
+above.

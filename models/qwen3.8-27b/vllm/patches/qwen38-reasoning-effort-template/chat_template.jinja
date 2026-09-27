@@ -44,7 +44,12 @@
 {%- endif %}
 {%- set reasoning_instructions = '' %}
 {%- if enable_thinking is undefined or enable_thinking is true %}
-    {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
+    {#- club-3090 PATCH: `default_reasoning_effort` is the server-side default, read
+        ONLY when the request names no reasoning_effort. SGLang composes set it via
+        --default-chat-template-kwargs instead of `reasoning_effort` itself, because
+        SGLang <= 0.5.20 lets a default `reasoning_effort` OVERRIDE the request's
+        (sglang#38104). vLLM composes never pass it, so they render as before. -#}
+    {%- set resolved_reasoning_effort = reasoning_effort|default(default_reasoning_effort|default('xhigh')) %}
     {#- club-3090 PATCH: Qwen3.8's ladder is low/medium/xhigh with no `high`, which
         OpenAI- and Anthropic-shaped clients send as their TOP rung. Map it onto
         `xhigh` -- the real top rung -- so the three standard values map bijectively
