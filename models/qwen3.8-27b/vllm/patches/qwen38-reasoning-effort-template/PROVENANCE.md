@@ -222,3 +222,37 @@ the gateway: a three-file find-and-read task (tool calls) answered in 17 s, and 
 (33,696 of 33,846) served from the prefix cache.
 
 **Drop when** upstream Qwen's template accepts a system message after the first.
+
+## 2026-09-27 — `minimal` → `low` and `max` → `xhigh`
+
+Two more aliases beside `high` → `xhigh`:
+
+```jinja
+{%- if resolved_reasoning_effort == 'minimal' %}
+    {%- set resolved_reasoning_effort = 'low' %}
+{%- elif resolved_reasoning_effort == 'max' %}
+    {%- set resolved_reasoning_effort = 'xhigh' %}
+{%- endif %}
+```
+
+**Why.** The wider OpenAI-compatible vocabulary is `none / minimal / low / medium /
+high / xhigh / max`. Hermes Agent sends it as a top-level `reasoning_effort` (and
+clamps its own `ultra` to `max`). Measured through the gateway on both engines:
+`none` turns thinking off — vLLM and SGLang both map it to
+`enable_thinking=false` before the template runs — and `low` / `medium` / `high` /
+`xhigh` work, but **`minimal` and `max` reached this template and 400'd**
+("Unexpected reasoning effort …").
+
+**Mapping.** Each clamps to the nearest real rung: `minimal` to `low`, the weakest
+(never to "off" — that is `none`'s job), and `max` to `xhigh`, the top.
+
+**Scope.** Every input that doesn't send `minimal` or `max` renders byte-identically
+to the previous vendored file (64 combinations of conversation shape, effort /
+thinking setting and tools). `test-qwen38-template` checks both aliases.
+
+**Measured** on `vllm/qwen38-27b-dual-fast` (patched): all seven levels answer;
+`minimal` renders the same 41-token prompt as `low`, `max` the same 53-token prompt
+as `xhigh`. Hermes Agent with `--reasoning max` and `--reasoning minimal` answered.
+
+**Drop when** upstream Qwen's template accepts these names — together with the `high`
+alias above.

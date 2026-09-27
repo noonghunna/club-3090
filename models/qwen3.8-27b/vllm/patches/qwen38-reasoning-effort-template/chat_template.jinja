@@ -65,6 +65,17 @@
     {%- if resolved_reasoning_effort == 'high' %}
         {%- set resolved_reasoning_effort = 'xhigh' %}
     {%- endif %}
+    {#- club-3090 PATCH: the wider OpenAI-compatible vocabulary (Hermes Agent,
+        OpenRouter-shaped clients) also sends `minimal` and `max`, which reached
+        this template and 400'd on both engines. Clamp each to the nearest real
+        rung: `minimal` -> `low` (never to "off": `none` is thinking off, and the
+        engines turn it into enable_thinking=false before the template runs) and
+        `max` -> `xhigh`, the top. -#}
+    {%- if resolved_reasoning_effort == 'minimal' %}
+        {%- set resolved_reasoning_effort = 'low' %}
+    {%- elif resolved_reasoning_effort == 'max' %}
+        {%- set resolved_reasoning_effort = 'xhigh' %}
+    {%- endif %}
     {%- if resolved_reasoning_effort not in ('xhigh', 'medium', 'low') %}
         {{- raise_exception('Unexpected reasoning effort ' ~ reasoning_effort ~ '. Supported types are xhigh (default), medium, and low.') }}
     {%- endif %}

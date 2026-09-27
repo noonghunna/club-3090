@@ -6,8 +6,9 @@
 # --------------------
 # models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja
 # is mounted over the checkpoint's own template on every Qwen3.8 and ThinkingCap
-# slug, vLLM and SGLang. Its four changes (PROVENANCE.md) each fix a failure that
-# looks like a healthy server: a Claude-API client's `high` effort 500'd, SGLang
+# slug, vLLM and SGLang. Its changes (PROVENANCE.md) each fix a failure that
+# looks like a healthy server: a Claude-API client's `high` effort 500'd (and a
+# Hermes-style `minimal` / `max` 400'd), SGLang
 # ignored the request's effort, a reordered tool schema re-prefilled the whole
 # conversation, and Claude Code's mid-conversation system message 400'd every
 # request on vLLM (#1447). A re-vendor from upstream silently drops all four. This
@@ -93,6 +94,11 @@ check("an empty later system message renders nothing",
 hi, xh = render([{"role": "user", "content": "q"}], reasoning_effort="high"), render([{"role": "user", "content": "q"}], reasoning_effort="xhigh")
 check("reasoning_effort 'high' must render as 'xhigh' (Claude-API clients send high)", hi == xh)
 check("an unknown effort must still be rejected", raises([{"role": "user", "content": "q"}], reasoning_effort="bogus") is not None)
+lo = render([{"role": "user", "content": "q"}], reasoning_effort="low")
+check("reasoning_effort 'minimal' must render as 'low' (Hermes / OpenAI-compatible clients send it)",
+      render([{"role": "user", "content": "q"}], reasoning_effort="minimal") == lo)
+check("reasoning_effort 'max' must render as 'xhigh' (Hermes clamps its `ultra` to max)",
+      render([{"role": "user", "content": "q"}], reasoning_effort="max") == xh)
 dflt = render([{"role": "user", "content": "q"}], default_reasoning_effort="low")
 check("default_reasoning_effort must apply when the request names no effort (SGLang, sglang#38104)",
       dflt == render([{"role": "user", "content": "q"}], reasoning_effort="low") != xh)
@@ -109,5 +115,5 @@ for f in fails:
 sys.exit(1 if fails else 0)
 PY
 rc=$?
-[ "$rc" -eq 0 ] && echo "test-qwen38-template: ok (later system message in place + append-only, image rule kept, high→xhigh, default_reasoning_effort, sorted tool keys)"
+[ "$rc" -eq 0 ] && echo "test-qwen38-template: ok (later system message in place + append-only, image rule kept, high/max→xhigh, minimal→low, default_reasoning_effort, sorted tool keys)"
 exit "$rc"
