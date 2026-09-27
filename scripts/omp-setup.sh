@@ -159,6 +159,9 @@ Next:
      ⚠️ Set modelRoles either way: with none, omp picks a model on its own from every
      gateway route, and a route you can't use can win.
 
+  Optional: decode speed + prompt-cache share in the statusline:
+                      cp "$ROOT_DIR/services/omp/extensions/tps-meter.ts" ~/.omp/agent/extensions/
+
   Always write models as club/<id> — a bare id can fuzzy-match a cloud provider.
   Scripted:  omp -p --model club/qwen3.8-27b --thinking low "..." </dev/null
 EOF

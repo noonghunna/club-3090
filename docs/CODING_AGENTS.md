@@ -304,6 +304,25 @@ subagent's system prompt), and omp's small title calls (~340 tokens) were never
 reused. vLLM and SGLang report the share split into the GPU cache and the
 host-RAM tier (`KV_OFFLOAD_GB`); llama.cpp has no cached-token counter.
 
+**The same numbers in your agent's statusline.** A small extension shows decode
+speed and prompt-cache share after every reply, per request and for the session:
+
+```
+⚡ 66.3 tok/s · ttft 0.3s · out 131 · think 29 · cache 98% of 7.8K · Σ 66.1 tok/s · Σ cache 95% (n=12)
+```
+
+```bash
+cp services/omp/extensions/tps-meter.ts ~/.omp/agent/extensions/   # omp
+cp services/pi/extensions/tps-meter.ts  ~/.pi/agent/extensions/    # pi — same program
+```
+
+It loads with the next session. `cache 98% of 7.8K` is how much of this request's
+prompt came from the cache (`cacheRead / (input + cacheRead + cacheWrite)` — both
+agents count only the *uncached* part as `input`); `Σ cache` is the whole session
+on this model, the number to watch. Cache figures appear only once the backend has
+reported a cache hit: an engine that doesn't report cached tokens would otherwise
+read as a false 0 %.
+
 **What did the gateway actually send?** Request logging on the LiteLLM gateway is
 **off by default** — one access line per request, no content. To see each request
 exactly as it was forwarded to the engine (URL, every parameter, the messages) and
