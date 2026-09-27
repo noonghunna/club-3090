@@ -31,7 +31,7 @@ Start here if you want to run a model.
 | [`PCIE_P2P.md`](PCIE_P2P.md) | PCIe-only multi-GPU — read your `topo -m`, and optionally enable P2P over PCIe without NVLink. |
 | [`GLOSSARY.md`](GLOSSARY.md) | TPS / KV / MTP / TP and the rest of the vocabulary. |
 | [`FAQ.md`](FAQ.md) | Common setup and operational questions. |
-| [`CODING_AGENTS.md`](CODING_AGENTS.md) | Use the local models from a coding agent (omp, pi, Claude Code) through the LiteLLM gateway: one-command omp and pi setup, the settings a local GPU needs (effort per role, compaction, concurrency, timeouts), and which slug to serve for agent work. |
+| [`CODING_AGENTS.md`](CODING_AGENTS.md) | Use the local models from a coding agent (omp, pi, Hermes Agent, Claude Code) through the LiteLLM gateway: one-command omp, pi and Hermes setup, the settings a local GPU needs (effort per role, compaction, concurrency, timeouts), and which slug to serve for agent work. |
 | [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) | Generate a paste-ready report (`report.sh`), and boot a compose directly when the launcher won't. |
 | [`COMPARISONS.md`](COMPARISONS.md) | Self-host vs cloud APIs — cost crossover and when each wins. |
 | [`EXAMPLES.md`](EXAMPLES.md) | Worked end-to-end usage examples. |

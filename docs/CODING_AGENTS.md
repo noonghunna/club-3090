@@ -1,4 +1,4 @@
-# Coding agents on club-3090 (omp, pi, Claude Code)
+# Coding agents on club-3090 (omp, pi, Hermes Agent, Claude Code)
 
 Point a coding agent at the **LiteLLM gateway** (`:4000`), not at a model's own
 port. The gateway's route set is re-rendered from whatever is actually serving on
@@ -6,7 +6,7 @@ every `switch.sh` launch and teardown (`scripts/lib/litellm-sync.sh`), so the ag
 always sees the live model — no config edit when you switch slugs.
 
 ```
-omp / pi / claude ──► LiteLLM :4000 ──► whichever slug switch.sh booted (:8113, :8142, …)
+omp / pi / hermes / claude ──► LiteLLM :4000 ──► whichever slug switch.sh booted (:8113, :8142, …)
 ```
 
 ## What the gateway sets
@@ -401,6 +401,59 @@ Scripted runs:
 pi -p --model club/qwen3.8-27b --thinking low "…" </dev/null
 ```
 
+## Hermes Agent — setup
+
+```bash
+bash scripts/hermes-setup.sh              # adds a `club` provider to ~/.hermes/config.yaml
+bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast   # experimental slug: --force
+hermes chat --provider custom:club -m qwen3.8-27b          # or `hermes model` to make it the default
+```
+
+Hermes can't read a context window from the gateway, so, as for pi, the script
+writes a snapshot: every route the gateway serves with the window it reports, plus
+`qwen3.8-27b` (262,144 when nothing is up). **Re-run it after switching to a slug
+with a different window or model.** It writes through `hermes config set`, which
+keeps the file's comments and layout; it leaves your default model and reasoning
+effort alone, refuses a `club` provider it didn't write, and backs the file up.
+In a session, `/model custom:club:qwen3.8-27b` switches to it.
+
+What it writes with the vLLM dual-fast slug up:
+
+```yaml
+providers:
+  club:
+    name: club-3090 local models (scripts/hermes-setup.sh)
+    api: http://127.0.0.1:4000/v1
+    api_key: sk-litellm-master-key
+    transport: chat_completions
+    default_model: qwen3.8-27b
+    models:
+      qwen3.8-27b:
+        context_length: 262144
+```
+
+- Hermes sends its effort as a top-level `reasoning_effort` (`/reasoning`, or
+  `agent.reasoning_effort` in the config). On the Qwen3.8 template `none` turns
+  thinking off, `low` / `medium` / `xhigh` are the real rungs, `high` and `max` run
+  as `xhigh`, and `minimal` as `low` — Hermes's own `ultra` goes out as `max`
+  (`minimal` and `max` from #1458 on; before it they 400'd).
+- It sends no reply cap to a custom endpoint, so the server's default applies, and
+  it does not send earlier reasoning back — the prompt still grows append-only, so
+  the prefix cache holds.
+- At startup it probes `/api/v1/models`, `/api/tags` and `/v1/props` for a context
+  window; the gateway answers 404 to each, which is harmless — the window comes from
+  the config.
+- A fresh Hermes home installs its runtime (browser tools and more, ~2 GB) on the
+  first `hermes` command, `hermes config set` included — run Hermes once before the
+  script.
+
+Checked through the gateway on the reference rig (Hermes Agent 0.21.5): on
+`vllm/qwen38-27b-dual-fast` a task with tool calls (read three files) answered in
+14 s, and a resumed follow-up (`hermes chat --resume <id>`) in 4 s with 97 % of its
+prompt served from the prefix cache; on `sgl/qwen38-27b-dual-fast` a two-file task
+took a 16 s session (3 tool calls, every request 200). Hermes's system prompt with
+its 33 tools is about 14.5K tokens.
+
 ## Statusline meter (omp and pi)
 
 An extension that shows the model's decode speed and how much of each prompt the
@@ -599,6 +652,10 @@ bash scripts/litellm-log.sh status
 
 ## Known limits
 
+- **Claude Code needs a vLLM or SGLang slug.** The llama.cpp Qwen3.8 slugs use the
+  template inside the GGUF, which refuses the system message Claude Code sends after
+  the first user turn; the vendored template that accepts it is mounted on the vLLM
+  and SGLang slugs only.
 - **Route changes restart the gateway.** LiteLLM has no reload endpoint, so a
   `switch.sh` that changes the route set restarts the container — switch at a
   turn boundary.
