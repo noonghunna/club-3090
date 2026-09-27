@@ -1224,8 +1224,15 @@ status_gate() {
   esac
 }
 
-up_variant() {
-  local v="$1"
+# Every check that can refuse a launch WITHOUT needing the running slug's GPUs or
+# RAM back. main runs it BEFORE down_running, so a refused launch leaves the rig
+# serving what it was. It used to tear the running slug down first and refuse
+# afterwards — an experimental slug without --force, a mistyped slug, model files
+# missing on this host (a worktree without MODEL_DIR) — leaving nothing serving.
+# Checks that measure free VRAM or host RAM stay in up_variant, after the teardown
+# has freed them.
+check_variant() {
+  local v="$1" eng dir file full_dir
   if [[ -z "${VARIANTS[$v]:-}" ]]; then
     echo "ERROR: unknown variant '${v}'." >&2
     echo "Run: bash scripts/switch.sh --list" >&2
@@ -1233,18 +1240,17 @@ up_variant() {
   fi
   status_gate "$v"
   IFS='|' read -r eng dir file <<< "${VARIANTS[$v]}"
-  local full_dir="${ROOT_DIR}/${dir}"
+  full_dir="${ROOT_DIR}/${dir}"
   if [[ ! -f "${full_dir}/${file}" ]]; then
     echo "ERROR: compose file missing at ${full_dir}/${file}" >&2
     exit 1
   fi
-
-  # Pre-up sanity:
   #  - repo_drift: warn if local HEAD is behind origin/master
   #  - compose_deps: HARD error if compose mounts a model dir that doesn't exist on host
   #    (catches the "you didn't WITH_DFLASH_DRAFT=1 then tried dual-dflash-noviz" case;
   #     see club-3090#37 — this is the canonical fix raphael / snoby asked for)
-  #  - kv_format_hint: soft warn if VRAM class needs --kv-cache-dtype override (#47)
+  #  - compose_hardware: GPU count / SM / total VRAM — the cards, not what is free on them
+  #  - offload_split_mode: reads only SPLIT_MODE, so it needs none of the resolvers below
   if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
     # shellcheck source=preflight.sh
     source "${ROOT_DIR}/scripts/preflight.sh"
@@ -1252,6 +1258,28 @@ up_variant() {
     preflight_compose_deps "${full_dir}/${file}" || exit 1
     if [[ "$eng" == "vllm" ]]; then
       preflight_compose_hardware "${full_dir}/${file}" "$v" "${FORCE:-0}" || exit 1
+    fi
+    preflight_offload_split_mode "${full_dir}/${file}" || exit 1
+  fi
+  # The engine-pin resolver can refuse a slug for this hardware (exit 2). Dry-run it
+  # in a subshell so a refusal lands here; its exports still happen in up_variant,
+  # where the preflights between have always run without them.
+  ( export_variant_engine_pin "$v" ) >/dev/null || exit $?
+}
+
+up_variant() {
+  local v="$1"
+  # check_variant has already vetted the slug, its status, compose file, model
+  # files and hardware — before the teardown. What is left needs freed resources.
+  IFS='|' read -r eng dir file <<< "${VARIANTS[$v]}"
+  local full_dir="${ROOT_DIR}/${dir}"
+
+  # Pre-up sanity that needs the old slug gone:
+  #  - kv_format_hint: soft warn if VRAM class needs --kv-cache-dtype override (#47)
+  if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
+    # shellcheck source=preflight.sh
+    source "${ROOT_DIR}/scripts/preflight.sh"
+    if [[ "$eng" == "vllm" ]]; then
       # Free-VRAM gate: fail fast (not a 600s restart-loop) when the GPUs don't have
       # room for this config's gpu_memory_utilization — e.g. a desktop/other scene
       # still holding VRAM after a switch (club-3090 #535). Runs AFTER down_running(),
@@ -1274,7 +1302,6 @@ up_variant() {
     resolve_cpu_moe_split     "${full_dir}/${file}"
     # CPU-offload guards: marker-scoped, no-ops on non-offload composes (#deepseek-flash)
     preflight_cpu_offload_ram "${full_dir}/${file}" || exit 1
-    preflight_offload_split_mode "${full_dir}/${file}" || exit 1
     preflight_kv_format_hint "${full_dir}/${file}" || true
     # WARN-only first-token-latency hint; never blocks a boot.
     preflight_offload_thp "${full_dir}/${file}" || true
@@ -1617,6 +1644,7 @@ VARIANT="$(resolve_default_variant "$VARIANT")"
 warn_if_default_arch_gated "$ROOT_DIR" "$VARIANT" "$(primary_sm_from_gpu_spec "$(switch_gpu_profile_spec 2>/dev/null || true)")"
 
 resolve_ready_url "${VARIANT}"
+check_variant "${VARIANT}"   # every refusal that doesn't need freed resources, BEFORE the teardown
 down_running
 up_variant "${VARIANT}"
 [[ $WAIT -eq 1 ]] && wait_ready
