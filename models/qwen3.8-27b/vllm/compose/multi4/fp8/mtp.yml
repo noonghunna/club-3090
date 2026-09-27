@@ -257,12 +257,9 @@ services:
       # rung gets HTTP 500 while /v1/models still returns 200. Observed live via
       # /v1/messages?beta=true.
       # ⭐ MOUNTED OVER the checkpoint's own chat_template.jinja: vLLM auto-loads
-      # the template from the model dir, so this needs NO --chat-template arg
-      # (the same wiring style as the carnice override -- see patches.yml).
-      # That is deliberate, not incidental: upstream edits the args list
-      # constantly (11 commits touched these composes in the last 7 days), and
-      # every edit there collides with an inserted flag. The volumes block is
-      # quiet by comparison, so wiring here is what keeps this patch rebasable.
+      # the template from the model dir, so every endpoint renders it from here.
+      # The command ALSO names the same file with --chat-template, for vLLM's
+      # Anthropic /v1/messages — see the note there.
       # DATA-ONLY mount, not an engine-code overlay, so the engine's overlay-free
       # contract is unaffected. See patches.yml qwen38-reasoning-effort-template.
       - ../../../patches/qwen38-reasoning-effort-template/chat_template.jinja:/root/.cache/huggingface/qwen3.8-27b-fp8/chat_template.jinja:ro
@@ -470,6 +467,13 @@ services:
     command:
       - --model
       - /root/.cache/huggingface/qwen3.8-27b-fp8
+      # Names the chat_template.jinja mounted over the model dir (volumes). vLLM v0.30.0's
+      # Anthropic /v1/messages checks only this flag to decide whether the template can
+      # take a system message mid-conversation; without it every such message is moved
+      # to the front, and Claude Code (one per turn) re-prefills the whole conversation
+      # each turn. vllm#58754 fixes the check — see docs/UPSTREAM.md.
+      - --chat-template
+      - /root/.cache/huggingface/qwen3.8-27b-fp8/chat_template.jinja
       - --served-model-name
       - qwen3.8-27b
       - qwen3.8-27b-fp8

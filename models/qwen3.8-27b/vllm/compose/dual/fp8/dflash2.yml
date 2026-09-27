@@ -162,6 +162,13 @@ services:
     command:
       - --model
       - /root/.cache/huggingface/qwen3.8-27b-fp8
+      # Names the chat_template.jinja mounted over the model dir (volumes). vLLM v0.30.0's
+      # Anthropic /v1/messages checks only this flag to decide whether the template can
+      # take a system message mid-conversation; without it every such message is moved
+      # to the front, and Claude Code (one per turn) re-prefills the whole conversation
+      # each turn. vllm#58754 fixes the check — see docs/UPSTREAM.md.
+      - --chat-template
+      - /root/.cache/huggingface/qwen3.8-27b-fp8/chat_template.jinja
       - --served-model-name
       - qwen3.8-27b
       - qwen3.8-27b-fp8

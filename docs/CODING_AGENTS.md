@@ -26,7 +26,7 @@ does not serve it. Each live route gets:
 | `model_info.supports_function_calling` | `true` | |
 | `model_info.supports_reasoning` | set only where the slug declares a thinking sampler profile | Left out when unknown — a wrong `false` would make a client turn thinking off on a thinking model. |
 | `model_info.supports_vision` | from the registry | |
-| `model_info.supported_endpoints` | `["/v1/chat/completions", "/v1/responses", "/v1/messages"]` on an SGLang route whose server answers `/v1/messages`; left out elsewhere | LiteLLM then forwards Claude Code's Anthropic requests to the engine's own endpoint untranslated, so the model's reasoning reaches Claude Code — see *Claude Code*. |
+| `model_info.supported_endpoints` | `["/v1/chat/completions", "/v1/responses", "/v1/messages"]` on a vLLM or SGLang route whose own `/v1/messages` keeps a mid-conversation `system` message in place (the sync checks with `count_tokens`); left out elsewhere | LiteLLM then forwards Claude Code's Anthropic requests to the engine's own endpoint untranslated, so the model's reasoning reaches Claude Code — see *Claude Code*. |
 
 Gateway-wide (`litellm_settings`): `request_timeout: 1800` — the client owns the
 real timeout, and a long cold prefill plus a long reply outlasts short defaults —
@@ -588,22 +588,23 @@ where it sits, as its own system turn, which keeps the prompt append-only
 that 400? The slug was started before the fix — relaunch it with `switch.sh`.
 
 Claude Code talks to the same gateway through its Anthropic-compatible
-`/v1/messages` endpoint. What happens next depends on the slug's engine:
+`/v1/messages` endpoint. What happens next depends on the slug:
 
-| Engine | The gateway… | The model's reasoning | Follow-up turns |
+| Slug | The gateway… | The model's reasoning | Follow-up turns |
 |---|---|---|---|
-| SGLang | forwards the request untouched to SGLang's own `/v1/messages` | comes back as thinking blocks; Claude Code sends them back on the next request | 97–99 % of the prompt from the prefix cache |
-| vLLM | translates it (LiteLLM → the engine's Responses API) | not returned — only the answer and tool calls | 99–100 % |
+| Qwen3.8 on vLLM or SGLang | forwards the request untouched to the engine's own `/v1/messages` | comes back as thinking blocks; Claude Code sends them back on the next request | 97–99 % of the prompt from the prefix cache |
+| any other slug | translates it (LiteLLM → the engine's Responses API) | not returned — only the answer and tool calls | — |
 
 LiteLLM's translation builds thinking blocks only from a reasoning *summary*, which
 neither engine produces, so on that path Claude Code never sees the reasoning and
-has nothing to replay. vLLM has its own `/v1/messages` too, but v0.30.0 moves every
-mid-conversation `system` message to the front of the prompt unless the server was
-started with `--chat-template` (ours mount the template instead). Claude Code sends
-one each turn, so every turn would re-read the whole conversation. Fixed upstream in
-vllm#58754 ([UPSTREAM.md](UPSTREAM.md)); vLLM slugs move to the direct path once the
-pin carries it. The sync decides per route (`supported_endpoints` in *What the
-gateway sets*); nothing to configure.
+has nothing to replay. The engines' own endpoints return it, but Claude Code sends a
+`system` message every turn, and an endpoint that moves it to the front of the
+prompt makes every turn re-read the whole conversation. vLLM v0.30.0 moves it
+unless the server was started with `--chat-template` — it checks the flag, not the
+template it loaded (vllm#58754, [UPSTREAM.md](UPSTREAM.md)) — so the Qwen3.8 vLLM
+composes pass their mounted template that way too. The sync measures this per route
+with `count_tokens` (`supported_endpoints` in *What the gateway sets*); nothing to
+configure.
 
 Claude Code (2.1.283) sends no thinking setting or effort for a model it doesn't
 recognise, so the model reasons at the slug's default effort.
@@ -639,14 +640,12 @@ In `~/.claude/settings.json`:
   network can use it.
 
 Checked on the reference rig with the Claude Code CLI (2.1.283) through the
-gateway, on the patched template. On `sgl/qwen38-27b-dual-fast` (direct path) a task
-with tool calls (find three files, read each, answer) took 20 s, and three
-`--continue` follow-ups, one with another tool call, took 2–4 s each with 97–99 % of
-every follow-up request served from the prefix cache; each of the session's eight
-requests carried all of its earlier thinking blocks back to the model. On
-`vllm/qwen38-27b-dual-fast` (translated path) the same task took 17 s, and two
-follow-ups about 1 s each with 99 % served from cache, with no thinking blocks
-returned.
+gateway, direct path on both engines: a task with tool calls (find three files,
+read each, answer), then three `--continue` follow-ups, one with another tool call.
+On `vllm/qwen38-27b-dual-fast` that took 18 s, 2 s, 2 s and 5 s, on
+`sgl/qwen38-27b-dual-fast` 20 s, 2 s, 4 s and 4 s, with 97–99 % of every follow-up
+served from the prefix cache; every request carried all of the session's earlier
+thinking blocks back to the model, and every answer was right.
 
 Two differences from omp: there is no counterpart to omp's key-gated cloud
 fallback — if the local model can't be reached, the request fails — and a slug

@@ -64,7 +64,8 @@ def probe(port: int) -> list[Live]:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2) as r:
             data = json.load(r).get("data") or []
         owned_by = next((str(m["owned_by"]) for m in data if m.get("owned_by")), "")
-        native = serves_messages(port, owned_by) if data else False
+        first_id = next((str(m["id"]) for m in data if m.get("id")), "")
+        native = serves_messages(port, owned_by, first_id) if first_id else False
         out: list[Live] = []
         for m in data:
             if not m.get("id"):
@@ -92,35 +93,48 @@ def engine_kind_from_owned_by(owned_by: str) -> str:
     return out.stdout.strip() or "unknown"
 
 
-def serves_messages(port: int, owned_by: str) -> bool:
+def count_tokens(port: int, model: str, body: dict) -> "int | None":
+    """Anthropic /v1/messages/count_tokens: renders the prompt, generates nothing."""
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/messages/count_tokens",
+        data=json.dumps({"model": model, **body}).encode(),
+        headers={"content-type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            n = json.load(r).get("input_tokens")
+    except Exception:
+        return None
+    return n if isinstance(n, int) else None
+
+
+def serves_messages(port: int, owned_by: str, model: str) -> bool:
     """Whether the gateway should hand Claude Code's Anthropic /v1/messages to the
     engine's own endpoint instead of translating it. Both must hold:
-      - the engine is SGLang, whose endpoint was checked with the Claude Code CLI:
+      - the engine is SGLang or vLLM, the two checked with the Claude Code CLI:
         thinking blocks out, replayed thinking and a mid-array system message in,
-        tool calls, 97-99 % prefix reuse on follow-ups.
-        NOT vLLM (v0.30.0): its endpoint moves every mid-array system message into
-        the leading system block unless `--chat-template` was passed — it tests
-        the flag, not the template the model loaded, and our composes mount the
-        template instead. Claude Code sends one such message per turn, so each turn
-        re-prefills the whole conversation after the system prompt (measured: the
-        new tokens grow 7.8K → 9.9K → 12.8K over three turns; 2.9K without them).
-        Fixed upstream by vllm#58754 (after v0.30.0) — add vllm here once the pin
-        carries it (docs/UPSTREAM.md). Until then vLLM stays on LiteLLM's
-        translation, which keeps the prompt append-only.
-      - this server answers /v1/messages. An empty body costs no generation: a
-        server with the endpoint rejects it (400/422), an older one 404s. A route
-        without the endpoint stays on LiteLLM's translation, which still works."""
-    if engine_kind_from_owned_by(owned_by) != "sglang":
+        tool calls, prefix reuse on follow-ups.
+      - the endpoint keeps a mid-conversation `system` message where it is.
+        Claude Code sends one every turn. An endpoint that moves it into the
+        leading system block changes the front of the prompt each turn, and the
+        whole conversation after the system prompt is re-prefilled (vLLM v0.30.0
+        without `--chat-template`: new tokens per turn grew 7.8K → 9.9K → 12.8K
+        over three turns, against 2.9K). count_tokens tells the two apart without
+        generating anything: moved, the message renders exactly like the same text
+        appended to the top-level system prompt; kept in place, it adds its own
+        turn markers. A server without the endpoint (an older build) fails the
+        request and stays on LiteLLM's translation, which still works.
+    vLLM v0.30.0 keeps the message in place only when started with
+    `--chat-template` — it tests the flag, not the template it loaded; our Qwen3.8
+    composes pass it. vllm#58754 fixes the check (docs/UPSTREAM.md)."""
+    if engine_kind_from_owned_by(owned_by) not in ("sglang", "vllm"):
         return False
-    req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/messages", data=b"{}",
-                                 headers={"content-type": "application/json"})
-    try:
-        urllib.request.urlopen(req, timeout=2).close()
-        return True
-    except urllib.error.HTTPError as e:
-        return e.code in (400, 422)
-    except Exception:
-        return False
+    turns = [{"role": "user", "content": "a"}, {"role": "user", "content": "b"}]
+    inline = count_tokens(port, model, {"system": "Be brief.", "messages": [
+        turns[0], {"role": "system", "content": "Env: linux"}, turns[1]]})
+    merged = count_tokens(port, model, {"system": [
+        {"type": "text", "text": "Be brief."}, {"type": "text", "text": "Env: linux"}], "messages": turns})
+    return inline is not None and merged is not None and inline > merged + 1
 
 
 def llamacpp_ctx(port: int) -> "int | None":
@@ -214,9 +228,9 @@ def port_facts(variants: list[dict]) -> dict[int, dict]:
 # chat-completions bridge maps reasoning both ways, but it re-routes a thinking
 # request to Responses unless the route says `supports_reasoning: false`, which
 # /model_group/info publishes (pi-setup.sh would turn thinking off). So a route on
-# an engine whose own /v1/messages holds up (today SGLang — see serves_messages)
-# lists it in `supported_endpoints`, and LiteLLM forwards the Anthropic request to
-# the engine untranslated.
+# an engine whose own /v1/messages holds up (SGLang, and vLLM started with
+# --chat-template — see serves_messages) lists it in `supported_endpoints`, and
+# LiteLLM forwards the Anthropic request to the engine untranslated.
 MESSAGES_ENDPOINTS = '      supported_endpoints: ["/v1/chat/completions", "/v1/responses", "/v1/messages"]'
 ROUTE_PARAMS = ["      allowed_openai_params: [reasoning_effort]"]
 

@@ -187,16 +187,19 @@ fi
   || bad "passthrough route carries supports_reasoning=$(route_field sgl-live model_info.supports_reasoning)"
 
 # --- 16: the REAL probe decides it, against stub servers (not the seam) ------------
-# One positive control and three negatives, so a probe that always says yes or
-# always says no both fail. vLLM is a negative ON PURPOSE: v0.30.0 moves Claude
-# Code's per-turn system message to the front, re-prefilling the conversation
-# every turn (vllm#58754 fixes it; see serves_messages).
-python3 - "$ROOT/scripts/lib" <<'PY2' && ok "probe: SGLang with /v1/messages → passthrough; SGLang without it, vLLM, llama.cpp → translated" || bad "probe decision wrong (see above)"
+# The property that matters is whether the endpoint keeps Claude Code's per-turn
+# `system` message where it is: an endpoint that moves it to the front re-prefills
+# the conversation every turn (vLLM v0.30.0 without --chat-template). The probe
+# measures it with count_tokens: moved, the message counts exactly like the same text
+# in the top-level system prompt; in place, it adds its own turn markers. Positive
+# controls (SGLang and vLLM keeping it in place) and negatives (vLLM moving it, no
+# endpoint, llama.cpp), so a probe that always says yes or always no both fail.
+python3 - "$ROOT/scripts/lib" <<'PY2' && ok "probe: in-place SGLang/vLLM → passthrough; vLLM that moves the message, no count_tokens, llama.cpp → translated" || bad "probe decision wrong (see above)"
 import http.server, json, sys, threading
 sys.path.insert(0, sys.argv[1])
 import litellm_sync
 
-def stub(owned_by, messages_status):
+def stub(owned_by, inline_system):   # inline_system: "in-place" | "moved" | "absent"
     class H(http.server.BaseHTTPRequestHandler):
         def log_message(self, *a): pass
         def _send(self, code, body):
@@ -209,21 +212,29 @@ def stub(owned_by, messages_status):
             else:
                 self._send(404, {})
         def do_POST(self):
-            self.rfile.read(int(self.headers.get("content-length") or 0))
-            self._send(messages_status if self.path == "/v1/messages" else 404, {"error": "stub"})
+            body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
+            if self.path != "/v1/messages/count_tokens" or inline_system == "absent":
+                return self._send(404, {"error": "stub"})
+            if body.get("model") != "m":
+                return self._send(404, {"error": "unknown model"})
+            # Both probe requests carry the same text; kept in place, the inline message
+            # adds its own turn markers (4 tokens on Qwen), moved it adds none.
+            inline = any(m["role"] == "system" for m in body.get("messages", []))
+            self._send(200, {"input_tokens": 50 + (4 if inline and inline_system == "in-place" else 0)})
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
-cases = [("sglang", 400, True), ("sglang", 404, False), ("vllm", 400, False), ("llamacpp", 400, False)]
+cases = [("sglang", "in-place", True), ("vllm", "in-place", True), ("vllm", "moved", False),
+         ("sglang", "absent", False), ("llamacpp", "in-place", False)]
 bad = 0
-for owned_by, status, want in cases:
-    srv = stub(owned_by, status)
+for owned_by, behaviour, want in cases:
+    srv = stub(owned_by, behaviour)
     got = litellm_sync.probe(srv.server_address[1])
     srv.shutdown()
     flag = got[0][3] if got else None
     if flag is not want:
-        print(f"    owned_by={owned_by} /v1/messages→{status}: passthrough={flag}, want {want}", file=sys.stderr)
+        print(f"    owned_by={owned_by} inline system {behaviour}: passthrough={flag}, want {want}", file=sys.stderr)
         bad = 1
 sys.exit(bad)
 PY2

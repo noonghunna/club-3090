@@ -115,5 +115,33 @@ for f in fails:
 sys.exit(1 if fails else 0)
 PY
 rc=$?
-[ "$rc" -eq 0 ] && echo "test-qwen38-template: ok (later system message in place + append-only, image rule kept, high/max→xhigh, minimal→low, default_reasoning_effort, sorted tool keys)"
+
+# 5. every vLLM compose that mounts this template also NAMES it with --chat-template.
+# vLLM v0.30.0's Anthropic /v1/messages decides whether the template can take a
+# mid-conversation system message by testing only that flag; unset, it moves every
+# such message to the front, and Claude Code (one per turn) re-prefills the whole
+# conversation every turn (vllm#58754). The mount alone serves every other endpoint
+# correctly, so a compose copied from an older sibling would look fine everywhere
+# else. SGLang tests the loaded template and is not checked here.
+python3 - "$ROOT" <<'PY' || rc=1
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+mount = re.compile(r"qwen38-reasoning-effort-template/chat_template\.jinja:([^:\s]+):ro")
+checked, bad = 0, []
+for f in sorted(root.glob("models/*/vllm/compose/**/*.yml")):
+    s = f.read_text(encoding="utf-8")
+    m = mount.search(s)
+    if not m:
+        continue
+    checked += 1
+    if not re.search(r"\n\s*- --chat-template\n\s*- " + re.escape(m.group(1)) + r"\n", s):
+        bad.append(f"{f.relative_to(root)}: mounts {m.group(1)} but does not pass it as --chat-template")
+for b in bad:
+    print(f"✗ {b}", file=sys.stderr)
+if checked == 0:
+    print("✗ no vLLM compose mounts the template — the glob or the mount pattern is stale", file=sys.stderr)
+sys.exit(1 if bad or checked == 0 else 0)
+PY
+
+[ "$rc" -eq 0 ] && echo "test-qwen38-template: ok (later system message in place + append-only, image rule kept, high/max→xhigh, minimal→low, default_reasoning_effort, sorted tool keys, vLLM composes pass --chat-template)"
 exit "$rc"
