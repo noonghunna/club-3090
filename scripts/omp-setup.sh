@@ -59,6 +59,12 @@ QWEN38_IDS = ["qwen3.8-27b", "thinkingcap38-27b"]
 
 def qwen38_override(mid: str) -> str:
     return f"""      {mid}:
+        # Reply cap (thinking + answer). The gateway reports it per route, but when
+        # it can't (routes rendered before model_info existed, or an engine that
+        # reports no context) omp falls back to its catalog's 65,536 — the WHOLE
+        # window of the 65K single-card slug. Pinned here, it wins over discovery;
+        # 32768 is at most half the window on every Qwen3.8 slug.
+        maxTokens: 32768
         # A thinking model on every engine. Stated here because the gateway only
         # says so for slugs that declare a thinking sampler profile; without it omp
         # treats the model as non-reasoning and never sends an effort at all.

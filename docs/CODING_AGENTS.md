@@ -9,6 +9,30 @@ always sees the live model — no config edit when you switch slugs.
 omp / claude ──► LiteLLM :4000 ──► whichever slug switch.sh booted (:8113, :8142, …)
 ```
 
+## What the gateway sets
+
+The gateway serves `services/litellm/config.runtime.yaml` (gitignored), which
+`scripts/lib/litellm-sync.sh` renders from the endpoints that answer `/v1/models`
+— on every `switch.sh` launch and teardown, restarting the gateway only when the
+route set changed. The tracked `config.yaml` is the registry catalog; the gateway
+does not serve it. Each live route gets:
+
+| Field | Value | Why |
+|---|---|---|
+| `model` | `openai/<served id>` | Forwards the messages untouched, including a past turn's `reasoning_content`, which `hosted_vllm/` drops. |
+| `allowed_openai_params` | `[reasoning_effort]` | Without it the `openai` provider answers a top-level `reasoning_effort` with HTTP 400 before the request reaches the engine. |
+| `model_info.max_input_tokens` | the booted server's context: vLLM/SGLang `max_model_len`, llama.cpp `n_ctx`; else the registry's configured context | Clients size compaction against the real window of *this* boot. |
+| `model_info.max_output_tokens` | 32,768, or half the context if that is smaller | The reply cap (thinking + answer); half the window at most, so a long prompt still fits. |
+| `model_info.supports_function_calling` | `true` | |
+| `model_info.supports_reasoning` | set only where the slug declares a thinking sampler profile | Left out when unknown — a wrong `false` would make a client turn thinking off on a thinking model. |
+| `model_info.supports_vision` | from the registry | |
+
+Gateway-wide (`litellm_settings`): `request_timeout: 1800` — the client owns the
+real timeout, and a long cold prefill plus a long reply outlasts short defaults —
+and `num_retries: 0`, because a retry repeats the whole prefill. Request logging
+is off by default (see *Troubleshooting*). The cloud routes below the generated
+block (`qwen3.8-max*`) are hand-maintained and pass through untouched.
+
 ## omp (oh-my-pi) — setup
 
 ```bash
@@ -33,10 +57,13 @@ omp -p --no-session --config services/omp/omp-club.yml \
 
 `omp-setup.sh` writes one marked block (re-run it to refresh; other providers are
 never touched, and the old file is backed up). The provider uses omp's
-`discovery: litellm`, which reads the gateway's `/model_group/info`: each route
-carries `model_info` rendered from the serving engine — `max_input_tokens` is the
-`max_model_len` of *this* boot, `max_output_tokens` is 32768 — so omp budgets
-compaction and replies against the real window instead of a generic default.
+`discovery: litellm`, which reads each route's `model_info` from the gateway's
+`/model_group/info` (see *What the gateway sets*), so omp sizes compaction and
+replies against the real window of the serving slug. For the Qwen3.8 ids the
+provider also pins `maxTokens: 32768`, which omp applies over the gateway's value:
+when a route carries no `model_info`, omp otherwise falls back to its own catalog's
+65,536 — the whole window of the 65K single-card slug. 32,768 is at most half the
+window on every Qwen3.8 slug.
 
 **Wire format.** omp's LiteLLM discovery talks the **OpenAI Responses API**
 (`/v1/responses`) to any route whose LiteLLM provider is `openai` — which every
@@ -203,9 +230,39 @@ bash scripts/litellm-log.sh status
 - **Route changes restart the gateway.** LiteLLM has no reload endpoint, so a
   `switch.sh` that changes the route set restarts the container — switch at a
   turn boundary.
+- **After updating the repo, the gateway keeps its old routes** until the next
+  `switch.sh` re-renders them (or run `bash scripts/lib/litellm-sync.sh`). Routes
+  rendered before #1438 carry no `model_info`, and omp then assumes its catalog's
+  context window (262K) — past the end of the smaller slugs' windows.
 - **An engine that stops without `switch.sh`** (a crash, a plain `docker stop`)
   stays advertised until the next sync; requests fail with a clean HTTP error.
   Re-sync with `bash scripts/lib/litellm-sync.sh`.
 - **`qwen3_coder` tool parser** drops everything after a literal `<tool_call>` in
   a reply's prose ([#1191](https://github.com/noonghunna/club-3090/issues/1191)) —
   rare in practice, but agents that *talk about* tool calling can hit it.
+
+
+## Background reading
+
+doug.sh's write-ups of running a local Qwen3.8-27B coding agent on two RTX 3090s
+are where most of this setup comes from:
+
+- [Tuning a local coding agent (oh-my-pi)](https://doug.sh/posts/tuning-a-local-coding-agent-oh-my-pi/)
+  — the omp settings the overlay adopts: effort per role, the 32K reply cap,
+  artifact spill, append-only context, late compaction, subagent concurrency,
+  stream timeouts.
+- [oh-my-pi custom models](https://doug.sh/posts/oh-my-pi-custom-models/) —
+  `models.yml` pitfalls: a provider name omp already uses, `qwenTemplateReasoningEffort`,
+  fields silently inherited from omp's catalog.
+- [vLLM KV cache for agents](https://doug.sh/posts/vllm-kv-cache-agents/) —
+  prefix-cache forensics: tool-schema key order, live subagent status in the
+  system prompt, compaction, and measuring the cached share rather than hit counts.
+
+Where this setup differs, and why:
+
+| Topic | Articles | Here |
+|---|---|---|
+| Thinking budget | `thinking_token_budget` via the provider's `extraBody` | Doesn't reach the engine through the gateway: omp talks the Responses API to `openai/` routes, and vLLM accepts the budget only on chat completions. Effort per role is the lever. |
+| Subagents | `task.maxConcurrency: 4` | 2 — vLLM dual-fast runs 8 sequences, SGLang dual-fast 2; see *Which slug to serve*. |
+| Tool-schema key order | template fix `tojson(sort_keys=True)` | Shipped in the Qwen3.8 template (#1441). |
+| Host-RAM KV tier on hybrid models | served ~1.5 % of what was asked | Revisits of evicted agent sessions took 7.7 s (SGLang) / 8.6 s (vLLM) vs ~42 s cold (#1419). |

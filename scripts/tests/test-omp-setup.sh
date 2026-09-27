@@ -36,6 +36,10 @@ bash "$ROOT/scripts/omp-setup.sh" >/dev/null || bad "fresh run failed"
 [ "$(yq providers/club/baseUrl)" = "http://127.0.0.1:4000/v1" ] || bad "club baseUrl must be the gateway (:4000/v1)"
 [ "$(yq providers/club/modelOverrides/qwen3.8-27b/compat/qwenTemplateReasoningEffort)" = "True" ] \
   || bad "qwen3.8-27b override must set qwenTemplateReasoningEffort"
+# The reply cap must not depend on the gateway reporting it: without model_info omp
+# falls back to its catalog's 65,536, the whole window of the 65K single-card slug.
+[ "$(yq providers/club/modelOverrides/qwen3.8-27b/maxTokens)" = "32768" ] \
+  || bad "qwen3.8-27b override must pin maxTokens: 32768 (got '$(yq providers/club/modelOverrides/qwen3.8-27b/maxTokens)')"
 # `qwen` would send a top-level enable_thinking that vLLM and SGLang ignore, so omp's
 # "off" level would keep thinking on; chat_template_kwargs is what the engines read.
 [ "$(yq providers/club/compat/thinkingFormat)" = "qwen-chat-template" ] \
