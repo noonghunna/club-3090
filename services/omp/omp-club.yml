@@ -59,3 +59,15 @@ task:
 providers:
   streamFirstEventTimeoutSeconds: 900
   streamIdleTimeoutSeconds: 900
+
+# Cloud fallback — only when OPENROUTER_API_KEY is set; without it omp skips the
+# fallback. When the local model can't be reached, omp retries it with
+# backoff (~53 s, 12 attempts, measured), then continues on OpenRouter's free
+# hosted Qwen3.8-27B (same model), then its `openrouter/free` router, and returns
+# to local after a cooldown. Prompts leave the machine on those turns; the free
+# tier is 20 req/min and 50/day. Opt out: retry.modelFallback: false.
+retry:
+  fallbackChains:                            # only with OPENROUTER_API_KEY set
+    club/*:                                  # when the local model is unreachable
+      - openrouter/qwen/qwen3.8-27b:free     # the same model, hosted, free
+      - openrouter/openrouter/free           # then any free model

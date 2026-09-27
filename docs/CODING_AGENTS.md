@@ -128,6 +128,12 @@ provider:
 providers:
   streamFirstEventTimeoutSeconds: 900  # 15 min for first word
   streamIdleTimeoutSeconds: 900        # and for pauses in a reply
+
+retry:
+  fallbackChains:                            # only with OPENROUTER_API_KEY set
+    club/*:                                  # when the local model is unreachable
+      - openrouter/qwen/qwen3.8-27b:free     # the same model, hosted, free
+      - openrouter/openrouter/free           # then any free model
 ```
 
 ⚠️ **Set `modelRoles` even if you change nothing else.** Without roles, omp picks a
@@ -135,6 +141,25 @@ model on its own from everything the gateway lists, and a route you can't use
 can win — a contributor's empty `modelRoles` landed on a keyless cloud route and
 got a 401. The ThinkingCap slugs serve `thinkingcap38-27b`, not `qwen3.8-27b`:
 there, use `club/thinkingcap38-27b:<effort>` in the roles.
+
+**Cloud fallback — only if you set `OPENROUTER_API_KEY`.** When the local model
+can't be reached (an engine that died, a slug that failed to boot), omp retries it
+with backoff, then carries on with OpenRouter's free hosted Qwen3.8-27B — the same
+model, so the same effort levels and tool-call format — and after that its
+`openrouter/free` router. It returns to the local model after a cooldown. Measured
+against a local endpoint that failed every request: 12 attempts over ~53 s, then
+the answer came back from the fallback. The retries also cover the ~10 s gateway
+restart of a `switch.sh`, so a normal switch doesn't send anything out. Without
+the key, omp skips the fallback and keeps retrying the local model (tested).
+Before relying on it:
+
+- **Your prompts leave the machine** on a fallback turn — code included — to
+  whichever provider serves the free model, under its data terms.
+- **The free tier is small:** 20 requests a minute and 50 a day (1,000 a day once
+  you've bought $10 of credits). One small omp task took ~20 requests here.
+- It covers an *unreachable* model, not a *stuck* one: omp only falls back on
+  failed requests, never because a task is hard.
+- Opt out with `retry.modelFallback: false`, or leave the `retry` block out.
 
 Rather leave your `config.yml` alone? The same settings ship as an overlay you
 load per run: `omp --config services/omp/omp-club.yml` (e.g. as an `omp-club`
@@ -313,6 +338,7 @@ Where this setup differs, and why:
 |---|---|---|
 | Thinking budget | `thinking_token_budget` via the provider's `extraBody` | Doesn't reach the engine through the gateway: omp talks the Responses API to `openai/` routes, and vLLM accepts the budget only on chat completions. Effort per role is the lever. |
 | Compaction | `thresholdTokens: 200000` (on a 262K window) | `thresholdPercent: 80` — follows each slug's window, which runs from 65K to 262K here. |
+| Fallback | between the author's two local machines | `club/*` → OpenRouter's free Qwen3.8-27B, then `openrouter/free` — only with `OPENROUTER_API_KEY` set. |
 | Subagents | `task.maxConcurrency: 4` | 2 — vLLM dual-fast runs 8 sequences, SGLang dual-fast 2; see *Which slug to serve*. |
 | Tool-schema key order | template fix `tojson(sort_keys=True)` | Shipped in the Qwen3.8 template (#1441). |
 | Host-RAM KV tier on hybrid models | served ~1.5 % of what was asked | Revisits of evicted agent sessions took 7.7 s (SGLang) / 8.6 s (vLLM) vs ~42 s cold (#1419). |
