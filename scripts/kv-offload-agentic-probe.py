@@ -29,7 +29,7 @@ read). Pass --seed to vary the needles.
 
 Needs the slug booted with KV_OFFLOAD_GB (>= 64 recommended, so the tier holds everything the probe
 writes; too small a tier evicts the conversations too and reads as a false FAIL). RAM mode takes
-~35-50 min on a 2x 3090 dual-fast slug (build + fillers must exceed its ~550K-token GPU pool).
+~15 min on a 2x 3090 dual-fast slug in RAM mode (build + fillers must exceed its ~550K-token GPU pool).
 Stdlib only.
 """
 import argparse, json, os, random, re, subprocess, sys, time, urllib.error, urllib.request
@@ -313,6 +313,9 @@ def main():
         msgs = convs[c]
         msgs.append({"role": "user", "content": "Question: What is the access code for this conversation? Answer with the code only."})
         t0 = time.time()
+        # ⚠️ `tools` MUST match the build turns: the Qwen3.8 template renders the tool block at the
+        # top of the system turn, so a revisit without it diverges from the stored conversation and
+        # no tier (GPU, host or disk) can match it.
         # Thinking-on revisits spend ~20 reasoning tokens before the answer, so 24 truncates
         # the answer text itself (finish_reason length, content None) — widen to 128 there.
         r = http(base + "/v1/chat/completions", {
@@ -320,7 +323,11 @@ def main():
             "chat_template_kwargs": {"enable_thinking": a.thinking},
         })
         t_back = time.time() - t0
-        answer = r["choices"][0]["message"].get("content")
+        # With `tools` on the revisit the model may answer through a tool call, so a correct
+        # answer in the tool-call arguments is still a hit — check them as well as content.
+        m = r["choices"][0]["message"]
+        answer = (m.get("content") or "") + " ".join(
+            (tc.get("function") or {}).get("arguments") or "" for tc in (m.get("tool_calls") or []))
         time.sleep(2)
         after = evidence(base, engine)
         moved = {k: after.get(k, 0) - before.get(k, 0) for k in after if after.get(k, 0) - before.get(k, 0) > 0}
