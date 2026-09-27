@@ -89,6 +89,43 @@ need = [d["provider"]["appendOnlyContext"] == "on", d["compaction"]["thresholdPe
 sys.exit(0 if all(need) else 1)
 PY
 
+# 8. the override keys are EXACTLY the ids the Qwen3.8-family composes serve —
+#    the registry's model name is not what omp sees; the engine's /v1/models (and
+#    so the gateway) says --served-model-name / --alias. A key nothing serves is
+#    dead; a served id with no key gets no effort (#1444: ThinkingCap's key was
+#    `thinkingcap-qwen3.8-27b` while every ThinkingCap compose served thinkingcap38-27b).
+python3 - "$ROOT" <<'PY' || bad "omp-setup.sh QWEN38_IDS must equal the ids the Qwen3.8-family composes serve"
+import ast, glob, io, re, sys
+root = sys.argv[1]
+src = io.open(f"{root}/scripts/omp-setup.sh", encoding="utf-8").read()
+keys = set(ast.literal_eval(re.search(r"^QWEN38_IDS = (\[.*\])$", src, re.M).group(1)))
+served = set()
+def add(tok):
+    m = re.fullmatch(r"\$\{\w+:-([^}]+)\}", tok)          # ${SERVED_NAME:-qwen3.8-27b} -> its default
+    if m: tok = m.group(1)
+    if re.fullmatch(r"[A-Za-z0-9][\w.\-]*", tok): served.add(tok)
+for d in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b"):
+    for f in glob.glob(f"{root}/models/{d}/*/compose/*/*/*.yml"):
+        lines = [l for l in io.open(f, encoding="utf-8").read().splitlines() if not l.lstrip().startswith("#")]
+        for i, l in enumerate(lines):
+            m = re.search(r"--(?:served-model-name|alias)\b(.*)$", l)
+            if not m: continue
+            rest = m.group(1).strip().rstrip("\\").strip().strip('"')
+            if rest and not rest.startswith("-"):                    # one-line form
+                for tok in rest.split():
+                    add(tok.strip('"'))
+                continue
+            for nxt in lines[i + 1:]:                                # YAML list form
+                v = nxt.strip()
+                if not v.startswith("- ") or v[2:].lstrip().startswith("-"): break
+                add(v[2:].strip().strip("\"'"))
+if not served:
+    sys.exit("found no served names — the scan itself is broken")
+if keys != served:
+    print(f"  served but no override: {sorted(served - keys)}   override nothing serves: {sorted(keys - served)}", file=sys.stderr)
+    sys.exit(1)
+PY
+
 # 7. the config.yml block the doc tells readers to paste == the overlay we ship
 python3 - "$ROOT/docs/CODING_AGENTS.md" "$ROOT/services/omp/omp-club.yml" <<'PY' || bad "docs/CODING_AGENTS.md's config.yml block and services/omp/omp-club.yml have drifted apart"
 import io, re, sys, yaml
@@ -103,5 +140,5 @@ if block != overlay:
     sys.exit(1)
 PY
 
-[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay)"
+[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served ids)"
 exit "$fail"

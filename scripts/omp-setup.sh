@@ -55,7 +55,10 @@ END = "  # <<< club-3090 local models <<<"
 # Qwen3.8 slugs all serve the shared id `qwen3.8-27b`; the ThinkingCap slugs are
 # replicas that serve their OWN name `thinkingcap38-27b` on every tier (fast /
 # max / superfast, vLLM and SGLang).
-QWEN38_IDS = ["qwen3.8-27b", "thinkingcap38-27b"]
+# The FP8 tiers also serve a `-fp8` alias, and the gateway lists every alias as its
+# own route, so each needs the override too. test-omp-setup checks this list
+# against every name the Qwen3.8-family composes serve.
+QWEN38_IDS = ["qwen3.8-27b", "qwen3.8-27b-fp8", "thinkingcap38-27b", "thinkingcap38-27b-fp8"]
 
 def qwen38_override(mid: str) -> str:
     return f"""      {mid}:
