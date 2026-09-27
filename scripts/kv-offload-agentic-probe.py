@@ -15,12 +15,17 @@ revisited and proven to come back warm from the tier:
 Each conversation carries a needle ("the access code is ...") planted in its unique first user
 message, so a hit that returns the wrong state also shows up. PASS = every conversation's return
 takes less than half of a fresh cold-reference prompt of the same length AND the engine's own
-offload counters moved during the revisits. The probe always runs thinking-off (a fast,
-deterministic build); pass --seed to vary the needles.
+offload counters moved during the revisits. The probe runs thinking-off by default (a fast,
+deterministic build); --thinking switches the whole run (build and revisit) to
+enable_thinking: true and widens the build-turn budget (thinking turns run ~20 reasoning tokens
+plus the preamble). The needle check is unaffected: this family emits the answer in `content`
+even with thinking on (the reasoning block is a separate `reasoning` field the probe does not
+read). Pass --seed to vary the needles.
 
   python3 scripts/kv-offload-agentic-probe.py --url http://localhost:8142
   python3 scripts/kv-offload-agentic-probe.py --url http://localhost:8142 --disk --container sglang-qwen38-27b-mtp-dual
   python3 scripts/kv-offload-agentic-probe.py --conversations 4 --turns 15 --out results/probe-1419-ram.md
+  python3 scripts/kv-offload-agentic-probe.py --thinking --out results/probe-1419-vllm-ram-think.md
 
 Needs the slug booted with KV_OFFLOAD_GB (>= 64 recommended, so the tier holds everything the probe
 writes; too small a tier evicts the conversations too and reads as a false FAIL). RAM mode takes
@@ -170,6 +175,7 @@ def main():
     ap.add_argument("--disk", action="store_true", help="disk mode: restart the container instead of filling the GPU")
     ap.add_argument("--container", help="container to restart in --disk mode (docker ps shows it)")
     ap.add_argument("--seed", type=int, default=1096, help="RNG seed for the needles (default 1096, matches bench-agentic.sh)")
+    ap.add_argument("--thinking", action="store_true", help="run the whole probe (build + revisit) with enable_thinking: true instead of off")
     ap.add_argument("--out", help="also write the final report block as markdown to this path")
     a = ap.parse_args()
     base = (a.url or default_url()).rstrip("/")
@@ -188,6 +194,7 @@ def main():
     mode = "DISK" if a.disk else "RAM"
     print(f"[probe] {engine} · model {model} · max_model_len {max_len:,} · GPU pool "
           f"{f'{pool:,} tokens' if pool else 'not detected'} · mode {mode} · "
+          f"thinking {'ON' if a.thinking else 'off'} · "
           f"{a.conversations} conversations x {turns} turns", flush=True)
 
     # Each conversation starts with the shared system prompt; its turn 0 is the seeded needle
@@ -195,7 +202,7 @@ def main():
     codes, first_user = [p[0] for p in planted], [p[1] for p in planted]
     convs = [[{"role": "system", "content": SYSTEM}] for _ in range(a.conversations)]
 
-    def chat(messages, max_tokens=600):
+    def chat(messages, max_tokens=2000 if a.thinking else 600):
         t0 = time.time()
         r = http(base + "/v1/chat/completions", {
             "model": model,
@@ -205,7 +212,7 @@ def main():
             "max_tokens": max_tokens,
             "temperature": 0,
             "seed": a.seed,
-            "chat_template_kwargs": {"enable_thinking": False},
+            "chat_template_kwargs": {"enable_thinking": a.thinking},
         })
         return time.time() - t0, r
 
@@ -300,9 +307,11 @@ def main():
         msgs = convs[c]
         msgs.append({"role": "user", "content": "Question: What is the access code for this conversation? Answer with the code only."})
         t0 = time.time()
+        # Thinking-on revisits spend ~20 reasoning tokens before the answer, so 24 truncates
+        # the answer text itself (finish_reason length, content None) — widen to 128 there.
         r = http(base + "/v1/chat/completions", {
-            "model": model, "messages": msgs, "max_tokens": 24, "temperature": 0,
-            "chat_template_kwargs": {"enable_thinking": False},
+            "model": model, "messages": msgs, "tools": TOOLS, "max_tokens": 128 if a.thinking else 24, "temperature": 0,
+            "chat_template_kwargs": {"enable_thinking": a.thinking},
         })
         t_back = time.time() - t0
         answer = r["choices"][0]["message"].get("content")
