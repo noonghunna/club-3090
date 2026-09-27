@@ -86,10 +86,14 @@ need = [d["provider"]["appendOnlyContext"] == "on", d["compaction"]["thresholdPe
         d["tools"]["artifactSpillThreshold"] <= 16, d["task"]["maxConcurrency"] >= 1,
         d["providers"]["streamFirstEventTimeoutSeconds"] >= 600,
         all(":" in v for v in d["modelRoles"].values()),   # every role names an effort
-        # omp starts on a club model or not at all: without this, a role whose
-        # model isn't up at startup lands on ANY keyed provider (it picked a paid
-        # openrouter/openai/gpt-5.5 with only OPENROUTER_API_KEY set)
-        d.get("enabledModels") == ["club/*"]]
+        # no enabledModels: it narrows omp's model scope for every session, and
+        # omp must not be limited to club models (maintainer, 2026-09-27). The
+        # startup risk it covered is documented instead ("Start the slug before omp").
+        "enabledModels" not in d,
+        # one model per role: an ordered list (`a, b`) does not prefer its first
+        # entry at startup — omp started on the OpenRouter entry with the club
+        # model served, cold and warm discovery cache alike
+        all("," not in v for v in d["modelRoles"].values())]
 sys.exit(0 if all(need) else 1)
 PY
 

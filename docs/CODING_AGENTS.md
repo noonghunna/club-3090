@@ -178,9 +178,6 @@ modelRoles:
 
 defaultThinkingLevel: low  # requests no role covers
 
-enabledModels:
-  - club/*  # start on a club model or not at all
-
 task:
   maxConcurrency: 2  # subagents at once — see "Which slug to serve"
 
@@ -209,10 +206,16 @@ retry:
 ⚠️ **Set `modelRoles` even if you change nothing else.** Without roles, omp picks a
 model on its own from everything the gateway lists, and a route you can't use
 can win — a contributor's empty `modelRoles` landed on a keyless cloud route and
-got a 401. Roles alone don't cover a model that isn't up when omp starts — that is
-what `enabledModels` is for (see the table). The ThinkingCap slugs serve
-`thinkingcap38-27b`, not `qwen3.8-27b`: there, use `club/thinkingcap38-27b:<effort>`
-in the roles.
+got a 401. The ThinkingCap slugs serve `thinkingcap38-27b`, not `qwen3.8-27b`:
+there, use `club/thinkingcap38-27b:<effort>` in the roles.
+
+⚠️ **Start the slug before omp.** If the default role's model isn't being served
+when omp starts, omp picks a model itself from *any* provider you hold a key for,
+without asking — with only `OPENROUTER_API_KEY` set it started on
+`openrouter/openai/gpt-5.5`, a paid model. Check the model omp shows before your
+first prompt, or launch with `omp --model club/qwen3.8-27b`: that exits with an
+error when the model isn't served ("Set an API key environment variable…" — it
+means the model isn't up) and sends nothing.
 
 Rather leave your `config.yml` alone? The same settings ship as an overlay you
 load per run: `omp --config services/omp/omp-club.yml` (e.g. as an `omp-club`
@@ -224,7 +227,6 @@ What each setting is for:
 |---|---|
 | explicit effort on every role (`default: …:medium`, `task`/`smol`/`tiny`/`commit`: `…:low`, `plan`/`slow`: `…:xhigh`) | the role, not whichever slug is serving, decides how long the model thinks (club composes default to `low`; the checkpoint's own default is **xhigh**). On the vLLM dual-fast slug, two hard prompts took **10,395 / 16,000 (capped)** completion tokens at xhigh vs **5,916 / 7,280** at low and **4,474 / 6,455** at medium. |
 | `maxTokens: 32768` (the gateway's value, pinned by the provider) | the reply cap covers thinking *and* the answer — xhigh alone spent up to 16,000 tokens on one hard prompt, so a small cap cuts a file write off mid-file. |
-| `enabledModels: [club/*]` | if the model a role names isn't being served when omp starts, omp picks a model itself from *any* provider you hold a key for — with only `OPENROUTER_API_KEY` set it started on `openrouter/openai/gpt-5.5`, a paid model. With the list it exits with an error instead ("Set an API key environment variable…" — it means no club model is up). It is also omp's model scope when you switch models; a pattern you add there becomes a startup candidate too. |
 | `provider.appendOnlyContext: on` | anything that rewrites the front of the prompt re-prefills the whole conversation. |
 | `compaction.thresholdPercent: 80` | compaction swaps history for a summary and busts the cached prefix, so it should happen late. A percentage follows each slug's real window; the article's `thresholdTokens: 200000` would sit past the end of the 147K and 163K slugs' windows. |
 | `tools.artifactSpillThreshold: 10` (KB) | inlined 40K-character tool results are prefill on every later turn. |
@@ -304,8 +306,8 @@ Before relying on it:
 - It covers an *unreachable* model, not a *stuck* one: omp only falls back on
   failed requests, never because a task is hard.
 - It covers turns in a running session, not startup. If no club model is up when
-  omp starts, the chain never runs; `enabledModels: [club/*]` (in the block above)
-  makes omp stop with an error then, rather than start on a paid model.
+  omp starts, the chain never runs and omp picks a model itself — see *Start the
+  slug before omp* above.
 - Opt out with `retry.modelFallback: false`, or leave the `retry` block out.
 
 ## Which slug to serve for agent work
@@ -498,7 +500,7 @@ Where this setup differs, and why:
 |---|---|---|
 | Thinking budget | `thinking_token_budget` via the provider's `extraBody` | Doesn't reach the engine through the gateway: omp talks the Responses API to `openai/` routes, and vLLM accepts the budget only on chat completions. Effort per role is the lever. |
 | Compaction | `thresholdTokens: 200000` (on a 262K window) | `thresholdPercent: 80` — follows each slug's window, which runs from 65K to 262K here. |
-| Fallback | between the author's two local machines | `club/*` → OpenRouter's free Qwen3.8-27B, then `openrouter/free` — only with `OPENROUTER_API_KEY` set. `enabledModels: [club/*]` keeps omp from *starting* on a cloud model. |
+| Fallback | between the author's two local machines | `club/*` → OpenRouter's free Qwen3.8-27B, then `openrouter/free` — only with `OPENROUTER_API_KEY` set. |
 | Subagents | `task.maxConcurrency: 4` | 2 — vLLM dual-fast runs 8 sequences, SGLang dual-fast 2; see *Which slug to serve*. |
 | Tool-schema key order | template fix `tojson(sort_keys=True)` | Shipped in the Qwen3.8 template (#1441). |
 | Host-RAM KV tier on hybrid models | served ~1.5 % of what was asked | Revisits of evicted agent sessions took 7.7 s (SGLang) / 8.6 s (vLLM) vs ~42 s cold (#1419). |
