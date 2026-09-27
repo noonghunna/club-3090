@@ -174,11 +174,17 @@ def main():
     ap.add_argument("--fill-tokens", type=int, help="total filler tokens (RAM mode). Default: GPU pool x 1.1, auto-detected")
     ap.add_argument("--disk", action="store_true", help="disk mode: restart the container instead of filling the GPU")
     ap.add_argument("--container", help="container to restart in --disk mode (docker ps shows it)")
-    ap.add_argument("--seed", type=int, default=1096, help="RNG seed for the needles (default 1096, matches bench-agentic.sh)")
+    # Time-derived by default: a re-run with the same seed on the same still-running slug
+    # re-generates byte-identical fillers/soups and re-hits the previous run's KV, turning the
+    # "cold reference" into a cache hit (2026-09-27: 100K-token fillers ran 1.2 s vs 20 s cold).
+    ap.add_argument("--seed", type=int, default=None, help="RNG seed for the needles (default: time-derived so re-runs stay cold; pass 1096 to match bench-agentic.sh)")
     ap.add_argument("--thinking", action="store_true", help="run the whole probe (build + revisit) with enable_thinking: true instead of off")
     ap.add_argument("--out", help="also write the final report block as markdown to this path")
     a = ap.parse_args()
     base = (a.url or default_url()).rstrip("/")
+    if a.seed is None:
+        a.seed = int(time.time() * 1000) % (10 ** 9)
+        print(f"[probe] seed {a.seed} (time-derived; pass --seed to fix the needles)", flush=True)
     if a.disk and not a.container:
         ap.error("--disk needs --container (the serving container's name from `docker ps`)")
 
