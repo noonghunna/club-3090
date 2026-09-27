@@ -1,0 +1,59 @@
+# omp settings overlay for club-3090's local models — load it per run:
+#
+#     omp --config <repo>/services/omp/omp-club.yml
+#
+# It layers on top of your own ~/.omp/agent/config.yml for that run only, so your
+# own roles and settings stay untouched. Needs the `club` provider that
+# scripts/omp-setup.sh writes into ~/.omp/agent/models.yml. Every value is sized
+# for a local 2x RTX 3090 rig serving one model; docs/CODING_AGENTS.md has the
+# reasoning (and, where there is one, the measurement) behind each one.
+
+# Every role names an explicit effort, so the role — not whichever slug happens
+# to be serving — decides how long the model thinks. (Club composes default to
+# low; the checkpoint's own template default is xhigh.) Measured on the vLLM
+# dual-fast slug, xhigh spent ~1.6-2.2x the tokens of low/medium on the same
+# hard prompts.
+# All Qwen3.8 slugs (vLLM/SGLang, fast/max/superfast) serve the same id, so these
+# roles survive a switch between them.
+modelRoles:
+  default: club/qwen3.8-27b:medium
+  plan: club/qwen3.8-27b:xhigh
+  slow: club/qwen3.8-27b:xhigh
+  task: club/qwen3.8-27b:low
+  smol: club/qwen3.8-27b:low
+  commit: club/qwen3.8-27b:low
+defaultThinkingLevel: low
+
+# Keep the prompt append-only so the engine's prefix cache survives each turn.
+# Anything that rewrites the front of the prompt (live subagent status inside the
+# system prompt, reordered tool schemas) forces a full re-prefill.
+provider:
+  appendOnlyContext: "on"
+
+# Compact late. Compaction replaces history with a summary, which invalidates the
+# cached prefix and costs a full re-prefill of what remains. A percentage tracks
+# each model's real context window (the gateway publishes it), from 262K on the
+# dual slugs down to 160K on SGLang dual-max.
+compaction:
+  thresholdPercent: 80
+
+# Spill large tool output to an artifact above 10 KB instead of inlining it:
+# every inlined 40K-character result is prefill on this and every later turn.
+tools:
+  artifactSpillThreshold: 10
+  artifactHeadBytes: 10
+  artifactTailBytes: 10
+
+# One GPU pair has one prefill budget (~1,300-1,800 tok/s on dual-fast). Parallel
+# subagents split it and every request slows down. 2 fits vLLM dual-fast (8 seqs,
+# ~590K-token KV pool). Use 1 on single-sequence slugs (the DFlash2 tiers, SGLang
+# dual-max) — see docs/CODING_AGENTS.md for the per-slug table.
+task:
+  maxConcurrency: 2
+
+# A cold prefill of a long session is minutes, not seconds (200K tokens ≈ 2.5 min
+# on dual-fast), and thinking before the first visible token adds more. Don't let
+# the client give up first; the gateway's own request_timeout is 1800 s.
+providers:
+  streamFirstEventTimeoutSeconds: 900
+  streamIdleTimeoutSeconds: 900
