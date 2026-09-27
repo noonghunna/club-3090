@@ -2,6 +2,17 @@
 
 Dated history for Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-09-27 — tool schemas render with sorted keys (prefix cache)
+
+The vendored `qwen38-reasoning-effort-template` now renders each tool schema with
+`tojson(sort_keys=True)`. Qwen3.8 puts the tool definitions first in the prompt, so
+a client, gateway or MCP server that re-serialised a schema with its keys in another
+order used to change the prompt at its very start: on vLLM the next turn then missed
+the prefix cache for the whole conversation (0 of 29.6K tokens cached, an 18 s
+re-prefill). Sorted, the same tools always render the same bytes. Only key order
+inside each schema changes; prompts without tools are byte-identical. Detail: the
+patch's [`PROVENANCE.md`](vllm/patches/qwen38-reasoning-effort-template/PROVENANCE.md).
+
 ## 2026-09-27 — SGLang: a request's reasoning_effort is honoured again
 
 On every SGLang Qwen3.8 slug the client's `reasoning_effort` was ignored: the

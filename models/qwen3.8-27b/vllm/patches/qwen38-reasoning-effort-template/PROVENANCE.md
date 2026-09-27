@@ -145,3 +145,30 @@ the output is byte-identical.
 ships in the pinned SGLang image — then the SGLang composes can go back to a plain
 `reasoning_effort` default. The `high` → `xhigh` alias stays under its own drop rule
 above.
+
+## 2026-09-27 — tool schemas rendered with sorted keys
+
+One more change, in the tools block:
+
+```jinja
+{{- tool | tojson(sort_keys=True) }}      {#- was: tool | tojson #}
+```
+
+**Why.** Qwen3.8 renders the tool definitions *first* in the prompt. A client,
+gateway or MCP server that re-serialises a schema with its keys in a different
+order therefore changes the prompt at its very start, and the engine's prefix
+cache misses the whole conversation. Measured on vLLM dual-fast: one tool's keys
+reordered → **0 of 29.6K tokens** cached (an 18 s re-prefill). SGLang normalises
+schemas itself and was unaffected. The same fix is described for Qwen3.8 on vLLM in
+doug.sh's "vLLM KV cache for agents" write-up (cache share 78 % → 95 % there).
+
+**Scope.** Only the order of keys *inside* each tool's JSON changes, recursively
+(`function`/`type`, `description`/`name`/`parameters`, `properties`/`required`/`type`,
+…); the tools' order, their content and everything outside the tools block are
+unchanged. Rendered against the previous vendored file in both engines' images
+(transformers 5.12 / 5.17): prompts without tools are byte-identical for every
+effort; with tools, output differs only in key order; tool-call history renders
+identically.
+
+**Drop when** upstream Qwen's template sorts keys itself, or every client in use is
+known to serialise schemas stably (omp's built-in tools do — verified).

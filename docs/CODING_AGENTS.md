@@ -112,12 +112,13 @@ token from the start. Verified on this stack:
 
 - **The gateway is transparent**: a prompt sent through LiteLLM and then repeated
   directly to the engine hit the cache in full (29,616 of 29,637 tokens).
-- **Tool-schema key order matters on vLLM.** The Qwen3.8 template renders tool
-  definitions *first*; the same 29.6K-token prompt with one tool's JSON keys
-  reordered got **0** cached tokens (a full 18 s re-prefill) on vLLM. SGLang
-  normalises the schemas and still hit in full. omp's built-in tools are
-  serialised the same way every turn; MCP servers that rebuild schemas from a
-  map can reorder keys between turns.
+- **Tool-schema key order no longer matters on the Qwen3.8 slugs.** The template
+  renders tool definitions *first*, so before the fix the same 29.6K-token prompt
+  with one tool's JSON keys reordered got **0** cached tokens (a full 18 s
+  re-prefill) on vLLM — the way an MCP server that rebuilds schemas from a map
+  busts every turn. The vendored template now renders each schema with sorted
+  keys (SGLang already normalised them). Other models' templates don't: there,
+  keep tool schemas serialised the same way every turn (omp's built-in tools are).
 - **A request must repeat the same `tools`.** Qwen's template puts the tool block
   at the top of the system turn, so a turn sent without the tools shares only a
   few tokens with the cached conversation (the cause of the false FAIL in #1435's
