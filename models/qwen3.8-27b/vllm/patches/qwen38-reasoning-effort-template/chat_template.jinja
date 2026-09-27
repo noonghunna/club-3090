@@ -129,7 +129,18 @@
     {%- set content = render_content(message.content, true)|trim %}
     {%- if message.role == "system" %}
         {%- if not loop.first %}
-            {{- raise_exception('System message must be at the beginning.') }}
+            {#- club-3090 PATCH: a system message after the first is rendered WHERE IT SITS,
+                as its own system turn, instead of raising 'System message must be at the
+                beginning.'. Claude Code (2.1.x) sends its `# Environment` block that way,
+                and vLLM hands it to the template in place, so every Claude Code request
+                400'd on the vLLM slugs (#1447). In place, not hoisted into the leading
+                system turn: the prompt stays append-only, so the prefix cache holds.
+                Same content rules as the first system message; empty ones are skipped.
+                Approach from froggeric's Qwen-Fixed-Chat-Templates. -#}
+            {%- set content = render_content(message.content, false, true)|trim %}
+            {%- if content %}
+                {{- '<|im_start|>system\n' + content + '<|im_end|>\n' }}
+            {%- endif %}
         {%- endif %}
     {%- elif message.role == "user" %}
         {{- '<|im_start|>' + message.role + '\n' + content + '<|im_end|>' + '\n' }}

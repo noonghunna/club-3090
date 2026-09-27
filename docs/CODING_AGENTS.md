@@ -488,12 +488,13 @@ token from the start. Verified on this stack:
 
 ## Claude Code
 
-⚠️ **Works on the SGLang slugs only, for now.** On the vLLM Qwen3.8 slugs, Claude
-Code's first request fails with `400 … System message must be at the beginning`.
 Claude Code (2.1.x) sends its `# Environment` block as a `system` message after the
-first user turn; LiteLLM forwards it where it is, and the Qwen3.8 template refuses
-a system message that isn't first. SGLang's request handling lets it through.
-Tracked in [#1447](https://github.com/noonghunna/club-3090/discussions/1447).
+first user turn. The stock Qwen3.8 template refuses a system message that isn't
+first, so every Claude Code request used to fail on the vLLM slugs with
+`400 … System message must be at the beginning`. The vendored template renders it
+where it sits, as its own system turn, which keeps the prompt append-only
+([#1447](https://github.com/noonghunna/club-3090/discussions/1447)). Still seeing
+that 400? The slug was started before the fix — relaunch it with `switch.sh`.
 
 Claude Code talks to the same gateway through LiteLLM's Anthropic-compatible
 `/v1/messages` endpoint, which LiteLLM translates for the engine. In
@@ -528,10 +529,10 @@ Claude Code talks to the same gateway through LiteLLM's Anthropic-compatible
   network can use it.
 
 Checked on the reference rig with the Claude Code CLI (2.1.283) through the
-gateway: on `sgl/qwen38-27b-dual-fast` a multi-turn session with tool calls (find
-three files, read each, answer) finished in 17 s; on `vllm/qwen38-27b-dual-fast`
-the first request failed as above. With hand-built `/v1/messages` requests on the
-SGLang slug, a `thinking.budget_tokens` request reached the model as a different
+gateway, on the patched template: on `vllm/qwen38-27b-dual-fast` a task with tool
+calls (find three files, read each, answer) finished in 17 s, and two `--continue`
+follow-ups took about 1 s each with 99 % of their prompt served from the prefix
+cache; on `sgl/qwen38-27b-dual-fast` the same session took 21 s, 2 s and 1 s, with 95 % served from cache on the follow-ups. With hand-built `/v1/messages` requests on the SGLang slug, a `thinking.budget_tokens` request reached the model as a different
 reasoning effort (283 prompt tokens vs 309 at the server's default). Past-turn
 thinking blocks do reach the model on both engines (the prompt grows by the
 block's size), but the model's reasoning is **not** returned as thinking blocks on
@@ -608,8 +609,6 @@ bash scripts/litellm-log.sh status
 - **An engine that stops without `switch.sh`** (a crash, a plain `docker stop`)
   stays advertised until the next sync; requests fail with a clean HTTP error.
   Re-sync with `bash scripts/lib/litellm-sync.sh`.
-- **Claude Code on the vLLM slugs** fails on its first request — see *Claude Code*
-  ([#1447](https://github.com/noonghunna/club-3090/discussions/1447)).
 - **`qwen3_coder` tool parser** drops everything after a literal `<tool_call>` in
   a reply's prose ([#1191](https://github.com/noonghunna/club-3090/issues/1191)) —
   rare in practice, but agents that *talk about* tool calling can hit it.

@@ -172,3 +172,53 @@ identically.
 
 **Drop when** upstream Qwen's template sorts keys itself, or every client in use is
 known to serialise schemas stably (omp's built-in tools do — verified).
+
+## 2026-09-27 — a system message after the first renders in place (#1447)
+
+The stock template raises for any system message that isn't first:
+
+```jinja
+{%- if message.role == "system" %}
+    {%- if not loop.first %}
+        {{- raise_exception('System message must be at the beginning.') }}
+```
+
+The vendored copy renders it where it sits instead, as its own system turn,
+with the first system message's content rules (no images or video); an empty one
+renders nothing:
+
+```jinja
+{%- set content = render_content(message.content, false, true)|trim %}
+{%- if content %}
+    {{- '<|im_start|>system\n' + content + '<|im_end|>\n' }}
+{%- endif %}
+```
+
+**Why.** Claude Code (2.1.x) sends its `# Environment` block as a `role: "system"`
+message after the first user turn. LiteLLM forwards it in place (to the engine's
+`/v1/responses` on an `openai/` route, and in place on chat completions too), and
+vLLM hands it to the template, so **every Claude Code request 400'd on the vLLM
+Qwen3.8 slugs**, the first one included. SGLang's request handling let it through.
+Reported by paulp83 on a 2× 5090 rig; reproduced here with the Claude Code CLI
+2.1.283 (#1447).
+
+**Why in place, not hoisted into the leading system turn.** A hoist rewrites the
+front of the prompt whenever a new system entry appears mid-session, and the engine
+then re-prefills the whole conversation. In place, the prompt stays append-only.
+The approach is froggeric's Qwen-Fixed-Chat-Templates (v22.x), which renders later
+system messages the same way; only this rule is taken, not the rest of that
+template.
+
+**Scope.** Rendered against the previous vendored file (transformers-style Jinja):
+96 input combinations without a later system message (6 conversation shapes × 8
+effort / thinking settings × with and without tools) are byte-identical. Only a
+conversation that has a system message after the first changes, from a raised
+error to a rendered turn. `scripts/tests/test-qwen38-template.sh` checks this rule
+and the three changes above.
+
+**Measured** on `vllm/qwen38-27b-dual-fast` with the Claude Code CLI 2.1.283 through
+the gateway: a three-file find-and-read task (tool calls) answered in 17 s, and two
+`--continue` follow-ups in about 1 s each, with 99 % of their prompt tokens
+(33,696 of 33,846) served from the prefix cache.
+
+**Drop when** upstream Qwen's template accepts a system message after the first.
