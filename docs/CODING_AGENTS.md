@@ -74,7 +74,10 @@ model_list:
 bash scripts/omp-setup.sh                 # adds a `club` provider to ~/.omp/agent/models.yml
 bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast   # experimental slug: --force
 omp models club                           # the live model, with its real context window
+cp services/omp/extensions/tps-meter.ts ~/.omp/agent/extensions/   # optional: speed + cache share in the statusline
 ```
+
+The last line installs the *Statusline meter (omp and pi)*.
 
 Then put the settings below in your `~/.omp/agent/config.yml` — `omp-setup.sh`
 never touches that file.
@@ -310,6 +313,39 @@ Before relying on it:
   slug before omp* above.
 - Opt out with `retry.modelFallback: false`, or leave the `retry` block out.
 
+## Statusline meter (omp and pi)
+
+An extension that shows the model's decode speed and how much of each prompt the
+engine served from its prefix cache, after every reply, for the request and for
+the session:
+
+```
+⚡ 66.3 tok/s · ttft 0.3s · out 131 · think 29 · cache 98% of 7.8K · Σ 66.1 tok/s · Σ cache 95% (n=12)
+```
+
+```bash
+cp services/omp/extensions/tps-meter.ts ~/.omp/agent/extensions/   # omp
+cp services/pi/extensions/tps-meter.ts  ~/.pi/agent/extensions/    # pi
+```
+
+The two files are the same program (only the package their type import names
+differs; `test-agent-statusline-meter` keeps them in step). It loads with the next
+session and needs nothing else — it reads the usage each reply already carries.
+
+| Field | Meaning |
+|---|---|
+| `⚡ 66.3 tok/s` | decode speed of this reply: output tokens over the time from the first generated token to the end, so prefill is left out |
+| `ttft 0.3s` | request start to first generated token (thinking or text) — prefill plus queueing |
+| `out 131` · `think 29` | output tokens, and the reasoning tokens the provider reported (left out when it reports none) |
+| `cache 98% of 7.8K` | share of this request's 7.8K-token prompt taken from the prefix cache: `cacheRead / (input + cacheRead + cacheWrite)` (both agents count only the *uncached* part as `input`) |
+| `Σ … tok/s` · `Σ cache 95%` · `(n=12)` | the same over the session on this model; it resets when you switch models. `Σ cache` is the number to watch — 90 %+ past the first turns; a drop means something rewrote the front of the prompt (see *Prefix caching — what breaks it*) |
+
+Cache figures appear only once the backend has reported a cache hit for the
+model — a backend that reports no cached tokens would otherwise read as a false
+0 %. While a reply streams, the status shows elapsed time and phase instead.
+`scripts/cache-share.sh` reads the same share from the engine's own counters
+(*Troubleshooting a session*).
+
 ## Which slug to serve for agent work
 
 | Slug | Concurrent sequences | KV pool | Agent notes |
@@ -426,24 +462,7 @@ subagent's system prompt), and omp's small title calls (~340 tokens) were never
 reused. vLLM and SGLang report the share split into the GPU cache and the
 host-RAM tier (`KV_OFFLOAD_GB`); llama.cpp has no cached-token counter.
 
-**The same numbers in your agent's statusline.** A small extension shows decode
-speed and prompt-cache share after every reply, per request and for the session:
-
-```
-⚡ 66.3 tok/s · ttft 0.3s · out 131 · think 29 · cache 98% of 7.8K · Σ 66.1 tok/s · Σ cache 95% (n=12)
-```
-
-```bash
-cp services/omp/extensions/tps-meter.ts ~/.omp/agent/extensions/   # omp
-cp services/pi/extensions/tps-meter.ts  ~/.pi/agent/extensions/    # pi — same program
-```
-
-It loads with the next session. `cache 98% of 7.8K` is how much of this request's
-prompt came from the cache (`cacheRead / (input + cacheRead + cacheWrite)` — both
-agents count only the *uncached* part as `input`); `Σ cache` is the whole session
-on this model, the number to watch. Cache figures appear only once the backend has
-reported a cache hit: an engine that doesn't report cached tokens would otherwise
-read as a false 0 %.
+**The same numbers in your agent's statusline:** see *Statusline meter (omp and pi)*.
 
 **What did the gateway actually send?** Request logging on the LiteLLM gateway is
 **off by default** — one access line per request, no content. To see each request
