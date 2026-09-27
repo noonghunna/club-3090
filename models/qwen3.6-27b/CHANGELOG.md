@@ -2,6 +2,15 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-09-27 — parked SGLang EAGLE3 composes carry `--sleep-on-idle`
+
+Both parked `sglang/compose/*/autoround-int4/eagle3-experimental.yml` composes now pass
+`--sleep-on-idle` (present in their v0.5.12 pin), like every other SGLang compose — stock
+SGLang busy-polls each scheduler rank while idle (~1 CPU core per GPU; measured on the
+Qwen3.8 v0.5.20 slugs: 192 % → 42 % of a core at TP=2, serving unchanged). Not boot-tested
+here: both composes are parked. A new gate, `test-compose-sglang-sleep-on-idle`, keeps
+every SGLang compose on it.
+
 ## 2026-08-02 — dual-NVFP4: first native-FP4 validation, and an envelope correction
 
 `vllm/qwen-27b-dual-nvfp4` was authored blind and had never had a clean boot on the hardware it targets. [#849](https://github.com/noonghunna/club-3090/issues/849) (@paulp83, 2× RTX 5090 sm_120, no power cap) is that boot, and it is a full gate.
