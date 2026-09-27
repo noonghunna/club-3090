@@ -230,6 +230,14 @@ show_service_images() {
     if [ "$behind" -gt 0 ]; then
         echo -e "  ${YELLOW}→ ${behind} running service(s) behind their pinned image: run 'gpu-mode upgrade'${NC}"
     fi
+    # Gateway request logging writes full prompts and replies; say so while it is on
+    # so it isn't left on by accident (scripts/litellm-log.sh; off by default).
+    local llog
+    llog=$( { _svc_docker inspect litellm --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null || true; } \
+            | sed -n 's/^LITELLM_LOG=//p' | head -1)
+    if [ -n "$llog" ]; then
+        echo -e "  ${YELLOW}⚠ LiteLLM request logging is ON (LITELLM_LOG=${llog}) — full prompts are logged: bash $CLUB3090_DIR/scripts/litellm-log.sh off${NC}"
+    fi
 }
 
 # Back up a named docker volume to $CLUB3090_DIR/backups/ (gitignored). tar runs

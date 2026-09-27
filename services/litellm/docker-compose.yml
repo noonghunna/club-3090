@@ -19,6 +19,17 @@ services:
       - LITELLM_MASTER_KEY=sk-litellm-master-key
       # Cloud reference route (qwen3.8-max*) — referenced as os.environ/DASHSCOPE_API_KEY
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      # Request logging for troubleshooting — OFF unless the starting shell sets it.
+      # Bare pass-through: `- LITELLM_LOG=${LITELLM_LOG:-}` would set it to the EMPTY
+      # string instead of leaving it unset. Toggle with scripts/litellm-log.sh on|off.
+      - LITELLM_LOG
     command: ["--config", "/app/config.yaml", "--port", "4000", "--host", "0.0.0.0", "--num_workers", "1"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Cap the container log: with request logging ON (scripts/litellm-log.sh) every
+    # prompt and reply is written here, and an agent session's prompts are large.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

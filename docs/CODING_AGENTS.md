@@ -144,6 +144,59 @@ A contributor runs Claude Code against the same gateway through its Anthropic-co
 }
 ```
 
+## Troubleshooting a session
+
+**Is the prefix cache doing its job?** Read the engine's own counters — nothing
+is sent to the model:
+
+```bash
+bash scripts/cache-share.sh              # every serving engine: prompt tokens taken from cache since it booted
+bash scripts/cache-share.sh --watch 30   # then one line per 30 s while you work (Ctrl-C stops)
+```
+
+```
+:8113  vllm  qwen3.8-27b
+  since boot      144,055 prompt tok ·  49.8% from cache (GPU 49.8%) · 72,247 prefilled
+
+every 10s — tokens since the previous line:
+  12:19:52       18,693 prompt tok ·  40.0% from cache (GPU 40.0%) · 11,221 prefilled
+  12:20:02       12,878 prompt tok ·  86.7% from cache (GPU 86.7%) · 1,710 prefilled
+  12:20:12       44,729 prompt tok ·  62.6% from cache (GPU 62.6%) · 16,745 prefilled
+  12:20:22       41,781 prompt tok ·  85.5% from cache (GPU 85.5%) · 6,053 prefilled
+```
+
+*(An omp task on `vllm/qwen38-27b-dual-fast` that fans out to three subagents.
+"Since boot" includes every cold first turn since the engine started; the watch
+lines are the session.)*
+
+A long agent session should sit at 90 %+ once it is past its first turns, and a
+sudden drop means something rewrote the *front* of the prompt — compaction, a
+changed system prompt, reordered tool schemas (see *Prefix caching* above) — so
+the engine re-read the conversation. **Subagents pull the aggregate down without
+anything being wrong:** in that run the main session reused 91–98 % per request
+from its third turn on, while subagents started cold — two launched at the same
+instant could not share with each other, the third reused 32 % on vLLM where the
+same task on SGLang reused 91 % (omp puts per-subagent text partway through each
+subagent's system prompt), and omp's small title calls (~340 tokens) were never
+reused. vLLM and SGLang report the share split into the GPU cache and the
+host-RAM tier (`KV_OFFLOAD_GB`); llama.cpp has no cached-token counter.
+
+**What did the gateway actually send?** Request logging on the LiteLLM gateway is
+**off by default** — one access line per request, no content. To see each request
+exactly as it was forwarded to the engine (URL, every parameter, the messages) and
+the engine's raw reply:
+
+```bash
+bash scripts/litellm-log.sh on       # recreates the gateway (~10 s) with LITELLM_LOG=DEBUG
+docker logs -f litellm               # read it
+bash scripts/litellm-log.sh off      # back to the default
+bash scripts/litellm-log.sh status
+```
+
+⚠️ With it on, full prompts and replies go into the container log (capped at
+3 × 50 MB). It stays on across the route-sync restarts `switch.sh` does, and
+`gpu-mode status` warns while it is; any fresh start of the gateway comes back off.
+
 ## Known limits
 
 - **Route changes restart the gateway.** LiteLLM has no reload endpoint, so a

@@ -36,7 +36,7 @@ pin qdrant          qdrant          qdrant/qdrant:v1.19.1                       
 pin searxng         searxng         searxng/searxng:2026.9.25-12f8b6515         searxng
 pin spark-dashboard spark-dashboard ghcr.io/niklasfrick/spark-dashboard:v0.14.0 spark-dashboard
 # Containers: <image>\n<running>\n<volume mounted at /qdrant/storage>
-ctr() { printf '%s\n%s\n%s\n' "$2" "$3" "${4:-}" > "$T/stub/containers/$1"; }
+ctr() { printf '%s\n%s\n%s\n%s\n' "$2" "$3" "${4:-}" "${5:-}" > "$T/stub/containers/$1"; }   # line 4: an env line
 ctr litellm         ghcr.io/berriai/litellm:v1.100.3            true            # current
 ctr qdrant          qdrant/qdrant:v1.18.0                       true qdrant_qdrant-data   # DRIFT
 ctr searxng         searxng/searxng:2026.9.20-fdd8525b1         false           # stopped (and old)
@@ -62,6 +62,7 @@ case "$1" in
       *Config.Image*)   sed -n 1p "$f" ;;
       *State.Running*)  sed -n 2p "$f" ;;
       *Mounts*)         sed -n 3p "$f" ;;
+      *Config.Env*)     sed -n 4p "$f" ;;
     esac ;;
   run) printf 'fake-tar-stream' ;;
   *) exit 0 ;;
@@ -128,5 +129,14 @@ out="$(PATH="$T/bin:$PATH" bash "$ROOT/scripts/gpu-mode.sh" service-images 2>&1)
 command grep -q 'update.sh' "$ROOT/scripts/update.sh" && command grep -q 'gpu-mode.sh" service-images' "$ROOT/scripts/update.sh" \
   || bad "update.sh must call 'gpu-mode.sh service-images' to report drift after a pull"
 
-[ "$fail" -eq 0 ] && echo "test-gpu-mode-service-upgrade: ok (drift detection, upgrade scope, backup-before-recreate, --no-backup, status, update.sh contract)"
+# ── 6. status warns while gateway request logging is on (scripts/litellm-log.sh) ─
+out="$(PATH="$T/bin:$PATH" bash "$ROOT/scripts/gpu-mode.sh" status 2>&1)"
+[[ "$out" == *"request logging is ON"* ]] && bad "status must NOT warn about request logging when it is off"
+ctr litellm ghcr.io/berriai/litellm:v1.100.3 true "" "LITELLM_LOG=DEBUG"
+out="$(PATH="$T/bin:$PATH" bash "$ROOT/scripts/gpu-mode.sh" status 2>&1)"
+[[ "$out" == *"LiteLLM request logging is ON (LITELLM_LOG=DEBUG)"*"litellm-log.sh off"* ]] || bad "status must warn while gateway request logging is on"
+out="$(PATH="$T/bin:$PATH" bash "$ROOT/scripts/gpu-mode.sh" service-images 2>&1)"
+[[ "$out" == *"gpu-mode upgrade"* ]] && bad "the logging warning must not trip update.sh's upgrade-hint contract"
+
+[ "$fail" -eq 0 ] && echo "test-gpu-mode-service-upgrade: ok (drift detection, upgrade scope, backup-before-recreate, --no-backup, status, update.sh contract, request-logging warning)"
 exit "$fail"
