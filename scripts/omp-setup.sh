@@ -149,9 +149,12 @@ Next:
   1. Serve a model:   bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast   (experimental; the slug docs/CODING_AGENTS.md recommends for agents)
   2. Check omp sees it with its real context window:
                       omp models club
-  3. Run omp with the local-GPU settings overlay:
+  3. Add the local-GPU settings — this script never touches your config.yml:
+     paste the block from docs/CODING_AGENTS.md ("Settings for ~/.omp/agent/config.yml")
+     into ~/.omp/agent/config.yml, or load them per run:
                       omp --config "$ROOT_DIR/services/omp/omp-club.yml"
-     (or: alias omp-club='omp --config "$ROOT_DIR/services/omp/omp-club.yml"')
+     ⚠️ Set modelRoles either way: with none, omp picks a model on its own from every
+     gateway route, and a route you can't use can win.
 
   Always write models as club/<id> — a bare id can fuzzy-match a cloud provider.
   Scripted:  omp -p --model club/qwen3.8-27b --thinking low "..." </dev/null

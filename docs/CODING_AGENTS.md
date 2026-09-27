@@ -30,8 +30,10 @@ does not serve it. Each live route gets:
 Gateway-wide (`litellm_settings`): `request_timeout: 1800` — the client owns the
 real timeout, and a long cold prefill plus a long reply outlasts short defaults —
 and `num_retries: 0`, because a retry repeats the whole prefill. Request logging
-is off by default (see *Troubleshooting*). The cloud routes below the generated
-block (`qwen3.8-max*`) are hand-maintained and pass through untouched.
+is off by default (see *Troubleshooting*). Routes of your own — a cloud endpoint,
+a private service — go in the gitignored `services/litellm/config.local.yaml`
+(keys in `services/litellm/local.env`; see the `.example` files, #1446): the sync
+serves them after the generated ones, and they never enter the tracked catalog.
 
 ## omp (oh-my-pi) — setup
 
@@ -39,8 +41,10 @@ block (`qwen3.8-max*`) are hand-maintained and pass through untouched.
 bash scripts/omp-setup.sh                 # adds a `club` provider to ~/.omp/agent/models.yml
 bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast   # experimental slug: --force
 omp models club                           # the live model, with its real context window
-omp --config services/omp/omp-club.yml    # run with the local-GPU settings overlay
 ```
+
+Then put the settings below in your `~/.omp/agent/config.yml` — `omp-setup.sh`
+never touches that file.
 
 Always name models with the `club/` prefix. omp matches bare names fuzzily across
 every provider it knows: `--model qwen3.8-27b` resolved to a *cloud* provider's
@@ -90,15 +94,60 @@ The Qwen3.8 override also says `reasoning: true`: the gateway only marks a route
 as reasoning-capable when its slug declares a thinking sampler profile, and omp
 sends no effort at all to a model it thinks can't reason.
 
-The overlay (`services/omp/omp-club.yml`) is loaded per run, so your own
-`config.yml` stays as it is. What each setting is for:
+### Settings for `~/.omp/agent/config.yml`
+
+The block from the tuning write-up (see *Background reading*), adapted to the
+`club` provider:
+
+```yaml
+modelRoles:
+  default: club/qwen3.8-27b:medium  # the main agent
+  plan: club/qwen3.8-27b:xhigh      # plan mode, think hard once
+  slow: club/qwen3.8-27b:xhigh      # reviewer
+  task: club/qwen3.8-27b:low        # general subagents
+  smol: club/qwen3.8-27b:low        # scouting, simple edits
+  tiny: club/qwen3.8-27b:low        # titles, memory, background
+  commit: club/qwen3.8-27b:low      # commit messages
+
+defaultThinkingLevel: low  # requests no role covers
+
+task:
+  maxConcurrency: 2  # subagents at once — see "Which slug to serve"
+
+tools:
+  artifactSpillThreshold: 10  # KB, bigger results go to a file
+  artifactHeadBytes: 10       # KB of the start kept inline
+  artifactTailBytes: 10       # KB of the end kept inline
+
+compaction:
+  thresholdPercent: 80  # summarize only when nearly full, on any slug's window
+
+provider:
+  appendOnlyContext: "on"  # only add to the conversation
+
+providers:
+  streamFirstEventTimeoutSeconds: 900  # 15 min for first word
+  streamIdleTimeoutSeconds: 900        # and for pauses in a reply
+```
+
+⚠️ **Set `modelRoles` even if you change nothing else.** Without roles, omp picks a
+model on its own from everything the gateway lists, and a route you can't use
+can win — a contributor's empty `modelRoles` landed on a keyless cloud route and
+got a 401. The ThinkingCap slugs serve `thinkingcap38-27b`, not `qwen3.8-27b`:
+there, use `club/thinkingcap38-27b:<effort>` in the roles.
+
+Rather leave your `config.yml` alone? The same settings ship as an overlay you
+load per run: `omp --config services/omp/omp-club.yml` (e.g. as an `omp-club`
+alias).
+
+What each setting is for:
 
 | Setting | Why |
 |---|---|
-| explicit effort on every role (`default: …:medium`, `task`/`smol`: `…:low`, `plan`/`slow`: `…:xhigh`) | the role, not whichever slug is serving, decides how long the model thinks (club composes default to `low`; the checkpoint's own default is **xhigh**). On the vLLM dual-fast slug, two hard prompts took **10,395 / 16,000 (capped)** completion tokens at xhigh vs **5,916 / 7,280** at low and **4,474 / 6,455** at medium. |
-| `maxTokens: 32768` (from the gateway) | the reply cap covers thinking *and* the answer — xhigh alone spent up to 16,000 tokens on one hard prompt, so a small cap cuts a file write off mid-file. |
+| explicit effort on every role (`default: …:medium`, `task`/`smol`/`tiny`/`commit`: `…:low`, `plan`/`slow`: `…:xhigh`) | the role, not whichever slug is serving, decides how long the model thinks (club composes default to `low`; the checkpoint's own default is **xhigh**). On the vLLM dual-fast slug, two hard prompts took **10,395 / 16,000 (capped)** completion tokens at xhigh vs **5,916 / 7,280** at low and **4,474 / 6,455** at medium. |
+| `maxTokens: 32768` (the gateway's value, pinned by the provider) | the reply cap covers thinking *and* the answer — xhigh alone spent up to 16,000 tokens on one hard prompt, so a small cap cuts a file write off mid-file. |
 | `provider.appendOnlyContext: on` | anything that rewrites the front of the prompt re-prefills the whole conversation. |
-| `compaction.thresholdPercent: 80` | compaction swaps history for a summary and busts the cached prefix; a percentage tracks each model's real window. |
+| `compaction.thresholdPercent: 80` | compaction swaps history for a summary and busts the cached prefix, so it should happen late. A percentage follows each slug's real window; the article's `thresholdTokens: 200000` would sit past the end of the 147K and 163K slugs' windows. |
 | `tools.artifactSpillThreshold: 10` (KB) | inlined 40K-character tool results are prefill on every later turn. |
 | `task.maxConcurrency: 2` | one GPU pair has one prefill budget; parallel subagents split it. See the per-slug table below. |
 | stream timeouts `900` s | a cold 200K-token prefill is ~2.5 min on dual-fast, before thinking. |
@@ -263,6 +312,7 @@ Where this setup differs, and why:
 | Topic | Articles | Here |
 |---|---|---|
 | Thinking budget | `thinking_token_budget` via the provider's `extraBody` | Doesn't reach the engine through the gateway: omp talks the Responses API to `openai/` routes, and vLLM accepts the budget only on chat completions. Effort per role is the lever. |
+| Compaction | `thresholdTokens: 200000` (on a 262K window) | `thresholdPercent: 80` — follows each slug's window, which runs from 65K to 262K here. |
 | Subagents | `task.maxConcurrency: 4` | 2 — vLLM dual-fast runs 8 sequences, SGLang dual-fast 2; see *Which slug to serve*. |
 | Tool-schema key order | template fix `tojson(sort_keys=True)` | Shipped in the Qwen3.8 template (#1441). |
 | Host-RAM KV tier on hybrid models | served ~1.5 % of what was asked | Revisits of evicted agent sessions took 7.7 s (SGLang) / 8.6 s (vLLM) vs ~42 s cold (#1419). |

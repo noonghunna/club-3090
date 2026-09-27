@@ -14,13 +14,15 @@
 # dual-fast slug, xhigh spent ~1.6-2.2x the tokens of low/medium on the same
 # hard prompts.
 # All Qwen3.8 slugs (vLLM/SGLang, fast/max/superfast) serve the same id, so these
-# roles survive a switch between them.
+# roles survive a switch between them. The ThinkingCap slugs serve
+# `thinkingcap38-27b` instead: use club/thinkingcap38-27b in the roles there.
 modelRoles:
   default: club/qwen3.8-27b:medium
   plan: club/qwen3.8-27b:xhigh
   slow: club/qwen3.8-27b:xhigh
   task: club/qwen3.8-27b:low
   smol: club/qwen3.8-27b:low
+  tiny: club/qwen3.8-27b:low
   commit: club/qwen3.8-27b:low
 defaultThinkingLevel: low
 

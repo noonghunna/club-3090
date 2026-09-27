@@ -89,5 +89,19 @@ need = [d["provider"]["appendOnlyContext"] == "on", d["compaction"]["thresholdPe
 sys.exit(0 if all(need) else 1)
 PY
 
-[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay)"
+# 7. the config.yml block the doc tells readers to paste == the overlay we ship
+python3 - "$ROOT/docs/CODING_AGENTS.md" "$ROOT/services/omp/omp-club.yml" <<'PY' || bad "docs/CODING_AGENTS.md's config.yml block and services/omp/omp-club.yml have drifted apart"
+import io, re, sys, yaml
+doc = io.open(sys.argv[1], encoding="utf-8").read()
+sec = doc.split("### Settings for `~/.omp/agent/config.yml`", 1)[1]
+block = yaml.safe_load(re.search(r"```yaml\n(.*?)```", sec, re.S).group(1))
+overlay = yaml.safe_load(io.open(sys.argv[2], encoding="utf-8"))
+if block != overlay:
+    for k in sorted(set(block) | set(overlay)):
+        if block.get(k) != overlay.get(k):
+            print(f"  {k}: doc={block.get(k)!r} overlay={overlay.get(k)!r}", file=sys.stderr)
+    sys.exit(1)
+PY
+
+[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay)"
 exit "$fail"
