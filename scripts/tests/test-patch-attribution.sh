@@ -400,6 +400,32 @@ for seed in seeds:
     if "tool-call-stream" in smoked:
         errors.append(f"seed {label} claims tool-call-stream smoked; #145 guard forbids that without explicit working-source evidence")
 
+# Every registry slug whose compose mounts a patch's vendored chat template must be in
+# that patch's load_bearing_when: generate_compose.select_patches picks a profile's
+# patches from that list alone, so an unlisted slug generates a compose WITHOUT the
+# template. The lists drifted as replica slugs were added — 39 slugs across four
+# template patches were missing (all 18 vllm/thinkingcap38-* slugs among them).
+def _compose_path(entry):
+    return entry.get("compose_path") if isinstance(entry, dict) else getattr(entry, "compose_path", None)
+
+
+_compose_bodies: dict[str, str] = {}
+for _slug, _entry in COMPOSE_REGISTRY.items():
+    _cp = _compose_path(_entry)
+    if _cp and (root / _cp).exists():
+        _text = (root / _cp).read_text(encoding="utf-8")
+        _compose_bodies[_slug] = "\n".join(l for l in _text.splitlines() if not l.lstrip().startswith("#"))
+for patch in patches:
+    if patch.get("delivery_mechanism") != "chat_template":
+        continue
+    _listed = {s for lb in patch.get("load_bearing_when") or [] for s in (lb.get("composes") or [])}
+    _needles = ["/".join(Path(f).parts[-2:]) for f in patch.get("files") or []
+                if Path(f).suffix in pa.CHAT_TEMPLATE_ARTIFACT_SUFFIXES]
+    _unlisted = sorted(s for s, b in _compose_bodies.items() if any(n in b for n in _needles) and s not in _listed)
+    if _unlisted:
+        errors.append(f"patch {patch.get('id')}: {len(_unlisted)} slug(s) mount its template but are missing "
+                      f"from load_bearing_when (generate_compose would leave the template out): {_unlisted}")
+
 if known_gaps:
     print("[patch-attribution] known delivery gaps:")
     for gap in sorted(known_gaps):
