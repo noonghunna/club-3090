@@ -2,6 +2,18 @@
 
 Dated history for Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-09-27 — SGLang slugs: `--sleep-on-idle` (idle CPU ~2 cores → under half a core)
+
+Every SGLang Qwen3.8 compose now passes `--sleep-on-idle`. Without it each scheduler
+rank busy-polls its event loop while nothing is being served: measured on
+`sgl/qwen38-27b-dual-fast` (TP=2, v0.5.20), **192 % of a CPU core at idle** —
+about one core per GPU, all day — against 3 % for the vLLM dual-fast slug. With it,
+rank 0 blocks in a zmq poll until a request arrives: **42 %** at idle. Serving is
+unchanged within run noise: TTFT after a 4 s idle gap 84 vs 80 ms (median of 8),
+decode 63.4 vs 66.3 tok/s. The flag exists upstream but defaults off. The residual
+~20 % per rank is the scheduler's idle bookkeeping waking ~16×/s (rank 0) and the
+other ranks following it through the gloo broadcast.
+
 ## 2026-09-27 — tool schemas render with sorted keys (prefix cache)
 
 The vendored `qwen38-reasoning-effort-template` now renders each tool schema with

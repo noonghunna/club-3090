@@ -582,6 +582,12 @@ services:
           no_buffer) echo "[mrcs] MAMBA_RADIX_CACHE_STRATEGY=no_buffer needs --disable-overlap-schedule, which these composes do not expose; use auto, extra_buffer, or extra_buffer_lazy" >&2; exit 1 ;;
           *) echo "[mrcs] MAMBA_RADIX_CACHE_STRATEGY='${MAMBA_RADIX_CACHE_STRATEGY:-auto}' must be auto, extra_buffer, or extra_buffer_lazy" >&2; exit 1 ;;
         esac
+        # --sleep-on-idle: without it every scheduler rank busy-polls its event loop
+        # while no request is in flight — measured on dual-fast (TP=2, v0.5.20):
+        # 192 % of a CPU core at idle (vLLM: 3 %), i.e. ~1 core per GPU, all day.
+        # With it rank 0 blocks in zmq poll until a request arrives (the other ranks
+        # wait on its broadcast): 42 % at idle, TTFT after idle 84 vs 80 ms and decode
+        # 63.4 vs 66.3 tok/s — within run noise. Upstream default is off.
         exec python3 -m sglang.launch_server \
           --model-path "$$M" \
           --tp-size 8 \
@@ -598,6 +604,7 @@ services:
           "$${CACHE[@]}" \
           --trust-remote-code \
           --enable-metrics \
+          --sleep-on-idle \
           --enable-cache-report \
           "$${SAMPLER[@]}" \
           --reasoning-parser "${REASONING_PARSER:-qwen3}" \
