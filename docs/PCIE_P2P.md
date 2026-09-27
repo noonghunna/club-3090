@@ -67,18 +67,19 @@ fixing one gate and expecting the whole stack to work.
 flowchart TD
     L0["<b>0 · Topology</b><br/>PIX / PXB / PHB = workable<br/>SYS (cross-socket) = no"]
     L1["<b>1 · BAR1 aperture</b><br/>needed by the <i>patched-module</i> path only<br/>NOT needed by the clique path"]
-    L2["<b>2 · Driver grant</b><br/>three independent routes"]
-    L3["<b>3 · Transfers actually work</b><br/>p2pBandwidthLatencyTest"]
+    L2["<b>2 · Driver grant</b><br/>four demonstrated routes"]
+    L3["<b>3 · Transfers actually work</b><br/>destination-owner bytes + checked collective"]
     L4["<b>4 · Engine uses it</b><br/>vLLM: automatic via NCCL<br/>llama.cpp: GGML_CUDA_P2P (opt-in, OFF)"]
     L5["<b>5 · Workload benefits</b><br/>TP yes · PP barely · EP n/a"]
 
     R1["real chipset<br/>in NVIDIA's table"]
     R2["common PCIe switch<br/>(PLX/BR03/BR04/Mellanox<br/>allowlist only)"]
-    R3["hypervisor clique<br/>x-nv-gpudirect-clique<br/><b>← the VM answer</b>"]
+    R3["hypervisor clique<br/>x-nv-gpudirect-clique<br/>VM route A"]
+    R4["version-matched patched module<br/>validated on Proxmox/Q35<br/>VM route B"]
 
     L0 --> L1 --> L2
-    L2 --- R1 & R2 & R3
-    R1 & R2 & R3 --> L3 --> L4 --> L5
+    L2 --- R1 & R2 & R3 & R4
+    R1 & R2 & R3 & R4 --> L3 --> L4 --> L5
     L5 --> WIN["P2P pays off"]
 
     F0["SYS: stop"]:::f
@@ -154,7 +155,7 @@ systemd-detect-virt          # qemu/kvm = virtualised · none = bare metal
 |---|---|---|
 | **Read BAR1 / ReBAR** | `lspci -vv` in place | ⚠️ **on the HOST** — a guest exposes *no* ReBAR capability and reports 256M for a card that supports 32G |
 | **Enable large BAR1** | BIOS: Above 4G + Re-Size BAR | Host BIOS (same), then confirm the guest sees it |
-| **Get the driver grant** | open modules, or the §5 patched module | ⚠️ **`x-nv-gpudirect-clique`** (§4a). The chipset table can never match an emulated bridge |
+| **Get the driver grant** | open modules, or the §5 patched module | Two demonstrated routes (§4a): **`x-nv-gpudirect-clique`** (config-only, host-dependent) **or** the version-matched 610.57.04 BAR1/P2P module path validated on Proxmox/Q35 in [#1454](https://github.com/noonghunna/club-3090/discussions/1454) |
 | **Verify** | transfer test (§7) | transfer test **and a real collective** — copies can pass while collectives hang |
 | **Enable in the engine** | §0c | §0c (identical) |
 
@@ -177,7 +178,7 @@ systemd-detect-virt          # qemu/kvm = virtualised · none = bare metal
 | **Guest BAR1 reading is a lie** | No ReBAR capability is exposed. We diagnosed our own cards as VBIOS-capped when they support 32G |
 | **`CNS` is a chipset-table verdict** | Not fixable by BAR size, driver flavour, IOMMU or ACS. We proved all four (§4a) |
 | `NVreg_RegistryDwords` don't help | Measured, refuted. They relax peer *mapping*, not the chipset check |
-| **A patched module doesn't help either** | The p2p forks never touch `chipset_pcie.c`. The gate fires upstream of everything they change |
+| **Patch behavior is version/branch-specific** | The older `610.43.02-p2p` tree documented below does not clear the VM gate. The pinned `610.57.04-p2p-v3` tree in [#1454](https://github.com/noonghunna/club-3090/discussions/1454) **does** grant and deliver correct peer traffic on one Proxmox/Q35 + 3×3090 rig. Do not generalize one fork to another; verify destination-owner bytes + collectives |
 | Emulated PCIe switch doesn't help | `clFindCommonDownstreamBR()` uses an allowlist; QEMU's TI XIO3130 isn't on it |
 | `hidden=1` silently defeats the clique | It emits `kvm=off`, and the clique path is gated on `bDetected` |
 | Dotted QEMU ids silently defeat it | A bare BDF yields `hostpci0.0`; `-set` can't target dotted ids. Use explicit `.0` |
@@ -463,10 +464,96 @@ nowhere in that table. It falls through to the deny-all, both flags go `NV_FALSE
 fires. **On bare metal the same rig's real bridge (e.g. AMD `[1022:1480]`) matches an allow entry
 and the gate never fires** — which is the entire difference between host and guest.
 
-> ⚠️ **The patched-module forks do NOT change this.** We read the `610.43.02-p2p` tree: it modifies
-> BAR1 P2P *transport* across 17 files, and touches `chipset_pcie.c` **not at all**. On bare metal
-> the gate never fires so this is invisible; in a VM the gate fires first and nothing downstream
-> matters. **Installing a patched module in a VM will not clear `CNS`.** Confirm before you build.
+> ⚠️ **Do not generalize the old `610.43.02-p2p` finding to every fork.** That tree was inspected
+> here because it leaves `chipset_pcie.c` untouched; on the reference VM it could not clear the
+> chipset verdict. A later, version-matched branch has now produced a different measured result:
+> Aikitoria `610.57.04-p2p-v3`, pinned at
+> [`94b69ebc...`](https://github.com/aikitoria/open-gpu-kernel-modules/commit/94b69ebc8980da5dc3385a2014b6310fd92be97b),
+> grants **and delivers** correct P2P on a Proxmox/Q35 VM with 3× RTX 3090 — no clique and no registry
+> overrides ([#1454](https://github.com/noonghunna/club-3090/discussions/1454)).
+>
+> The practical rule is now **branch-specific evidence, not a blanket VM verdict**: match the patch
+> to the exact driver release and prove one-way delivery at the destination plus a value-checked
+> collective before enabling it in a serving engine.
+
+### ✅ Second demonstrated VM route — version-matched patched BAR1 path (Proxmox/Q35, 610.57.04)
+
+A second route is now field-validated on a **Proxmox + Q35/OVMF + VFIO** guest with **3× RTX 3090**:
+use a version-matched NVIDIA Open kernel-module P2P branch and validate the delivered mapping before
+making it persistent. This route used **no** `x-nv-gpudirect-clique`, **no** NVLink and **no**
+`NVreg_RegistryDwords` overrides.
+
+Measured rig ([discussion #1454](https://github.com/noonghunna/club-3090/discussions/1454),
+[bench #1453](https://github.com/noonghunna/club-3090/issues/1453)):
+
+| item | value |
+|---|---|
+| host | Proxmox · ASRock Rack ROMED8-2T · EPYC 7502P |
+| guest | Q35/OVMF · Ubuntu 24.04 · kernel `6.8.0-142-generic` |
+| GPUs | 3× RTX 3090 via VFIO |
+| guest BAR1 | **32768 MiB per GPU** before and after the patch |
+| NVIDIA | Open `610.57.04` |
+| patch | aikitoria `610.57.04-p2p-v3` commit `94b69ebc8980da5dc3385a2014b6310fd92be97b` |
+| result | all six directed pairs `OK`; destination-owner byte checks + NCCL collectives pass |
+
+Reporting-VM specifics (recorded for reproducibility; not every item is proven individually necessary):
+- host kernel command line included `amd_iommu=on iommu=pt` with the NVIDIA functions bound to `vfio-pci`;
+- Q35 + OVMF, `cpu: host`, PCIe passthrough enabled, `rombar=0`;
+- OVMF MMIO64 aperture set to **256 GiB** (`X-PciMmio64Mb,string=262144`);
+- no `x-nv-gpudirect-clique` property.
+
+**Bring-up sequence used on that rig:**
+
+1. Keep a recoverable Proxmox snapshot / host console path.
+2. Confirm the guest already has the intended BAR aperture (`nvidia-smi -q -d MEMORY`). On this rig it
+   was 32 GiB on stock; no VBIOS or BAR resizing change was part of the fix.
+3. Pin the patch **exactly** and build only:
+   ```bash
+   git clone --branch 610.57.04-p2p-v3 https://github.com/aikitoria/open-gpu-kernel-modules.git
+   cd open-gpu-kernel-modules
+   git checkout 94b69ebc8980da5dc3385a2014b6310fd92be97b
+   test -z "$(git status --porcelain)"
+   make -j"$(nproc)" modules
+   ```
+4. Stop **every** GPU user; verify `/dev/nvidia*` has no open handles. Do not force-unload.
+5. Temporarily load the built `kernel-open/` module family by explicit path and verify the loaded
+   module identity. On the reporting rig, `nvidia.ko` triggered udev to auto-load the packaged
+   `nvidia_uvm.ko`; the safe recovery was to identify the mismatch by `srcversion`, remove that
+   unused stock UVM module, then load the pinned UVM module.
+6. Require stronger proof than `topo -p2p`:
+   - destination-owner one-way writes with guards, every directed pair;
+   - a value-checked NCCL collective using the **same NCCL** the serving engine loads;
+   - kernel log free of Xid/AER/IOMMU faults.
+7. Only after those pass, benchmark the real workload and then persist through DKMS.
+
+The reporting rig used
+[`owner_verify.cu`](https://github.com/xiaoyanzi191/rtx4090-small-bar-p2p/blob/main/tests/owner_verify.cu)
+compiled for Ampere (`-arch=sm_86`). All six directed pairs passed with destination-local match and
+`guard_errors=0`. The live SGLang workers mapped **NCCL 2.30.7**; official `nccl-tests` linked
+against that exact library passed all-reduce/all-gather/reduce-scatter with `#wrong=0`, and NCCL logged
+`via P2P/direct pointer`.
+
+**Matched serving A/B (custom all-reduce disabled in both arms):**
+
+| metric | P2P off | P2P on | gain |
+|---|---:|---:|---:|
+| 10K fresh-prefix prefill | 2519.65 tok/s | **3071.07 tok/s** | **+21.9%** |
+| 90K fresh-prefix prefill | 1620.75 tok/s | **1885.23 tok/s** | **+16.3%** |
+| narrative decode | 99.79 tok/s | **106.11 tok/s** | **+6.3%** |
+| code decode | 137.52 tok/s | **147.29 tok/s** | **+7.1%** |
+
+**Persistence note (Ubuntu DKMS):** the distro `nvidia-dkms-open 610.57.04-1ubuntu1` source tree used
+on this guest contains a prebuilt `nvidia/nv-kernel.o_binary`, while the tested patch relies on the
+full generated/RM sources too. The working persistence method was to back up the distro source,
+retain the single DKMS identity `nvidia/610.57.04`, replace its source tree with the **full pinned
+patch tree**, rebuild/install that identity, run `depmod` + `update-initramfs`, then verify installed
+`srcversion`s against the temporary known-good build. The matched 610.57.04 NVIDIA package set was
+held to prevent an unattended driver update from silently replacing the validated source/userspace
+pair. After a controlled VM reboot, the loaded module identities, all-six owner checks and NCCL
+direct-P2P checks passed again.
+
+This is a **demonstrated configuration, not a new default**. Treat it exactly like the clique path:
+the grant is only the beginning; destination-delivery and real collectives are the acceptance gate.
 
 ### ⚠️ THE GRANT-CLEARER — `x-nv-gpudirect-clique` (config-only; clears `CNS`, does NOT prove delivery)
 
@@ -914,8 +1001,8 @@ Everything below was hit for real. Start from the symptom.
 |---|---|---|
 | ⚠️⚠️ The **machine hard-resets** a few seconds into decode-heavy work over a patched peer path — kernel log ends mid-line, **no panic, no oops, no MCE, no Xid, kdump produces nothing**, no systemd shutdown, filesystem needs orphan cleanup on the next boot | vLLM's **custom all-reduce** over BAR1 P2P. Same kernel as the wrong-data row below, different consequence. **Mechanism unestablished** — nothing is logged and there is no crash dump, so what is on record is the correlation, not the cause. The reporter offers `iommu=pt` removing DMA isolation while the patch has GPUs writing to peer BAR1 addresses; a PCIe *fatal* error resetting a consumer board fits the same silence. Neither is distinguishable without out-of-band logging | **`DISABLE_CUSTOM_ALL_REDUCE=1`** (§0c) — keeps the NCCL transport and its prefill win. Isolated by @leo-3889 ([#1332](https://github.com/noonghunna/club-3090/issues/1332)) on 2× 3090 (Ti + non-Ti), AM5 / Ryzen 7 7700, gen4 x8+x8, driver 610.57.04 patched via DKMS, vLLM 0.29.0 TP=2 + DFlash2: three arms in one sitting at identical clocks and power limits — P2P+kernel **resets**, P2P off **clean**, P2P+kernel-off **clean and faster** (+10.7 % prefill, −8.6 % TTFT). The reporter concludes the two working arms rule out the PSU and the overclock, since both run the same workload at the same draw; note that the failing arm also has its own load *shape*, so treat that as their inference rather than an independent finding |
 | ⚠️⚠️ Collectives **complete**, at a plausible TPS, but the model emits **garbage on every request** (e.g. `!!!!!!!!!!!!` at 18 prompt tokens) over a patched peer path | vLLM's **custom all-reduce** over BAR1 P2P returns WRONG DATA — NCCL itself is fine. aikitoria [#21](https://github.com/aikitoria/open-gpu-kernel-modules/issues/21) class; related `vllm#28334` (IMA in custom AR during graph capture with spec-decode). **NOT universal on Ampere** — a configuration interaction, not "Ampere is broken" | **`--disable-custom-all-reduce`** — keeps NCCL P2P *and* its prefill gain. `NVLINK_MODE=force_off` also works but discards the win. Reported by @juslex + independently reproduced by @fkrutko ([#922](https://github.com/noonghunna/club-3090/issues/922)) on **two** Intel-platform patched-P2P rigs (Z390/Gen3/FP8 · Z690/Gen4/INT4, two driver point-releases) — **reseat-persistent** on both, identical signature (`!!!!` + 0% MTP accept); a Threadripper x16 rig did **not** reproduce. NCCL over the same link stays correct (`p2p-validate.sh` HEALTHY), so the fault is the custom kernel, not the transport |
-| `topo -p2p` = **`CNS`** in a VM | Emulated front host bridge isn't in the driver's chipset table (§4a) | `x-nv-gpudirect-clique` (§4a). **Not** a BAR, driver-flavour or topology problem |
-| `CNS` persists after a **large BAR1** + **open driver** | BAR/driver were never the gate; the chipset table is | Same — clique. Measured: 32 GB BAR1 + `nvidia-open` still `CNS` |
+| `topo -p2p` = **`CNS`** in a VM | Emulated front host bridge isn't in the driver's chipset table (§4a) | Two demonstrated routes: `x-nv-gpudirect-clique` (config-only, host-dependent) **or** the version-matched 610.57.04 patched BAR1 route in [#1454](https://github.com/noonghunna/club-3090/discussions/1454). In either case, require destination-owner delivery + a checked collective |
+| `CNS` persists after a **large BAR1** + **stock open driver** | BAR aperture alone is not the grant; stock `nvidia-open` can still refuse the emulated bridge | Use one measured VM route from §4a: clique, or a patch branch **validated on your exact driver/version**. Do not assume every P2P fork behaves the same |
 | `CNS` persists after `NVreg_RegistryDwords` | Those keys relax peer *mapping*, not the chipset verdict | Refuted on-rig. Don't retry |
 | **`--split-mode tensor` hangs in warmup** | **NCCL collectives over a clique-granted peer path** — same root cause as the vLLM TP=2 hang. ⚠️ **NOT** [#24489](https://github.com/ggml-org/llama.cpp/issues/24489), whose real fix ([PR #24491](https://github.com/ggml-org/llama.cpp/pull/24491), `cuMemSetAccess` on llama.cpp's VMM pool) is already in `b10236` | **`NCCL_P2P_DISABLE=1`** — verified: boots 16 s, benches on par with `layer`. `GGML_CUDA_ALLREDUCE=internal` does **not** clear it |
 | `-sm tensor` segfaults with no clear error | **Flash attention is REQUIRED for `-sm tensor`** and nothing validates it (#24489) | Pass `-fa on` |
@@ -965,7 +1052,7 @@ Everything below was hit for real. Start from the symptom.
 | Second GPU trains at **x8** or disappears | A populated M.2 / adjacent slot is stealing its lanes → move the card or clear the bifurcation jumper (board manual). |
 | `topo -p2p rw` shows `CNS` ("chipset not supported") | Stock driver refusing P2P on consumer GPU → install the patched module (§5), then re-check. |
 | `topo -p2p rw` shows `GNS` **and** `lspci` `BAR 1: supported:` caps at 256MB | **First rule out virtualisation (§4a)** — a QEMU guest exposes no Resizable BAR capability, so it reports this while the physical card supports 32GB. Run `systemd-detect-virt`; if it says `qemu`/`kvm`, re-read on the host, and the fix is host BIOS Re-Size BAR, not a VBIOS. **On bare metal**, this is a genuine **pre-ReBAR / BAR1-capped VBIOS** — a firmware gate, not a driver or topology problem (#734). No BIOS setting or driver swap helps; the §5 patched path needs large BAR1. Vendor ReBAR VBIOS first (§4 note + the board-ID tip in §5), then re-check `supported:`. |
-| BAR1 is large, driver is open (`Dual MIT/GPL`), but `topo -p2p r` still says **`CNS`** | **Chipset-table verdict, not an aperture problem** (§4a). Expected inside a VM: the emulated Q35/ICH9 is not on NVIDIA's supported list, and no BAR size or registry key changes that. Needs the §5 patched module — and even then, verify with a **transfer** check, because VFIO peer DMA can still be blocked by host IOMMU/ACS routing. |
+| BAR1 is large, driver is open (`Dual MIT/GPL`), but `topo -p2p r` still says **`CNS`** | **Chipset-table/grant problem, not an aperture problem** (§4a). Expected with the stock driver in a Q35 VM. Use a demonstrated VM route from §4a; then verify destination-owner bytes **and a real collective**, because VFIO can still produce a false or unusable grant. |
 | `[nvlink] WARNING: … BAR1 is far smaller than VRAM …` | The launcher's BAR1 sanity check fired: P2P is being enabled, but the aperture is too small to back the patch's static full-VRAM mapping (§5) — the firmware-gated #734 class, caught *before* the hang instead of after. It **warns rather than gating**; the config is applied unchanged, so if this boot then hangs at `pynccl`, that's the row below. ⚠️ **Silence is not a clean bill of health** — [#873](https://github.com/noonghunna/club-3090/issues/873) had a full-size 32 GB BAR1 and still needed the §5 override, so the absence of this warning does not mean the mapping is in use. If P2P demonstrably works on your rig *despite* the warning, say so in an issue and bring `nvidia-smi -q -d MEMORY`. |
 | Boot crash after enabling P2P: `custom_all_reduce.cuh … invalid argument` | Known `expandable_segments` ↔ custom-all-reduce IPC clash → `detect_nvlink.sh` strips the token on the P2P path automatically; ensure you're on a current pin ([UPSTREAM.md → #42609](UPSTREAM.md)). |
 | **vLLM slugs HANG at `pynccl` init after installing a patched driver/module** (last line `vLLM is using nccl==…`, weights never load, no error) | The driver now *grants* P2P, so `detect_nvlink.sh` auto-enabled the P2P path (§5) — but the grant doesn't carry actual transfers, so NCCL blocks on its first peer op. **Unblock: `NVLINK_MODE=force_off` in `.env`, relaunch** (back to pre-patch behavior). Then validate the grant with raw transfers: cuda-samples `p2pBandwidthLatencyTest`, or §7's `VLLM_SKIP_P2P_CHECK=0` transfer check. If raw P2P hangs/reads garbage, in order: (1) **force the static BAR1 mapping** with the two-key registry override in §5 — this is what resolved the 5090 case ([#873](https://github.com/noonghunna/club-3090/issues/873)), and note it was needed *even though* `nvidia-smi -q -d MEMORY` already showed a full-size 32 GB BAR1, so **a healthy BAR1 number does not rule this out**; (2) match the patch branch to your **exact** driver version; (3) check ACS (`lspci -vvv \| grep ACSCtl` — ACS redirect stalls peer TLPs) and confirm `iommu=pt` per §4. Common right after a driver upgrade: the patch fork lags new driver branches. |
