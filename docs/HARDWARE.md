@@ -129,7 +129,7 @@ then `bash scripts/launch.sh --gpus 1,2` as normal (the composes pass `CUDA_VISI
 
 - 3090s have an NVLink connector but a **bridge has to be physically installed**. Most consumer setups don't have one. (Cost: ~$70-150 for a working 3-slot bridge if you wanted to add one.)
 - **Auto-detection**: each dual compose sources `scripts/detect_nvlink.sh` in its entrypoint at boot. The script checks `nvidia-smi topo -m` and sets the correct NCCL env vars + vLLM flags.
-- **Override**: set `NVLINK_MODE=force_on|force_off` in your `.env` to bypass auto-detection.
+- **Override**: set `NVLINK_MODE=force_on|force_off` to bypass auto-detection — for one launch in the shell, or saved for every launch with `bash scripts/settings.sh set NVLINK_MODE=force_off` (see [where settings live](FAQ.md#where-are-my-settings-saved-and-how-do-i-change-one)).
 - Without NVLink (PCIe), `--disable-custom-all-reduce` is passed to vLLM and `NCCL_P2P_DISABLE=1` is set. With NVLink, custom all-reduce is enabled and NCCL uses the NVLink path.
 - **If you have NVLink installed and working**, single-stream TPS on dual-card will be ~1.6-1.8× single-card (vs ~1.05× without). Measured NVLink lift is ~10-15% over PCIe on the same rig. See [BENCHMARKS.md](../BENCHMARKS.md) for cross-rig data.
 - **No NVLink?** You can still enable GPU↔GPU P2P over the PCIe bus on a patched driver for a workload-dependent gain — and learn why `nvidia-smi topo -m` reports `PHB` instead of `PIX` — in [PCIE_P2P.md](PCIE_P2P.md).
@@ -533,7 +533,7 @@ This means the shipped `gpu_memory_utilization` defaults (0.92 for single, 0.95 
 
 **Formula**: `safe_util = (vram_total_gib - 1.31) / vram_total_gib`. On 24 GB cards that's 0.945. The overhead is variable (idle reports as low as ~300 MiB) but the upper bound is consistent across rigs.
 
-**Recommendation**: drop `GPU_MEMORY_UTILIZATION=0.94` in your `.env` when running on WSL2. The shipped composes' defaults (0.92 / 0.95) are calibrated for headless Linux and can crash on WSL2 at the higher value.
+**Recommendation**: on WSL2, launch a compose whose default is above 0.94 with `GPU_MEMORY_UTILIZATION=0.94 bash scripts/switch.sh <slug>`. The shipped composes' defaults (0.92 / 0.95) are calibrated for headless Linux and can crash on WSL2 at the higher value. Set it per launch rather than saving it: a saved `GPU_MEMORY_UTILIZATION` applies to every vLLM compose, including the many that default lower, and would raise them.
 
 ### TDR — kernel-timeout watchdog
 
@@ -582,19 +582,19 @@ Setting `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` resolves the crash. 
 
 Known occurrences:
 
-- JusefPol — NVLink-wired dual-3090 setups (PR #31). NVLink rigs can hit this; set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` in `.env` (the dual composes default it on; the old `dual-nvlink*.yml` variants are retired — NVLink is auto-detected at boot via `NVLINK_MODE`).
+- JusefPol — NVLink-wired dual-3090 setups (PR #31). NVLink rigs can hit this; save `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` as a setting (see Override below; the dual composes default it on; the old `dual-nvlink*.yml` variants are retired — NVLink is auto-detected at boot via `NVLINK_MODE`).
 - club-3090 issue (this PR, 2026-05-06) — single-card RTX 3090 Ti on WSL2, driver 596.36, vLLM nightly `01d4d1ad` (the v7.72.2-uplift pin).
 
 #### Override
 
-All single-card and PCIe dual-card composes now expose `PYTORCH_CUDA_ALLOC_CONF` as a `${...}` override knob. Drop a `.env` next to the compose file (or export the var in your shell):
+All single-card and PCIe dual-card composes now expose `PYTORCH_CUDA_ALLOC_CONF` as a `${...}` override knob. On WSL2, `setup.sh` saves `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` to your [settings](FAQ.md#where-are-my-settings-saved-and-how-do-i-change-one) for you, unless `PYTORCH_CUDA_ALLOC_CONF` is already set. Anywhere else, set it yourself:
 
 ```sh
-# models/qwen3.6-27b/vllm/compose/.env
-PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
+bash scripts/settings.sh set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False           # every vLLM launch
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False bash scripts/switch.sh <slug>          # one launch
 ```
 
-Then `docker compose up -d` as usual. No edits to tracked files needed.
+No edits to tracked files needed. Older versions of this page said to put it in `models/qwen3.6-27b/vllm/compose/.env`. Nothing reads that file: docker compose looks for `.env` only in the compose file's own directory (`<topology>/<quant>/`). If you have one, move its lines into your settings and delete it.
 
 #### Possible secondary effect on weight-load time
 
@@ -606,31 +606,31 @@ A third runtime failure mode separate from TDR + `expandable_segments`: at ~50-6
 
 **Workaround**: pass `--enforce-eager` to vLLM, which disables CUDA graphs and frees the activation memory the cliff was contesting. Tradeoff: ~20-30% TPS reduction in exchange for stable long-context behavior.
 
-Since 2026-05-07 ([PR #99](https://github.com/noonghunna/club-3090/pull/99) by @easel) all qwen3.6-27b vLLM composes expose `VLLM_ENFORCE_EAGER` as an env-var hook so you can enable the flag from gitignored `.env` instead of editing tracked files:
+Since 2026-05-07 ([PR #99](https://github.com/noonghunna/club-3090/pull/99) by @easel) all qwen3.6-27b vLLM composes expose `VLLM_ENFORCE_EAGER` as an env-var hook so you can enable the flag without editing tracked files:
 
 ```sh
-# models/qwen3.6-27b/vllm/compose/.env
-VLLM_ENFORCE_EAGER=1
+VLLM_ENFORCE_EAGER=1 bash scripts/switch.sh <slug>      # one launch
+bash scripts/settings.sh set VLLM_ENFORCE_EAGER=1       # every vLLM launch, each paying the TPS cost
 ```
 
-Then `docker compose up -d` as usual. The bash entrypoint expands `${VLLM_ENFORCE_EAGER:+--enforce-eager}` only when the var is non-empty, so desktop users with no `.env` see zero behavior change.
+The bash entrypoint expands `${VLLM_ENFORCE_EAGER:+--enforce-eager}` only when the var is non-empty, so leaving it unset changes nothing. Any non-empty value turns it on, `0` included; `bash scripts/settings.sh unset VLLM_ENFORCE_EAGER` removes a saved one.
 
-### Combined WSL2 / laptop `.env` template
+### Combined WSL2 / laptop settings
 
-Three overrides commonly land together on WSL2 / laptop rigs (5090 Laptop validated 2026-05-07 by @easel). Drop this into `models/qwen3.6-27b/vllm/compose/.env`:
+Three overrides commonly land together on WSL2 / laptop rigs (5090 Laptop validated 2026-05-07 by @easel):
 
 ```sh
-# WSL2 boot overhead caps safe gpu_memory_utilization at ~0.94 (vs 0.95 desktop default)
-GPU_MEMORY_UTILIZATION=0.94
+# expandable_segments:True crashes weight repack on WSL2 driver 596.36.
+# Saved: applies to every vLLM launch (setup.sh already saves expandable_segments:False on WSL2)
+bash scripts/settings.sh set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False,max_split_size_mb:512
 
-# expandable_segments:True crashes weight repack on WSL2 driver 596.36
-PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False,max_split_size_mb:512
-
-# Disable CUDA graphs — Cliff 2 GDN-spike workaround (~20-30% TPS cost, stable >50K ctx)
-VLLM_ENFORCE_EAGER=1
+# WSL2 boot overhead caps safe gpu_memory_utilization at ~0.94 (only matters for a compose
+# whose default is higher); eager disables CUDA graphs — the Cliff 2 GDN-spike workaround
+# (~20-30% TPS cost, stable >50K ctx). Per launch:
+GPU_MEMORY_UTILIZATION=0.94 VLLM_ENFORCE_EAGER=1 bash scripts/switch.sh <slug>
 ```
 
-All three are `${VAR}`-interpolated by docker-compose at boot, so adding/removing any of them needs only an `.env` edit + recreate.
+All three are read when the container is created, so a change takes effect at the next launch. Older versions of this page put all three in `models/qwen3.6-27b/vllm/compose/.env`, which nothing reads (see Override above).
 
 ### Additional WSL2 considerations
 

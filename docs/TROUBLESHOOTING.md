@@ -10,8 +10,9 @@ see the [FAQ](FAQ.md), starting with its
 ## Generate a report
 
 `report.sh` writes a paste-ready markdown report: hardware, OS, GPUs, power limits, container
-runtime, stack version and the running container's state. **Home paths, hostnames, usernames and
-Hugging Face tokens are redacted by default**, so it's safe to paste into a public issue.
+runtime, stack version, your saved settings and the running container's state. **Home paths,
+hostnames, usernames, Hugging Face tokens and every secret in your settings are redacted by
+default**, so it's safe to paste into a public issue.
 
 ```bash
 bash scripts/report.sh                     # ~2 s: hardware + stack + boot-log highlights
@@ -37,12 +38,13 @@ To contribute numbers, follow [Run the evals yourself](RUN_EVALS.md).
 
 ## If `launch.sh` / `switch.sh` won't boot: load the compose directly
 
-The launchers wrap the boot in a preflight (hardware and free-VRAM checks), `.env` parsing and the
-slug → compose registry. If one of those misfires (a false preflight failure, a CRLF `.env` on
-Windows, missing PyYAML), go around them. This assumes the weights are already downloaded.
+The launchers wrap the boot in a preflight (hardware and free-VRAM checks), your saved settings and
+the slug → compose registry. If one of those misfires (a false preflight failure, a saved setting
+you can't track down, missing PyYAML), go around them. This assumes the weights are already
+downloaded. (`bash scripts/settings.sh show` lists every saved setting and where it comes from.)
 
 ```bash
-# 1. Skip only the hardware / free-VRAM preflight (keeps .env and the registry):
+# 1. Skip only the hardware / free-VRAM preflight (keeps your settings and the registry):
 bash scripts/switch.sh --force <slug>
 
 # 2. Skip the scripts entirely: boot the compose file with Docker.
@@ -64,8 +66,10 @@ docker compose -f <the-same-compose-file> down
 
 `MODEL_DIR` is the only variable you must set; it defaults to the in-repo `models-cache/`.
 Everything else has a default, and each compose's **header** documents its own overrides and its
-port. The card pages ([single](SINGLE_CARD.md) · [dual](DUAL_CARD.md) · [multi](MULTI_CARD.md))
-link every slug's compose file, and a successful `switch.sh` run prints the path it used.
+port. Booting directly doesn't read your saved settings, so pass anything else you rely on the same
+way, or hand compose the settings file with `--env-file ~/.config/club-3090/club3090.env`. The card
+pages ([single](SINGLE_CARD.md) · [dual](DUAL_CARD.md) · [multi](MULTI_CARD.md)) link every slug's
+compose file, and a successful `switch.sh` run prints the path it used.
 
 > ⚠️ Booting directly skips the preflight that catches not-enough-VRAM and wrong-GPU-count
 > mistakes. If the container exits, check `docker logs <container> 2>&1 | tail -50`.

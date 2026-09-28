@@ -26,7 +26,7 @@ curl -sf http://localhost:8020/v1/chat/completions \
 
 If you see `Paris` in the response, you're up and running.
 
-> After the boot finishes, `launch.sh` asks **"Make `<slug>` your default for `qwen3.6-27b`? [y/N]"**. Say `y` and a bare `bash scripts/launch.sh` next time goes straight to that exact config — no flags, one keypress to launch. (Change or clear it anytime: `bash scripts/switch.sh --set-default <slug>` / `--clear-default qwen3.6-27b`.)
+> After the boot finishes, `launch.sh` asks **"Make `<slug>` your default for `qwen3.6-27b`? [y/N]"**. Say `y` and a bare `bash scripts/launch.sh` next time goes straight to that exact config — no flags, one keypress to launch. (Change or clear it anytime: `bash scripts/switch.sh --set-default <slug>` / `--clear-default qwen3.6-27b`. The pin is saved in `~/.config/club-3090/` with your other [settings](FAQ.md#where-are-my-settings-saved-and-how-do-i-change-one).)
 
 ---
 

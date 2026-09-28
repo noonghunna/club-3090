@@ -34,8 +34,10 @@ each fit one card.
 > shipped default lane. It's also the swing factor on the single-card Wan ceiling: its 4.5 GB on GPU0
 > caps the single-card 480p window at ~121 frames; **freeing it lifts that to 161** (measured).
 >
-> One knob drives it: **`STUDIO_DIRECTOR_DEVICE=gpu0|gpu1|cpu`** in the rig `.env` — set it from
-> **c3 → Settings → "Director placement"**, or edit the line directly. `gpu-mode` reads it on every
+> One knob drives it: **`STUDIO_DIRECTOR_DEVICE=gpu0|gpu1|cpu`**, a saved setting — set it from
+> **c3 → Settings → "Director placement"**, or with
+> `bash scripts/settings.sh set STUDIO_DIRECTOR_DEVICE=cpu` (see
+> [where settings live](../FAQ.md#where-are-my-settings-saved-and-how-do-i-change-one)). `gpu-mode` reads it on every
 > scene launch and translates it to the container's `CUDA_VISIBLE_DEVICES` + `-ngl`:
 > - **`gpu0`** (default) → GPU0, snappy refine-by-reply (~1.4 s craft).
 > - **`gpu1`** → the second card. **Safe only when GPU1 has room** — the image lanes and the Wan video

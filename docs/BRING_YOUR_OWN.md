@@ -434,9 +434,11 @@ missing what a maintainer would bounce the PR for: a real `display_name` /
 re-run, then open the PR with the bundle's contents.
 
 Writing the curated catalog **directly** is maintainer-only and double-gated
-(`promote.py --layer core` **plus** `C3_ALLOW_CORE_PROMOTE=1`). Note that gate is
-a plain environment variable and **`.env` is not read by these tools** — `export`
-it in your shell or pass it per-invocation.
+(`promote.py --layer core` **plus** `C3_ALLOW_CORE_PROMOTE=1`). `promote.py` reads
+that gate from your shell or, failing that, from your saved settings
+(`~/.config/club-3090/`, then a legacy repo-root `.env`), and says so when a file
+set it. `export` it in your shell or pass it per-invocation; a saved one leaves
+the gate open for every run.
 
 
 

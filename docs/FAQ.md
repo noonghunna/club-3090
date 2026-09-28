@@ -7,6 +7,7 @@ Common questions about club-3090. If your question isn't here, open a [GitHub Di
 - [Hardware](#hardware) — 4090/5090, NVLink, AMD, WSL2, dtype
 - [Engine choice](#engine-choice) — Ollama, LM Studio, MTP vs EAGLE
 - [Performance](#performance) — slow TPS, prefill cliffs
+- [Settings](#where-are-my-settings-saved-and-how-do-i-change-one) — where they're saved, `settings.sh`, the old repo `.env`
 - [Troubleshooting ladder](#before-symptom-matching--boot-the-simplest-stack-first) — 5-step isolation from minimal to dual-turbo
 
 ---
@@ -156,7 +157,7 @@ Yes — both engines work on WSL2. Make sure GPU passthrough is set up (`nvidia-
 
 **Dual-card vLLM**: mostly unaffected. Each card runs at ~17 GB with ~7 GB headroom — 1.3 GB overhead is noise.
 
-**Single-card vLLM**: drop a `.env` with `GPU_MEMORY_UTILIZATION=0.94` (default 0.95 assumes headless Linux). Already documented with a combined `.env` template — see [HARDWARE.md WSL2 section](HARDWARE.md#note-for-wsl2--windows-users).
+**Single-card vLLM**: if the compose's `GPU_MEMORY_UTILIZATION` default is above 0.94 (its header says; the higher defaults assume headless Linux), launch it with `GPU_MEMORY_UTILIZATION=0.94 bash scripts/switch.sh <slug>`. Set it per launch rather than saving it: a saved value applies to every vLLM compose, and most default lower. The combined WSL2 settings are below and in the [HARDWARE.md WSL2 section](HARDWARE.md#note-for-wsl2--windows-users).
 
 **Single-card llama.cpp / ik_llama**: this is the gap. llama.cpp composes allocate by fixed sizes, not a utilization ratio, so there's no `GPU_MEMORY_UTILIZATION` knob to dial. The shipped defaults are tight for headless Linux:
 
@@ -184,16 +185,21 @@ The ik_llama composes (IQ4_KS quants are smaller, ~15.1 GB weights) fit at defau
 **Other WSL2 gotchas** (all documented in [HARDWARE.md](HARDWARE.md#note-for-wsl2--windows-users)):
 
 1. **TDR timeout** — Windows force-resets the GPU after 2 seconds of kernel time. Long-context prompts trigger this. Fix: extend TDR to 60s via registry.
-2. **PyTorch `expandable_segments` crash** — `device not ready` at `gptq_marlin_repack` on some WSL2 drivers. Fix: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False`.
+2. **PyTorch `expandable_segments` crash** — `device not ready` at `gptq_marlin_repack` on some WSL2 drivers. Fix: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False`, which `setup.sh` saves to your settings when it detects WSL2 (unless you've already set `PYTORCH_CUDA_ALLOC_CONF`).
 3. **GDN activation spike** — OOM at ~50-65K tokens on reduced-VRAM rigs. Fix: `VLLM_ENFORCE_EAGER=1` (vLLM only, ~20-30% TPS cost).
 
-Combined `.env` for vLLM single-card WSL2 (drop into `models/qwen3.6-27b/vllm/compose/.env`):
+The three together for vLLM single-card on WSL2:
 
 ```sh
-GPU_MEMORY_UTILIZATION=0.94
-PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False,max_split_size_mb:512
-VLLM_ENFORCE_EAGER=1
+# saved: applies to every vLLM launch on this machine (setup.sh already saves
+# PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False when it detects WSL2)
+bash scripts/settings.sh set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False,max_split_size_mb:512
+
+# per launch: only for a compose whose default is above 0.94; eager costs ~20-30% TPS
+GPU_MEMORY_UTILIZATION=0.94 VLLM_ENFORCE_EAGER=1 bash scripts/switch.sh <slug>
 ```
+
+Older versions of this answer said to put these in `models/qwen3.6-27b/vllm/compose/.env`, a file nothing reads. If you have one, move its lines into your [settings](#where-are-my-settings-saved-and-how-do-i-change-one) and delete it.
 
 ---
 
@@ -380,7 +386,7 @@ KV-cache quant trades **quality ↔ context ceiling ↔ a little speed**, and th
 
 Two takeaways: **(1) K is the sensitive cache** — keep K higher and starve V (`q5_0`/`q4_1` beats symmetric `q4_1` at the same size); **(2) turbo/TCQ only pays at 2–3 bit** — at 4+ bits scalar `q4_0`/`q5_0` wins, and turbo3 is *not* quality-neutral (the TurboQuant paper's "neutral at 3.5 bits" is a perplexity-average claim; the tail disagrees).
 
-**On this stack:** the llama.cpp / ik_llama composes default to `q4_0` (max context — the per-token loss is small *on average*, but meaningful on the tail for structured output). If you serve **coding / agent / tool-calling** traffic, bump quality with the `KV_TYPE` override (shell env wins over `.env`):
+**On this stack:** the llama.cpp / ik_llama composes default to `q4_0` (max context — the per-token loss is small *on average*, but meaningful on the tail for structured output). If you serve **coding / agent / tool-calling** traffic, bump quality with the `KV_TYPE` override (a variable set in your shell wins over your saved settings):
 
 ```bash
 KV_TYPE=q5_0 bash scripts/switch.sh --force llamacpp/mtp     # ~93% tail vs q4_0's ~89%, at some context cost
@@ -427,7 +433,7 @@ bash scripts/switch.sh vllm/qwen-27b-dual-max    # stateless: down the old, up t
 
 `launch.sh` wraps `switch.sh` and then `verify-full.sh`; `switch.sh` is the bare down-old/up-new if you just want the swap.
 
-**Don't want to remember a slug? Use `<model>/default`.** It auto-resolves to a config for *that model* on *your* hardware — your `.env` pin if you've set one (see the next Q), else the curated pick for the detected topology:
+**Don't want to remember a slug? Use `<model>/default`.** It auto-resolves to a config for *that model* on *your* hardware — your pin if you've set one (see the next Q), else the curated pick for the detected topology:
 
 ```bash
 bash scripts/launch.sh --variant qwen3.6-27b/default   # this model, picked for your rig
@@ -466,12 +472,13 @@ There are **two layers of "default"**, with different owners:
 By default `<model>/default` resolves to the *curated* pick — the first engine in `ENGINE_PREFERENCE` for your topology that has a healthy config (single-card Qwen → **`vllm/minimal`** since the 2026-08-12 retirements; dual → `vllm/dual`). To make it resolve to **your** choice instead, pin a slug:
 
 ```bash
-bash scripts/switch.sh --set-default vllm/qwen-27b-dual-max   # pin (writes .env)
+bash scripts/switch.sh --set-default vllm/qwen-27b-dual-max   # pin (saved in club3090.env)
 bash scripts/switch.sh --clear-default qwen3.6-27b      # remove the pin
 bash scripts/switch.sh --defaults                       # show what each model resolves to + pin vs curated
 ```
 
-- A pin is a **full slug**, so it captures engine + topology + config in one pick. It's stored in `.env` as `CLUB3090_DEFAULT_<MODELID>` (e.g. `CLUB3090_DEFAULT_QWEN3_6_27B=vllm/dual-turbo`) — one key per model.
+- A pin is a **full slug**, so it captures engine + topology + config in one pick. It's saved in your [settings](#where-are-my-settings-saved-and-how-do-i-change-one) (`~/.config/club-3090/club3090.env`) as `CLUB3090_DEFAULT_<MODELID>` (e.g. `CLUB3090_DEFAULT_QWEN3_6_27B=vllm/dual-turbo`), one key per model, so every checkout of the repo sees it. A pin in an old repo-root `.env` still counts; `--clear-default` removes that copy too.
+- c3 saves a per-model **thinking** default the same way: `[T]` in its serve dialog writes `CLUB3090_THINKING_<MODELID>` (`on`, `off` or `inherit`).
 - After any successful `bash scripts/launch.sh` boot, it offers: *"Make `<slug>` your default for `<model>`? [y/N]"* — one keypress to pin it.
 - A **bare** `bash scripts/launch.sh` with a pin set asks *"Launch your default `<slug>`? [Y/n]"* — one keypress to go.
 - Pins are **validated, never blocking**: if a pin names an unknown slug, the wrong model, a config for a different topology than your rig, or a known-unhealthy config, the resolver warns and falls back to the curated default — it never stops a launch.
@@ -485,9 +492,11 @@ Yes. The knob is `MODEL_DIR`, with **four ways** to set it (priority order):
    export MODEL_DIR=/mnt/your-second-drive/models
    bash scripts/setup.sh qwen3.6-27b
    ```
-2. **`.env` file at repo root** — picked up automatically on every script run. See [`.env.example`](../.env.example).
-3. **Interactive prompt** — `bash scripts/setup.sh` with nothing set first asks which model to download, then offers three model-dir choices: in-repo default, `~/models`, or custom path. After you pick custom, it asks "Save `MODEL_DIR=/your/path` to `.env` so we skip this next time?" — say `Y` and it persists for every subsequent `launch.sh` / `switch.sh` / `bench.sh` call.
+2. **Your saved settings** — `bash scripts/settings.sh set MODEL_DIR=/mnt/your-second-drive/models` saves it in `~/.config/club-3090/club3090.env`, which the launchers, c3 and every checkout of the repo read ([where settings live](#where-are-my-settings-saved-and-how-do-i-change-one)). c3's **`[S]` Settings** writes the same setting. A `MODEL_DIR` in an old repo-root `.env` still works; it's read after the saved settings.
+3. **Interactive prompt** — `bash scripts/setup.sh` with nothing set first asks which model to download, then offers three model-dir choices: in-repo default, `~/models`, or custom path. Then it asks "Save `MODEL_DIR=/your/path` to your club-3090 settings (…/club3090.env) so we skip this next time?" — say `Y` and every later `setup.sh` / `launch.sh` / `switch.sh` run uses it.
 4. **Silent fallback** — `<repo>/models-cache/`. Functional but pollutes the git tree; not recommended.
+
+A saved path is used exactly as written, so give the full path (`/data/models`, never `~/models` or `$HOME/models`).
 
 Every script that touches model paths reads from the same `MODEL_DIR`. The compose YAMLs' volume mount is `${MODEL_DIR:-...}:/root/.cache/huggingface` — once set, every container reads + writes there.
 
@@ -496,6 +505,42 @@ Every script that touches model paths reads from the same `MODEL_DIR`. The compo
 - Or symlink between them
 
 **On Windows / WSL2** — same mechanism. Docker Desktop handles path translation. Use Windows paths (`D:\models`) from PowerShell or WSL paths (`/mnt/d/models`) from WSL. If you flip between Linux and Windows on the same rig, point `MODEL_DIR` at a drive both OSes can see — the model files themselves are OS-agnostic.
+
+### Where are my settings saved, and how do I change one?
+
+In **`~/.config/club-3090/`** (`$XDG_CONFIG_HOME/club-3090/` if you set `XDG_CONFIG_HOME`, or any directory you name in `CLUB3090_CONFIG_DIR`). `setup.sh`, `launch.sh`, `switch.sh`, `report.sh`, `gpu-mode` and c3 all read the same two files, from every checkout of the repo:
+
+| File | Holds | Saved there by |
+|---|---|---|
+| `club3090.env` | settings: `MODEL_DIR`, your pinned defaults (`CLUB3090_DEFAULT_<MODEL>`, `CLUB3090_THINKING_<MODEL>`), knobs such as `NVLINK_MODE` or `DISABLE_CUSTOM_ALL_REDUCE`, the AI Studio's `LANIP` / `COMFYUI_ROOT` / `COMFYUI_OUTPUT_DIR` / `STUDIO_DIRECTOR_DEVICE` | `settings.sh set`; `setup.sh` (the model-dir prompt, and the [WSL2 fix](#does-this-work-on-windows--wsl2)); `switch.sh --set-default`; c3's `[S]` Settings and `[T]`; the AI Studio setup |
+| `secrets.env` (mode 0600) | tokens and keys: `HF_TOKEN`, the gateway key `LITELLM_MASTER_KEY` | `settings.sh set` (a token- or key-like name goes here on its own); c3's `[S]` Settings (the HF token); `gateway-key.sh rotate` ([the gateway key](CODING_AGENTS.md#the-gateway-key)) |
+
+```bash
+bash scripts/settings.sh show                    # every setting, its value and where it comes from (secrets hidden)
+bash scripts/settings.sh get MODEL_DIR           # one setting's effective value
+bash scripts/settings.sh set NVLINK_MODE=force_off OFFLINE=1
+bash scripts/settings.sh set HF_TOKEN=hf_xxx     # goes to secrets.env
+bash scripts/settings.sh unset NVLINK_MODE       # removes it from both files and from the repo .env
+bash scripts/settings.sh path                    # where the files are
+```
+
+**Which value wins**, highest first:
+
+| | Source | Applies to |
+|---|---|---|
+| 1 | a variable set in your shell (`KV_TYPE=q5_0 bash scripts/switch.sh …`, or `export`ed) | that command, or that shell |
+| 2 | `club3090.env` | every launch |
+| 3 | `secrets.env` | every launch |
+| 4 | the repo-root `.env` (where settings used to live) | launches from that checkout |
+| 5 | the compose file's own default (`${VAR:-default}`) | — |
+
+- **A change applies at the next launch.** A running container keeps the values it started with.
+- **Values are taken literally.** `$HOME`, `${VAR}` and a leading `~` are not expanded, so write the full path; the launchers warn when a saved value contains one. `set` refuses a value that bash, docker compose and systemd would read differently (quotes, `$`, a backslash, ` #`).
+- **Still using the repo-root `.env`?** It keeps working, read last. `bash scripts/settings.sh migrate` copies every setting in it into your settings (`--dry-run` first shows what it would copy). It never changes or deletes `.env`, and skips a key you've already saved. Once `settings.sh show` lists nothing from the repo `.env`, you can delete it.
+- **A `.env` in `models/<model>/<engine>/compose/` is never read.** Older docs suggested one for WSL2; docker compose only looks for `.env` in the compose file's own directory (`<topology>/<quant>/`). Move its lines with `settings.sh set` and delete it.
+- **Running `docker compose` yourself** skips all of this. Pass what you need on the command line (`MODEL_DIR=/path/to/models docker compose -f …`), or hand compose the settings file: `docker compose --env-file ~/.config/club-3090/club3090.env -f … up -d`.
+- **One checkout that should run differently, or a `~/.config` you sync between machines?** Export `CLUB3090_CONFIG_DIR=/some/other/dir` for it. `MODEL_DIR` and the GPU knobs belong to one machine, and `secrets.env` shouldn't travel.
+- **Filing a bug?** `report.sh` includes a Settings section, with secrets redacted.
 
 ### How do I keep my install up-to-date?
 
@@ -522,8 +567,11 @@ Even with the weights already on disk and `--model` pointed at a local path, vLL
 
 1. **Set `OFFLINE=1`** (or the individual `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`). Every vLLM compose passes these through to the container, default-off, so it's one flag:
    ```bash
-   OFFLINE=1 docker compose -f <compose>.yml up    # or export it / put it in your .env
+   OFFLINE=1 bash scripts/switch.sh <slug>           # one launch
+   bash scripts/settings.sh set OFFLINE=1            # every launch from now on
+   OFFLINE=1 docker compose -f <compose>.yml up      # running a compose file yourself
    ```
+   A compose file you run with `docker compose` yourself doesn't read your saved settings, so pass it on the command line there.
    With it set, vLLM uses local files only and never phones home.
 
 2. **Pre-download everything the compose loads — including gated drafters.** Speculative-decoding composes (`*-mtp.yml`, `dflash.yml`) also load an assistant/MTP drafter, often a **gated** repo (e.g. `google/gemma-4-12B-it-assistant`). If only the main model is local, boot will still try to fetch the drafter. Either grab it too (into `MODEL_DIR`, while you still have network), or drop the `--speculative-config` lines to run the main model alone.
@@ -553,7 +601,7 @@ The 0.97 / 0.98 / 0.985 defaults assume a headless rig with ≥23.3 GiB consiste
 
 ### Can I run multiple variants at once on the same machine?
 
-You'd need different ports per variant. Set `PORT=9876` in `.env` (or pass inline: `PORT=9876 bash scripts/switch.sh vllm/default`) — every shipped compose now reads `${PORT}` for the host-side port mapping. Watch VRAM — two configs simultaneously typically don't fit on 24 GB.
+You'd need different ports per variant. Pass the port inline, `PORT=9876 bash scripts/switch.sh vllm/default` — every shipped compose now reads `${PORT}` for the host-side port mapping. (Saving `PORT` as a setting would move *every* launch to that port.) Watch VRAM — two configs simultaneously typically don't fit on 24 GB.
 
 ### Will this work behind Open WebUI?
 

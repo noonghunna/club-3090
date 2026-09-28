@@ -43,7 +43,11 @@ curl -sf http://localhost:8010/v1/chat/completions -H "Content-Type: application
 bash scripts/switch.sh --list   # every config this machine can run (--all adds retired ones)
 bash scripts/switch.sh <slug>   # switch to another one (🧪 slugs need --force)
 bash scripts/update.sh          # later: pull the latest stack and re-run setup
+bash scripts/settings.sh show   # your saved settings (model dir, default pins, …) and where each comes from
 ```
+
+Settings you save (the weights dir, your default config) live in `~/.config/club-3090/`, shared by every
+checkout: [where settings live](docs/FAQ.md#where-are-my-settings-saved-and-how-do-i-change-one).
 
 Prefer a screen to the CLI? **`c3`** is a terminal cockpit for the same flow: browse the catalog,
 serve with one key, watch GPUs and containers, run health checks. Install it with

@@ -49,6 +49,10 @@ own location; override with **`C3_REPO_ROOT=/path/to/club-3090`** if you install
 **First run — set your Model Dir + HF token:** press **`S`** to open Settings, set your **Model Dir**
 (where weights download to) and your **HuggingFace token** (needed for gated / private repos), then
 **`Ctrl+S`** to save (`HF_HOME` is auto-derived under the model dir). Then hit **`r`** to browse the catalog.
+Both are saved in your club-3090 settings, which `switch.sh`, `setup.sh` and the other launchers read too: the
+model dir as `MODEL_DIR` in `~/.config/club-3090/club3090.env`, the token as `HF_TOKEN` in the 0600
+`secrets.env` beside it ([where settings live](../../docs/FAQ.md#where-are-my-settings-saved-and-how-do-i-change-one)).
+A model dir or token that an older c3 kept in its own `c3-settings.json` is moved there once, on first start (a value already saved there wins).
 
 **Keeping current:** the cockpit moves fast — after a `git pull`, **re-run the install**
 (`uv pip install -e tools/serve-cockpit`) to pick up new deps (e.g. PyYAML) and UI changes.

@@ -87,18 +87,18 @@ cd club-3090
 
 **Do not clone under `/mnt/c` or `/mnt/d`.** Those are the Windows drive mounted via DrvFs, which is **10–50× slower** for the many-small-file I/O that git and the scripts do, and it **doesn't preserve Unix file modes** — so the helper scripts lose their exec bit and you hit mysterious `permission denied` failures. Model *weights* are large-but-few files and can live on a Windows drive if you're short on space (see step 7); the repo itself must be on ext4.
 
-## 6. Keep `.env` and scripts as LF — not CRLF ⚠️
+## 6. Keep scripts and settings files as LF — not CRLF ⚠️
 
-If you create or edit `.env` (or any script) with a Windows editor, it may save with **CRLF** line endings. That breaks two things:
+If you edit a script or a settings file with a Windows editor, it may save with **CRLF** line endings. That breaks two things:
 
-- **`docker compose`** reads `GPU_MEMORY_UTILIZATION=0.94\r` — the trailing `\r` becomes part of the *value*, producing baffling "no such file"/invalid-number errors.
 - **Shell scripts** fail with `bad interpreter: /usr/bin/env bash^M`.
+- **`docker compose` run by hand with `--env-file`** reads `GPU_MEMORY_UTILIZATION=0.94\r` — the trailing `\r` becomes part of the *value*, producing baffling "no such file"/invalid-number errors. (The launchers' settings loader strips the `\r`, so `switch.sh` / `launch.sh` are not affected.)
 
 Prevent it before cloning, and fix any file that slipped through:
 
 ```bash
 git config --global core.autocrlf input    # set BEFORE cloning
-dos2unix .env                               # or: sed -i 's/\r$//' .env
+dos2unix ~/.config/club-3090/club3090.env  # or: sed -i 's/\r$//' <file>
 ```
 
 In VS Code, set the file's EOL to **LF** (bottom-right status bar) and enable `"files.eol": "\n"`.
@@ -133,13 +133,13 @@ bash scripts/setup.sh qwen3.6-27b
 export MODEL_DIR=/mnt/d/models      # from WSL; or D:\models from PowerShell
 ```
 
-Set `MODEL_DIR` **consistently** — either `export` it in your shell *or* put it in the repo-root `.env`, then use it for both `setup.sh` and `launch.sh`. (Mixing the two sources can disagree; see [#187](https://github.com/noonghunna/club-3090/issues/187).)
+To keep it without exporting it in every shell, save it once with `bash scripts/settings.sh set MODEL_DIR=/mnt/d/models` (a `setup.sh` run with nothing set also offers to), and `setup.sh`, `launch.sh`, `switch.sh` and c3 all use it ([where settings live](FAQ.md#where-are-my-settings-saved-and-how-do-i-change-one)). An exported `MODEL_DIR` wins over the saved one for that shell, so don't leave a stale `export` in your shell profile. A `docker compose` you run by hand doesn't read saved settings: pass `MODEL_DIR=…` on that command line, or the compose mounts the in-repo `models-cache/` and can't find your weights (see [#187](https://github.com/noonghunna/club-3090/issues/187)).
 
 ## 8. Budget for the ~1.3 GiB WSL2 GPU overhead
 
 WSL2's container CUDA context reserves **~1.3 GiB of VRAM that `nvidia-smi` doesn't show at idle** but is locked once a container starts — so the headless-Linux defaults can crash on boot. The fixes (don't repeat them here):
 
-- **Single-card vLLM:** drop `GPU_MEMORY_UTILIZATION=0.94` into `models/qwen3.6-27b/vllm/compose/.env`.
+- **Single-card vLLM:** if the compose's default is above 0.94, launch it with `GPU_MEMORY_UTILIZATION=0.94 bash scripts/switch.sh <slug>` (per launch; a saved value would apply to every vLLM compose).
 - **Single-card llama.cpp / ik_llama:** lower the context (e.g. `CTX_SIZE=131072`), since these allocate by fixed size, not a ratio.
 
 **Shrink the overhead (not just budget for it).** Part of the ~1.3 GiB is the WSL2 GPU-paravirtualization context itself — unavoidable while you're on WSL2 at all — but the **display/WDDM portion is reclaimable**, often most of it:
@@ -152,14 +152,14 @@ WSL2's container CUDA context reserves **~1.3 GiB of VRAM that `nvidia-smi` does
 
 **Measure your real headroom:** `nvidia-smi` in WSL at idle, then again after boot — the jump above your idle baseline is exactly what you're budgeting for, and these tips shrink that idle baseline.
 
-Full per-compose VRAM table + the combined `.env` template: [FAQ.md → Windows/WSL2](FAQ.md#does-this-work-on-windows--wsl2) and [HARDWARE.md → GPU memory budget on WSL2](HARDWARE.md#note-for-wsl2--windows-users).
+Full per-compose VRAM table + the combined WSL2 settings: [FAQ.md → Windows/WSL2](FAQ.md#does-this-work-on-windows--wsl2) and [HARDWARE.md → GPU memory budget on WSL2](HARDWARE.md#note-for-wsl2--windows-users).
 
 ## 9. Long-prompt + boot-crash gotchas (TDR, expandable_segments)
 
 Two WSL2-specific failure modes, both fixed on the **Windows** side, both documented in [HARDWARE.md → WSL2/Windows](HARDWARE.md#note-for-wsl2--windows-users):
 
 - **TDR timeout** — Windows force-resets the GPU after 2 s of kernel time; long-context prompts trip it (`CUDA driver error: device not ready`). Fix: raise `TdrDelay` to 60 via the registry + reboot.
-- **`expandable_segments` boot crash** — `device not ready` at `gptq_marlin_repack` on some drivers. Fix: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` (already exposed as a `.env` knob).
+- **`expandable_segments` boot crash** — `device not ready` at `gptq_marlin_repack` on some drivers. Fix: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` — `setup.sh` saves it to your settings when it detects WSL2.
 
 ## 10. Boot it
 
@@ -207,7 +207,7 @@ New-NetFirewallRule -DisplayName "club3090-8020" -Direction Inbound -LocalPort 8
 
 LAN clients then hit `http://<WINDOWS-host-LAN-IP>:8020/`. ⚠️ In NAT mode the WSL2 IP **changes on reboot** — re-run the `portproxy add` line (or script it). Option A avoids this entirely.
 
-**Verify** from another machine: `curl http://<windows-lan-ip>:8020/v1/models` should list the model. (The `.env` `URL=` is the *client/bench* target — point it at the reachable address; it does **not** affect the server bind.)
+**Verify** from another machine: `curl http://<windows-lan-ip>:8020/v1/models` should list the model. (`URL=` — e.g. `URL=http://<windows-lan-ip>:8020 bash scripts/bench.sh` — is the *client/bench* target; point it at the reachable address. It does **not** affect the server bind.)
 
 ---
 
@@ -244,7 +244,7 @@ You still do steps **1–3** (WSL + driver/passthrough + `.wslconfig` RAM) and *
 | Hardware | Recommended | Why |
 |---|---|---|
 | 1× 24 GB (3090/4090) | `vllm/minimal` | ⚠️ `ik-llama/iq4ks-mtp` (leanest VRAM, no prefill cliffs) was RETIRED 2026-08-12 → `--force` only. `vllm/minimal` is the functional path (32K, no vision). |
-| 1× 24 GB, want vLLM | `vllm/single` + `GPU_MEMORY_UTILIZATION=0.94` `.env` | Full feature stack; needs the WSL2 VRAM + TDR tuning (steps 8–9) |
+| 1× 24 GB, want vLLM | `vllm/single` + `GPU_MEMORY_UTILIZATION=0.94` per launch | Full feature stack; needs the WSL2 VRAM + TDR tuning (steps 8–9) |
 | 2× 24 GB | `vllm/dual` | TP=2; the ~1.3 GiB overhead is noise at ~17 GB/card |
 
 ## Diagnostics on WSL2

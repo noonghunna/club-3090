@@ -247,9 +247,11 @@ depth behind a passing run:
 
 ## Where weights land
 
-`MODEL_DIR` is the single storage root — set it once (the repo `.env` ships a
-default) and every path below derives from it, so a model downloaded by one tool
-is found by the others and you never re-download the same weights.
+`MODEL_DIR` is the single storage root — set it once (`bash scripts/settings.sh
+set MODEL_DIR=/path/to/models`, or let `setup.sh` / c3's `[S]` Settings save it;
+see [where settings live](FAQ.md#where-are-my-settings-saved-and-how-do-i-change-one))
+and every path below derives from it, so a model downloaded by one tool is found
+by the others and you never re-download the same weights.
 
 | Tier | Path | Notes |
 |---|---|---|
