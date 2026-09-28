@@ -27,10 +27,7 @@ bad() { echo "  ✗ $*" >&2; fail=1; }
 ALLOWLIST=$(cat <<'EOF'
 scripts/switch.sh                                   1c --set-default / thinking-pin writer (reads moved in 1b-1)
 scripts/setup.sh                                    1c MODEL_DIR writer + WSL2 compose-dir .env (reads moved in 1b-1)
-scripts/gpu-mode.sh                                 1b-2 sudo docker compose --env-file, single-key reads
-services/comfyui/comfyui-paths.sh                   1b-2 reads, 1c LANIP / COMFYUI_* writer
-services/comfyui/download_director.sh               1b-2 MODEL_DIR read
-services/studio/push-pipe-to-owui.sh                1b-2 LANIP read
+services/comfyui/comfyui-paths.sh                   1c LANIP / COMFYUI_* writer (reads moved in 1b-2)
 tools/serve-cockpit/club3090_cockpit/app.py         1c thinking-pin / director writer
 tools/serve-cockpit/club3090_cockpit/services.py    1b-3 reads + docker compose --env-file, 1c writer
 EOF
@@ -62,6 +59,9 @@ detect() {
   local -a pats
   for f in "$@"; do
     body="$(command grep -vE '^[[:space:]]*#' "$f" 2>/dev/null || true)"
+    # The one sanctioned --env-file: the file the loader writes for `sudo docker
+    # compose` (club_config_compose_env_file → $CLUB3090_COMPOSE_ENV_FILE).
+    body="${body//--env-file \"\$CLUB3090_COMPOSE_ENV_FILE\"/}"
     case "$f" in *.py) pats=("${PY_PATTERNS[@]}") ;; *) pats=("${SH_PATTERNS[@]}") ;; esac
     for p in "${pats[@]}"; do
       if command grep -qE -e "$p" <<<"$body"; then printf '%s\n' "$f"; break; fi
@@ -91,9 +91,10 @@ w n4.sh  '. "$LIB/club-config.sh"; club_config_load "$ROOT"'
 w n5.sh  'echo "[setup] set MODEL_DIR in your config"'
 w n6.py  '"""Reads ``<root>/.env`` as a legacy fallback."""'
 w n7.py  'p = config_dir() / "club3090.env"'
-got="$(cd "$T" && detect r1.sh r2.sh r3.sh r4.sh r5.sh r6.sh r7.service r8.py r9.sh n1.sh n2.sh n3.sh n4.sh n5.sh n6.py n7.py | tr '\n' ' ')"
+w n8.sh  'sudo docker compose --env-file "$CLUB3090_COMPOSE_ENV_FILE" -f x.yml up -d'
+got="$(cd "$T" && detect r1.sh r2.sh r3.sh r4.sh r5.sh r6.sh r7.service r8.py r9.sh n1.sh n2.sh n3.sh n4.sh n5.sh n6.py n7.py n8.sh | tr '\n' ' ')"
 want="r1.sh r2.sh r3.sh r4.sh r5.sh r6.sh r7.service r8.py r9.sh "
-[[ "$got" == "$want" ]] && ok "self-test: detector flags 9 readers (incl. a 20,000-line file) and ignores 7 look-alikes" \
+[[ "$got" == "$want" ]] && ok "self-test: detector flags 9 readers (incl. a 20,000-line file) and ignores 8 look-alikes (incl. the sanctioned compose env file)" \
                         || bad "self-test: detector flagged [$got], want [$want]"
 
 # ── the tree ────────────────────────────────────────────────────────────────

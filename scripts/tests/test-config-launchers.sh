@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-config-launchers — the launchers and tools read settings through the ONE loader
-# (club-3090#1466, phase 1b-1), driven through their real entry points.
+# (club-3090#1466, phases 1b-1 and 1b-2), driven through their real entry points.
 #
 # For each reader: a value only in club3090.env reaches it, and the shell beats it.
 # club3090.env also outranks the repo .env, so on a checkout whose .env sets the same
@@ -79,6 +79,44 @@ got="$(run python3 -c 'import importlib.util as u; s = u.spec_from_file_location
   || bad "model-switch server PORT: '$got'"
 command grep -q '^EnvironmentFile=' scripts/systemd/club3090-model-switch.service \
   && bad "the systemd unit still loads the repo .env itself" || ok "the systemd unit no longer reads the repo .env itself"
+
+# 6. gpu-mode: `sudo docker compose` gets settings through a 0600 temp env file,
+#    removed on exit. `service-images` is read-only (docker compose config, no sudo).
+if docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  G6="$T/g6"; mkdir -p "$G6" "$T/tmp"
+  printf 'SPARK_DASHBOARD_IMAGE=cfg/spark-dashboard:from-config\n' > "$G6/club3090.env"
+  out="$(env -u SPARK_DASHBOARD_IMAGE TMPDIR="$T/tmp" CLUB3090_CONFIG_DIR="$G6" timeout 180 bash scripts/gpu-mode.sh service-images 2>&1)"
+  command grep -qF 'cfg/spark-dashboard:from-config' <<<"$out" \
+    && ok "gpu-mode: a setting only in club3090.env reaches docker compose (service image pin)" \
+    || bad "gpu-mode service-images didn't see the config value: $(command grep -m1 spark <<<"$out")"
+  left="$(ls -A "$T/tmp" | command grep -E "^club3090-compose-" || true)"
+  [[ -z "$left" ]] && ok "gpu-mode removes its temp env file on exit" || bad "gpu-mode left its env file: $left"
+else
+  ok "gpu-mode arm skipped (no docker access here)"
+fi
+
+# 7. comfyui-paths.sh (sourced by the studio scripts): MODEL_DIR, LANIP, HF_TOKEN only.
+C7="$T/c7"; mkdir -p "$C7"
+printf 'MODEL_DIR=/from/club3090-env\nLANIP=203.0.113.7\n' > "$C7/club3090.env"
+printf 'HF_TOKEN=hf_from_secrets\n' > "$C7/secrets.env"
+got="$(env -u MODEL_DIR -u LANIP -u HF_TOKEN -u C3_PATHS_NO_ENV CLUB3090_CONFIG_DIR="$C7" \
+        bash -c '. services/comfyui/comfyui-paths.sh; printf "%s|%s|%s" "$MODEL_DIR" "$LANIP" "$HF_TOKEN"')"
+[[ "$got" == "/from/club3090-env|203.0.113.7|hf_from_secrets" ]] \
+  && ok "comfyui-paths.sh reads MODEL_DIR / LANIP from club3090.env and HF_TOKEN from secrets.env" \
+  || bad "comfyui-paths.sh: '$got'"
+got="$(env -u LANIP -u HF_TOKEN -u C3_PATHS_NO_ENV MODEL_DIR= CLUB3090_CONFIG_DIR="$C7" \
+        bash -c '. services/comfyui/comfyui-paths.sh; printf "%s" "$MODEL_DIR"')"
+[[ "$got" == "/from/club3090-env" ]] && ok "comfyui-paths.sh: an EMPTY exported MODEL_DIR still falls through to the settings (as before)" \
+  || bad "comfyui-paths.sh empty MODEL_DIR: '$got'"
+got="$(env -u MODEL_DIR -u LANIP -u HF_TOKEN C3_PATHS_NO_ENV=1 CLUB3090_CONFIG_DIR="$C7" \
+        bash -c '. services/comfyui/comfyui-paths.sh; printf "%s|%s" "${LANIP:-}" "${HF_TOKEN:-}"')"
+[[ "$got" == "|" ]] && ok "comfyui-paths.sh: C3_PATHS_NO_ENV=1 still skips the settings" || bad "C3_PATHS_NO_ENV: '$got'"
+
+# 8. download_director.sh — an `hf` that does nothing, so it only reports its destination.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$T/bin/hf"; chmod +x "$T/bin/hf"
+out="$(env -u MODEL_DIR PATH="$T/bin:$PATH" CLUB3090_CONFIG_DIR="$C7" timeout 60 bash services/comfyui/download_director.sh 2>&1)"
+command grep -qF '→ /from/club3090-env/qwen3.5-4b-gguf/' <<<"$out" && ok "download_director.sh takes MODEL_DIR from club3090.env" \
+  || bad "download_director.sh: $(command grep -m1 '→' <<<"$out")"
 
 [[ -e "$T/switch-called" ]] && bad "launch.sh went past model selection and called switch: $(cat "$T/switch-called")" \
   || ok "launch.sh never got as far as calling switch (the mock was never invoked)"

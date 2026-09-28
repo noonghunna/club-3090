@@ -10,6 +10,8 @@
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 HELPER="$(cd "$(dirname "$0")/../.." && pwd)/services/comfyui/comfyui-paths.sh"
+LOADER_SH="$(cd "$(dirname "$0")/../.." && pwd)/scripts/lib/club-config.sh"
+LOADER_PY="$(cd "$(dirname "$0")/../.." && pwd)/scripts/lib/club_config.py"
 
 [ -f "$HELPER" ] || { echo "FAIL: helper not found: $HELPER"; exit 1; }
 
@@ -117,6 +119,7 @@ rm -f "$_tmpenv"
 #     repo root so C3_REPO_ROOT/.env (a MODEL_DIR-only .env) is controlled.
 _reroot="$(mktemp -d)"; mkdir -p "$_reroot/services/comfyui"
 cp "$HELPER" "$_reroot/services/comfyui/comfyui-paths.sh"
+mkdir -p "$_reroot/scripts/lib" && cp "$LOADER_SH" "$LOADER_PY" "$_reroot/scripts/lib/"   # the helper reads settings through the loader (#1466)
 printf 'MODEL_DIR=%s/models\n' "$_reroot" > "$_reroot/.env"   # NO LANIP line
 ( cd "$_reroot" && bash -c 'set -euo pipefail; . services/comfyui/comfyui-paths.sh' ) >/dev/null 2>&1
 chk "no silent set-e exit when .env lacks LANIP (#686)" "0" "$?"
@@ -127,6 +130,7 @@ rm -rf "$_reroot"
 #     the whole setup script. The paths lib now reads + exports it (env wins).
 _tkroot="$(mktemp -d)"; mkdir -p "$_tkroot/services/comfyui"
 cp "$HELPER" "$_tkroot/services/comfyui/comfyui-paths.sh"
+mkdir -p "$_tkroot/scripts/lib" && cp "$LOADER_SH" "$LOADER_PY" "$_tkroot/scripts/lib/"   # the helper reads settings through the loader (#1466)
 printf 'HF_TOKEN=hf_dotenv_test\n' > "$_tkroot/.env"
 chk "HF_TOKEN read from .env + exported (#686)" "hf_dotenv_test" \
   "$(env -u HF_TOKEN MODEL_DIR=/home/u/models bash -c '. "'"$_tkroot"'/services/comfyui/comfyui-paths.sh"; printf "%s" "${HF_TOKEN:-}"')"

@@ -9,6 +9,8 @@
 #   club_config_resolve [ROOT]      KEY<TAB>SOURCE<TAB>VALUE for every configured key
 #   club_config_load [ROOT]         export every key the environment doesn't already
 #                                   set; CLUB3090_CONFIG_SOURCE[KEY] says which file
+#   club_config_get KEY [ROOT]      one setting's effective value, or exit 1
+#   club_config_compose_env_file [ROOT]   0600 temp file for docker compose --env-file
 #   club_config_set [--file global|secrets] KEY=VALUE...   the ONE writer (python)
 #   club_config_unset [--file global|secrets] KEY...
 #
@@ -92,6 +94,21 @@ club_config_load() {
     fi
   done < <(club_config_resolve "${1:-}")
 }
+
+# One setting's effective value (the shell wins), or exit 1. For scripts that need
+# a key or two without exporting every setting into their environment.
+club_config_get() {
+  local __cc_key="$1" __cc_line
+  [[ -n "${!__cc_key+x}" ]] && { printf '%s\n' "${!__cc_key}"; return 0; }
+  __cc_line="$(club_config_resolve "${2:-}" | awk -F'\t' -v k="$__cc_key" '$1 == k { print; exit }')"
+  [[ -n "$__cc_line" ]] || return 1
+  __cc_line="${__cc_line#*$'\t'}"; printf '%s\n' "${__cc_line#*$'\t'}"
+}
+
+# A 0600 temp file of the resolved settings for `docker compose --env-file`, for
+# callers whose environment doesn't reach compose (`sudo` strips it). Prints the
+# path; the caller removes it. Written by club_config.py (compose quoting rules).
+club_config_compose_env_file() { _club_config_py compose-env-file ${1:+--root "$1"}; }
 
 _club_config_py() {
   python3 "$(dirname -- "${BASH_SOURCE[0]}")/club_config.py" "$@"

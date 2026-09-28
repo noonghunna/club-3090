@@ -43,14 +43,16 @@ echo "[push] pipe = $(wc -c < "$PIPE") bytes"
 
 # #715 gap 6 — stamp the configured LAN IP into the pipe's browser_base default so
 # gallery/media links open from OTHER machines without the manual valve step (the
-# runtime cousin of the #703 LANIP class). LANIP: env wins, else repo .env; unset /
-# localhost keeps the localhost default (single-machine rigs). Stamps a TEMP copy —
-# the tracked studio_pipe.py is never mutated.
+# runtime cousin of the #703 LANIP class). LANIP: env wins, else the saved settings
+# (club-3090 config, then repo .env; club-3090#1466); unset / localhost keeps the
+# localhost default (single-machine rigs). Stamps a TEMP copy — the tracked
+# studio_pipe.py is never mutated.
+# shellcheck source=../../scripts/lib/club-config.sh
+. "$HERE/../../scripts/lib/club-config.sh"
 _lanip="${LANIP:-}"
-if [ -z "$_lanip" ] && [ -f "$HERE/../../.env" ]; then
-    _lanip="$(grep -E '^LANIP=' "$HERE/../../.env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+if [ -z "$_lanip" ]; then
+    _lanip="$(unset LANIP; club_config_get LANIP "$HERE/../.." 2>/dev/null || true)"
 fi
-_lanip="${_lanip%\"}"; _lanip="${_lanip#\"}"
 PIPE_PUSH="$PIPE"
 if [ -n "$_lanip" ] && [ "$_lanip" != "localhost" ] && [ "$_lanip" != "127.0.0.1" ]; then
     PIPE_PUSH="$(mktemp /tmp/studio_pipe_push.XXXXXX.py)"

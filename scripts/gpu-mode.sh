@@ -19,6 +19,22 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 # any clone. Override with CLUB3090_DIR=... if needed.
 CLUB3090_DIR="${CLUB3090_DIR:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}"
 COMPOSE_BASE="$CLUB3090_DIR/services"
+
+# Settings for `sudo docker compose` (club-3090#1466). sudo strips the environment,
+# so the resolved settings (your club-3090 config, then the repo .env; a variable
+# already set in this shell wins) go in a 0600 temp file passed as --env-file and
+# removed on exit. Created once, here in the main shell: a file made inside a
+# ( … ) subshell would outlive it, since traps don't reach subshells. When nothing
+# is configured the file isn't passed, so compose keeps its own .env lookup.
+# The loader is library code, so it comes from THIS script's tree; CLUB3090_DIR is
+# only the clone whose settings (its legacy .env) are read.
+# shellcheck source=lib/club-config.sh
+. "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/lib/club-config.sh"
+CLUB3090_COMPOSE_ENV_FILE="$(club_config_compose_env_file "$CLUB3090_DIR" 2>/dev/null || true)"
+if [ -n "$CLUB3090_COMPOSE_ENV_FILE" ] && [ ! -s "$CLUB3090_COMPOSE_ENV_FILE" ]; then
+    rm -f "$CLUB3090_COMPOSE_ENV_FILE"; CLUB3090_COMPOSE_ENV_FILE=""
+fi
+[ -n "$CLUB3090_COMPOSE_ENV_FILE" ] && trap 'rm -f "$CLUB3090_COMPOSE_ENV_FILE"' EXIT
 # ComfyUI/studio paths derive from MODEL_DIR (see services/comfyui/comfyui-paths.sh) so the
 # ai-studio scene's compose mounts + missing-model check match wherever the user keeps models.
 if [ -f "$COMPOSE_BASE/comfyui/comfyui-paths.sh" ]; then
@@ -104,11 +120,12 @@ SERVICES=(openwebui litellm qdrant searxng spark-dashboard)
 # Run a docker compose command in any directory, with optional -f override.
 # Args: <dir> <action> [compose_file]
 #
-# Always passes --env-file $CLUB3090_DIR/.env when that file exists, so
-# ${MODEL_DIR} (and other repo-level vars) resolve correctly regardless of
-# which compose dir we're cd'd into. Without this, docker compose only
-# auto-loads .env from the compose file's own directory and falls back to
-# the relative-path default `../../../../../models-cache` (mostly empty).
+# Passes --env-file $CLUB3090_COMPOSE_ENV_FILE (the resolved settings, see the
+# top of this file) whenever anything is configured, so ${MODEL_DIR} (and other
+# repo-level vars) resolve correctly regardless of which compose dir we're cd'd
+# into. Without it, docker compose only auto-loads .env from the compose file's
+# own directory and falls back to the relative-path default
+# `../../../../../models-cache` (mostly empty).
 #
 # stderr is preserved (no 2>/dev/null) so real errors surface.
 compose_at() {
@@ -117,8 +134,8 @@ compose_at() {
     local file=${3:-docker-compose.yml}
     if [ -f "$dir/$file" ]; then
         local env_args=()
-        if [ -f "$CLUB3090_DIR/.env" ]; then
-            env_args=(--env-file "$CLUB3090_DIR/.env")
+        if [ -n "$CLUB3090_COMPOSE_ENV_FILE" ]; then
+            env_args=(--env-file "$CLUB3090_COMPOSE_ENV_FILE")
         fi
         (cd "$dir" && sudo docker compose "${env_args[@]}" -f "$file" $action)
     fi
@@ -143,8 +160,8 @@ compose_at_env() {
     local envs=("$@")
     if [ -f "$dir/$file" ]; then
         local env_args=()
-        if [ -f "$CLUB3090_DIR/.env" ]; then
-            env_args=(--env-file "$CLUB3090_DIR/.env")
+        if [ -n "$CLUB3090_COMPOSE_ENV_FILE" ]; then
+            env_args=(--env-file "$CLUB3090_COMPOSE_ENV_FILE")
         fi
         (cd "$dir" && sudo "${envs[@]}" docker compose "${env_args[@]}" -f "$file" $action)
     fi
@@ -193,7 +210,7 @@ _svc_docker() {
 
 service_image_rows() {
     local svc dir env_args=() cfg pinned cname running state
-    [ -f "$CLUB3090_DIR/.env" ] && env_args=(--env-file "$CLUB3090_DIR/.env")
+    [ -n "$CLUB3090_COMPOSE_ENV_FILE" ] && env_args=(--env-file "$CLUB3090_COMPOSE_ENV_FILE")
     for svc in "${SERVICES[@]}"; do
         dir="$COMPOSE_BASE/$svc"
         [ -f "$dir/docker-compose.yml" ] || continue
@@ -394,12 +411,10 @@ start_studio_gallery() {
 # coexists with the image lanes); gpu1 = GPU1 (NOT during a video render — GPU1 is the DiT donor);
 # cpu = frees GPU0 for long single-card video, but craft is ~single-digit tok/s. See video.md.
 _director_device() {
-    local d=gpu0
-    if [ -f "$CLUB3090_DIR/.env" ]; then
-        local v
-        v=$(command grep -E '^STUDIO_DIRECTOR_DEVICE=' "$CLUB3090_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")
-        [ -n "$v" ] && d="$v"
-    fi
+    local d=gpu0 v
+    v="$(club_config_get STUDIO_DIRECTOR_DEVICE "$CLUB3090_DIR" 2>/dev/null || true)"
+    v="${v//[[:space:]]/}"
+    [ -n "$v" ] && d="$v"
     echo "$d"
 }
 start_studio_director() {
@@ -931,9 +946,9 @@ preflight_studio_models() {
         echo -e "${YELLOW}[preflight] studio manifest missing ($manifest) — skipping model check.${NC}" >&2
         return 0
     fi
-    # Roots: weights (director, MODEL_DIR from .env) · comfy (image/video/audio tree).
+    # Roots: weights (director, MODEL_DIR from the settings) · comfy (image/video/audio tree).
     local model_dir comfy_models
-    model_dir="$(command grep -E '^MODEL_DIR=' "$CLUB3090_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+    model_dir="$(club_config_get MODEL_DIR "$CLUB3090_DIR" 2>/dev/null || true)"
     model_dir="${model_dir:-/mnt/models/huggingface}"
     comfy_models="${COMFYUI_MODELS_DIR:-/mnt/models/comfyui/models}"
     local director_missing=0 warns=() modality label root rel size installer base

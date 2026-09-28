@@ -59,6 +59,9 @@ READONLY = (
     "--list", "--explain", "--defaults", "--set-default", "--clear-default",
     "--validate-estate", "--topology", "--check", "--json", "--help",
     "--version", "--down", "--print", "--emit",
+    "service-images",     # gpu-mode: show_service_images → service_image_rows runs only
+                          # `docker compose config` + `docker ps/inspect`, and prints.
+                          # VERIFIED against gpu-mode.sh, not assumed from the name.
 )
 LAUNCHERS = re.compile(r"\b(spec-sweep|switch|launch|gpu-mode)\.sh\b")
 # Execution, not mention: `bash <path>/<launcher>.sh` anywhere in the command.

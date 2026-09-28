@@ -15,44 +15,41 @@
 # Explicitly-set COMFYUI_ROOT / COMFYUI_MODELS_DIR are always respected. This file is also
 # the shared home for studio host helpers — c3_lan_ip / c3_ensure_comfy_models_dir (below).
 
-# 1. MODEL_DIR is configured in repo-root .env (c3 Settings writes it there). Pick it up
-#    if the caller hasn't already exported it. Resolve this file's repo root from its own
-#    location so it works whether sourced by an in-repo script or a symlinked launcher.
-#    (C3_PATHS_NO_ENV=1 skips the .env read — for tests / fully-explicit callers.)
+# 1. MODEL_DIR comes from the saved settings (club-3090 config, then the repo-root .env,
+#    which c3 Settings writes). Pick it up if the caller hasn't already exported it. Resolve
+#    this file's repo root from its own location so it works whether sourced by an in-repo
+#    script or a symlinked launcher. (C3_PATHS_NO_ENV=1 skips the settings read — for tests /
+#    fully-explicit callers.)
 # Repo root (this file is services/comfyui/comfyui-paths.sh → ../.. = repo root). Exposed so the
 # studio helpers below (c3_resolve_lanip) can find the repo-root .env to read/persist config.
 C3_REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." 2>/dev/null && pwd || true)"
-if [ -z "${C3_PATHS_NO_ENV:-}" ] && [ -n "$C3_REPO_ROOT" ]; then
-  _c3_env="$C3_REPO_ROOT/.env"
-  if [ -f "$_c3_env" ]; then
-    # MODEL_DIR (the studio's one knob) — env wins over .env.
-    if [ -z "${MODEL_DIR:-}" ]; then
-      # `|| true`: a no-match grep returns 1, which pipefail propagates → the
-      # assignment fails → a `set -e` caller (setup-ai-studio.sh) exits SILENTLY
-      # before it can auto-detect. MODEL_DIR is usually present so it rarely bit;
-      # LANIP (below) is usually absent, which is the #686 silent-no-op.
-      MODEL_DIR="$(grep -E '^MODEL_DIR=' "$_c3_env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
-      MODEL_DIR="${MODEL_DIR%\"}"; MODEL_DIR="${MODEL_DIR#\"}"   # strip optional surrounding quotes
-    fi
-    # LANIP for the printed URLs — pin it here when auto-detect can't pick the right NIC, or on
-    # hosts without `hostname -I` / `ip` (club-3090 #512). Env wins; auto-detect (c3_lan_ip) is the
-    # fallback when neither sets it.
-    if [ -z "${LANIP:-}" ]; then
-      LANIP="$(grep -E '^LANIP=' "$_c3_env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"   # || true: see MODEL_DIR note above (#686)
-      LANIP="${LANIP%\"}"; LANIP="${LANIP#\"}"
-      [ -n "$LANIP" ] && export LANIP
-    fi
-    # HF_TOKEN for the roster downloads (gated repos) — env wins; the repo .env is
-    # where users naturally put it, and until now it was silently ignored by the
-    # HOST-side hf calls (only the composes read .env) — MoppelMat had to env-prefix
-    # the whole setup script (#686). Same read-then-export pattern as LANIP.
-    if [ -z "${HF_TOKEN:-}" ]; then
-      HF_TOKEN="$(grep -E '^HF_TOKEN=' "$_c3_env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
-      HF_TOKEN="${HF_TOKEN%\"}"; HF_TOKEN="${HF_TOKEN#\"}"
-      [ -n "$HF_TOKEN" ] && export HF_TOKEN
-    fi
+if [ -z "${C3_PATHS_NO_ENV:-}" ] && [ -n "$C3_REPO_ROOT" ] && [ -f "$C3_REPO_ROOT/scripts/lib/club-config.sh" ]; then
+  # Saved settings through the ONE loader (club-3090#1466): your club-3090 config
+  # (~/.config/club-3090/), then the repo .env. Only these three keys, so sourcing
+  # this file doesn't export every setting into the studio scripts. As before, an
+  # EMPTY exported value counts as unset here, hence `unset` inside each lookup.
+  # `|| true` on each: a missing key returns 1, which a `set -e` caller
+  # (setup-ai-studio.sh) would otherwise exit on SILENTLY (#686).
+  # shellcheck source=../../scripts/lib/club-config.sh
+  . "$C3_REPO_ROOT/scripts/lib/club-config.sh"
+  # MODEL_DIR — the studio's one knob.
+  if [ -z "${MODEL_DIR:-}" ]; then
+    MODEL_DIR="$(unset MODEL_DIR; club_config_get MODEL_DIR "$C3_REPO_ROOT" 2>/dev/null || true)"
   fi
-  unset _c3_env
+  # LANIP for the printed URLs — pin it when auto-detect can't pick the right NIC, or on
+  # hosts without `hostname -I` / `ip` (club-3090 #512). Auto-detect (c3_lan_ip) is the
+  # fallback when neither the env nor the settings set it.
+  if [ -z "${LANIP:-}" ]; then
+    LANIP="$(unset LANIP; club_config_get LANIP "$C3_REPO_ROOT" 2>/dev/null || true)"
+    [ -n "$LANIP" ] && export LANIP
+  fi
+  # HF_TOKEN for the roster downloads (gated repos). The HOST-side hf calls used to
+  # ignore it unless exported — MoppelMat had to env-prefix the whole setup script
+  # (#686). It belongs in ~/.config/club-3090/secrets.env; the repo .env still works.
+  if [ -z "${HF_TOKEN:-}" ]; then
+    HF_TOKEN="$(unset HF_TOKEN; club_config_get HF_TOKEN "$C3_REPO_ROOT" 2>/dev/null || true)"
+    [ -n "$HF_TOKEN" ] && export HF_TOKEN
+  fi
 fi
 
 # 2. Default MODEL_DIR only when neither the env nor .env set it. Prefer a USER-OWNED location

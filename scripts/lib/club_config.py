@@ -176,6 +176,47 @@ def format_resolved(resolved: dict[str, tuple[str, str]]) -> str:
     return "".join(f"{k}\t{src}\t{val}\n" for k, (src, val) in resolved.items())
 
 
+def get(key: str, repo_root=None, environ=None):
+    """The effective value of one setting (the environment wins), or None."""
+    env = os.environ if environ is None else environ
+    if key in env:
+        return env[key]
+    hit = resolve(repo_root, env).get(key)
+    return hit[1] if hit else None
+
+
+# ── handing settings to `docker compose --env-file` ──────────────────────────
+# For callers that can't pass settings through the environment — `sudo docker
+# compose` strips it (gpu-mode.sh) — the resolved values go in a temporary file.
+# Measured on docker compose v5.5.1 (2026-09-28): a single-quoted value is fully
+# literal ($, #, ", backslashes survive); inside double quotes \" \\ and \$ are
+# escapes. So: single quotes, or double quotes with escapes when the value has a '.
+def compose_env_quote(value: str) -> str:
+    if "'" not in value:
+        return f"'{value}'"
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$") + '"'
+
+
+def compose_env_text(resolved: dict[str, tuple[str, str]]) -> str:
+    return "".join(f"{k}={compose_env_quote(v)}\n" for k, (_src, v) in resolved.items())
+
+
+def write_compose_env_file(repo_root=None, out=None, environ=None) -> Path:
+    """Write every resolved setting (the environment winning, as everywhere) to a
+    0600 file docker compose reads back exactly. A new temp file unless `out`.
+    The caller removes it. Empty when nothing is configured."""
+    text = compose_env_text(resolve(repo_root, environ))
+    if out is None:
+        fd, name = tempfile.mkstemp(prefix="club3090-compose-", suffix=".env")
+    else:
+        name = str(out)
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.chmod(name, 0o600)
+    return Path(name)
+
+
 # ── writer ───────────────────────────────────────────────────────────────────
 class ConfigError(ValueError):
     pass
@@ -284,6 +325,12 @@ def main(argv=None) -> int:
     s = sub.add_parser("set", help="store KEY=VALUE pairs")
     s.add_argument("--file", choices=("global", "secrets"), default="global")
     s.add_argument("pairs", nargs="+", metavar="KEY=VALUE")
+    g = sub.add_parser("get", help="print one setting's effective value (exit 1 if unset)")
+    g.add_argument("key")
+    g.add_argument("--root", help="repo root, to include its legacy .env")
+    c = sub.add_parser("compose-env-file", help="write resolved settings for docker compose --env-file; print its path")
+    c.add_argument("--root", help="repo root, to include its legacy .env")
+    c.add_argument("--out", help="path to write (default: a new 0600 temp file)")
     u = sub.add_parser("unset", help="remove keys")
     u.add_argument("--file", choices=("global", "secrets"), default="global")
     u.add_argument("keys", nargs="+", metavar="KEY")
@@ -299,6 +346,13 @@ def main(argv=None) -> int:
                 print(json.dumps({k: {"source": s_, "value": v} for k, (s_, v) in res.items()}, indent=2))
             else:
                 sys.stdout.write(format_resolved(res))
+        elif a.cmd == "get":
+            v = get(a.key, a.root)
+            if v is None:
+                return 1
+            print(v)
+        elif a.cmd == "compose-env-file":
+            print(write_compose_env_file(a.root, a.out))
         elif a.cmd == "set":
             vals = {}
             for p in a.pairs:

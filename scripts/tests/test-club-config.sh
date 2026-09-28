@@ -133,6 +133,49 @@ want=$'WARN: W_BRACE\nWARN: W_HOME\nWARN: W_TILDE'
 xenv bash -c '. "$1"; club_config_load "$2"' _ "$SH" "$XR" 2>&1 >/dev/null | command grep -q 'models' \
   && bad "a warning printed the value" || ok "warnings name the key and file, never the value"
 
+# ── get: one setting's effective value, bash = Python ──────────────────────
+G="$T/g"; GR="$T/gr"; mkdir -p "$G" "$GR"
+printf 'DUAL=global\nSHADOW=x DUAL\tlooks like a key\n' > "$G/club3090.env"
+printf 'ONLY_REPO=legacy\n' > "$GR/.env"
+genv() { env -i PATH="$PATH" HOME="$T/home" CLUB3090_CONFIG_DIR="$G" SHELLKEY=from-shell "$@"; }
+gb() { genv bash -c '. "$1"; club_config_get "$2" "$3"; echo "rc=$?"' _ "$SH" "$1" "$GR"; }
+gp() { genv bash -c 'python3 "$1" get "$2" --root "$3"; echo "rc=$?"' _ "$PY" "$1" "$GR"; }
+get_ok=1
+for case in "DUAL|global" "ONLY_REPO|legacy" "SHELLKEY|from-shell" "NOPE|"; do
+  k="${case%%|*}"; v="${case#*|}"
+  want="$v"$'\nrc=0'; [[ -z "$v" ]] && want="rc=1"
+  [[ "$(gb "$k")" == "$want" && "$(gp "$k")" == "$want" ]] || { bad "get $k: bash [$(gb "$k")] python [$(gp "$k")] want [$want]"; get_ok=0; }
+done
+[[ $get_ok -eq 1 ]] && ok "get: file, legacy .env, shell and absent (exit 1) agree in bash and Python; another value containing 'DUAL<TAB>' can't shadow DUAL"
+
+# ── compose env file: what docker compose reads back is exactly what we resolved ──
+E="$T/e"; ER="$T/er"; mkdir -p "$E" "$ER"
+{ printf 'Q_APOS=it'"'"'s\n'; printf 'Q_DOLLAR=has $HOME and ${X}\n'; printf 'Q_HASH=a # b\n'
+  printf 'Q_DQ=dq"inside\n'; printf 'Q_BS=back\\slash\\n\n'; printf 'Q_EMPTY=\n'
+  printf 'Q_ALL=it'"'"'s "both" \\ $X\n'; printf 'Q_SHELL=from-file\n'; } > "$ER/.env"
+envf="$(env -i PATH="$PATH" HOME="$T/home" CLUB3090_CONFIG_DIR="$E" Q_SHELL=from-shell bash -c '. "$1"; club_config_compose_env_file "$2"' _ "$SH" "$ER")"
+[[ -f "$envf" && "$(stat -c %a "$envf")" == 600 ]] && ok "compose env file is written 0600 (it can hold secrets)" || bad "compose env file: '$envf' mode $(stat -c %a "$envf" 2>/dev/null)"
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  keys="Q_APOS Q_DOLLAR Q_HASH Q_DQ Q_BS Q_EMPTY Q_ALL Q_SHELL"
+  { echo "services:"; echo "  x:"; echo "    image: busybox"; echo "    environment:"; for k in $keys; do echo "      $k: \"\${$k}\""; done; } > "$T/ce.yml"
+  got="$(env -i PATH="$PATH" HOME="$T/home" docker compose --env-file "$envf" -f "$T/ce.yml" config --format json 2>&1)"
+  want="$(env -i PATH="$PATH" HOME="$T/home" CLUB3090_CONFIG_DIR="$E" Q_SHELL=from-shell python3 "$PY" resolve --show-secrets --root "$ER")"
+  ce_ok=1
+  for k in $keys; do
+    w="$(awk -F'\t' -v k="$k" '$1 == k { sub(/^[^\t]*\t[^\t]*\t/, ""); print; exit }' <<<"$want")"
+    # `docker compose config` RENDERS a literal $ as $$ (so its output re-parses
+    # safely); undo that. Verified 2026-09-28 in a container: `docker compose run`
+    # sees `has $HOME and ${X}` and `it's "both" \ $X` exactly.
+    v="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["services"]["x"]["environment"][sys.argv[1]].replace("$$", "$"), end="")' "$k" <<<"$got" 2>/dev/null)" \
+      || { bad "docker compose did not parse the env file: ${got:0:200}"; ce_ok=0; break; }
+    [[ "$v" == "$w" ]] || { bad "compose read $k as [$v], resolved [$w]"; ce_ok=0; }
+  done
+  [[ $ce_ok -eq 1 ]] && ok "docker compose reads back every resolved value exactly (', \$HOME, #, \", backslash, empty, shell-wins)"
+else
+  ok "compose env file round trip skipped (no docker compose here)"
+fi
+rm -f "$envf"
+
 # ── config dir: override > XDG > HOME, identical in both ────────────────────
 for case in "CLUB3090_CONFIG_DIR=/x/y|/x/y" "XDG_CONFIG_HOME=/xdg|/xdg/club-3090" "XDG_CONFIG_HOME=|/h/.config/club-3090" "|/h/.config/club-3090"; do
   assign="${case%%|*}"; want="${case##*|}"

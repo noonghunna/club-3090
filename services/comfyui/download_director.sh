@@ -5,10 +5,13 @@
 #   Run:  ./download_director.sh
 set -uo pipefail
 
-# Weights root: $MODEL_DIR env > repo .env MODEL_DIR > on-rig default.
+# Weights root: $MODEL_DIR env > saved settings (club-3090 config, then repo .env;
+# club-3090#1466) > on-rig default.
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"   # services/comfyui → repo root
+# shellcheck source=../../scripts/lib/club-config.sh
+. "$REPO_DIR/scripts/lib/club-config.sh"
 md="${MODEL_DIR:-}"
-[ -z "$md" ] && md="$(grep -E '^MODEL_DIR=' "$REPO_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+[ -z "$md" ] && md="$(unset MODEL_DIR; club_config_get MODEL_DIR "$REPO_DIR" 2>/dev/null || true)"
 md="${md:-/mnt/models/huggingface}"
 command -v hf >/dev/null 2>&1 || { echo "ERROR: 'hf' (huggingface_hub CLI) not found. pip install -U huggingface_hub" >&2; exit 1; }
 
