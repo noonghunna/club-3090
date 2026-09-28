@@ -582,6 +582,20 @@ from scripts.lib.profiles.compose_registry import DEFAULTS, get_registry  # noqa
 # C4-rev: merged view (core + local layer); pristine checkout ⇒ identical output.
 REG = get_registry()
 from scripts.lib.profiles.launch_compat import ProfileError, resolve_variant_pin  # noqa: E402
+from scripts.lib.profiles.launch_knobs import CatalogueError, SlugKnobs  # noqa: E402
+
+# Launch knobs (#1465 phase 3a): which catalogued launch settings each slug's compose
+# actually READS, scanned from the compose text (stdlib, launch_knobs.py). The compose
+# is the source of truth; scripts/tests/test-launch-knobs.sh proves every claim through
+# `docker compose config`. A malformed catalogue must not blank the whole c3 catalog,
+# so it degrades to knobs=None (unknown — distinct from [] = reads none) with the
+# reason on stderr; the guard test fails on it hard.
+try:
+    _KNOBS = SlugKnobs(root)
+except CatalogueError as _exc:
+    print(f"[registry-emit] WARN: launch-knob catalogue unusable, emitting knobs=null: {_exc}",
+          file=sys.stderr)
+    _KNOBS = None
 
 _tab_path = os.environ.get("REGISTRY_TAB_FILE", "")
 tab = Path(_tab_path).read_text(encoding="utf-8") if _tab_path and Path(_tab_path).exists() else ""
@@ -836,6 +850,10 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # ONLY measured-display source for consumers (replaces the c3-side
             # BENCHMARKS.md scrape).  None when the slug has no accepted row.
             "baseline": _baseline_for(d["slug"], d["compose_path"]),
+            # Catalogued launch settings (scripts/lib/profiles/launch-knobs.json)
+            # this slug's compose reads — sorted names, [] for none, None when
+            # unknown. Value domains live in the catalogue, not here (#1465).
+            "knobs": _KNOBS.for_compose(d["compose_path"]) if _KNOBS else None,
         }
     )
 

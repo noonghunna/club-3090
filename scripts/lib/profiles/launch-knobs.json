@@ -1,0 +1,341 @@
+{
+  "schema_version": 1,
+  "_about": "Launch-knob catalogue (#1465 phase 3a). DESCRIBES the launch settings a user may persist; it changes no launch behaviour. Which slugs read each knob is NOT declared here: scripts/lib/profiles/launch_knobs.py derives it from the compose text and registry-emit.sh --json exposes it per slug as `knobs`. Schema and how to add a knob: launch-knobs.md next to this file. Guard: scripts/tests/test-launch-knobs.sh.",
+  "knobs": {
+    "KV_OFFLOAD_GB": {
+      "status": "first-batch",
+      "description": "Host-RAM KV-cache tier below the GPU pool, in GiB total across all GPUs.",
+      "type": "size_gb",
+      "unit": "GiB",
+      "unset": "off: no host-RAM tier (the default on every compose that reads it)",
+      "engines": ["sglang", "vllm"],
+      "variants": [
+        {
+          "match": {"engine": ["vllm"]},
+          "enforced": "boot",
+          "above": 0,
+          "default": "",
+          "every_consumer_contains": ["*[!0-9.]*|.*|*.|*.*.*)"],
+          "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "entrypoint KV-offload block: `case \"$$KV_OFFLOAD_GB\" in *[!0-9.]*|.*|*.|*.*.*) exit 1`, i.e. digits with at most one inner dot; then --kv-offloading-size <GiB> --kv-offloading-backend native (RAM only), or a TieringOffloadingSpec with cpu_bytes_to_use = GiB * 2^30 when KV_OFFLOAD_DISK=1"},
+          "checks": [
+            {"kind": "shell", "compose": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml",
+             "from": "^\\s*OFFLOAD_ARGS=\\(\\)\\s*$", "to": "echo \"\\[kv-offload\\] \\$\\$KV_OFFLOAD_GB GiB host RAM \\(OffloadingConnector", "to_plus": 1,
+             "accept": ["64", "0.5", "128"],
+             "reject": ["64G", "1.2.3", "-5", ".5", "5."],
+             "stricter": ["0"]}
+          ]
+        },
+        {
+          "match": {"engine": ["sglang"]},
+          "enforced": "boot",
+          "min": 1.862645149230957,
+          "default": "",
+          "every_consumer_contains": ["*[!0-9.]*|.*|*.|*.*.*)", "* (1 << 30) / 1e9 / 2))"],
+          "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "command KV-offload block: the same number check as vLLM, then --hicache-size int(GiB * 2^30 / 1e9 / 2) GB PER GPU and exit 1 when that is under 1 (so the total must be >= 2e9 / 2^30 = 1.8626 GiB on these 2-GPU composes); adds --enable-hierarchical-cache --mamba-max-states-per-path 1"},
+          "checks": [
+            {"kind": "shell", "compose": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+             "from": "^\\s*OFFLOAD_ARGS=\\(\\)\\s*$", "to": "echo \"\\[kv-offload\\] \\$\\$KV_OFFLOAD_GB GiB host RAM \\(HiCache", "to_plus": 1,
+             "accept": ["64", "2", "1.9"],
+             "reject": ["1", "1.8", "0", "64G", "1.2.3", "-5"]}
+          ]
+        }
+      ],
+      "interacts": [
+        {"knob": "PYTORCH_CUDA_ALLOC_CONF", "effect": "vLLM: dropped whenever the tier is on, because vLLM rejects a KV connector with expandable_segments:True", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "entrypoint unsets PYTORCH_CUDA_ALLOC_CONF inside the KV_OFFLOAD_GB branch"}},
+        {"knob": "RADIX_EVICTION_POLICY", "effect": "SGLang: defaults to slru while the tier is on; an explicit value wins", "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "adds --radix-eviction-policy slru only when RADIX_EVICTION_POLICY is empty"}},
+        {"knob": "KV_OFFLOAD_DIR", "effect": "host directory mounted at /kv-offload for the disk tier (default: the repo's gitignored kv-offload/)", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "volumes: ${KV_OFFLOAD_DIR:-../../../../../../kv-offload}:/kv-offload"}}
+      ],
+      "caveats": [
+        {"text": "Only the dual MTP composes read it. On the vLLM DFlash tiers the same connector stores every block and never serves one back (write-only, dual-superfast measured 0 hits), so it is deliberately not wired there; SGLang DFlash2 and multi-N composes are not probed.", "source": {"file": "scripts/tests/test-kv-offload-knob.sh", "what": "header rationale, and the arm that fails any other compose carrying OFFLOAD_ARGS"}},
+        {"text": "Pinned at boot: vLLM reserves the whole tier even when idle, and SGLang's host use runs above the setting (64 -> 74 GiB measured). Size it above the GPU KV pool; a smaller tier only mirrors what the GPU already holds.", "source": {"file": "docs/engines/SGLANG.md", "what": "HiCache trap table; the vLLM sizing note is in the vLLM compose's KV-offload comment"}},
+        {"text": "No launcher checks host RAM against this value today (preflight.sh gates only CPU-offloaded weights). A global value applies to every reader, so on a small-RAM rig it can make every such launch fail; phase 3b adds the check.", "source": {"file": "scripts/preflight.sh", "what": "the host-RAM gate reads CPU-Offload-Host-RAM-GB, never KV_OFFLOAD_GB"}}
+      ]
+    },
+
+    "KV_OFFLOAD_DISK": {
+      "status": "first-batch",
+      "description": "Adds a disk tier below the host-RAM KV tier, at /kv-offload (KV_OFFLOAD_DIR on the host).",
+      "type": "bool",
+      "unset": "0: no disk tier",
+      "engines": ["sglang", "vllm"],
+      "variants": [
+        {
+          "match": {},
+          "enforced": "boot",
+          "values": ["0", "1"],
+          "spelling": {"on": "1", "off": "0"},
+          "default": "0",
+          "every_consumer_contains": ["case \"$${KV_OFFLOAD_DISK:-0}\" in", "[ \"$${KV_OFFLOAD_DISK:-0}\" = \"1\" ] && [ -z \"$${KV_OFFLOAD_GB:-}\" ]"],
+          "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "`case \"$${KV_OFFLOAD_DISK:-0}\" in 0|1) ;; *) exit 1`, then exit 1 when it is 1 and KV_OFFLOAD_GB is empty; the SGLang dual MTP composes carry the same two lines"},
+          "checks": [
+            {"kind": "shell", "compose": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml",
+             "from": "^\\s*OFFLOAD_ARGS=\\(\\)\\s*$", "to": "echo \"\\[kv-offload\\] \\$\\$KV_OFFLOAD_GB GiB host RAM \\(OffloadingConnector", "to_plus": 1,
+             "accept": [{"KV_OFFLOAD_DISK": "0"}, {"KV_OFFLOAD_DISK": "1", "KV_OFFLOAD_GB": "64"}, {"KV_OFFLOAD_DISK": "0", "KV_OFFLOAD_GB": "64"}],
+             "reject": [{"KV_OFFLOAD_DISK": "1"}, {"KV_OFFLOAD_DISK": "yes", "KV_OFFLOAD_GB": "64"}, {"KV_OFFLOAD_DISK": "true", "KV_OFFLOAD_GB": "64"}, {"KV_OFFLOAD_DISK": "2", "KV_OFFLOAD_GB": "64"}]},
+            {"kind": "shell", "compose": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+             "from": "^\\s*OFFLOAD_ARGS=\\(\\)\\s*$", "to": "echo \"\\[kv-offload\\] \\$\\$KV_OFFLOAD_GB GiB host RAM \\(HiCache", "to_plus": 1,
+             "accept": [{"KV_OFFLOAD_DISK": "0"}, {"KV_OFFLOAD_DISK": "1", "KV_OFFLOAD_GB": "64"}],
+             "reject": [{"KV_OFFLOAD_DISK": "1"}, {"KV_OFFLOAD_DISK": "on", "KV_OFFLOAD_GB": "64"}]}
+          ]
+        }
+      ],
+      "requires": [
+        {"when": {"equals": "1"}, "knob": "KV_OFFLOAD_GB", "then": "set", "why": "every disk read stages through the RAM tier", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "\"[kv-offload] KV_OFFLOAD_DISK=1 needs KV_OFFLOAD_GB\" then exit 1 (same on the SGLang dual MTP composes)"}}
+      ],
+      "interacts": [
+        {"knob": "KV_OFFLOAD_DIR", "effect": "the host directory behind /kv-offload; files there are root-owned", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "volumes line and the KV_OFFLOAD_DISK comment in the entrypoint"}},
+        {"knob": "KV_OFFLOAD_DISK_GB", "effect": "SGLang only: optional cap; there is no cap otherwise", "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE is exported only when KV_OFFLOAD_DISK_GB is set"}}
+      ],
+      "caveats": [
+        {"text": "Uncapped by default, by maintainer decision (discussion #1419): never invent a default cap. vLLM's fs tier grows until the disk is full; SGLang's is capped only by KV_OFFLOAD_DISK_GB and always keeps 20 GiB free.", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "\"the fs tier has NO size cap - it grows until the disk is full\"; the SGLang compose exports SGLANG_HICACHE_FILE_BACKEND_MIN_FREE_SPACE=20Gi"}},
+        {"text": "SGLang writes about one file per token per GPU (a 40K session is ~89K files) and switches storage prefetch to wait_complete, because the default timeout silently re-prefilled every disk hit on a large directory.", "source": {"file": "docs/engines/SGLANG.md", "what": "Disk tier paragraph (2026-09-25 measurements)"}}
+      ]
+    },
+
+    "KV_OFFLOAD_DISK_GB": {
+      "status": "first-batch",
+      "description": "Caps SGLang's disk KV tier, in whole GiB total across both GPUs.",
+      "type": "int",
+      "unit": "GiB",
+      "unset": "no cap (the disk tier grows until only 20 GiB of the volume is free)",
+      "engines": ["sglang"],
+      "variants": [
+        {
+          "match": {"engine": ["sglang"]},
+          "enforced": "boot",
+          "min": 1,
+          "default": "",
+          "every_consumer_contains": ["case \"$$KV_OFFLOAD_DISK_GB\" in", "[ \"$${KV_OFFLOAD_DISK:-0}\" = \"1\" ] || {", "KV_OFFLOAD_DISK_GB * 1024 / 2 ))Mi"],
+          "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "`case \"$$KV_OFFLOAD_DISK_GB\" in *[!0-9]*|0) exit 1`; exit 1 unless KV_OFFLOAD_DISK=1; SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE = GiB * 1024 / 2 Mi per GPU"},
+          "checks": [
+            {"kind": "shell", "compose": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+             "from": "^\\s*OFFLOAD_ARGS=\\(\\)\\s*$", "to": "echo \"\\[kv-offload\\] \\$\\$KV_OFFLOAD_GB GiB host RAM \\(HiCache", "to_plus": 1,
+             "env": {"KV_OFFLOAD_GB": "64", "KV_OFFLOAD_DISK": "1"},
+             "accept": ["3", "100"],
+             "reject": ["0", "2.5", "3G", "-1", {"KV_OFFLOAD_DISK_GB": "3", "KV_OFFLOAD_DISK": "0"}],
+             "stricter": ["00"]}
+          ]
+        }
+      ],
+      "requires": [
+        {"when": "set", "knob": "KV_OFFLOAD_DISK", "then": {"equals": "1"}, "why": "it caps the disk tier, which is off unless KV_OFFLOAD_DISK=1", "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "\"KV_OFFLOAD_DISK_GB is set but KV_OFFLOAD_DISK is not 1\" then exit 1"}}
+      ],
+      "caveats": [
+        {"text": "vLLM has no equivalent: its fs tier cannot be capped, so no vLLM compose reads this knob.", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "KV_OFFLOAD_DISK comment: the fs tier has NO size cap"}},
+        {"text": "Split evenly per GPU and enforced per model directory; measured 1.43 GiB per GPU under a 1.5 GiB-per-GPU cap after 3 sessions, LRU eviction.", "source": {"file": "docs/engines/SGLANG.md", "what": "Disk tier paragraph"}}
+      ]
+    },
+
+    "ENABLE_THINKING": {
+      "status": "first-batch",
+      "description": "Server-default thinking mode for requests that don't set their own.",
+      "type": "bool",
+      "unset": "the compose default: true on the Qwen3.8 family and Nemotron, false on vllm/thinkingcap-dual-w4a8",
+      "engines": ["sglang", "vllm"],
+      "variants": [
+        {
+          "match": {"engine": ["vllm"], "model": ["qwen3.8-27b", "thinkingcap-qwen3.8-27b", "nemotron-3-puzzle-75b"]},
+          "enforced": "boot",
+          "values": ["true", "false"],
+          "spelling": {"on": "true", "off": "false"},
+          "default": "true",
+          "every_consumer_contains": ["\"enable_thinking\": ${ENABLE_THINKING:-true}"],
+          "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "--default-chat-template-kwargs '{\"enable_thinking\": ${ENABLE_THINKING:-true}, ...}': the value is spliced into the JSON as a bare literal, so only true|false make valid JSON (issue #1465 gotcha 6: `on` stops vLLM from starting); the entrypoint picks the thinking sampler row only on the exact string true"},
+          "checks": [
+            {"kind": "json_line", "compose": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml",
+             "line": "\"enable_thinking\": \\$\\{ENABLE_THINKING",
+             "accept": ["true", "false"],
+             "reject": ["on", "yes", "True", "off"],
+             "stricter": ["1", "0"]},
+            {"kind": "json_line", "compose": "models/nemotron-3-puzzle-75b/vllm/compose/dual/w4a16/turbo.yml",
+             "line": "\"enable_thinking\": \\$\\{ENABLE_THINKING",
+             "accept": ["true", "false"],
+             "reject": ["on", "True"],
+             "stricter": ["1"]}
+          ]
+        },
+        {
+          "match": {"engine": ["vllm"], "model": ["thinkingcap-27b"]},
+          "enforced": "boot",
+          "values": ["true", "false"],
+          "spelling": {"on": "true", "off": "false"},
+          "default": "false",
+          "source": {"file": "models/thinkingcap-27b/vllm/compose/dual/w4a16/w4a8.yml", "what": "--default-chat-template-kwargs '{\"enable_thinking\": ${ENABLE_THINKING:-false}}' (JSON splice, default off)"},
+          "checks": [
+            {"kind": "json_line", "compose": "models/thinkingcap-27b/vllm/compose/dual/w4a16/w4a8.yml",
+             "line": "\"enable_thinking\": \\$\\{ENABLE_THINKING",
+             "accept": ["true", "false"],
+             "reject": ["on", "True"],
+             "stricter": ["1"]}
+          ]
+        },
+        {
+          "match": {"engine": ["sglang"], "model": ["qwen3.8-27b", "thinkingcap-qwen3.8-27b"]},
+          "enforced": "boot",
+          "values": ["true", "false"],
+          "spelling": {"on": "true", "off": "false"},
+          "default": "true",
+          "every_consumer_contains": ["\\\"enable_thinking\\\": $$_think"],
+          "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "_think=\"${ENABLE_THINKING:-true}\" is spliced bare into the JSON of --default-chat-template-kwargs, so a non-JSON value makes that argument invalid JSON (how SGLang then reacts is not measured here); the sampler row is the thinking one only on the exact string true"},
+          "checks": [
+            {"kind": "shell", "compose": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+             "from": "^\\s*_think=\"\\$\\{ENABLE_THINKING", "to": "^\\s*--preferred-sampling-params",
+             "emit": "${SAMPLER[1]}", "json": true,
+             "accept": ["true", "false"],
+             "reject": ["on", "yes", "True"],
+             "stricter": ["1", "0"]}
+          ]
+        }
+      ],
+      "interacts": [
+        {"knob": "REASONING_EFFORT", "effect": "Qwen3.8 family (vLLM and SGLang): false makes the effort default inert, because the chat template reads reasoning_effort only when thinking is on", "source": {"file": "models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja", "what": "the effort branch sits inside {%- if enable_thinking is undefined or enable_thinking is true %}"}},
+        {"knob": "TEMP", "effect": "Qwen3.8 family: selects the model-card sampler row (thinking 1.0/0.95/0.0 vs instruct 0.7/0.80/1.5 for temp/top_p/presence); an explicit TEMP, TOP_P or PRESENCE_PENALTY still wins", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "\"Sampler follows the reasoning mode\" block in the entrypoint"}}
+      ],
+      "caveats": [
+        {"text": "SGLang with false: thinking goes off but the engine keeps serving the thinking sampler row from generation_config.json; clients must send temperature/top_p/presence_penalty to get the instruct row.", "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "the [sampler] warning printed on the instruct branch"}},
+        {"text": "switch.sh's per-model thinking pin (CLUB3090_THINKING_<MODEL> = on|off) exports ENABLE_THINKING=true|false for every slug of that model, including slugs that do not read it (the llama.cpp Qwen3.8 composes use REASONING=on|off instead).", "source": {"file": "scripts/switch.sh", "what": "apply_thinking_pin_env()"}}
+      ]
+    },
+
+    "REASONING_EFFORT": {
+      "status": "first-batch",
+      "description": "Server-default reasoning effort for requests that don't send their own.",
+      "type": "enum",
+      "unset": "the compose default: low (Qwen3.8 vLLM/SGLang, Inkling-Small), medium (Qwen3.8 llama.cpp), max (GLM-5.3-Flash)",
+      "engines": ["llamacpp", "sglang", "vllm"],
+      "variants": [
+        {
+          "match": {"engine": ["vllm"], "model": ["qwen3.8-27b", "thinkingcap-qwen3.8-27b"], "compose_contains": "qwen38-reasoning-effort-template/chat_template.jinja"},
+          "enforced": "request",
+          "values": ["low", "medium", "xhigh", "high", "minimal", "max"],
+          "aliases": {"high": "xhigh", "max": "xhigh", "minimal": "low"},
+          "default": "low",
+          "every_consumer_contains": ["\"reasoning_effort\": \"${REASONING_EFFORT:-low}\""],
+          "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "spliced unvalidated into --default-chat-template-kwargs as \"reasoning_effort\": \"${REASONING_EFFORT:-low}\"; the mounted patched template maps high/max -> xhigh and minimal -> low and raises on anything else at render, so a bad default boots fine and then fails every request that sends no effort of its own (HTTP 400)"},
+          "evidence": [
+            {"file": "models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja", "contains": "{%- if resolved_reasoning_effort == 'high' %}"},
+            {"file": "models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja", "contains": "{%- if resolved_reasoning_effort == 'minimal' %}"},
+            {"file": "models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja", "contains": "{%- elif resolved_reasoning_effort == 'max' %}"},
+            {"file": "models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja", "contains": "{%- if resolved_reasoning_effort not in ('xhigh', 'medium', 'low') %}"}
+          ],
+          "checks": [
+            {"kind": "json_line", "compose": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml",
+             "line": "\"reasoning_effort\": \"\\$\\{REASONING_EFFORT",
+             "accept": ["low", "medium", "xhigh", "high", "minimal", "max"],
+             "reject": ["none", "HIGH", "extreme"]}
+          ]
+        },
+        {
+          "match": {"engine": ["sglang"], "model": ["qwen3.8-27b", "thinkingcap-qwen3.8-27b"]},
+          "enforced": "boot",
+          "values": ["low", "medium", "xhigh"],
+          "default": "low",
+          "every_consumer_contains": ["case \"$$_reff\" in low|medium|xhigh) : ;;"],
+          "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "`case \"$$_reff\" in low|medium|xhigh) : ;; *) exit 1`; passed as default_reasoning_effort, not reasoning_effort, because SGLang <= 0.5.20 lets a default reasoning_effort override the request's (sglang#38104). Stricter than vLLM: high/minimal/max are refused at boot although the same template would map them"},
+          "checks": [
+            {"kind": "shell", "compose": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+             "from": "^\\s*_reff=\"\\$\\{REASONING_EFFORT", "to": "^\\s*case \"\\$\\$_reff\" in",
+             "accept": ["low", "medium", "xhigh"],
+             "reject": ["high", "max", "minimal", "none", "LOW"]}
+          ]
+        },
+        {
+          "match": {"engine": ["llamacpp"], "model": ["qwen3.8-27b"]},
+          "enforced": "unverified",
+          "values": ["low", "medium", "xhigh", "high"],
+          "aliases": {"high": "xhigh"},
+          "default": "medium",
+          "every_consumer_contains": ["{\"reasoning_effort\":\"${REASONING_EFFORT:-medium}\"}"],
+          "source": {"file": "models/qwen3.8-27b/llama-cpp/compose/dual/unsloth-q8kxl/q8kv.yml", "what": "LLAMA_ARG_CHAT_TEMPLATE_KWARGS=${LLAMA_ARG_CHAT_TEMPLATE_KWARGS:-{\"reasoning_effort\":\"${REASONING_EFFORT:-medium}\"}}, unvalidated; per the compose header the GGUF's embedded template silently turns high into xhigh (the slowest level). Whether it raises on other values is not recorded in the repo"},
+          "checks": [
+            {"kind": "json_line", "compose": "models/qwen3.8-27b/llama-cpp/compose/dual/unsloth-q8kxl/q8kv.yml",
+             "line": "LLAMA_ARG_CHAT_TEMPLATE_KWARGS=\\$\\{LLAMA_ARG_CHAT_TEMPLATE_KWARGS", "strip_prefix": "LLAMA_ARG_CHAT_TEMPLATE_KWARGS=",
+             "accept": ["low", "medium", "xhigh", "high"],
+             "reject": ["none", "max", "minimal"]}
+          ]
+        },
+        {
+          "match": {"engine": ["llamacpp"], "model": ["glm-5.3-flash"]},
+          "enforced": "none",
+          "values": ["max", "high", "low"],
+          "default": "max",
+          "every_consumer_contains": ["'${REASONING_EFFORT:-max}'"],
+          "source": {"file": "models/glm-5.3-flash/llamacpp-club3090/compose/dual/unsloth-ud-iq3xxs/moecache.yml", "what": "--reasoning-effort '${REASONING_EFFORT:-max}', unvalidated; the comment above it lists the family's values as max (vendor default) | high | low and records that `none` is silently ignored"},
+          "checks": [
+            {"kind": "passthrough", "compose": "models/glm-5.3-flash/llamacpp-club3090/compose/dual/unsloth-ud-iq3xxs/moecache.yml",
+             "line": "\\$\\{REASONING_EFFORT:-max\\}",
+             "accept": ["max", "high", "low"],
+             "reject": ["none", "medium", "xhigh"]}
+          ]
+        },
+        {
+          "match": {"engine": ["llamacpp"], "model": ["inkling-small"]},
+          "enforced": "unverified",
+          "values": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+          "default": "low",
+          "every_consumer_contains": ["'{\"reasoning_effort\":\"${REASONING_EFFORT:-low}\"}'"],
+          "source": {"file": "models/inkling-small/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/moecache.yml", "what": "--chat-template-kwargs '{\"reasoning_effort\":\"${REASONING_EFFORT:-low}\"}', unvalidated; the header lists none/minimal/low/medium/high/xhigh/max and the model ignores enable_thinking entirely"},
+          "checks": [
+            {"kind": "json_line", "compose": "models/inkling-small/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/moecache.yml",
+             "line": "\"reasoning_effort\":\"\\$\\{REASONING_EFFORT",
+             "accept": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+             "reject": ["off", "0.5", "extreme"]}
+          ]
+        }
+      ],
+      "interacts": [
+        {"knob": "ENABLE_THINKING", "effect": "Qwen3.8 family on vLLM and SGLang: inert when ENABLE_THINKING=false", "source": {"file": "models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja", "what": "the effort branch is inside the enable_thinking check"}},
+        {"knob": "LLAMA_ARG_CHAT_TEMPLATE_KWARGS", "effect": "llama.cpp Qwen3.8: REASONING_EFFORT is only the default of this variable, so setting LLAMA_ARG_CHAT_TEMPLATE_KWARGS makes it ignored", "source": {"file": "models/qwen3.8-27b/llama-cpp/compose/dual/unsloth-q8kxl/q8kv.yml", "what": "LLAMA_ARG_CHAT_TEMPLATE_KWARGS=${LLAMA_ARG_CHAT_TEMPLATE_KWARGS:-{...${REASONING_EFFORT:-medium}...}}"}}
+      ],
+      "caveats": [
+        {"text": "Only the fallback for clients that send no effort: a request's own reasoning_effort wins on every engine here.", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "\"It is a PER-REQUEST OpenAI control, so this is only the fallback for callers that send nothing\""}},
+        {"text": "The levels are not a scale on Qwen3.8: low injects a brevity instruction, medium injects nothing (the un-nudged baseline), xhigh injects a careful-thinking one. The instruction sits at the top of the system prompt, so changing the default changes every prompt's prefix and the prefix cache starts over.", "source": {"file": "models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja", "what": "reasoning_instructions for xhigh/low, rendered first in the system block"}},
+        {"text": "On GLM-5.3-Flash it is effectively a two-position switch: low = thinking off (0 reasoning chars measured), max = on; high measured next to low, not between.", "source": {"file": "models/glm-5.3-flash/llamacpp-club3090/compose/dual/unsloth-ud-iq3xxs/moecache.yml", "what": "measurements in the thinking/reasoning policy comment"}},
+        {"text": "Inkling-Small also documents a float 0.0-0.99; it is left out of the domain because the compose splices the value into a JSON string (\"0.5\"), and whether the template accepts that string form is not recorded.", "source": {"file": "models/inkling-small/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/moecache.yml", "what": "header: reads reasoning_effort (none/minimal/low/medium/high/xhigh/max, or a float 0.0-0.99)"}}
+      ]
+    },
+
+    "SPEC_N": {
+      "status": "candidate",
+      "description": "Speculative-decoding depth for the slug's drafter; 0 turns the drafter off.",
+      "type": "int",
+      "unset": "the compose's own depth (per slug; 1 to 8 today, or inferred from the drafter on the SGLang DFlash2 composes)",
+      "engines": ["exllamav3", "llamacpp", "sglang", "vllm"],
+      "variants": [
+        {
+          "match": {},
+          "enforced": "boot",
+          "min": 0,
+          "every_consumer_contains": ["*[!0-9]*"],
+          "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "`case \"$$_spec_n\" in \"\"|*[!0-9]*) exit 1` (\"a typo can never masquerade as a silent drafter off\"); every compose that reads SPEC_N carries the same *[!0-9]* check and a 0 = off branch"},
+          "checks": [
+            {"kind": "shell", "compose": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml",
+             "from": "^\\s*_spec_n=\"\\$\\$\\{SPEC_N", "to": "^\\s*esac\\s*$",
+             "accept": ["0", "3"], "reject": ["-1", "3x", "on", "2.5"]},
+            {"kind": "shell", "compose": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+             "from": "^\\s*_n=\"\\$\\{SPEC_N", "to": "^\\s*case \"\\$\\$_n\" in",
+             "accept": ["0", "3"], "reject": ["-1", "3x", "on"]},
+            {"kind": "shell", "compose": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/dflash2.yml",
+             "from": "^\\s*_n=\"\\$\\{SPEC_N", "to": "^\\s*case \"\\$\\$_n\" in",
+             "accept": ["0", "8"], "reject": ["-1", "8x"]},
+            {"kind": "shell", "compose": "models/glm-5.3-flash/llamacpp-club3090/compose/dual/unsloth-ud-iq3xxs/moecache.yml",
+             "from": "^\\s*_spec_n=\"\\$\\$\\{SPEC_N", "to": "^\\s*esac\\s*$",
+             "accept": ["0", "3"], "reject": ["-1", "on"]},
+            {"kind": "shell", "compose": "models/qwen3.8-flash-next/exllamav3/compose/dual/exl3-3.05bpw/cpumoe.yml",
+             "from": "^\\s*_spec_n=\"\\$\\$\\{SPEC_N", "to": "^\\s*esac\\s*$",
+             "accept": ["0", "4"], "reject": ["-1", "four"]}
+          ]
+        }
+      ],
+      "interacts": [
+        {"knob": "SPEC", "effect": "SPEC=off|OFF|Off|false|no|0 forces the drafter off whatever SPEC_N says (back-compat alias)", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "case \"$${SPEC:-}\" in off|OFF|Off|false|no|0) _spec_n=0"}},
+        {"knob": "MEM_FRACTION", "effect": "SGLang MTP composes: SPEC_N=0 lowers the default mem-fraction-static from 0.95 to 0.90 (room for CUDA graphs without the drafter)", "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "the SPEC_N=0 branch exports MEM_FRACTION=0.90 when it is unset"}},
+        {"knob": "MTP_DRAFT_N_MAX", "effect": "older per-compose depth names (MTP_DRAFT_N_MAX, DRAFT_N_MAX, MTP_N_MAX, SPEC_N_MAX, NUM_SPEC_TOKENS) are the fallback when SPEC_N is unset on some llama.cpp, beellama and vLLM composes", "source": {"file": "models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/mtp-vision.yml", "what": "_spec_n=\"$${SPEC_N:-$${MTP_DRAFT_N_MAX:-2}}\" (and siblings)"}}
+      ],
+      "caveats": [
+        {"text": "The number means different things per slug: MTP depth, DFlash/DFlash2 draft width or block size, the ngram-mod length, or exllamav3's draft ceiling. Defaults are tuned per slug, so a global value other than 0 overrides every slug's tuning at once.", "source": {"file": "models/qwen3.8-flash-next/exllamav3/compose/dual/exl3-3.05bpw/cpumoe.yml", "what": "\"SPEC_N=<n> sets the draft ceiling\"; the other meanings are in the vLLM DFlash2, SGLang DFlash2 and qwen3.8-flash-next llama.cpp composes"}},
+        {"text": "Measured on vllm/qwen38-27b-dual-max: with the MTP drafter on, prefix reuse snaps to the attention-block boundary (zero below about two blocks, ~3.2K tokens there); with SPEC_N=0 it reuses at 16-token granularity. Turning the drafter off trades decode speed for that.", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "the --mamba-cache-mode comment (club-3090#1246)"}}
+      ]
+    }
+  }
+}
