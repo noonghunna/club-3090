@@ -70,8 +70,11 @@ st -- frobnicate; [[ $RC -eq 2 ]] && ok "an unknown command exits 2" || bad "unk
 # ── path ────────────────────────────────────────────────────────────────────
 CFG="$T/p/club-3090"
 st -- path
-[[ $RC -eq 0 && "$OUT" == *"$CFG"* && "$(command grep -c 'not created yet' <<<"$OUT")" == 3 ]] \
+# (the cache and data dir rows, #1466 phase 4, are counted apart: they depend on XDG/HOME)
+[[ $RC -eq 0 && "$OUT" == *"$CFG"* && "$(command grep -vE '^(cache|data) dir:' <<<"$OUT" | command grep -c 'not created yet')" == 3 ]] \
   && ok "path: the config dir and both files, none created yet" || bad "path (empty): rc=$RC out: $OUT"
+[[ "$(command grep -cE '^(cache|data) dir: ' <<<"$OUT")" == 2 ]] && ok "path: also lists the cache and data dirs" \
+  || bad "path: no cache/data dir rows: $OUT"
 [[ "$OUT" == *"$REPO/.env"*"none"* ]] && ok "path: names the repo .env, absent here" || bad "path: repo .env line: $OUT"
 [[ ! -e "$CFG" ]] && ok "path creates nothing" || bad "path created $CFG"
 

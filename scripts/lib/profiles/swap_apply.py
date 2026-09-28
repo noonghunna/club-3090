@@ -20,6 +20,7 @@ head) ``--speculative-config``.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -48,11 +49,17 @@ def _absolutize_volume(v: str, base_dir: Path) -> str:
     if i == -1:
         return v                       # named volume / no bind target
     src, rest = v[:i], v[i:]           # rest = ':/target[:mode]'
-    if src.startswith("${") and ":-" in src and src.endswith("}"):
-        var, _, fb = src[2:-1].partition(":-")
-        if fb and not fb.startswith(("/", "~", "$")):
-            fb = os.path.abspath(os.path.join(base_dir, fb))
-        return f"${{{var}:-{fb}}}{rest}"
+    if "${" in src:
+        # Every relative ${VAR:-default}, innermost, wherever it sits: the shared-dir
+        # mounts (#1466 phase 4) put a suffix after it or nest it —
+        #   ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton
+        #   ${KV_OFFLOAD_DIR:-${CLUB3090_DATA_DIR:-../../../../../..}/kv-offload}
+        def _abs(m):
+            fb = m.group(2)
+            if fb and not fb.startswith(("/", "~", "$")):
+                fb = os.path.abspath(os.path.join(base_dir, fb))
+            return f"${{{m.group(1)}:-{fb}}}"
+        return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*):-([^${}]*)\}", _abs, src) + rest
     if src.startswith(("./", "../")) or (
         "/" in src and not src.startswith(("/", "~", "$"))
     ):

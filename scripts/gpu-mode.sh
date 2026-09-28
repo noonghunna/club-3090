@@ -34,8 +34,15 @@ GPU_MODE_SCRIPTS="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 # only the clone whose settings (its legacy .env) are read.
 # shellcheck source=lib/club-config.sh
 . "$GPU_MODE_SCRIPTS/lib/club-config.sh"
-# shellcheck source=lib/engine-cache.sh
-. "$GPU_MODE_SCRIPTS/lib/engine-cache.sh"
+# Compile-cache / KV-disk-tier dirs for model composes (#1466 phase 4). A partial copy of
+# scripts/ without it (the gateway tests copy only what they exercise) keeps every
+# compose on its in-repo defaults, which is what a plain `docker compose up` does.
+if [ -f "$GPU_MODE_SCRIPTS/lib/engine-cache.sh" ]; then
+    # shellcheck source=lib/engine-cache.sh
+    . "$GPU_MODE_SCRIPTS/lib/engine-cache.sh"
+else
+    club_engine_cache_env() { :; }
+fi
 # Studio paths YOU exported, captured BEFORE comfyui-paths.sh (below) exports its derived
 # ones: passed through sudo on every compose call, so a one-run override reaches the
 # containers without being saved. Derived values are not passed — the saved value, else
