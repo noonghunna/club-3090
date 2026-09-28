@@ -1426,6 +1426,22 @@ ready_probe() {
   esac
 }
 
+# #1462: an engine can take disable_custom_all_reduce=False, fail to build its custom
+# all-reduce, log a single warning and serve on NCCL. Nothing else in a launch says
+# so, and a custom-AR benchmark from that boot measures NCCL. Detection is the shared
+# classifier's (scripts/lib/p2p-state.sh), so report.sh, bench.sh and this agree.
+warn_if_custom_ar_setup_failed() {
+  local container="${VARIANT_CONTAINER[$VARIANT]:-}" log
+  [[ -n "$container" ]] || return 0
+  # shellcheck source=lib/p2p-state.sh
+  source "${ROOT_DIR}/scripts/lib/p2p-state.sh" 2>/dev/null || return 0
+  log="$(docker logs "$container" 2>&1 || true)"
+  [[ "$(printf '%s\n' "$log" | p2p_engine_log_evidence | p2p_classify_engagement 2>/dev/null)" == "nccl_only_failed" ]] || return 0
+  echo "[switch] ⚠️ custom all-reduce was requested but its SETUP FAILED — the engine fell back to NCCL, so the kernel is NOT running." >&2
+  printf '%s\n' "$log" | command grep -m1 -F "Setup Custom allreduce failed" | sed 's/^/[switch]   | /' >&2
+  echo "[switch]    Serving is unaffected; a custom-AR benchmark from this boot measures NCCL. See club-3090#1462." >&2
+}
+
 wait_ready() {
   # Find the container we just brought up so we can detect crashes mid-boot
   # AND surface stage progress markers from its logs while we wait.
@@ -1648,6 +1664,7 @@ check_variant "${VARIANT}"   # every refusal that doesn't need freed resources, 
 down_running
 up_variant "${VARIANT}"
 [[ $WAIT -eq 1 ]] && wait_ready
+[[ $WAIT -eq 1 ]] && warn_if_custom_ar_setup_failed
 # OWUI sync (default on; --no-owui to skip): surface the just-launched endpoint in
 # Open WebUI's model picker AND prune club-owned connections that are no longer
 # serving, so the picker matches reality. No-op if OWUI isn't running. Only

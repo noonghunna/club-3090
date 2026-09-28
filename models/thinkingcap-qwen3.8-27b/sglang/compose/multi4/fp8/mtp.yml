@@ -328,6 +328,7 @@ services:
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8177}}:30000"
     volumes:
+      - ../../../../../../scripts/lib/cuda-ordinals.sh:/etc/club3090/cuda-ordinals.sh:ro
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
       # Patched template (default_reasoning_effort + high -> xhigh), mounted over the
       # checkpoint's own; SGLang loads it from the model dir. See the SAMPLER note
@@ -376,6 +377,10 @@ services:
     command:
       - |
         set -euo pipefail
+        # GPU UUIDs (estate pinning) -> this container's ordinals, so SGLang's custom all-reduce can
+        # parse CUDA_VISIBLE_DEVICES (club-3090#1462). No-op when unset or already numeric.
+        if [ -f /etc/club3090/cuda-ordinals.sh ]; then . /etc/club3090/cuda-ordinals.sh; club3090_cuda_ordinals;
+        else echo "[gpus] cuda-ordinals.sh not mounted; CUDA_VISIBLE_DEVICES not remapped (club-3090#1462)" >&2; fi
         M=/models/thinkingcap-qwen3.8-27b-fp8
         # ⚠️ SPEC_N=0 removes the speculative flags entirely rather than passing
         # n=0 — the same rule the GLM composes use, so a typo can never

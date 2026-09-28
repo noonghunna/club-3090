@@ -116,6 +116,7 @@ p2p_engine_log_evidence() {
     index($0, "CustomAllreduce is disabled") ||
     index($0, "CustomAllReduceV2 is disabled") ||
     index($0, "disable_custom_all_reduce=True") ||
+    index($0, "Setup Custom allreduce failed") ||
     index($0, "sglang is using nccl==") ||
     index($0, "All Reduce config:") { print }
   '
@@ -127,7 +128,7 @@ p2p_engine_log_evidence() {
 # own all-reduce runtime lines. vLLM reports vetoes; SGLang additionally reports
 # `sglang is using nccl==...` and `All Reduce config: ...` after initialization.
 # Prints: "on" | "nccl_only_operator" | "nccl_only_gated" | "nccl_only_degraded"
-#         | "nccl_only_nolib" | "off" | "unknown" | "requested".
+#         | "nccl_only_nolib" | "nccl_only_failed" | "off" | "unknown" | "requested".
 # Reads detect_nvlink.sh's machine-readable STATE line for OUR configuration and
 # vLLM/SGLang runtime messages for what the ENGINE did; our prose is consulted
 # only on the legacy path (containers predating STATE and non-SGLang engines).
@@ -188,6 +189,12 @@ p2p_classify_engagement() {
   case "$text" in
     *"lacks GPU P2P capability"*|*"P2P test failed"*)       engine_verdict=degraded ;;
     *"missing custom allreduce library"*)                   engine_verdict=nolib ;;
+    # SGLang catches ANY exception while building its custom all-reduce, logs this
+    # line and falls back to NCCL — the boot args still say it is enabled
+    # (club-3090#1462: UUID-form CUDA_VISIBLE_DEVICES was one such exception). Its
+    # advice suffix names --disable-custom-all-reduce, so this must precede the
+    # operator match below.
+    *"Setup Custom allreduce failed"*)                       engine_verdict=failed ;;
     *"not supported on"*"PCIe-only GPUs"*)                  engine_verdict=gated ;;
     *"Custom allreduce is disabled"*|*"CustomAllreduce is disabled"*|*"CustomAllReduceV2 is disabled"*)
                                                                engine_verdict=gated ;;
@@ -210,6 +217,7 @@ p2p_classify_engagement() {
     case "$engine_verdict" in
       degraded) echo nccl_only_degraded; return 0 ;;
       nolib)    echo nccl_only_nolib;    return 0 ;;
+      failed)   echo nccl_only_failed;   return 0 ;;
       gated)    echo nccl_only_gated;    return 0 ;;
       operator) echo nccl_only_operator; return 0 ;;
     esac
@@ -240,6 +248,13 @@ p2p_classify_engagement() {
   esac
   case "$text" in
     *"missing custom allreduce library"*) echo nccl_only_nolib; return 0 ;;
+  esac
+  # Before the operator case: this line's advice suffix ("specify
+  # --disable-custom-all-reduce explicitly") would otherwise read as an opt-out.
+  case "$text" in
+    *"Setup Custom allreduce failed"*)
+      case "$text" in *"P2P off"*|*"using PCIe mode"*|*"forcing PCIe mode"*|*NCCL_P2P_DISABLE=1*) echo off; return 0 ;; esac
+      echo nccl_only_failed; return 0 ;;
   esac
   case "$text" in
     *"Custom allreduce is disabled"*|*"CustomAllreduce is disabled"*|*"CustomAllReduceV2 is disabled"*|*"custom all-reduce engine-gated"*)
@@ -293,6 +308,9 @@ p2p_verdict() {
       return 0 ;;
     nccl_only_nolib)
       echo "ℹ interconnect: P2P transport is up, but this image has no custom all-reduce library to run (non-GPU or stripped build). Peer transfers still go via NCCL."
+      return 0 ;;
+    nccl_only_failed)
+      echo "⚠️ interconnect WARN: custom all-reduce was requested (disable_custom_all_reduce=False) but its SETUP FAILED and the engine fell back to NCCL — the kernel is NOT running, whatever the boot args say. The engine log's 'Setup Custom allreduce failed with …' line names the cause; UUID-form CUDA_VISIBLE_DEVICES was one (club-3090#1462, now remapped in the SGLang composes). Custom-AR benchmarks from this boot measure NCCL."
       return 0 ;;
   esac
   case "$eng" in

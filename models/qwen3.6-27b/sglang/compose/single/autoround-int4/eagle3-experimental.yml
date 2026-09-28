@@ -99,6 +99,7 @@ services:
               device_ids: ["${ESTATE_GPUS:-0}"]
               capabilities: [gpu]
     volumes:
+      - ../../../../../../scripts/lib/cuda-ordinals.sh:/etc/club3090/cuda-ordinals.sh:ro
       - "${MODEL_DIR:?MODEL_DIR is required}/qwen3.6-27b-autoround-int4:/models/target:ro"
       - "${MODEL_DIR}/qwen3.6-27b-prism-eagle3/compressed:/models/drafter:ro"
       - "../../../patches/patch_sglang_eagle3.py:/patches/patch_sglang_eagle3.py:ro"
@@ -110,6 +111,10 @@ services:
     command:
       - |
         set -euo pipefail
+        # GPU UUIDs (estate pinning) -> this container's ordinals, so SGLang's custom all-reduce can
+        # parse CUDA_VISIBLE_DEVICES (club-3090#1462). No-op when unset or already numeric.
+        if [ -f /etc/club3090/cuda-ordinals.sh ]; then . /etc/club3090/cuda-ordinals.sh; club3090_cuda_ordinals;
+        else echo "[gpus] cuda-ordinals.sh not mounted; CUDA_VISIBLE_DEVICES not remapped (club-3090#1462)" >&2; fi
         echo "[club-3090] applying EAGLE-3 patch to SGLang v0.5.12 ..."
         python3 /patches/patch_sglang_eagle3.py
         echo "[club-3090] applying AutoRound fused-BF16 patch to SGLang v0.5.12 ..."

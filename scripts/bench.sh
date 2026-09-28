@@ -2221,6 +2221,7 @@ bench_interconnect_block() {
       nccl_only_gated)    l3="custom-AR OFF (engine-gated), P2P LIVE — the vLLM/SGLang NVLink-only gate at world>2 (#786). Peer transfers still go via NCCL. Healthy" ;;
       nccl_only_degraded) l3="⚠️ custom-AR OFF (P2P BROKEN) — the engine refused its kernel because peer access is missing or its P2P TEST FAILED. NOT an operator choice and NOT healthy; the grant can be advertised while transfers fail (#873). Run scripts/p2p-validate.sh" ;;
       nccl_only_nolib)    l3="custom-AR unavailable — this image has no custom all-reduce library. Peer transfers still go via NCCL" ;;
+      nccl_only_failed)   l3="⚠️ custom-AR SETUP FAILED — requested, but the engine logged 'Setup Custom allreduce failed' and fell back to NCCL (#1462). The kernel is NOT running; a custom-AR A/B from this boot measures NCCL" ;;
       off)       l3="OFF — the serving container resolved to PCIe/no-P2P mode" ;;
       requested) l3="REQUESTED but UNVERIFIED — P2P forced on without a driver grant (#688)" ;;
       *)         l3="unknown — no current-boot custom all-reduce initialization or veto line" ;;
