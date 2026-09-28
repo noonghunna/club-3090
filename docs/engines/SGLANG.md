@@ -138,7 +138,9 @@ Shipped as the opt-in `KV_OFFLOAD_GB` knob (plus `KV_OFFLOAD_DISK` / `KV_OFFLOAD
 40K session written before a `docker restart` came back from disk in 4.74 s vs 26.70 s cold
 (`cache_source="storage"`, prefetch hit 100%). `KV_OFFLOAD_DISK_GB` caps it (split per GPU; measured 1.43 GiB
 per GPU under a 1.5 GiB cap after 3 sessions, LRU eviction). ⚠️ About **one file per token per GPU** (a 40K session
-= ~89K files), all root-owned; the cap is per model; a 20 GiB free-space floor is always set.
+= ~89K files), all root-owned; the cap is per model; a 20 GiB free-space floor is always set. The directory is
+`KV_OFFLOAD_DIR`, else `~/.local/share/club-3090/kv-offload` from the launchers: your home filesystem, inodes
+included, unless you move it ([FAQ](../FAQ.md#where-do-the-compile-caches-and-the-kv-disk-tier-go)).
 ⚠️ **The knob sets `--hicache-storage-prefetch-policy wait_complete`, deliberately.** SGLang's default `timeout`
 policy gives a storage prefetch `2 s + 0.1 s per 1K tokens` and then silently re-prefills. On a large tier directory
 (~850K files per GPU) a 40K prompt took 7.4 s to read back against a 5.9 s budget, so every disk hit was discarded;

@@ -164,13 +164,13 @@ Filename collisions across topology and quant dirs (e.g. `dual/autoround-int4/df
 
 #### Patches and caches stay engine-level (NOT under a topology)
 
-`<model>/<engine>/patches/` and `<model>/<engine>/cache/` sit parallel to `compose/`, not under any topology subdirectory. Three reasons:
+`<model>/<engine>/patches/` and `<model>/<engine>/cache/` sit parallel to `compose/`, not under any topology subdirectory (`cache/` is now only the raw-compose fallback — see 3). Three reasons:
 
 1. **Patches are reused across topologies and quant variants.** `vllm-marlin-pad/` is mounted by dual and multi-card AutoRound composes. Putting it under one topology or quant dir would force the others to symlink or duplicate.
 2. **Patches are scoped by (model, engine), not by topology.** A vLLM source override doesn't change based on TP=1 vs TP=4; it's an in-container engine-internal patch that applies the same way regardless of mount layout.
-3. **Caches (`torch_compile/`, `triton/`) warm-start across composes.** Sharing them at the engine level means switching from `single/autoround-int4/tq3-mtp.yml` to `single/autoround-int4/long-text.yml` reuses the JIT'd kernels instead of recompiling.
+3. **Caches (`torch_compile/`, `triton/`) warm-start across composes** — and since #1466 phase 4 they no longer live in the checkout. The launchers (`switch.sh`/`launch.sh`, `gpu-mode`, the estate planner, c3's generated-compose serve) mount them from `${CLUB3090_CACHE_DIR:-${XDG_CACHE_HOME:-~/.cache}/club-3090}/<engine image key>/`, shared by every checkout and every model on that image; `<engine>/cache/` is only what a raw `docker compose up` with nothing set falls back to. Write a cache mount as `${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/<subdir>:<container path>` (with `user: "0:${DOCKER_GID:-1000}"`), and the KV disk tier as `${KV_OFFLOAD_DIR:-${CLUB3090_DATA_DIR:-../../../../../..}/kv-offload}:/kv-offload`; `test-compose-cache-ownership` holds every compose to both. Why the launcher and not the compose: the key is the image ID, which compose can't compute, and a missing bind-mount source is created by docker as root:root, so the launcher creates each mounted dir as the user first. Mechanism, key format and fallbacks: `scripts/lib/engine_cache.py`.
 
-Relative paths from a compose to its sibling patches/caches: `../../../patches/...` and `../../../cache/...` (one `..` from `<quant>/` to `<topology>/`, second to `compose/`, third to the engine dir, then `patches/` or `cache/`). Repo-root mounts such as `scripts/` and `models-cache/` need one extra `../` for the quant layer too.
+Relative paths from a compose to its sibling patches/caches: `../../../patches/...` and `../../../cache/...` (one `..` from `<quant>/` to `<topology>/`, second to `compose/`, third to the engine dir, then `patches/` or `cache/` — for caches, as the fallback inside `${CLUB3090_ENGINE_CACHE_DIR:-…}`). Repo-root mounts such as `scripts/` and `models-cache/` need one extra `../` for the quant layer too.
 
 **If a future patch is genuinely topology-specific** (e.g., a kernel rewrite that only applies to TP=2), keep it at `<engine>/patches/<patch-name>/` and document the topology constraint in the patch's README. Discoverability ("one `patches/` per engine, search there") trumps the marginal benefit of a topology partition.
 

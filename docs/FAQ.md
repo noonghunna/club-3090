@@ -8,6 +8,7 @@ Common questions about club-3090. If your question isn't here, open a [GitHub Di
 - [Engine choice](#engine-choice) — Ollama, LM Studio, MTP vs EAGLE
 - [Performance](#performance) — slow TPS, prefill cliffs
 - [Settings](#where-are-my-settings-saved-and-how-do-i-change-one) — where they're saved, `settings.sh`, the old repo `.env`
+- [Caches](#where-do-the-compile-caches-and-the-kv-disk-tier-go) — where the compile caches and the KV disk tier go, and how to move them
 - [Troubleshooting ladder](#before-symptom-matching--boot-the-simplest-stack-first) — 5-step isolation from minimal to dual-turbo
 
 ---
@@ -541,6 +542,21 @@ bash scripts/settings.sh path                    # where the files are
 - **Running `docker compose` yourself** skips all of this. Pass what you need on the command line (`MODEL_DIR=/path/to/models docker compose -f …`), or hand compose all your settings the way the launchers resolve them: `envf="$(bash scripts/settings.sh compose-env-file)"; docker compose --env-file "$envf" -f … up -d; rm -f "$envf"` (a 0600 temp file, secrets included; `club3090.env` on its own would miss `secrets.env`, the repo `.env` and your shell).
 - **One checkout that should run differently, or a `~/.config` you sync between machines?** Export `CLUB3090_CONFIG_DIR=/some/other/dir` for it. `MODEL_DIR` and the GPU knobs belong to one machine, and `secrets.env` shouldn't travel.
 - **Filing a bug?** `report.sh` includes a Settings section, with secrets redacted.
+
+### Where do the compile caches and the KV disk tier go?
+
+vLLM compiles kernels the first time it starts (a few minutes) and keeps them, so later starts are quicker. The launchers keep that compile cache in **`~/.cache/club-3090/<engine image>/`**: one folder per engine image, shared by every checkout of the repo and every model that runs that image. A different image, or the same tag pulled again to a new version, gets its own folder. The KV-offload disk tier (`KV_OFFLOAD_DISK=1`) goes in **`~/.local/share/club-3090/kv-offload/`**.
+
+| Setting | Moves | Default |
+|---|---|---|
+| `CLUB3090_CACHE_DIR` | the compile caches | `$XDG_CACHE_HOME/club-3090`, else `~/.cache/club-3090` |
+| `CLUB3090_DATA_DIR` | the KV disk tier's default home | `$XDG_DATA_HOME/club-3090`, else `~/.local/share/club-3090` |
+| `KV_OFFLOAD_DIR` | the KV disk tier itself | `<data dir>/kv-offload` |
+
+- **Both are on your home filesystem by default.** One image's compile cache can reach tens of GB (22 GB for the Qwen3.8 composes in one checkout on the reference rig), and vLLM's KV disk tier has no size cap. If your home partition is small, move them to a bigger disk: `bash scripts/settings.sh set CLUB3090_CACHE_DIR=/data/club-3090-cache KV_OFFLOAD_DIR=/data/kv-offload`.
+- `bash scripts/settings.sh caches` lists each folder with its size, and the free space where the disk tier is.
+- **Older versions kept these inside the repo** (`models/<model>/vllm/cache/` and `kv-offload/`). They are no longer used. `bash scripts/settings.sh caches --remove-legacy` removes them after asking. Folders docker created as root can only be deleted by root; the command prints the `sudo rm -rf` line for those.
+- **Running `docker compose up` yourself?** With nothing set, a compose still uses the in-repo folders, as before. To use the shared ones, export the two lines `python3 scripts/lib/engine_cache.py prepare --compose <file>` prints (it creates the folders too), or launch through `switch.sh`.
 
 ### How do I keep my install up-to-date?
 
