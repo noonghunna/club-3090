@@ -20,8 +20,21 @@
 #   bash scripts/switch.sh --down               # just bring down whatever's up
 #   bash scripts/switch.sh --set-default <slug>  # pin <slug> as YOUR default for its model (saved in club3090.env)
 #   bash scripts/switch.sh --clear-default <model>  # remove your pinned default for <model>
-#   bash scripts/switch.sh --explain <slug>      # one slug's full story: registry row + engine/model/hardware/drafter facts + kv-calc fit verdict + measured BENCHMARKS row
+#   bash scripts/switch.sh --set <slug> KEY=VALUE...  # save launch settings for ONE slug (slugs.json), e.g.
+#                                                # --set sgl/qwen38-27b-dual-fast KV_OFFLOAD_GB=64 REASONING_EFFORT=medium
+#   bash scripts/switch.sh --unset <slug> KEY...  # remove launch settings saved for <slug>
+#   bash scripts/switch.sh --explain <slug>      # one slug's full story: registry row + engine/model/hardware/drafter facts + kv-calc fit verdict + measured BENCHMARKS row + its launch settings and their sources
 #   bash scripts/switch.sh --explain <slug> --json  # same, as a structured JSON object
+#
+# Launch settings (#1465) are the catalogued knobs in scripts/lib/profiles/launch-knobs.json
+# (KV_OFFLOAD_GB, KV_OFFLOAD_DISK, KV_OFFLOAD_DISK_GB, ENABLE_THINKING, REASONING_EFFORT, SPEC_N).
+# For each knob the slug's compose reads, the value comes from the first of:
+#   your shell (exported for this launch) > this slug (--set) > the model's thinking pin
+#   (ENABLE_THINKING only) > your global settings (club3090.env > secrets.env > repo .env)
+#   > the compose's own default.
+# A bad value, an unmet dependency (KV_OFFLOAD_DISK=1 without KV_OFFLOAD_GB) or a RAM tier
+# the host can't hold is refused BEFORE the running slug is taken down. Settings apply at
+# the next launch; `--explain <slug>` shows each value and where it comes from.
 #
 # `<…>/default` tokens auto-resolve to a concrete slug (design §13.1):
 #   <engine>/default        e.g. vllm/default — the maintainer's recommended
@@ -75,9 +88,11 @@
 #                 port is bound, and warms the moe-cache expert pool (allocated
 #                 on first inference). Set 0 to skip.
 #   READY_PROBE_TIMEOUT  Default: 90 (seconds) — hard cap on that one probe.
-#   CLUB3090_THINKING_<MODEL>  saved pin (on|off|inherit) → ENABLE_THINKING at
-#                 launch (#1014 follow-up; set it from the serve-confirm [T]).
-#                 An ENABLE_THINKING exported in the shell wins over the pin.
+#   CLUB3090_THINKING_<MODEL>  saved pin (on|off|inherit) → ENABLE_THINKING=true|false
+#                 at launch, on the slugs of that model whose compose reads it (#1014
+#                 follow-up; set it from the serve-confirm [T]). An ENABLE_THINKING exported
+#                 in the shell or saved for the slug wins over the pin; the pin wins over a
+#                 global ENABLE_THINKING.
 
 set -euo pipefail
 
@@ -331,66 +346,76 @@ PY_CLEARKEY
   exit 0
 }
 
-# --- #1014 follow-up: persisted per-model THINKING pin ------------------------
+# --- #1465: launch settings — per-slug store + the layered resolver ----------
 #
-# The serve-confirm modal's [T] persists the tri-state thinking choice as the saved
-# setting CLUB3090_THINKING_<MODEL> (the same kind of pin --set-default saves for
-# CLUB3090_DEFAULT_<MODEL>). This side makes that pin REAL: when resolving the
-# serve env for a launch we read it and inject ENABLE_THINKING accordingly.
+# The resolver is scripts/lib/launch_settings.py (the per-slug store is
+# scripts/lib/slug_settings.py): for each catalogued knob a slug's compose reads it
+# decides the effective value and its source — shell > this slug > model pin >
+# club3090.env > secrets.env > repo .env > compose default. This file only calls it:
+#   check_variant  → `check`   (refusals BEFORE the running slug is torn down)
+#   up_variant     → `exports` (the values are exported right before compose up)
+#   --explain      → `explain` · --set / --unset → `set` / `unset`
+# "Shell" means a key the settings loader did NOT export: club_config_load (top of this
+# script) records every key it exported in CLUB3090_CONFIG_SOURCE, passed as --loaded.
+# The per-model thinking pin (CLUB3090_THINKING_<MODEL>, #1014 follow-up) is one of the
+# layers: on → ENABLE_THINKING=true, off → false, inherit adds nothing.
+LAUNCH_SETTINGS_PY="${ROOT_DIR}/scripts/lib/launch_settings.py"
 
-# Echo the pin key for a model's thinking default — normalization identical
-# to model_default_pin_key (compose_registry.model_thinking_pin_key).
-thinking_pin_key_for() {
-  local model="$1"
-  python3 - "$ROOT_DIR" "$model" <<'PY_THINKKEY'
-import sys
-from pathlib import Path
-root = Path(sys.argv[1]); sys.path.insert(0, str(root))
-from scripts.lib.profiles.compose_registry import model_thinking_pin_key  # noqa: E402
-print(model_thinking_pin_key(sys.argv[2]))
-PY_THINKKEY
+_launch_settings() {  # <subcommand> [args…]
+  local cmd="$1" k
+  shift
+  local -a loaded=()
+  if declare -p CLUB3090_CONFIG_SOURCE >/dev/null 2>&1; then
+    for k in "${!CLUB3090_CONFIG_SOURCE[@]}"; do
+      loaded+=(--loaded "${k}=${CLUB3090_CONFIG_SOURCE[$k]}")
+    done
+  fi
+  python3 "$LAUNCH_SETTINGS_PY" "$cmd" --root "$ROOT_DIR" --prefix "[switch]" "${loaded[@]}" "$@"
 }
 
-# Resolve a model's persisted thinking state to on | off | inherit. Reads the
-# ALREADY-LOADED environment (club_config_load above; shell-env-wins per
-# commit 9a27de83). Unknown/empty values degrade to inherit (the entrypoint default).
-thinking_pin_state() {
-  local model="$1" key val
-  key="$(thinking_pin_key_for "$model")" || { printf 'inherit'; return 0; }
-  val="${!key:-}"
-  case "${val,,}" in
-    on)  printf 'on' ;;
-    off) printf 'off' ;;
-    *)   printf 'inherit' ;;
-  esac
+# Export the slug's resolved launch settings for `compose up`: every value from this
+# slug, the model pin or a settings file (overriding a global value the loader already
+# exported); a shell value is only logged — it is already in the environment and wins.
+apply_launch_settings() {
+  local v="$1" rec key val line
+  rec="$(mktemp)"
+  if ! _launch_settings exports --slug "$v" > "$rec"; then
+    rm -f "$rec"
+    echo "[switch] ERROR: could not resolve the launch settings for ${v}." >&2
+    exit 1
+  fi
+  while IFS= read -r -d '' key && IFS= read -r -d '' val && IFS= read -r -d '' line; do
+    [[ -n "$key" ]] && export "${key}=${val}"
+    echo "[switch] ${line}"
+  done < "$rec"
+  rm -f "$rec"
 }
 
-# Apply the persisted pin to the LAUNCH env right before compose up:
-#   on      → ENABLE_THINKING=true (explicit — beats the passthrough default)
-#   off     → ENABLE_THINKING=false (explicit, per the #1010 lesson)
-#   inherit → nothing injected.
-# An ENABLE_THINKING already present in the SHELL wins (shell-wins precedence, 9a27de83): the
-# saved pin is file-tier defaulting, never a shell override.
-apply_thinking_pin_env() {
-  local variant="$1" eng dir file model state key
-  IFS='|' read -r eng dir file <<< "${VARIANTS[$variant]:-}"
-  # dir = models/<model>/<engine>/compose → model is field 2 (list_variants).
-  IFS=/ read -ra _tp <<< "${dir:-}"
-  model="${_tp[1]:-}"
-  [[ -n "$model" ]] || return 0
-  state="$(thinking_pin_state "$model")"
-  case "$state" in
-    on|off)
-      if [[ -n "${ENABLE_THINKING+x}" ]]; then
-        echo "[switch] thinking pin '${state}' for ${model} ignored — shell exported ENABLE_THINKING=${ENABLE_THINKING} wins."
-        return 0
-      fi
-      if [[ "$state" == on ]]; then ENABLE_THINKING=true; else ENABLE_THINKING=false; fi
-      export ENABLE_THINKING
-      key="$(thinking_pin_key_for "$model")"
-      echo "[switch] thinking pinned ${state} for ${model} (${key} from $(switch_setting_source "$key")) → ENABLE_THINKING=${ENABLE_THINKING}."
-      ;;
-  esac
+# --set <slug> KEY=VALUE… / --unset <slug> KEY… are terminal: every word after the
+# slug is a setting, so a flag there is a mistake, not an option.
+_slug_settings_args_ok() {  # <flag> <slug> <args…>
+  local flag="$1" slug="$2" a
+  shift 2
+  [[ $# -gt 0 ]] || { echo "ERROR: ${flag} ${slug} needs at least one $([[ "$flag" == --set ]] && echo KEY=VALUE || echo KEY)." >&2; exit 1; }
+  for a in "$@"; do
+    [[ "$a" != -* ]] || { echo "ERROR: ${flag} takes only $([[ "$flag" == --set ]] && echo KEY=VALUE || echo KEY) after the slug; got '${a}'." >&2; exit 1; }
+  done
+}
+
+set_slug_settings() {  # <slug> KEY=VALUE…
+  _slug_settings_args_ok --set "$@"
+  local slug="$1"
+  shift
+  _launch_settings set --slug "$slug" "$@" || exit $?
+  exit 0
+}
+
+unset_slug_settings() {  # <slug> KEY…
+  _slug_settings_args_ok --unset "$@"
+  local slug="$1"
+  shift
+  _launch_settings unset --slug "$slug" "$@" || exit $?
+  exit 0
 }
 
 
@@ -827,7 +852,12 @@ explain_assemble_json() {
   local serving
   serving="$(printf '%s' "$reg" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("serving_file",""))')"
   bench="$(explain_benchmarks_json "$root" "$serving")"
-  python3 - "$reg" "$fit" "$bench" "$card" <<'PY_EXPLAIN_ASSEMBLE'
+  # #1465: each launch knob the slug reads, its effective value and source. Never
+  # fails --explain: an unreadable settings file is reported inside the object.
+  local settings
+  settings="$(_launch_settings explain --slug "$slug" 2>/dev/null)" \
+    || settings='{"available": false, "reason": "launch_settings.py failed"}'
+  python3 - "$reg" "$fit" "$bench" "$card" "$settings" <<'PY_EXPLAIN_ASSEMBLE'
 import json
 import sys
 
@@ -835,6 +865,7 @@ reg = json.loads(sys.argv[1])
 fit = json.loads(sys.argv[2])
 bench = json.loads(sys.argv[3])
 card = sys.argv[4]
+settings = json.loads(sys.argv[5])
 
 out = {
     "slug": reg["slug"],
@@ -842,6 +873,7 @@ out = {
     "card": card,
     "fit": fit,
     "benchmarks": bench,
+    "launch_settings": settings,
 }
 print(json.dumps(out, indent=2))
 PY_EXPLAIN_ASSEMBLE
@@ -915,6 +947,35 @@ if not bench:
 else:
     for b in bench:
         print(f"    {b['row']}")
+
+# #1465 — launch settings: what the NEXT launch of this slug would use, and why.
+ls = obj.get("launch_settings") or {}
+print()
+if not ls.get("available"):
+    print("  Launch settings:")
+    print(f"    (unavailable — {ls.get('reason') or 'no data'})")
+else:
+    print("  Launch settings (next launch; " + " > ".join(ls.get("order") or []) + "):")
+    knobs = ls.get("knobs") or []
+    if not knobs:
+        print("    (this slug's compose reads no catalogued launch settings)")
+    for k in knobs:
+        src = k["source"] + (f" — {k['detail']}" if k.get("detail") else "")
+        over = "; ".join(f"{o['source']}={o['value']}" for o in k.get("overrides") or [])
+        print(f"    {k['knob']:<20} {k['value']:<14} {src}" + (f"   (overrides {over})" if over else ""))
+    unread = ls.get("unread") or []
+    if unread:
+        print("    Saved but not read by this slug (no effect here):")
+        for u in unread:
+            print(f"      {u['knob']}={u['value']}   ({u['source']})")
+    for w in ls.get("warnings") or []:
+        print(f"    ⚠ {w}")
+    errs = ls.get("errors") or []
+    if errs:
+        print("    ✗ the next launch would be REFUSED (before the running slug is taken down):")
+        for e in errs:
+            print(f"      - {e}")
+    print(f"    Change: bash scripts/switch.sh --set {obj['slug']} KEY=VALUE   ·   --unset {obj['slug']} KEY")
 PY_EXPLAIN_HUMAN
 }
 
@@ -1255,6 +1316,12 @@ check_variant() {
     echo "ERROR: compose file missing at ${full_dir}/${file}" >&2
     exit 1
   fi
+  # #1465 launch settings: a value outside the slug's catalogued domain, an unmet
+  # dependency (KV_OFFLOAD_DISK=1 without KV_OFFLOAD_GB), a RAM tier this host can't
+  # hold, or an unreadable slugs.json. Warns about saved values this slug doesn't read.
+  local -a _ls_force=()
+  [[ "${FORCE:-0}" == "1" ]] && _ls_force=(--force)
+  _launch_settings check --slug "$v" "${_ls_force[@]}" || exit 1
   #  - repo_drift: warn if local HEAD is behind origin/master
   #  - compose_deps: HARD error if compose mounts a model dir that doesn't exist on host
   #    (catches the "you didn't WITH_DFLASH_DRAFT=1 then tried dual-dflash-noviz" case;
@@ -1329,7 +1396,7 @@ up_variant() {
   echo "[switch] bringing up: ${v}  (${dir}/${file})"
   export_variant_engine_pin "$v"
   preflight_ik_llama_image "$v"   # #633 — cu12 fallback on <13.2 drivers (unless pinned)
-  apply_thinking_pin_env "$v"     # #1014 follow-up — persisted CLUB3090_THINKING_<MODEL> → ENABLE_THINKING
+  apply_launch_settings "$v"      # #1465 — per-slug / thinking-pin / global launch settings → the compose env
   (cd "${full_dir}" && ${COMPOSE_BIN} -f "${file}" up -d --remove-orphans)
 }
 
@@ -1612,6 +1679,16 @@ while [[ $# -gt 0 ]]; do
     --clear-default)
       [[ -n "${2:-}" ]] || { echo "ERROR: --clear-default needs a <model> (e.g. qwen3.6-27b)." >&2; exit 1; }
       clear_default "$2"
+      ;;
+    # #1465 — per-slug launch settings. Terminal actions: everything after the slug
+    # is the KEY=VALUE (--set) or KEY (--unset) list.
+    --set)
+      [[ -n "${2:-}" && "$2" != --* ]] || { echo "ERROR: --set needs <slug> KEY=VALUE... (e.g. --set sgl/qwen38-27b-dual-fast KV_OFFLOAD_GB=64)." >&2; exit 1; }
+      set_slug_settings "${@:2}"
+      ;;
+    --unset)
+      [[ -n "${2:-}" && "$2" != --* ]] || { echo "ERROR: --unset needs <slug> KEY... (e.g. --unset sgl/qwen38-27b-dual-fast KV_OFFLOAD_GB)." >&2; exit 1; }
+      unset_slug_settings "${@:2}"
       ;;
     --down) down_running; exit 0 ;;
     --no-wait) WAIT=0 ;;

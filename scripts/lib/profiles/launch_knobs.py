@@ -2,8 +2,8 @@
 """launch_knobs — the launch-knob catalogue and a static per-compose scan (#1465, phase 3a).
 
 Two halves, both STDLIB-ONLY (no PyYAML: the launcher path runs on a bare python3,
-#584; this module is imported by the launcher-facing registry emit and, later, by
-the #1465 resolver):
+#584; this module is imported by the launcher-facing registry emit and by the #1465
+resolver, scripts/lib/launch_settings.py):
 
 1. ``launch-knobs.json`` (next to this file) DESCRIBES each launch setting a user
    may persist: its value domain, which engines read it, how it depends on other
@@ -315,11 +315,11 @@ def value_error(knob: dict, variant: dict, value: str) -> str | None:
     if in_pat and not in_vals and any(b in variant for b in ("min", "max", "above")):
         num = float(value)
         if "above" in variant and not num > variant["above"]:
-            return f"{value} must be greater than {variant['above']}"
+            return f"{value} must be greater than {variant['above']:g}"
         if "min" in variant and num < variant["min"]:
-            return f"{value} is below the minimum {variant['min']}"
+            return f"{value} is below the minimum {variant['min']:g}"
         if "max" in variant and num > variant["max"]:
-            return f"{value} is above the maximum {variant['max']}"
+            return f"{value} is above the maximum {variant['max']:g}"
     return None
 
 
@@ -329,15 +329,26 @@ def _cond_holds(cond, value: str | None) -> bool:
     return value == cond["equals"]
 
 
-def dependency_errors(catalogue: dict, values: dict[str, str | None]) -> list[str]:
-    """Broken `requires` rules for a set of effective knob values (None/"" = unset)."""
-    errs = []
+def broken_requires(catalogue: dict, values: dict[str, str | None]) -> list[tuple[str, dict]]:
+    """(knob, rule) for every `requires` rule the effective values break (None/"" = unset).
+    The resolver (scripts/lib/launch_settings.py) uses the pair to say where each
+    side's value came from; dependency_errors() words the same list."""
+    out = []
     for name, k in catalogue["knobs"].items():
         for r in k.get("requires", []) or []:
             if _cond_holds(r["when"], values.get(name)) and not _cond_holds(r["then"], values.get(r["knob"])):
-                want = "set" if r["then"] == "set" else f"={r['then']['equals']}"
-                errs.append(f"{name}={values.get(name)} needs {r['knob']} {want}: {r.get('why', '')}".rstrip(": "))
-    return errs
+                out.append((name, r))
+    return out
+
+
+def requirement_text(name: str, rule: dict, values: dict[str, str | None]) -> str:
+    want = " set" if rule["then"] == "set" else f"={rule['then']['equals']}"
+    return f"{name}={values.get(name)} needs {rule['knob']}{want}: {rule.get('why', '')}".rstrip(": ")
+
+
+def dependency_errors(catalogue: dict, values: dict[str, str | None]) -> list[str]:
+    """Broken `requires` rules for a set of effective knob values (None/"" = unset)."""
+    return [requirement_text(name, r, values) for name, r in broken_requires(catalogue, values)]
 
 
 # ---------------------------------------------------------------------------

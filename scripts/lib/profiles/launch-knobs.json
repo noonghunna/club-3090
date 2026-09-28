@@ -48,7 +48,7 @@
       "caveats": [
         {"text": "Only the dual MTP composes read it. On the vLLM DFlash tiers the same connector stores every block and never serves one back (write-only, dual-superfast measured 0 hits), so it is deliberately not wired there; SGLang DFlash2 and multi-N composes are not probed.", "source": {"file": "scripts/tests/test-kv-offload-knob.sh", "what": "header rationale, and the arm that fails any other compose carrying OFFLOAD_ARGS"}},
         {"text": "Pinned at boot: vLLM reserves the whole tier even when idle, and SGLang's host use runs above the setting (64 -> 74 GiB measured). Size it above the GPU KV pool; a smaller tier only mirrors what the GPU already holds.", "source": {"file": "docs/engines/SGLANG.md", "what": "HiCache trap table; the vLLM sizing note is in the vLLM compose's KV-offload comment"}},
-        {"text": "No launcher checks host RAM against this value today (preflight.sh gates only CPU-offloaded weights). A global value applies to every reader, so on a small-RAM rig it can make every such launch fail; phase 3b adds the check.", "source": {"file": "scripts/preflight.sh", "what": "the host-RAM gate reads CPU-Offload-Host-RAM-GB, never KV_OFFLOAD_GB"}}
+        {"text": "switch.sh refuses a value the host can't hold before the running slug is torn down: tier x 1.0 (vLLM) or x 74/64 (SGLang) + 28 GiB must fit in MemTotal. A global value applies to every reader, so on a small-RAM rig it makes every such launch refuse; a per-slug value or a shell export overrides it.", "source": {"file": "scripts/lib/launch_settings.py", "what": "ram_error(), called by the resolver's check (switch.sh check_variant) and by switch.sh --set"}}
       ]
     },
 
@@ -193,7 +193,7 @@
       ],
       "caveats": [
         {"text": "SGLang with false: thinking goes off but the engine keeps serving the thinking sampler row from generation_config.json; clients must send temperature/top_p/presence_penalty to get the instruct row.", "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "the [sampler] warning printed on the instruct branch"}},
-        {"text": "switch.sh's per-model thinking pin (CLUB3090_THINKING_<MODEL> = on|off) exports ENABLE_THINKING=true|false for every slug of that model, including slugs that do not read it (the llama.cpp Qwen3.8 composes use REASONING=on|off instead).", "source": {"file": "scripts/switch.sh", "what": "apply_thinking_pin_env()"}}
+        {"text": "The per-model thinking pin (CLUB3090_THINKING_<MODEL> = on|off) is a resolver layer between the slug's own value and the global one: on -> true, off -> false. It reaches only the slugs of that model whose compose reads ENABLE_THINKING; on the others (the llama.cpp Qwen3.8 composes use REASONING=on|off instead) switch.sh warns that it has no effect.", "source": {"file": "scripts/lib/launch_settings.py", "what": "PIN_VALUES and the `model pin` layer in resolve()"}}
       ]
     },
 

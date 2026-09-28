@@ -2,8 +2,9 @@
 
 `launch-knobs.json` describes the launch settings a user may persist (#1465): what
 values each one takes, which engines read it, how it depends on other settings, and
-why. It is phase 3a of the #1465 plan and **changes no launch behaviour**. The
-resolver (3b), the per-slug store (3c) and the c3 form (3d) will read it.
+why. It is phase 3a of the #1465 plan. The resolver (3b) and the per-slug store (3c)
+read it — see [Resolving a slug's settings](#resolving-a-slugs-settings-3b3c) below;
+the c3 form (3d) will too.
 
 | File | Role |
 |---|---|
@@ -12,6 +13,9 @@ resolver (3b), the per-slug store (3c) and the c3 form (3d) will read it.
 | `launch_knobs_check.py` | the checks behind the guard |
 | `scripts/tests/test-launch-knobs.sh` | the guard, including negative controls that prove each check can fail |
 | `scripts/lib/registry-emit.sh --json` | exposes each slug's knobs as `variants[].knobs` |
+| `scripts/lib/launch_settings.py` | the resolver: effective value + source per knob, validation, delivery (3b) |
+| `scripts/lib/slug_settings.py` | the per-slug store, `slugs.json` (3c) |
+| `scripts/tests/test-launch-settings.sh`, `test-slug-settings-store.sh` | their guards |
 
 ## Which slugs read a knob: derived, never declared
 
@@ -109,3 +113,48 @@ engine) fails the guard until its reader is covered. If its handling matches an
 existing variant, widen that variant's `match`. Otherwise add a variant with its own
 check. That failure is the point: it is where a model's different domain would
 otherwise go unnoticed.
+
+## Resolving a slug's settings (3b/3c)
+
+`scripts/lib/launch_settings.py` is the one resolver; `switch.sh` calls it and nothing
+reimplements it. For each catalogued knob a slug's compose reads (the scan above), the
+value comes from the first layer that sets it:
+
+| # | Layer | Where |
+|---|---|---|
+| 1 | `shell` | exported for this launch. Only a key the settings loader did **not** export counts: `switch.sh` passes the loader's `CLUB3090_CONFIG_SOURCE` as `--loaded`, and `launch.sh` drops the knobs its own loader exported before it runs `switch.sh` |
+| 2 | `this slug` | `<config dir>/slugs.json`, written by `switch.sh --set <slug> KEY=VALUE` |
+| 3 | `model pin` | `CLUB3090_THINKING_<MODEL>`: `on` → `ENABLE_THINKING=true`, `off` → `false`; `inherit` or anything else adds nothing. The only pin today |
+| 4 | `club3090.env` · `secrets.env` · `repo .env` | the global settings, in the loader's own order |
+| 5 | `compose default` | nothing sets it; the compose's `${KNOB:-x}` applies |
+
+An empty value from the shell or a settings file means unset: every catalogued knob is
+read as `${KNOB:-x}`, so empty is the compose default. An empty shell value still masks
+the saved layers, which is how `KV_OFFLOAD_GB= bash scripts/switch.sh <slug>` turns a
+saved RAM tier off for one launch. `slugs.json` never holds an empty value.
+
+**Validation**, in `check_variant`, before the running slug is torn down (#1464). Only
+values a layer supplied are checked, never a compose default:
+
+| Refused | Rule |
+|---|---|
+| a value outside the slug's domain | the variant matching the slug's engine kind, model and compose. With `--force`, a domain marked `enforced: unverified` or `none` only warns; `boot` and `request` always refuse |
+| an unmet `requires` rule | e.g. `KV_OFFLOAD_DISK=1` without `KV_OFFLOAD_GB`, `KV_OFFLOAD_DISK_GB` without `KV_OFFLOAD_DISK=1`. Skipped when the compose defaults alone break it |
+| a RAM tier the host can't hold | `KV_OFFLOAD_GB × factor + 28 GiB > MemTotal` (GiB). `factor` is 1.0 on vLLM, which pins exactly the tier, and 74/64 on SGLang (host use measured at 74 GiB for a 64 GiB tier). The 28 GiB is the headroom `preflight_lmcache_ram` budgets for a 27B TP=2 serving process plus the OS, the shape of every compose that reads the knob. MemTotal, not MemAvailable, because the running slug still holds its memory at this point. Applies with `--force` too. There is no disk-tier check: the disk tier is uncapped by default (discussion #1419) |
+| an unreadable `slugs.json` | bad JSON, wrong shape, or a newer `version`: the saved values can't be known |
+
+Warned, never refused: a saved per-slug or global value, or a thinking pin, for a knob
+the slug doesn't read (it does nothing there); a per-slug key that isn't a catalogued
+knob; a pin that isn't `on|off|inherit`.
+
+**Delivery.** Right before `docker compose up`, `switch.sh` exports every value that came
+from this slug, the model pin or a settings file, overriding a global value the loader
+already exported and never touching the shell's. `--explain <slug>` shows each knob's
+value, its source and what it overrides.
+
+**The store**, `slugs.json`: `{"version": 1, "slugs": {"<slug>": {"KEY": "value"}}}`.
+Values follow the global writer's literal rules (`club_config.check_value`). Credential-
+looking keys are refused, so secrets stay in the 0600 `secrets.env`. Writes are atomic
+(temp file + `os.replace`) under the config dir's `.lock`, the loader's lock file.
+`switch.sh --set` also refuses a knob the slug doesn't read and a value outside its domain;
+`--unset` can always remove a key that is stored, so the warning above has a way out.

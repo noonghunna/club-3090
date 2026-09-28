@@ -1449,7 +1449,18 @@ if [[ -n "$PP_VALUE" ]]; then
   export PP="$PP_VALUE"
 fi
 export_variant_engine_pin "$VARIANT"
-"$SWITCH" "$VARIANT"
+# #1465: hand switch.sh the launch knobs as YOUR shell set them. club_config_load (top
+# of this script) exported every saved setting; a catalogued launch knob inherited that
+# way would reach switch.sh looking exported in the shell, and the shell beats the
+# slug's own saved value (shell > this slug > model pin > global). So the knobs the
+# loader exported are dropped from switch.sh's environment; switch.sh loads the same
+# files again and resolves them in the right order. A knob you exported yourself is
+# not in CLUB3090_CONFIG_SOURCE, so it still arrives, and still wins.
+_launch_knob_unsets=()
+while IFS= read -r _k; do
+  if [[ -n "$_k" && -n "${CLUB3090_CONFIG_SOURCE[$_k]+x}" ]]; then _launch_knob_unsets+=(-u "$_k"); fi
+done < <(python3 "${ROOT_DIR}/scripts/lib/launch_settings.py" knob-names)
+env "${_launch_knob_unsets[@]}" "$SWITCH" "$VARIANT"
 
 ENDPOINT_PORT="${PORT:-${LAUNCH_DEFAULT_PORT[$VARIANT]:-8020}}"
 ENDPOINT_URL="http://localhost:${ENDPOINT_PORT}"
