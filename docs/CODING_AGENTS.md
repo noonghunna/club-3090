@@ -124,10 +124,10 @@ steps it prints:
 Until then those clients get `400 No connected db.`, LiteLLM's answer to a key it
 doesn't know.
 
-⚠️ A few ways of (re)creating the gateway don't read `secrets.env` yet, and bring it
-back on the public default: a plain `docker compose up` in `services/litellm`,
-`scripts/litellm-log.sh on|off`, and starting it from c3's Containers tab. Use
-`gpu-mode`, or the commands `rotate` prints.
+⚠️ Two ways of (re)creating the gateway don't read `secrets.env` yet, and bring it
+back on the public default: a plain `docker compose up` in `services/litellm`, and
+starting it from c3's Containers tab. Use `gpu-mode`, `scripts/litellm-log.sh`, or
+the commands `rotate` prints.
 
 ## omp (oh-my-pi) — setup
 

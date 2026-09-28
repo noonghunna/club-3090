@@ -21,7 +21,10 @@
 # stays on across the route-sync restarts `switch.sh` does, and any fresh start
 # of the service (gpu-mode, `docker compose up`) comes back OFF.
 set -euo pipefail
+export PYTHONUTF8="${PYTHONUTF8:-1}"   # club_config_compose_env_file runs python3 (#779)
 CONTAINER="litellm"
+# shellcheck source=lib/club-config.sh
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/club-config.sh"
 
 case "${1:-status}" in
   on)     WANT="${2:-DEBUG}" ;;
@@ -64,6 +67,18 @@ fi
 compose_args=(-p "$project")
 IFS=',' read -ra cfgs <<<"$files"
 for f in "${cfgs[@]}"; do compose_args+=(-f "$f"); done
+# The recreate must see the same settings gpu-mode started it with — above all
+# LITELLM_MASTER_KEY from secrets.env (club-3090#1467). Without them the compose
+# falls back to the public default key and every client carrying the per-install
+# key gets `400 No connected db.`. Settings of the checkout the gateway came from;
+# the shell still wins (LITELLM_LOG below rides the environment).
+CLUB3090_COMPOSE_ENV_FILE="$(club_config_compose_env_file "$(cd "$workdir/../.." 2>/dev/null && pwd)" 2>/dev/null || true)"
+if [[ -n "$CLUB3090_COMPOSE_ENV_FILE" && -s "$CLUB3090_COMPOSE_ENV_FILE" ]]; then
+  compose_args+=(--env-file "$CLUB3090_COMPOSE_ENV_FILE")
+  trap 'rm -f "$CLUB3090_COMPOSE_ENV_FILE"' EXIT
+elif [[ -n "$CLUB3090_COMPOSE_ENV_FILE" ]]; then
+  rm -f "$CLUB3090_COMPOSE_ENV_FILE"
+fi
 
 if [[ -n "$WANT" ]]; then
   export LITELLM_LOG="$WANT"

@@ -38,6 +38,8 @@ case "$1" in
     esac ;;
   compose)
     echo "PWD=$PWD ARGS=$* LITELLM_LOG=${LITELLM_LOG-<unset>}" >> "$S/calls"
+    # keep a copy of any --env-file, which the script deletes on exit
+    prev=""; for a in "$@"; do [[ "$prev" == --env-file ]] && cp "$a" "$S/envfile"; prev="$a"; done
     { echo "LITELLM_MASTER_KEY=k"
       if [[ -n "${LITELLM_LOG+x}" ]]; then echo "LITELLM_LOG=$LITELLM_LOG"; fi; } > "$S/env" ;;
   *) exit 0 ;;
@@ -80,6 +82,24 @@ out="$(PATH="$T/bin:$PATH" LITELLM_LOG=DEBUG bash "$ROOT/scripts/litellm-log.sh"
 last="$(tail -1 "$T/state/calls")"
 [[ "$last" == *"LITELLM_LOG=<unset>"* ]] || bad "off must recreate with LITELLM_LOG unset, even if this shell exports it: $last"
 [[ "$out" == *"off (default)"* ]] || bad "off must confirm: $out"
+
+# A per-install gateway key (secrets.env, #1467) must survive the recreate: it goes in
+# through --env-file, not the shell. Without it the compose falls back to the public
+# default and every client carrying the stored key is refused.
+KC="$T/kcfg"; mkdir -p "$KC"; printf 'LITELLM_MASTER_KEY=sk-club-test0000\n' > "$KC/secrets.env"
+rm -f "$T/state/envfile"
+out="$(env -u LITELLM_LOG -u LITELLM_MASTER_KEY PATH="$T/bin:$PATH" CLUB3090_CONFIG_DIR="$KC" bash "$ROOT/scripts/litellm-log.sh" on 2>&1)" || bad "on (with a stored key) failed: $out"
+last="$(tail -1 "$T/state/calls")"
+[[ "$last" == *"--env-file "* ]] || bad "a recreate must pass the settings with --env-file: $last"
+command grep -qxF "LITELLM_MASTER_KEY='sk-club-test0000'" "$T/state/envfile" 2>/dev/null \
+  || bad "the recreate's env file must carry the stored gateway key: $(cat "$T/state/envfile" 2>/dev/null || echo '<none>')"
+envpath="$(sed -n 's/.*--env-file \([^ ]*\).*/\1/p' <<<"$last")"
+[[ -n "$envpath" && ! -e "$envpath" ]] || bad "the temp env file must be removed after the recreate: $envpath"
+PATH="$T/bin:$PATH" LITELLM_LOG=DEBUG bash "$ROOT/scripts/litellm-log.sh" off >/dev/null 2>&1 || true
+# nothing configured → no --env-file (today's call shape)
+out="$(env -u LITELLM_LOG PATH="$T/bin:$PATH" bash "$ROOT/scripts/litellm-log.sh" on 2>&1)" || bad "on failed: $out"
+[[ "$(tail -1 "$T/state/calls")" != *"--env-file"* ]] || bad "with nothing configured, no --env-file: $(tail -1 "$T/state/calls")"
+PATH="$T/bin:$PATH" LITELLM_LOG=DEBUG bash "$ROOT/scripts/litellm-log.sh" off >/dev/null 2>&1 || true
 
 # bad level → refused
 PATH="$T/bin:$PATH" bash "$ROOT/scripts/litellm-log.sh" on TRACE >/dev/null 2>&1 && bad "an unknown level must be refused"
