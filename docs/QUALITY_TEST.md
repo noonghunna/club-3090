@@ -298,10 +298,10 @@ URL=https://your-endpoint/v1 API_KEY="$YOUR_KEY" MODEL=your-model-id \
 
 ### Worked example — Qwen3.8-Max-Preview (DashScope)
 
-Our first cloud reference ([Discussion #753](https://github.com/noonghunna/club-3090/discussions/753)): `qwen3.8-max-preview` via a LiteLLM proxy that normalizes auth + thinking controls into two routes — `qwen3.8-max` (thinking-on) and `qwen3.8-max-nothink` (`thinking_budget=1`). Result: **125/150 think-off · 134/150 think-on** (n=1) — see the [cloud references table](../BENCHMARKS.md#cloud-references). Those two routes were the measuring rig's own: a cloud route belongs in your gitignored `services/litellm/config.local.yaml` (see `config.local.yaml.example`), with its key in `services/litellm/local.env` — never in the tracked catalog.
+Our first cloud reference ([Discussion #753](https://github.com/noonghunna/club-3090/discussions/753)): `qwen3.8-max-preview` via a LiteLLM proxy that normalizes auth + thinking controls into two routes — `qwen3.8-max` (thinking-on) and `qwen3.8-max-nothink` (`thinking_budget=1`). Result: **125/150 think-off · 134/150 think-on** (n=1) — see the [cloud references table](../BENCHMARKS.md#cloud-references). Those two routes were the measuring rig's own: a cloud route belongs in your own routes file, `~/.config/club-3090/litellm/config.local.yaml` (see `services/litellm/config.local.yaml.example`), with its key saved by `bash scripts/settings.sh set` — never in the tracked catalog.
 
 ```bash
-# via this rig's own routes (services/litellm/config.local.yaml)
+# via this rig's own routes (~/.config/club-3090/litellm/config.local.yaml)
 URL=http://localhost:4000 API_KEY="$LITELLM_KEY" MODEL=qwen3.8-max \
   bash scripts/quality-test.sh --full --enable-thinking --save-json qwen38max-on.json
 URL=http://localhost:4000 API_KEY="$LITELLM_KEY" MODEL=qwen3.8-max-nothink \

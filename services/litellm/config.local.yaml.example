@@ -1,11 +1,20 @@
-# This rig's own LiteLLM routes — copy to config.local.yaml (gitignored) and edit.
+# This rig's own LiteLLM routes — copy to litellm/config.local.yaml in your club-3090
+# config dir and edit:
+#   mkdir -p ~/.config/club-3090/litellm
+#   cp services/litellm/config.local.yaml.example ~/.config/club-3090/litellm/config.local.yaml
+# (CLUB3090_CONFIG_DIR, or XDG_CONFIG_HOME, moves that dir; `bash scripts/settings.sh
+# path` prints it.) Older installs kept this file here, as services/litellm/
+# config.local.yaml: that copy is still read while the config-dir one doesn't exist,
+# and `bash scripts/settings.sh migrate` copies it across.
 #
 # scripts/lib/litellm-sync.sh (run by every switch.sh launch and teardown) copies
 # the entries under `model_list:` into the runtime view the gateway serves, after
 # the generated local routes. Use it for anything that belongs to this rig only:
 # a cloud endpoint, a private service, an alias. The tracked config.yaml stays the
-# club catalog. Keys go in local.env (gitignored), referenced as os.environ/<NAME>.
-# Apply a change with: bash scripts/lib/litellm-sync.sh
+# club catalog. Keys go in your settings, referenced as os.environ/<NAME>:
+#   bash scripts/settings.sh set MY_CLOUD_API_KEY=<key>     # saved in secrets.env (0600)
+# Apply a route change with: bash scripts/lib/litellm-sync.sh
+# A new or changed key needs the gateway recreated: bash scripts/gpu-mode.sh gateway
 #
 # ⚠️ omp's `discovery: litellm` lists every route the gateway serves, so a cloud
 # route here is selectable (and can become omp's default if modelRoles is empty).

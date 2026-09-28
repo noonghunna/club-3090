@@ -509,12 +509,13 @@ Every script that touches model paths reads from the same `MODEL_DIR`. The compo
 
 ### Where are my settings saved, and how do I change one?
 
-In **`~/.config/club-3090/`** (`$XDG_CONFIG_HOME/club-3090/` if you set `XDG_CONFIG_HOME`, or any directory you name in `CLUB3090_CONFIG_DIR`). `setup.sh`, `launch.sh`, `switch.sh`, `report.sh`, `gpu-mode` and c3 all read the same two files, from every checkout of the repo:
+In **`~/.config/club-3090/`** (`$XDG_CONFIG_HOME/club-3090/` if you set `XDG_CONFIG_HOME`, or any directory you name in `CLUB3090_CONFIG_DIR`). `setup.sh`, `launch.sh`, `switch.sh`, `report.sh`, `gpu-mode` and c3 all read the same files, from every checkout of the repo:
 
 | File | Holds | Saved there by |
 |---|---|---|
 | `club3090.env` | settings: `MODEL_DIR`, your pinned defaults (`CLUB3090_DEFAULT_<MODEL>`, `CLUB3090_THINKING_<MODEL>`), knobs such as `NVLINK_MODE` or `DISABLE_CUSTOM_ALL_REDUCE`, the AI Studio's `LANIP` / `COMFYUI_ROOT` / `COMFYUI_OUTPUT_DIR` / `STUDIO_DIRECTOR_DEVICE` | `settings.sh set`; `setup.sh` (the model-dir prompt, and the [WSL2 fix](#does-this-work-on-windows--wsl2)); `switch.sh --set-default`; c3's `[S]` Settings and `[T]`; the AI Studio setup |
-| `secrets.env` (mode 0600) | tokens and keys: `HF_TOKEN`, the gateway key `LITELLM_MASTER_KEY` | `settings.sh set` (a token- or key-like name goes here on its own); c3's `[S]` Settings (the HF token); `gateway-key.sh rotate` ([the gateway key](CODING_AGENTS.md#the-gateway-key)) |
+| `secrets.env` (mode 0600) | tokens and keys: `HF_TOKEN`, the gateway key `LITELLM_MASTER_KEY`, the keys your own gateway routes use | `settings.sh set` (a token- or key-like name goes here on its own); c3's `[S]` Settings (the HF token); `gateway-key.sh rotate` ([the gateway key](CODING_AGENTS.md#the-gateway-key)) |
+| `litellm/config.local.yaml` | your own gateway routes: a cloud endpoint, a private service ([routes of your own](CODING_AGENTS.md#routes-of-your-own)) | you, starting from `services/litellm/config.local.yaml.example` |
 
 ```bash
 bash scripts/settings.sh show                    # every setting, its value and where it comes from (secrets hidden)
@@ -537,7 +538,7 @@ bash scripts/settings.sh path                    # where the files are
 
 - **A change applies at the next launch.** A running container keeps the values it started with.
 - **Values are taken literally.** `$HOME`, `${VAR}` and a leading `~` are not expanded, so write the full path; the launchers warn when a saved value contains one. `set` refuses a value that bash, docker compose and systemd would read differently (quotes, `$`, a backslash, ` #`).
-- **Still using the repo-root `.env`?** It keeps working, read last. `bash scripts/settings.sh migrate` copies every setting in it into your settings (`--dry-run` first shows what it would copy). It never changes or deletes `.env`, and skips a key you've already saved. From then on, change those settings with `settings.sh set`: editing `.env` no longer changes a migrated key, because your saved copy wins. Once `settings.sh show` lists nothing from the repo `.env`, you can delete it.
+- **Still using the repo-root `.env`?** It keeps working, read last. `bash scripts/settings.sh migrate` copies every setting in it into your settings (`--dry-run` first shows what it would copy). It never changes or deletes `.env`, and skips a key you've already saved. From then on, change those settings with `settings.sh set`: editing `.env` no longer changes a migrated key, because your saved copy wins. Once `settings.sh show` lists nothing from the repo `.env`, you can delete it. The same command copies your own gateway routes (`services/litellm/config.local.yaml`) and the keys they use (`services/litellm/local.env`) out of the checkout; both keep working until you do, and it says which repo files you can then delete.
 - **A `.env` in `models/<model>/<engine>/compose/` is never read.** Older docs suggested one for WSL2; docker compose only looks for `.env` in the compose file's own directory (`<topology>/<quant>/`). Move its lines with `settings.sh set` and delete it.
 - **Running `docker compose` yourself** skips all of this. Pass what you need on the command line (`MODEL_DIR=/path/to/models docker compose -f …`), or hand compose all your settings the way the launchers resolve them: `envf="$(bash scripts/settings.sh compose-env-file)"; docker compose --env-file "$envf" -f … up -d; rm -f "$envf"` (a 0600 temp file, secrets included; `club3090.env` on its own would miss `secrets.env`, the repo `.env` and your shell).
 - **One checkout that should run differently, or a `~/.config` you sync between machines?** Export `CLUB3090_CONFIG_DIR=/some/other/dir` for it. `MODEL_DIR` and the GPU knobs belong to one machine, and `secrets.env` shouldn't travel.

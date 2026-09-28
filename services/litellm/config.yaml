@@ -144,9 +144,11 @@ model_list:
   # it gets promoted.
 
   # This rig's own routes (cloud endpoints, private services) do NOT go in this
-  # tracked catalog: put them in services/litellm/config.local.yaml (gitignored;
-  # see config.local.yaml.example) and their keys in services/litellm/local.env.
-  # litellm-sync merges them into the runtime view the gateway serves.
+  # tracked catalog: put them in litellm/config.local.yaml in your club-3090 config
+  # dir (~/.config/club-3090/; see config.local.yaml.example) and their keys in
+  # secrets.env there. litellm-sync merges them into the runtime view the gateway
+  # serves. Older installs kept them in services/litellm/config.local.yaml and
+  # services/litellm/local.env, which are still read.
 
 # Gateway-wide behaviour (hand-maintained; outside the generated blocks, so both
 # the catalog view and the runtime view litellm-sync renders carry it).

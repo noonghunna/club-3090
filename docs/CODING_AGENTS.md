@@ -47,9 +47,9 @@ Gateway-wide (`litellm_settings`): `request_timeout: 1800` — the client owns t
 real timeout, and a long cold prefill plus a long reply outlasts short defaults —
 and `num_retries: 0`, because a retry repeats the whole prefill. Request logging
 is off by default (see *Troubleshooting*). Routes of your own — a cloud endpoint,
-a private service — go in the gitignored `services/litellm/config.local.yaml`
-(keys in `services/litellm/local.env`; see the `.example` files, #1446): the sync
-serves them after the generated ones, and they never enter the tracked catalog.
+a private service — go in `~/.config/club-3090/litellm/config.local.yaml`, with
+your other settings (see *Routes of your own* below): the sync serves them after
+the generated ones, and they never enter the tracked catalog.
 
 What the gateway serves for one live slug — `config.runtime.yaml`, rendered by the
 sync; you never write it:
@@ -73,8 +73,12 @@ litellm_settings:
   num_retries: 0
 ```
 
-The one gateway file you do write, and only for routes of your own —
-`services/litellm/config.local.yaml` (apply with `bash scripts/lib/litellm-sync.sh`):
+### Routes of your own
+
+The one gateway file you do write, and only for routes of your own, is
+`litellm/config.local.yaml` in your club-3090 settings directory
+(`~/.config/club-3090/`; `bash scripts/settings.sh path` shows where yours is). Start
+from `services/litellm/config.local.yaml.example`:
 
 ```yaml
 model_list:
@@ -82,8 +86,28 @@ model_list:
     litellm_params:
       model: openai/<provider-model-id>
       api_base: https://<your-endpoint>/v1
-      api_key: os.environ/MY_CLOUD_API_KEY   # MY_CLOUD_API_KEY=… in services/litellm/local.env
+      api_key: os.environ/MY_CLOUD_API_KEY
 ```
+
+Save the key with your other secrets, not in the file:
+`bash scripts/settings.sh set MY_CLOUD_API_KEY=<key>` puts it in `secrets.env`
+(mode 0600). The gateway gets only the keys its routes name
+(`os.environ/<NAME>`), not the whole `secrets.env`, which also holds your HF token:
+gpu-mode, c3 and `litellm-log.sh` hand them over in a temporary 0600 file when they
+start the gateway.
+
+- A new or changed **route**: `bash scripts/lib/litellm-sync.sh` (switch.sh runs it
+  on every launch too).
+- A new or changed **key**: `bash scripts/gpu-mode.sh gateway`. A restart is not
+  enough, because a container keeps the environment it was created with.
+
+**Older installs** kept these in the checkout: `services/litellm/config.local.yaml`
+and its keys in `services/litellm/local.env`. Both still work: the checkout's
+routes file is read while there is none in the settings directory, and the gateway
+still loads `local.env`, with a key saved in your settings winning over it.
+`bash scripts/settings.sh migrate` (`--dry-run` first shows the plan) copies the
+routes file across, and the keys your routes use into `secrets.env`. It never
+changes or deletes the repo files, and says which ones you can delete.
 
 ## The gateway key
 
@@ -160,10 +184,10 @@ UI, so the compose doesn't set it.) `OWUI_OPENAI_API_KEYS` still replaces the wh
 key list. `setup-ai-studio.sh` adds a missing `:4000` connection to an older volume
 with a placeholder key; set that one the same way.
 
-⚠️ Two ways of (re)creating the gateway don't read `secrets.env` yet, and bring it
-back on the public default: a plain `docker compose up` in `services/litellm`, and
-starting it from c3's Containers tab. Use `gpu-mode gateway` (or any `gpu-mode`
-mode) or `scripts/litellm-log.sh`.
+⚠️ A plain `docker compose up` in `services/litellm` doesn't read your settings: it
+brings the gateway back on the public default key, without the keys your own routes
+use (only an older `services/litellm/local.env` is loaded). Use `gpu-mode gateway`
+(or any `gpu-mode` mode), c3's Containers tab or `scripts/litellm-log.sh`.
 
 ## omp (oh-my-pi) — setup
 
