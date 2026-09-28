@@ -129,6 +129,38 @@ assert_contains "$out" "#1462"
 unset _sgl_fail _ev _ok_boot
 echo "  ✓ SGLang custom-AR setup failure classified as a fallback, not an opt-out or unknown (#1462)"
 
+# ⭐ SGLang admits CustomAllReduceV2 only on full NVLink (can_use_custom_all_reduce_v2),
+# so every PCIe rig runs the V1 CustomAllreduce, which logs NOTHING when it initializes.
+# Its only success signal is the graph-buffer registration after CUDA-graph capture.
+# Before this rule a live V1 kernel scored "unknown": the classifier could never report
+# custom AR on for SGLang over PCIe. Real lines, v0.5.20, 2x3090 PCIe P2P, 2026-09-28.
+_sgl_v1=$(cat <<'EOF'
+[2026-09-28 04:36:56] server_args={'tp_size': 2, 'disable_custom_all_reduce': False}
+[2026-09-28 04:37:09 TP0] sglang is using nccl==2.30.7
+[2026-09-28 04:38:16 TP0] Registering 4352 cuda graph addresses
+[2026-09-28 04:38:20 TP0] Registering 258 cuda graph addresses
+[2026-09-28 04:38:23 TP0] Registering 6 cuda graph addresses
+EOF
+)
+_ev="$(printf '%s\n' "$_sgl_v1" | p2p_engine_log_evidence)"
+assert_contains "$_ev" "Registering 4352 cuda graph addresses"
+r="$(printf '%s\n' "$_ev" | p2p_classify_engagement)"
+[[ "$r" == "on" ]] || fail "SGLang V1 graph-buffer registration -> on (got $r)"
+r="$(printf '%s\n' "$_sgl_v1" | p2p_classify_engagement)"   # unfiltered stream too
+[[ "$r" == "on" ]] || fail "unfiltered SGLang V1 registration -> on (got $r)"
+# Positive control for the rule above: the same boot WITHOUT the registration lines
+# is still unknown — the lines, not the boot args, are what score it on.
+r="$(printf '%s\n' "$_sgl_v1" | command grep -v 'cuda graph addresses' | p2p_engine_log_evidence | p2p_classify_engagement)"
+[[ "$r" == "unknown" ]] || fail "SGLang requested-on without V1 registration -> unknown (got $r)"
+# Restart epochs: a V1-on boot must not make a later operator-disabled or failed boot read on.
+r="$(printf '%s\n%s' "$_ev" "[sglang] BOOT disable_custom_all_reduce=True" | p2p_classify_engagement)"
+[[ "$r" == "nccl_only_operator" ]] || fail "operator restart after a V1-on boot -> nccl_only_operator (got $r)"
+r="$(printf '%s\n%s\n%s' "$_ev" "[sglang] BOOT disable_custom_all_reduce=False" "Setup Custom allreduce failed with boom. To silence this warning, specify --disable-custom-all-reduce explicitly." | p2p_classify_engagement)"
+[[ "$r" == "nccl_only_failed" ]] || fail "failed restart after a V1-on boot -> nccl_only_failed (got $r)"
+out="$(p2p_verdict 2 pcie_p2p on)"; assert_contains "$out" "custom all-reduce ON"
+unset _sgl_v1 _ev
+echo "  ✓ SGLang V1 custom all-reduce (every PCIe rig) scored on from its graph-buffer registration"
+
 # ── 3. capability probes via faked nvidia-smi ────────────────────────────────
 mk_smi() { cat > "$TMP/nvidia-smi" <<EOF
 #!/usr/bin/env bash

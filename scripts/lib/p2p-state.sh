@@ -118,7 +118,11 @@ p2p_engine_log_evidence() {
     index($0, "disable_custom_all_reduce=True") ||
     index($0, "Setup Custom allreduce failed") ||
     index($0, "sglang is using nccl==") ||
-    index($0, "All Reduce config:") { print }
+    index($0, "All Reduce config:") { print; next }
+    # The V1 custom all-reduce (every PCIe rig: SGLang admits V2 only on full
+    # NVLink) logs nothing when it initializes. Its first sign of life is the
+    # graph-buffer registration after CUDA-graph capture, rank 0 only.
+    index($0, "Registering ") && index($0, " cuda graph addresses") { print }
   '
 }
 # Engagement classifier — PURE (takes the boot-trail/env text on stdin so the
@@ -126,7 +130,9 @@ p2p_engine_log_evidence() {
 # report.sh and bench.sh gather exactly this normalized text: the container's
 # `[nvlink]` boot lines, resolved NCCL_P2P*/NVLINK_MODE env, and the engine's
 # own all-reduce runtime lines. vLLM reports vetoes; SGLang additionally reports
-# `sglang is using nccl==...` and `All Reduce config: ...` after initialization.
+# `sglang is using nccl==...` and, when its custom all-reduce is live, either
+# `All Reduce config: ...` (V2, NVLink only) or `Registering N cuda graph
+# addresses` (V1 — the only success signal on PCIe, and only with CUDA graphs).
 # Prints: "on" | "nccl_only_operator" | "nccl_only_gated" | "nccl_only_degraded"
 #         | "nccl_only_nolib" | "nccl_only_failed" | "off" | "unknown" | "requested".
 # Reads detect_nvlink.sh's machine-readable STATE line for OUR configuration and
@@ -267,7 +273,7 @@ p2p_classify_engagement() {
       echo nccl_only_operator; return 0 ;;
   esac
   case "$text" in
-    *"All Reduce config:"*|*"custom all-reduce ON"*|*"enabling NVLink mode"*) echo on; return 0 ;;
+    *"All Reduce config:"*|*" cuda graph addresses"*|*"custom all-reduce ON"*|*"enabling NVLink mode"*) echo on; return 0 ;;
   esac
   case "$text" in
     *"P2P off"*|*"using PCIe mode"*|*"forcing PCIe mode"*) echo off; return 0 ;;
