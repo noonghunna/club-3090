@@ -15,7 +15,8 @@
 # a listed file that no longer does also fails, so the list can only shrink.
 #
 # Scope: tracked .sh / .service files for the shell patterns, tracked .py for the
-# Python ones; comment lines, tests and the two loaders themselves are excluded.
+# Python ones; comment lines, tests and the two loaders themselves are excluded, and
+# so is scripts/lib/litellm_local.py, the one reader of the gateway's old local.env.
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -30,18 +31,23 @@ EOF
 
 # ── the detector ────────────────────────────────────────────────────────────
 # `.env` as a path of its own: not preceded by a word character, a dot or a dash,
-# so local.env, imagegen.env, club3090.env and secrets.env never count.
-E='(^|[^A-Za-z0-9_.-])\.env\b'
+# so imagegen.env, club3090.env and secrets.env never count. `local.env` does: the
+# gateway's route keys used to live there (services/litellm/local.env), and they are
+# settings now (secrets.env, #1466 4c). Only scripts/lib/litellm_local.py reads it,
+# through club_config's parser, to migrate it; docker compose loads it itself. A
+# script reading it on its own would miss the saved keys, which win over it.
+E='(^|[^A-Za-z0-9_.-])(local)?\.env\b'
 SH_PATTERNS=(
   "(source|^[[:space:]]*\\.)[[:space:]]+[^#]*${E}"                      # sourcing it
   '--env-file[= ]+[^/[:space:]]'                                        # docker compose --env-file (not /dev/null)
   'EnvironmentFile='                                                    # systemd
   "(<|>>?)[[:space:]]*\"?[^[:space:]]*${E}"                              # redirecting from or to it
   "\\b(grep|sed|awk|cut|cat|mv|cp|touch|tee)\\b[^|;]*${E}"               # a tool reading or rewriting it
-  "^[[:space:]]*(local[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*[[:space:]]+)*[A-Za-z_][A-Za-z0-9_]*=[\"']?[^[:space:]]*[/\"'{]\\.env\\b"  # its path in a variable
+  "^[[:space:]]*(local[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*[[:space:]]+)*[A-Za-z_][A-Za-z0-9_]*=[\"']?[^[:space:]]*[/\"'{](local)?\\.env\\b"  # its path in a variable
 )
 PY_PATTERNS=(
   "[\"']\\.env[\"']"                                                    # Path(root) / ".env", "--env-file", ".env"
+  "[\"']([^\"']*/)?local\\.env[\"']"                                    # "services/litellm/local.env"
 )
 # detect <file>... → prints the files that parse .env themselves.
 # ⚠️ No `grep | grep -q` here: under pipefail, -q exiting on the first match SIGPIPEs
@@ -79,17 +85,23 @@ w r8.py  'text = (Path(root) / ".env").read_text()'
 # A large file whose reader line comes first: under the old `grep | grep -q`
 # pipeline this one read as clean.
 { echo 'source "${ROOT_DIR}/.env"'; for i in $(seq 1 20000); do echo "echo line $i padding padding padding"; done; } > "$T/r9.sh"
+# The gateway's old key file (#1466 4c).
+w r10.sh 'k=$(grep -E "^MY_KEY=" "$ROOT/services/litellm/local.env" | cut -d= -f2-)'
+w r11.py 'keys = open(os.path.join(root, "services/litellm/local.env")).read()'
+w r12.sh 'KEYS_FILE="$ROOT/services/litellm/local.env"'
 w n1.sh  '# source "${ROOT_DIR}/.env"   (a comment)'
 w n2.sh  'docker compose --env-file /dev/null -f x.yml config'
-w n3.sh  'cp services/litellm/local.env /tmp/x; echo ok > "$D/imagegen.env"'
+w n3.sh  'echo ok > "$D/imagegen.env"; cp "$D/club3090.env" "$D/secrets.env" "$D/bak/"'
+w n9.sh  'echo "route keys go in secrets.env now, not local.env"'
+w n10.py 'p = "mylocal.env"'
 w n4.sh  '. "$LIB/club-config.sh"; club_config_load "$ROOT"'
 w n5.sh  'echo "[setup] set MODEL_DIR in your config"'
 w n6.py  '"""Reads ``<root>/.env`` as a legacy fallback."""'
 w n7.py  'p = config_dir() / "club3090.env"'
 w n8.sh  'sudo docker compose --env-file "$CLUB3090_COMPOSE_ENV_FILE" -f x.yml up -d'
-got="$(cd "$T" && detect r1.sh r2.sh r3.sh r4.sh r5.sh r6.sh r7.service r8.py r9.sh n1.sh n2.sh n3.sh n4.sh n5.sh n6.py n7.py n8.sh | tr '\n' ' ')"
-want="r1.sh r2.sh r3.sh r4.sh r5.sh r6.sh r7.service r8.py r9.sh "
-[[ "$got" == "$want" ]] && ok "self-test: detector flags 9 readers (incl. a 20,000-line file) and ignores 8 look-alikes (incl. the sanctioned compose env file)" \
+got="$(cd "$T" && detect r1.sh r2.sh r3.sh r4.sh r5.sh r6.sh r7.service r8.py r9.sh r10.sh r11.py r12.sh n1.sh n2.sh n3.sh n4.sh n5.sh n6.py n7.py n8.sh n9.sh n10.py | tr '\n' ' ')"
+want="r1.sh r2.sh r3.sh r4.sh r5.sh r6.sh r7.service r8.py r9.sh r10.sh r11.py r12.sh "
+[[ "$got" == "$want" ]] && ok "self-test: detector flags 12 readers (incl. a 20,000-line file and three of the gateway's old local.env) and ignores 10 look-alikes (incl. the sanctioned compose env file)" \
                         || bad "self-test: detector flagged [$got], want [$want]"
 
 # ── the tree ────────────────────────────────────────────────────────────────
@@ -101,7 +113,7 @@ else
 fi
 mapfile -t FILES < <(printf '%s\n' "${FILES[@]}" \
   | command grep -vE '(^|/)tests/|/\.venv/|/node_modules/' \
-  | command grep -vxE 'scripts/lib/club-config\.sh|scripts/lib/club_config\.py')
+  | command grep -vxE 'scripts/lib/club-config\.sh|scripts/lib/club_config\.py|scripts/lib/litellm_local\.py')
 [[ ${#FILES[@]} -gt 100 ]] || bad "only ${#FILES[@]} files scanned — the file list is broken"
 
 found="$(detect "${FILES[@]}" | sort)"
