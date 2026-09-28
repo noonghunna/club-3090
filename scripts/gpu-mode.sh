@@ -20,21 +20,26 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 CLUB3090_DIR="${CLUB3090_DIR:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}"
 COMPOSE_BASE="$CLUB3090_DIR/services"
 
-# Settings for `sudo docker compose` (club-3090#1466). sudo strips the environment,
-# so the resolved settings (your club-3090 config, then the repo .env; a variable
-# already set in this shell wins) go in a 0600 temp file passed as --env-file and
-# removed on exit. Created once, here in the main shell: a file made inside a
-# ( … ) subshell would outlive it, since traps don't reach subshells. When nothing
-# is configured the file isn't passed, so compose keeps its own .env lookup.
+# Settings for `sudo docker compose` (club-3090#1466). sudo strips the environment, so
+# each compose call gets the resolved settings (your club-3090 config, then the repo
+# .env; a variable already set in this shell wins) in a 0600 temp file passed as
+# --env-file — built FRESH for every call, so a value saved earlier in this run
+# (start_comfyui saves COMFYUI_ROOT) reaches the next one, and removed right after
+# it. Not passed when nothing is configured, so compose keeps its own .env lookup.
 # The loader is library code, so it comes from THIS script's tree; CLUB3090_DIR is
 # only the clone whose settings (its legacy .env) are read.
 # shellcheck source=lib/club-config.sh
 . "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/lib/club-config.sh"
-CLUB3090_COMPOSE_ENV_FILE="$(club_config_compose_env_file "$CLUB3090_DIR" 2>/dev/null || true)"
-if [ -n "$CLUB3090_COMPOSE_ENV_FILE" ] && [ ! -s "$CLUB3090_COMPOSE_ENV_FILE" ]; then
-    rm -f "$CLUB3090_COMPOSE_ENV_FILE"; CLUB3090_COMPOSE_ENV_FILE=""
-fi
-[ -n "$CLUB3090_COMPOSE_ENV_FILE" ] && trap 'rm -f "$CLUB3090_COMPOSE_ENV_FILE"' EXIT
+# Studio paths YOU exported, captured BEFORE comfyui-paths.sh (below) exports its derived
+# ones: passed through sudo on every compose call, so a one-run override reaches the
+# containers without being saved. Derived values are not passed — the saved value, else
+# the compose's default, applies — so a hand-set COMFYUI_ROOT in your settings is never
+# overridden by a derivation.
+GPU_MODE_SHELL_ENV=()
+for _v in COMFYUI_ROOT COMFYUI_OUTPUT_DIR; do
+    [ -n "${!_v:-}" ] && GPU_MODE_SHELL_ENV+=("$_v=${!_v}")
+done
+unset _v
 # ComfyUI/studio paths derive from MODEL_DIR (see services/comfyui/comfyui-paths.sh) so the
 # ai-studio scene's compose mounts + missing-model check match wherever the user keeps models.
 if [ -f "$COMPOSE_BASE/comfyui/comfyui-paths.sh" ]; then
@@ -129,16 +134,7 @@ SERVICES=(openwebui litellm qdrant searxng spark-dashboard)
 #
 # stderr is preserved (no 2>/dev/null) so real errors surface.
 compose_at() {
-    local dir=$1
-    local action=$2
-    local file=${3:-docker-compose.yml}
-    if [ -f "$dir/$file" ]; then
-        local env_args=()
-        if [ -n "$CLUB3090_COMPOSE_ENV_FILE" ]; then
-            env_args=(--env-file "$CLUB3090_COMPOSE_ENV_FILE")
-        fi
-        (cd "$dir" && sudo docker compose "${env_args[@]}" -f "$file" $action)
-    fi
+    compose_at_env "$1" "$2" "${3:-docker-compose.yml}"
 }
 
 # #715 gap 4 — start-failure tracking. start_* helpers used to swallow a failed
@@ -157,14 +153,17 @@ c3_mark_start_failure() { FAILED_SERVICES+=("$1"); }
 # Args: <dir> <action> <file> [VAR=val ...]
 compose_at_env() {
     local dir=$1 action=$2 file=$3; shift 3
-    local envs=("$@")
-    if [ -f "$dir/$file" ]; then
-        local env_args=()
-        if [ -n "$CLUB3090_COMPOSE_ENV_FILE" ]; then
-            env_args=(--env-file "$CLUB3090_COMPOSE_ENV_FILE")
-        fi
-        (cd "$dir" && sudo "${envs[@]}" docker compose "${env_args[@]}" -f "$file" $action)
+    # The caller's assignments come last, so they win over the exported studio paths.
+    local envs=("${GPU_MODE_SHELL_ENV[@]}" "$@")
+    [ -f "$dir/$file" ] || return 0
+    local env_args=() rc=0 CLUB3090_COMPOSE_ENV_FILE
+    CLUB3090_COMPOSE_ENV_FILE="$(club_config_compose_env_file "$CLUB3090_DIR" 2>/dev/null || true)"
+    if [ -s "$CLUB3090_COMPOSE_ENV_FILE" ]; then
+        env_args=(--env-file "$CLUB3090_COMPOSE_ENV_FILE")
     fi
+    (cd "$dir" && sudo "${envs[@]}" docker compose "${env_args[@]}" -f "$file" $action) || rc=$?
+    rm -f "$CLUB3090_COMPOSE_ENV_FILE"
+    return "$rc"
 }
 
 # Standard service helpers (look in $COMPOSE_BASE/<service>)
@@ -210,7 +209,9 @@ _svc_docker() {
 
 service_image_rows() {
     local svc dir env_args=() cfg pinned cname running state
-    [ -n "$CLUB3090_COMPOSE_ENV_FILE" ] && env_args=(--env-file "$CLUB3090_COMPOSE_ENV_FILE")
+    local CLUB3090_COMPOSE_ENV_FILE
+    CLUB3090_COMPOSE_ENV_FILE="$(club_config_compose_env_file "$CLUB3090_DIR" 2>/dev/null || true)"
+    [ -s "$CLUB3090_COMPOSE_ENV_FILE" ] && env_args=(--env-file "$CLUB3090_COMPOSE_ENV_FILE")
     for svc in "${SERVICES[@]}"; do
         dir="$COMPOSE_BASE/$svc"
         [ -f "$dir/docker-compose.yml" ] || continue
@@ -232,6 +233,7 @@ print(svc.get("image") or "-", svc.get("container_name") or "-")' 2>/dev/null) |
         fi
         printf '%s\t%s\t%s\t%s\t%s\n' "$svc" "$cname" "$state" "$pinned" "${running:--}"
     done
+    rm -f "$CLUB3090_COMPOSE_ENV_FILE"
 }
 
 show_service_images() {
