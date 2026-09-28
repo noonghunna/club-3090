@@ -21,17 +21,19 @@ def config_path() -> Path:
 
 
 def settings_path() -> Path:
-    """The file the in-app Settings ([S]) persists MODEL_DIR / HF_TOKEN to —
+    """c3's own preferences (logging, catalog columns / sort, first-run flag) —
     ``<C3_CONFIG_DIR or ~/.config/club-3090>/c3-settings.json`` (parallel to the
-    surface file so the proven surface logic is untouched)."""
+    surface file so the proven surface logic is untouched).  MODEL_DIR and
+    HF_TOKEN used to live here too; they are club-3090 settings now (#1466, see
+    ``settings_store``), and a copy left here is moved over once."""
     base = os.environ.get("C3_CONFIG_DIR")
     cfg_dir = Path(base) if base else Path.home() / ".config" / "club-3090"
     return cfg_dir / "c3-settings.json"
 
 
 def load_settings() -> dict:
-    """Persisted user settings (``model_dir`` / ``hf_token``) — ``{}`` on a
-    missing / unreadable / malformed file (tolerant; never crashes the launch)."""
+    """c3's persisted preferences — ``{}`` on a missing / unreadable / malformed
+    file (tolerant; never crashes the launch)."""
     try:
         with settings_path().open("r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -72,24 +74,39 @@ def save_first_run_seen() -> None:
 
 
 def apply_persisted_settings(app, environ) -> None:
-    """Apply MODEL_DIR / HF_TOKEN / C3_LOG to the app before run().
+    """Apply the saved settings + c3's preferences to the app before run().
 
-    Precedence (highest first): an explicit shell env var > the persisted
-    setting (``c3-settings.json``) > the bundled default.  An env var is a
-    deliberate per-launch choice, so it WINS over a stale persisted value (the
-    standard 12-factor rule; matches the HF_TOKEN handling that was here first).
-    MODEL_DIR points the weights-on-disk check at the user's models volume;
-    HF_TOKEN flows into the download subprocess env (gated/private repos)."""
+    MODEL_DIR and HF_TOKEN are club-3090 settings (#1466), read through the one
+    loader with the precedence every script uses: the shell > club3090.env >
+    secrets.env > the repo .env > the bundled default.  ``weights_model_dir``
+    resolves MODEL_DIR itself, so c3 looks for weights exactly where switch.sh
+    and setup.sh do.  The saved HF token is applied to ``environ`` when the shell
+    hasn't set one, so c3's own children (downloads, HF search) get it.
+
+    First, a model dir / HF token that an older c3 saved in c3-settings.json
+    moves into the store once (``settings_store.fold_in_c3_settings``); what
+    happened is queued for the UI as a toast, never with a token in it."""
+    from .settings_store import fold_in_c3_settings, stored
+
     s = load_settings()
-    # MODEL_DIR: shell env wins over persisted; neither set → weights_model_dir
-    # falls back to the env var then the default on its own.
-    mdir = str(environ.get("MODEL_DIR") or "").strip() or str(s.get("model_dir") or "").strip()
-    if mdir:
-        app._data._model_dir = mdir
-    # HF_TOKEN: a shell-provided token wins; otherwise apply the persisted one.
-    tok = str(s.get("hf_token") or "").strip()
-    if tok and not environ.get("HF_TOKEN"):
-        environ["HF_TOKEN"] = tok
+    data = app._data
+    notices, moved, fallbacks = fold_in_c3_settings(s, data.repo_root)
+    if moved:
+        save_settings(s)
+    queue = getattr(app, "_startup_notices", None)
+    if isinstance(queue, list):
+        queue.extend(notices)
+    # A value the store refused keeps working in c3 for now (the warning above
+    # says why) — the pre-#1466 behaviour, shell still first.
+    if fallbacks.get("MODEL_DIR") and not str(environ.get("MODEL_DIR") or "").strip():
+        data._model_dir = fallbacks["MODEL_DIR"]
+    # HF_TOKEN: a shell-provided token wins; otherwise apply the saved one.
+    if not environ.get("HF_TOKEN"):
+        hit = stored("HF_TOKEN", data.repo_root)
+        tok = (hit[1] if hit else "").strip() or fallbacks.get("HF_TOKEN", "")
+        if tok:
+            environ["HF_TOKEN"] = tok
+            data._hf_token_injected = True
     # Catalog columns (#724): the [|] picker's persisted order/visibility —
     # applied via an app attribute (CatalogPane reads it on mount) so a
     # directly-constructed app (tests) always starts canonical.
@@ -217,7 +234,8 @@ def main() -> None:
     # full default.
     surface = resolve_surface(sys.argv, os.environ)
     app = CockpitApp(repo_root=repo_root, surface=surface)
-    # Apply persisted MODEL_DIR / HF_TOKEN (the in-app [S] Settings) before run.
+    # Apply the saved settings (MODEL_DIR / HF_TOKEN, via the loader) and c3's
+    # own preferences before run.
     apply_persisted_settings(app, os.environ)
     app.run()
 

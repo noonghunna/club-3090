@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +34,14 @@ import pytest
 # per-test via monkeypatch.
 os.environ.setdefault("C3_SKIP_DOWNLOAD_PREFLIGHT", "1")
 os.environ.setdefault("C3_CONFIG_DIR", tempfile.mkdtemp(prefix="c3-tests-config-"))
+# The club-3090 settings store (club-3090#1466) — forced, not defaulted: a
+# developer's exported CLUB3090_CONFIG_DIR must not leak into a test either.
+# The per-test fixture below replaces it with a fresh directory.
+os.environ["CLUB3090_CONFIG_DIR"] = tempfile.mkdtemp(prefix="c3-tests-club3090-config-")
+
+# The checkout these tests live in. Its repo-root .env may hold the maintainer's
+# real settings (the loader reads it last, as a legacy fallback).
+_REAL_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def pytest_configure(config):
@@ -72,3 +82,66 @@ def _no_live_subprocess(monkeypatch):
     monkeypatch.setattr(RealRunner, "run", _blocked_real_run)
     monkeypatch.setattr(SubprocessRunner, "start_raw", _blocked_start_raw)
     yield
+
+
+def _club_config():
+    """The ONE settings loader (scripts/lib/club_config.py) of this checkout —
+    the module object c3's settings_store uses, so patches here reach c3."""
+    root = str(_REAL_REPO_ROOT)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from scripts.lib import club_config
+
+    return club_config
+
+
+def _is_real_repo_root(repo_root) -> bool:
+    try:
+        return Path(repo_root).resolve() == _REAL_REPO_ROOT
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings(tmp_path_factory, monkeypatch):
+    """Tests never read or write the real club-3090 settings (club-3090#1466).
+
+    c3 reads and writes settings through the one loader: the per-user store
+    (``CLUB3090_CONFIG_DIR``: club3090.env + secrets.env) and, read last, the
+    checkout's repo-root .env.  For every test:
+      * ``CLUB3090_CONFIG_DIR`` and ``C3_CONFIG_DIR`` (c3-settings.json, logs)
+        point at a fresh temporary directory;
+      * the legacy .env of the checkout the tests run from is invisible (tests
+        that use the real tree as repo root, to read the registry, must not
+        pick up the maintainer's settings), and clearing a key there fails the
+        test instead of rewriting it;
+      * ``HF_TOKEN`` is restored afterwards (c3 applies a saved token to its own
+        environment, as it does at launch).
+    """
+    d = tmp_path_factory.mktemp("club3090-config")
+    monkeypatch.setenv("CLUB3090_CONFIG_DIR", str(d))
+    monkeypatch.setenv("C3_CONFIG_DIR", str(d))
+
+    cc = _club_config()
+    real_layers = cc.layers
+    real_unset = cc.unset_values
+
+    def layers(repo_root=None, environ=None):
+        out = real_layers(repo_root, environ)
+        if repo_root is not None and _is_real_repo_root(repo_root):
+            out = [layer for layer in out if layer[0] != cc.LEGACY_LABEL]
+        return out
+
+    def unset_values(keys, which="global", environ=None, repo_root=None):
+        if repo_root is not None and _is_real_repo_root(repo_root):
+            raise AssertionError("a test tried to rewrite the real checkout's .env")
+        return real_unset(keys, which, environ, repo_root=repo_root)
+
+    monkeypatch.setattr(cc, "layers", layers)
+    monkeypatch.setattr(cc, "unset_values", unset_values)
+    token = os.environ.get("HF_TOKEN")
+    yield
+    if token is None:
+        os.environ.pop("HF_TOKEN", None)
+    else:
+        os.environ["HF_TOKEN"] = token

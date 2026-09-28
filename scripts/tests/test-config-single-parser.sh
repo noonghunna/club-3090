@@ -28,8 +28,6 @@ ALLOWLIST=$(cat <<'EOF'
 scripts/switch.sh                                   1c --set-default / thinking-pin writer (reads moved in 1b-1)
 scripts/setup.sh                                    1c MODEL_DIR writer + WSL2 compose-dir .env (reads moved in 1b-1)
 services/comfyui/comfyui-paths.sh                   1c LANIP / COMFYUI_* writer (reads moved in 1b-2)
-tools/serve-cockpit/club3090_cockpit/app.py         1c thinking-pin / director writer
-tools/serve-cockpit/club3090_cockpit/services.py    1b-3 reads + docker compose --env-file, 1c writer
 EOF
 )
 

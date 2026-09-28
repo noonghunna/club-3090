@@ -1326,41 +1326,50 @@ class TestNavNodesExist:
 
     def test_thinking_persist_writes_pin_and_upserts(self, tmp_path):
         """#1014 follow-up: [T] persists the CURRENT choice as
-        CLUB3090_THINKING_<MODEL> in <repo>/.env through the --set-default
-        write semantics (upsert — any existing assignment for the key, with or
-        without an `export` prefix, is replaced; every other line survives),
-        and the card's persisted line reads the value back."""
+        CLUB3090_THINKING_<MODEL> in the club-3090 settings (club3090.env, the
+        one writer — #1466: upsert, any existing assignment for the key, with or
+        without an `export` prefix, is replaced; every other line survives), and
+        the card's persisted line reads the value back.  The repo .env is never
+        written."""
+        import os
+
+        store = Path(os.environ["CLUB3090_CONFIG_DIR"]) / "club3090.env"
+        store.parent.mkdir(parents=True, exist_ok=True)
         m = self._thinking_modal(tmp_path=tmp_path)
-        (tmp_path / ".env").write_text("FOO=bar\nKEEP=1\n", encoding="utf-8")
+        store.write_text("FOO=bar\nKEEP=1\n", encoding="utf-8")
         assert m.check_action("persist_thinking", ()) is False   # inherit: nothing to save
         m.action_cycle_thinking()                                # → on
         assert m.check_action("persist_thinking", ()) is True
         m.action_persist_thinking()
-        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        text = store.read_text(encoding="utf-8")
         assert "FOO=bar\n" in text and "KEEP=1\n" in text
         assert "CLUB3090_THINKING_QWEN3_8_27B=on\n" in text, text
-        assert "persisted default: on (CLUB3090_THINKING_QWEN3_8_27B)" \
+        assert "persisted default: on (CLUB3090_THINKING_QWEN3_8_27B) from club3090.env" \
             in "\n".join(m._thinking_card_lines())
+        assert not (tmp_path / ".env").exists()
 
         # Re-persist at a different state → upsert, never duplicate lines.
         m.action_cycle_thinking()                                # → off
         m.action_persist_thinking()
-        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        text = store.read_text(encoding="utf-8")
         assert text.count("CLUB3090_THINKING_QWEN3_8_27B=") == 1
         assert "CLUB3090_THINKING_QWEN3_8_27B=off\n" in text, text
 
-        # An `export `-prefixed pin (switch.sh loader tolerance) is replaced too.
-        (tmp_path / ".env").write_text(
+        # An `export `-prefixed pin (loader tolerance) is replaced too.
+        store.write_text(
             "export CLUB3090_THINKING_QWEN3_8_27B=on\nKEEP=1\n", encoding="utf-8"
         )
         m.action_persist_thinking()                              # still off
-        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        text = store.read_text(encoding="utf-8")
         assert "export CLUB3090_THINKING" not in text
         assert "CLUB3090_THINKING_QWEN3_8_27B=off" in text and "KEEP=1" in text
 
     def test_thinking_persist_inherit_neither_writes_nor_removes(self, tmp_path):
         """#1014 follow-up acceptance: at inherit the persist action writes
-        nothing AND removes nothing — .env stays byte-identical."""
+        nothing AND removes nothing — the repo .env stays byte-identical and no
+        settings file is created."""
+        import os
+
         m = self._thinking_modal(tmp_path=tmp_path)
         envf = tmp_path / ".env"
         envf.write_text("export CLUB3090_THINKING_QWEN3_8_27B=on\nKEEP=1\n", encoding="utf-8")
@@ -1369,6 +1378,7 @@ class TestNavNodesExist:
         assert m.check_action("persist_thinking", ()) is False
         m.action_persist_thinking()          # gated no-op
         assert envf.read_text(encoding="utf-8") == before
+        assert not (Path(os.environ["CLUB3090_CONFIG_DIR"]) / "club3090.env").exists()
 
     def test_thinking_persist_gates_and_card_surfaces_pin(self, tmp_path):
         """[T] is offered only where [t] is AND a choice exists (start + profile
@@ -14497,22 +14507,26 @@ class TestSettings:
 
     @pytest.mark.asyncio
     async def test_apply_settings_persists_and_applies(self):
+        """MODEL_DIR → club3090.env, HF_TOKEN → secrets.env (the settings
+        switch.sh reads, #1466); the logging switch stays c3's own."""
         import os
         from club3090_cockpit import __main__ as M
+        cfg = Path(os.environ["CLUB3090_CONFIG_DIR"])
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             app.apply_settings(
-                model_dir="/tmp/my-models",
+                model_dir="/data/my-models",
                 hf_token="hf_secret123",
                 log_enabled=True,
             )
             await _settle(pilot)
-            assert app._data.weights_model_dir() == "/tmp/my-models"
+            assert app._data.weights_model_dir() == "/data/my-models"
             assert os.environ.get("HF_TOKEN") == "hf_secret123"
+            assert "MODEL_DIR=/data/my-models\n" in (cfg / "club3090.env").read_text()
+            assert "HF_TOKEN=hf_secret123\n" in (cfg / "secrets.env").read_text()
             s = M.load_settings()
-            assert s.get("model_dir") == "/tmp/my-models"
-            assert s.get("hf_token") == "hf_secret123"
+            assert "model_dir" not in s and "hf_token" not in s
             assert s.get("logging_enabled") is True
 
     @pytest.mark.asyncio
@@ -14530,22 +14544,25 @@ class TestSettings:
             assert os.environ.get("HF_TOKEN") == "hf_first"
 
     @pytest.mark.asyncio
-    async def test_director_placement_persists_to_repo_env(self, tmp_path):
+    async def test_director_placement_persists_to_the_settings(self, tmp_path):
         """Director placement (CPU/GPU0/GPU1) persists to STUDIO_DIRECTOR_DEVICE in
-        the repo .env — what gpu-mode reads on the next ai-studio start."""
+        club3090.env (#1466) — what gpu-mode reads on the next ai-studio start."""
+        import os
+        store = Path(os.environ["CLUB3090_CONFIG_DIR"]) / "club3090.env"
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            app._data.repo_root = tmp_path                 # write the .env to a temp dir
+            app._data.repo_root = tmp_path                 # a checkout with no .env
             assert app._data.director_device() == "gpu0"
             app.apply_settings(model_dir="", hf_token="", director_device="cpu")
             await _settle(pilot)
             assert app._data.director_device() == "cpu"
-            assert "STUDIO_DIRECTOR_DEVICE=cpu" in (tmp_path / ".env").read_text()
+            assert "STUDIO_DIRECTOR_DEVICE=cpu" in store.read_text()
+            assert not (tmp_path / ".env").exists()
             # re-applying the same value is a no-op (no duplicate line)
             app.apply_settings(model_dir="", hf_token="", director_device="cpu")
             await _settle(pilot)
-            assert (tmp_path / ".env").read_text().count("STUDIO_DIRECTOR_DEVICE=") == 1
+            assert store.read_text().count("STUDIO_DIRECTOR_DEVICE=") == 1
 
     @pytest.mark.asyncio
     async def test_apply_persisted_settings_on_fresh_app(self):

@@ -3260,7 +3260,7 @@ class ConfirmActionScreen(ModalScreen):
         # registry row carries a 'thinking' sampler profile.  [t] cycles
         # inherit → force-on → force-off; [r] resets the sampler to the card
         # row (offered while thinking resolves ON); [T] persists the CURRENT
-        # choice as the model's .env default (#1014 follow-up — the pin
+        # choice as the model's saved default (#1014 follow-up — the pin
         # switch.sh resolves into ENABLE_THINKING on later launches).  Keys
         # checked against this modal's existing set (enter/k/f/a/escape):
         # t, r and shift-t are free.
@@ -3297,8 +3297,8 @@ class ConfirmActionScreen(ModalScreen):
         )
         # Tri-state thinking toggle (#1014 L3) — per-launch choice, defaulting
         # to inherit (the entrypoint's own ENABLE_THINKING=false default).
-        # [T] can PERSIST the choice as CLUB3090_THINKING_<MODEL> in the repo
-        # .env (the --set-default mechanism); switch.sh resolves that pin into
+        # [T] can PERSIST the choice as CLUB3090_THINKING_<MODEL> in the
+        # club-3090 settings (#1466); switch.sh resolves that pin into
         # ENABLE_THINKING=true/false on every later launch of the model
         # (#1014 follow-up), so the persistence outlives this session.
         self._thinking: str = "inherit"          # inherit | on | off
@@ -3436,11 +3436,11 @@ class ConfirmActionScreen(ModalScreen):
 
     # ── persisted thinking pin (#1014 follow-up) ────────────────────────────────
     #
-    # [T] writes the CURRENT tri-state choice as CLUB3090_THINKING_<MODEL> into
-    # the repo .env — the same write --set-default performs for
-    # CLUB3090_DEFAULT_<MODEL> (switch.sh env_set_key: upsert, all other lines
-    # preserved). switch.sh's launch path reads the pin back and injects
-    # ENABLE_THINKING accordingly, so the modal choice survives the session.
+    # [T] stores the CURRENT tri-state choice as CLUB3090_THINKING_<MODEL> in the
+    # club-3090 settings (club3090.env, through the one writer — #1466), the
+    # store switch.sh reads: its launch path resolves the pin (the shell wins)
+    # and injects ENABLE_THINKING accordingly, so the modal choice survives the
+    # session. An old pin in the repo .env is read last, so the stored one wins.
 
     def _thinking_model(self) -> str:
         """The MODEL-id this serve belongs to (the pin is per-model, like
@@ -3455,68 +3455,65 @@ class ConfirmActionScreen(ModalScreen):
         suffix = "".join(c if c.isalnum() else "_" for c in self._thinking_model()).upper()
         return f"CLUB3090_THINKING_{suffix}"
 
-    def _repo_env_set_key(self, key: str, value: str) -> bool:
-        """Upsert KEY=VALUE in <repo>/.env — the Python mirror of switch.sh's
-        env_set_key (--set-default's write path): replace any existing
-        assignment for KEY (with or without ``export``), else append; every
-        other line is preserved; the file is created when absent.  False when
-        there is no repo root to write to."""
-        from pathlib import Path as _Path
+    def _pin_notify(self, message: str, severity: str = "information") -> None:
+        """Toast via the app when mounted (tests build this modal bare)."""
+        try:
+            self.app.notify(message, title="Thinking default", severity=severity, timeout=6)
+        except Exception:
+            pass
+
+    def _save_thinking_pin(self, key: str, value: str) -> bool:
+        """Store KEY=VALUE in club3090.env through the one writer (replaces any
+        existing assignment, keeps every other line). False — with the reason
+        shown — when the store refuses or can't be written, or when there is no
+        repo root (a bare modal)."""
+        from rich.markup import escape
+
+        from . import settings_store as _ss
 
         if self._repo_root is None:
             return False
-        envf = _Path(self._repo_root) / ".env"
-        lines: list[str] = []
-        if envf.is_file():
-            try:
-                lines = envf.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                lines = []
-        pat = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}=")
-        kept = [ln for ln in lines if not pat.match(ln)]
-        kept.append(f"{key}={value}")
         try:
-            envf.write_text("\n".join(kept) + "\n", encoding="utf-8")
-        except OSError:
+            _ss.save({key: value})
+        except _ss.SettingsError as e:
+            self._pin_notify(f"Not saved: {escape(str(e))}", "error")
             return False
+        if _ss.source(key, self._repo_root) == "shell":
+            self._pin_notify(
+                f"Saved, but {key} is also set in your shell, which wins for this "
+                "session and for launches from it.", "warning")
         return True
 
+    def _thinking_persisted_source(self) -> str:
+        """Where the effective pin comes from (shell / club3090.env / secrets.env
+        / repo .env), '' when unset or without a repo root."""
+        from . import settings_store as _ss
+
+        if self._repo_root is None:
+            return ""
+        return _ss.source(self._thinking_pin_key(), self._repo_root) or ""
+
     def _thinking_persisted(self) -> str:
-        """The model's persisted thinking pin read back from <repo>/.env:
-        'on' | 'off' | '' (absent/unreadable/unparseable → treated as none).
-        Tolerant of an optional ``export`` prefix and CRLF, matching switch.sh's
-        loader."""
-        from pathlib import Path as _Path
+        """The model's thinking pin as switch.sh resolves it (the loader: the
+        shell, the club-3090 settings, then the repo .env): 'on' | 'off' | ''
+        (absent / unparseable → none; no repo root → none)."""
+        from . import settings_store as _ss
 
         key = self._thinking_pin_key()
         if not key.startswith("CLUB3090_THINKING_") or self._repo_root is None:
             return ""
-        try:
-            text = (_Path(self._repo_root) / ".env").read_text(
-                encoding="utf-8", errors="replace"
-            )
-        except OSError:
-            return ""
-        prefix = f"{key}="
-        for raw in text.splitlines():
-            line = raw.strip().rstrip("\r")
-            if line.startswith("export "):
-                line = line[len("export "):].strip()
-            if not line.startswith(prefix):
-                continue
-            val = line[len(prefix):].strip().strip('"').strip("'").lower()
-            return val if val in ("on", "off") else ""
-        return ""
+        val = (_ss.get(key, self._repo_root) or "").strip().lower()
+        return val if val in ("on", "off") else ""
 
     def action_persist_thinking(self) -> None:
         """[T] → persist the CURRENT thinking choice as the model's default
         (#1014 follow-up).  inherit offers nothing to persist (check_action
-        hides the key); on/off upsert the pin and refresh the card so the
+        hides the key); on/off store the pin and refresh the card so the
         persisted line reflects the new value.  A no-op when the repo root is
         unknown — never a silent fake success."""
         if not self._thinking_capable() or self._thinking not in ("on", "off"):
             return
-        if self._repo_env_set_key(self._thinking_pin_key(), self._thinking):
+        if self._save_thinking_pin(self._thinking_pin_key(), self._thinking):
             self._render_serve_card()
 
     def _thinking_env_pairs(self) -> list[str]:
@@ -3569,8 +3566,8 @@ class ConfirmActionScreen(ModalScreen):
         """The serve-card lines for the thinking knob — pure over modal state,
         so tests assert the rendered contract directly.  [] where the knob is
         not offered (profile-less slug / non-START mode) → no toggle rendered.
-        The trailing line surfaces the PERSISTED pin (#1014 follow-up) read
-        back from the repo .env when readable."""
+        The trailing line surfaces the PERSISTED pin (#1014 follow-up) as
+        switch.sh resolves it, and where it comes from."""
         if not self._thinking_capable():
             return []
         prof = self._thinking_profiles() or {}
@@ -3615,12 +3612,14 @@ class ConfirmActionScreen(ModalScreen):
         # later launches. inherit has nothing to save ([T] is gated off there).
         persisted = self._thinking_persisted()
         disp = persisted if persisted else "none"
+        src = self._thinking_persisted_source() if persisted else ""
+        where = f" from {src}" if src else ""
         suffix = (
             f" · \\[T] save '{self._thinking}' as default"
             if self._thinking != "inherit"
             else ""
         )
-        lines.append(f"  [dim]persisted default: {disp} ({self._thinking_pin_key()}){suffix}[/dim]")
+        lines.append(f"  [dim]persisted default: {disp} ({self._thinking_pin_key()}){where}{suffix}[/dim]")
         return lines
 
     # ── presentation predicates ───────────────────────────────────────────────────
@@ -6310,9 +6309,11 @@ class ShareBackReportScreen(_CopyableModal, ModalScreen):
 
 class SettingsScreen(ModalScreen):
     """Edit the download settings — the MODEL DIR (weights live under
-    ``<dir>/huggingface/``) and the HF TOKEN (gated/private repos).  Persisted to
-    ``c3-settings.json`` and applied LIVE (re-stats the catalog against the new
-    dir).  HF_HOME is auto-derived under the model dir — not a user field."""
+    ``<dir>/huggingface/``) and the HF TOKEN (gated/private repos).  Saved to the
+    club-3090 settings (MODEL_DIR → club3090.env, HF_TOKEN → secrets.env, 0600 —
+    #1466), which switch.sh and setup.sh read too, and applied LIVE (re-stats the
+    catalog against the new dir).  HF_HOME is auto-derived under the model dir —
+    not a user field."""
 
     DEFAULT_CSS = """
     SettingsScreen {
@@ -6364,11 +6365,17 @@ class SettingsScreen(ModalScreen):
         log_enabled: bool = False,
         log_path: str = "",
         log_env_override: bool = False,
+        model_dir_source: str = "",
+        hf_token_source: str = "",
         **kwargs,
     ):
         super().__init__(**kwargs)
         self._model_dir = model_dir or ""
         self._hf_token_set = hf_token_set
+        # Where each effective value comes from (shell / club3090.env /
+        # secrets.env / repo .env) — "" when unset or unknown.
+        self._model_dir_source = model_dir_source
+        self._hf_token_source = hf_token_source
         self._director_device = director_device if director_device in ("gpu0", "gpu1", "cpu") else "gpu0"
         self._log_enabled = log_enabled
         self._log_path = log_path
@@ -6384,10 +6391,14 @@ class SettingsScreen(ModalScreen):
                             classes="settings-field")
                 yield Input(value=self._model_dir, placeholder="/mnt/models/huggingface",
                             id="set-model-dir")
+                if self._model_dir_source:
+                    yield Label(self._source_note(self._model_dir_source, "club3090.env"))
                 tok_ph = ("hf_…  (leave blank to keep the current token)"
                           if self._hf_token_set else "hf_…  (for gated / private repos)")
                 yield Label("HuggingFace token", classes="settings-field")
                 yield Input(value="", password=True, placeholder=tok_ph, id="set-hf-token")
+                if self._hf_token_set and self._hf_token_source:
+                    yield Label(self._source_note(self._hf_token_source, "secrets.env"))
                 yield Label("Director placement  [dim](ai-studio prompt-crafter · :8090)[/dim]",
                             classes="settings-field")
                 yield Select(
@@ -6422,6 +6433,15 @@ class SettingsScreen(ModalScreen):
                     classes="settings-field",
                 )
             yield Footer()
+
+    @staticmethod
+    def _source_note(source: str, saves_to: str) -> str:
+        """One dim line under a field: where its current value comes from, and —
+        when the shell sets it — that a saved value won't apply over it."""
+        if source == "shell":
+            return (f"[dim]from your shell, which wins over the saved value · "
+                    f"saving writes {saves_to}[/dim]")
+        return f"[dim]from {source} · saving writes {saves_to}[/dim]"
 
     def action_save(self) -> None:
         mdir = self.query_one("#set-model-dir", Input).value.strip()
@@ -9808,7 +9828,7 @@ class CockpitApp(App):
         # space on screen.  `_relabel_binding` is still useful: it keeps the
         # command-palette/tooltip text truthful.
         Binding("enter", "primary_action", "Select", show=False),
-        # Catalog (Run) — default pin management (.env write, gated=no GPU).
+        # Catalog (Run) — default pin management (a settings write by switch.sh, gated=no GPU).
         Binding("d", "set_default", "Set default", show=False),
         Binding("D", "clear_default", "Clear default", show=False),
         # Operate · Containers — logs (read) + restart/stop (gated writes).
@@ -10580,6 +10600,9 @@ class CockpitApp(App):
         self._session_log = None
         self._c3_log_enabled = False
         self._c3_log_env_override = False
+        # (severity, text) toasts queued before mount — e.g. the one-time move of
+        # c3-settings.json's model dir / HF token into the settings (#1466).
+        self._startup_notices: list[tuple[str, str]] = []
         self._active_mode = 0  # 0=Run & Operate (merged) · 1=Bring & Validate
         # Containers log-follow (\\[f]) — three states: off / following / paused.
         #   _log_follow_armed   True in BOTH following and paused
@@ -10802,6 +10825,9 @@ class CockpitApp(App):
         import time as _t
         self._note_activity()                              # fresh launch = user present
         self._docker_burst_until = _t.monotonic() + 15.0   # 15s startup burst → immediate + live
+        for severity, text in self._startup_notices:
+            self.notify(text, title="Settings", severity=severity, timeout=12)
+        self._startup_notices = []
         self.load_catalog()
         # A3: ONE periodic refresh interval, created once.  It is GATED at fire
         # time (_periodic_estate_refresh) to the MERGED Run & Operate mode
@@ -13252,15 +13278,21 @@ class CockpitApp(App):
 
     def action_settings(self) -> None:
         """[S] — open Settings (MODEL_DIR + HF_TOKEN + director placement)."""
-        import os as _os
+        hf_src = self._data.setting_source("HF_TOKEN") or ""
+        if hf_src == "shell" and getattr(self._data, "_hf_token_injected", False):
+            hf_src = self._data.saved_setting_source("HF_TOKEN")
         self.push_screen(
             SettingsScreen(
                 self._data.weights_model_dir(),
-                bool(_os.environ.get("HF_TOKEN")),
+                bool(self._data.hf_token()),
                 self._data.director_device(),
                 log_enabled=self._c3_log_enabled,
                 log_path=str(getattr(self._session_log, "path", "") or ""),
                 log_env_override=self._c3_log_env_override,
+                model_dir_source=(
+                    "" if getattr(self._data, "_model_dir", None)
+                    else self._data.setting_source("MODEL_DIR") or ""),
+                hf_token_source=hf_src,
             )
         )
 
@@ -13272,43 +13304,86 @@ class CockpitApp(App):
         director_device: str = "gpu0",
         log_enabled: Optional[bool] = None,
     ) -> None:
-        """Persist + apply Settings.  MODEL_DIR / HF_TOKEN persist to c3-settings.json;
-        the director placement persists to the repo .env (STUDIO_DIRECTOR_DEVICE — what
-        gpu-mode reads, applied on the next ai-studio start).  Empty text fields are
-        no-ops; a model-dir change re-stats the catalog."""
+        """Persist + apply Settings (club-3090#1466).  MODEL_DIR and the director
+        placement (STUDIO_DIRECTOR_DEVICE — applied on the next ai-studio start)
+        are stored in club3090.env and the HF token in secrets.env (0600), through
+        the one writer: the settings switch.sh, setup.sh and gpu-mode read, so c3
+        and the scripts can't disagree about where the weights are.  The master
+        logging switch is c3's own and stays in c3-settings.json.
+
+        Empty text fields are no-ops.  A value the writer refuses (one bash,
+        docker compose and systemd would read differently) is reported — by key
+        and reason, never the value — and not saved.  A value the shell also
+        sets is saved, and c3 says the shell wins (as it does for every script).
+        A model-dir change re-stats the catalog."""
         import os as _os
+
+        from rich.markup import escape
+
         from .__main__ import load_settings, save_settings
-        s = load_settings()
-        json_changed = False
-        if model_dir and model_dir != self._data.weights_model_dir():
-            self._data._model_dir = model_dir
-            s["model_dir"] = model_dir
-            json_changed = True
+        from .settings_store import SettingsError
+
+        data = self._data
+        saved: list[str] = []
+        errors: list[str] = []
+        shell_wins: list[str] = []
+
+        def _store(label: str, values: dict, *, secret: bool = False) -> bool:
+            try:
+                data.store_settings(values, secret=secret)
+            except SettingsError as e:
+                errors.append(f"{label}: {escape(str(e))}")
+                return False
+            return True
+
+        dir_saved = False
+        if model_dir and model_dir != data.weights_model_dir():
+            if _store("model dir", {"MODEL_DIR": model_dir}):
+                saved.append("model dir")
+                dir_saved = True
+                # The settings decide from here on (an explicit override would
+                # keep showing the old dir — e.g. a pre-#1466 fallback).
+                data._model_dir = None
+                if data.setting_source("MODEL_DIR") == "shell":
+                    shell_wins.append("MODEL_DIR")
         if hf_token:
-            _os.environ["HF_TOKEN"] = hf_token
-            s["hf_token"] = hf_token
-            json_changed = True
+            if _store("HF token", {"HF_TOKEN": hf_token}, secret=True):
+                saved.append("HF token")
+                if _os.environ.get("HF_TOKEN") and not getattr(data, "_hf_token_injected", False):
+                    shell_wins.append("HF_TOKEN")
+                else:
+                    # c3's own children (downloads, HF search) inherit it now.
+                    _os.environ["HF_TOKEN"] = hf_token
+                    data._hf_token_injected = True
+        if director_device and director_device != data.director_device():
+            if _store("director placement", {"STUDIO_DIRECTOR_DEVICE": director_device}):
+                saved.append(f"director → {director_device} (next ai-studio start)")
+                if data.setting_source("STUDIO_DIRECTOR_DEVICE") == "shell":
+                    shell_wins.append("STUDIO_DIRECTOR_DEVICE")
+        s = load_settings()
         if (
             log_enabled is not None
             and not self._c3_log_env_override
             and log_enabled != s.get("logging_enabled")
         ):
             s["logging_enabled"] = bool(log_enabled)
-            json_changed = True
-        if json_changed:
             save_settings(s)
-        env_changed = False
-        if director_device and director_device != self._data.director_device():
-            env_changed = self._data.set_repo_env_var("STUDIO_DIRECTOR_DEVICE", director_device)
-        if json_changed or env_changed:
-            msg = (f"Saved · director → {director_device} (next ai-studio start)."
-                   if env_changed else "Settings saved.")
-            self.notify(msg, title="Settings", timeout=4)
-        else:
+            saved.append("logging")
+        if errors:
+            self.notify("Not saved — " + " · ".join(errors), title="Settings",
+                        severity="error", timeout=12)
+        if saved:
+            msg = "Saved: " + ", ".join(saved) + "."
+            if shell_wins:
+                msg += (f" {', '.join(shell_wins)} is also set in your shell, which wins "
+                        "for this session and for launches from it.")
+            self.notify(msg, title="Settings", severity="warning" if shell_wins else "information",
+                        timeout=8 if shell_wins else 4)
+        elif not errors:
             self.notify("No changes.", title="Settings", timeout=2)
         if log_enabled is not None and not self._c3_log_env_override:
             self.configure_session_logging(log_enabled)
-        if model_dir:
+        if dir_saved:
             self.load_catalog()   # re-stat weights against the (possibly new) dir
 
     def configure_session_logging(self, enabled: bool) -> None:
@@ -14135,7 +14210,7 @@ class CockpitApp(App):
     def action_set_default(self) -> None:
         """[d] in Run · Catalog: pin the selected slug as its model default.
 
-        A ``.env`` write — no GPU contention — but still routed through the same
+        A settings write (switch.sh) — no GPU contention — but still routed through the same
         ConfirmActionScreen → dispatch_action → execute_action gate so every
         write has one path.  The plan's ``requires_reconcile=False`` makes the
         gate report clear immediately."""
@@ -14152,7 +14227,7 @@ class CockpitApp(App):
 
     def action_clear_default(self) -> None:
         """[D] on the merged mode's Catalog tab: clear the model default pin for
-        the selected slug's model (gated path, .env write)."""
+        the selected slug's model (gated path, a settings write by switch.sh)."""
         if self._active_mode != 0 or self._current_subtab() != "tab-catalog":
             return
         entry = self._selected_catalog_entry()

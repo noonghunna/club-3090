@@ -1908,25 +1908,32 @@ class TestGpuServiceDisplay:
 
 class TestServiceStart:
     """service_start: bring a stopped supporting service up via compose, mirroring
-    gpu-mode's compose_at (project pinned to the dir name; --env-file when present)."""
+    gpu-mode's compose_at (project pinned to the dir name; --env-file with the
+    resolved settings — test_settings_store.py covers the file itself)."""
 
     def test_compose_up_plan(self, tmp_path):
+        from club3090_cockpit.services import SETTINGS_ENV_FILE
+
         _seed_service_dirs(tmp_path, ["litellm"])
         plan = CockpitData(tmp_path).service_start("litellm")
         # -p pins the project to the dir name (match gpu-mode so it operates on the
-        # SAME container, not a duplicate); no .env in tmp_path → --env-file omitted.
+        # SAME container, not a duplicate).  The env file is a placeholder until
+        # the command runs (#1466) — the plan may never run.
         assert plan.cmd == [
-            "docker", "compose", "-f",
+            "docker", "compose", "--env-file", SETTINGS_ENV_FILE, "-f",
             "services/litellm/docker-compose.yml", "-p", "litellm", "up", "-d"]
         # litellm is a non-GPU web service → skips the reconcile gate
         assert plan.requires_reconcile is False
         assert plan.kind == "service-up"
 
-    def test_env_file_included_when_present(self, tmp_path):
+    def test_env_file_is_the_settings_placeholder_not_the_repo_env(self, tmp_path):
+        from club3090_cockpit.services import SETTINGS_ENV_FILE
+
         _seed_service_dirs(tmp_path, ["comfyui"])
         (tmp_path / ".env").write_text("MODEL_DIR=/x\n")
         plan = CockpitData(tmp_path).service_start("comfyui")
-        assert plan.cmd[:4] == ["docker", "compose", "--env-file", ".env"]
+        assert plan.cmd[:4] == ["docker", "compose", "--env-file", SETTINGS_ENV_FILE]
+        assert ".env" not in plan.cmd
         assert plan.cmd[-4:] == ["-p", "comfyui", "up", "-d"]
 
     def test_yaml_spelling_fallback(self, tmp_path):
@@ -4353,9 +4360,10 @@ def test_api_booting_false_when_no_engine_running():
 
 
 class TestDirectorPlacement:
-    """director_device() reads STUDIO_DIRECTOR_DEVICE from the repo .env (default
-    gpu0); set_repo_env_var() upserts a key IN PLACE, preserving the rest of the
-    file — the c3 Settings 'Director placement' lever (CPU / GPU0 / GPU1)."""
+    """director_device() resolves STUDIO_DIRECTOR_DEVICE through the loader (the
+    store, then the legacy repo .env; default gpu0); store_settings() writes it to
+    club3090.env IN PLACE, preserving the rest of the file — the c3 Settings
+    'Director placement' lever (CPU / GPU0 / GPU1)."""
 
     def test_default_gpu0_when_unset(self, tmp_path):
         (tmp_path / ".env").write_text("MODEL_DIR=/mnt/models/huggingface\n")
@@ -4366,24 +4374,29 @@ class TestDirectorPlacement:
         assert CockpitData(tmp_path, runner=full_runner()).director_device() == "gpu0"
 
     def test_set_and_read_roundtrip_preserves_file(self, tmp_path):
-        (tmp_path / ".env").write_text("MODEL_DIR=/x\n# comment\nFOO=bar\n")
+        store = Path(os.environ["CLUB3090_CONFIG_DIR"]) / "club3090.env"
+        store.parent.mkdir(parents=True, exist_ok=True)
+        store.write_text("MODEL_DIR=/x\n# comment\nFOO=bar\n")
+        (tmp_path / ".env").write_text("STUDIO_DIRECTOR_DEVICE=gpu1\n")
         cd = CockpitData(tmp_path, runner=full_runner())
-        assert cd.set_repo_env_var("STUDIO_DIRECTOR_DEVICE", "cpu") is True
-        assert cd.director_device() == "cpu"
-        cd.set_repo_env_var("STUDIO_DIRECTOR_DEVICE", "gpu1")   # update in place
+        assert cd.store_settings({"STUDIO_DIRECTOR_DEVICE": "cpu"}) == store
+        assert cd.director_device() == "cpu"                    # the store beats the repo .env
+        cd.store_settings({"STUDIO_DIRECTOR_DEVICE": "gpu1"})   # update in place
         assert cd.director_device() == "gpu1"
-        txt = (tmp_path / ".env").read_text()
+        txt = store.read_text()
         assert txt.count("STUDIO_DIRECTOR_DEVICE=") == 1        # no duplicate
-        assert "MODEL_DIR=/x" in txt and "FOO=bar" in txt       # other lines kept
+        assert "MODEL_DIR=/x" in txt and "# comment" in txt and "FOO=bar" in txt   # kept
+        assert (tmp_path / ".env").read_text() == "STUDIO_DIRECTOR_DEVICE=gpu1\n"  # untouched
 
     def test_invalid_value_falls_back_gpu0(self, tmp_path):
         (tmp_path / ".env").write_text("STUDIO_DIRECTOR_DEVICE=bogus\n")
         assert CockpitData(tmp_path, runner=full_runner()).director_device() == "gpu0"
 
-    def test_creates_env_when_absent(self, tmp_path):
+    def test_creates_the_store_when_absent_never_the_repo_env(self, tmp_path):
         cd = CockpitData(tmp_path, runner=full_runner())
-        assert cd.set_repo_env_var("STUDIO_DIRECTOR_DEVICE", "cpu") is True
-        assert (tmp_path / ".env").is_file()
+        path = cd.store_settings({"STUDIO_DIRECTOR_DEVICE": "cpu"})
+        assert path.is_file() and path.name == "club3090.env"
+        assert not (tmp_path / ".env").exists()
         assert cd.director_device() == "cpu"
 
     def test_commented_line_ignored(self, tmp_path):
