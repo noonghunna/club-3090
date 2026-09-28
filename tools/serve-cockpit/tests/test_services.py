@@ -1912,14 +1912,16 @@ class TestServiceStart:
     resolved settings — test_settings_store.py covers the file itself)."""
 
     def test_compose_up_plan(self, tmp_path):
-        from club3090_cockpit.services import SETTINGS_ENV_FILE
+        from club3090_cockpit.services import ROUTE_KEYS_FILE, SETTINGS_ENV_FILE
 
         _seed_service_dirs(tmp_path, ["litellm"])
         plan = CockpitData(tmp_path).service_start("litellm")
         # -p pins the project to the dir name (match gpu-mode so it operates on the
-        # SAME container, not a duplicate).  The env file is a placeholder until
-        # the command runs (#1466) — the plan may never run.
+        # SAME container, not a duplicate).  The env file — and the gateway's route
+        # keys file — are placeholders until the command runs (#1466): the plan may
+        # never run.
         assert plan.cmd == [
+            "env", f"CLUB3090_LITELLM_ROUTE_KEYS={ROUTE_KEYS_FILE}",
             "docker", "compose", "--env-file", SETTINGS_ENV_FILE, "-f",
             "services/litellm/docker-compose.yml", "-p", "litellm", "up", "-d"]
         # litellm is a non-GPU web service → skips the reconcile gate

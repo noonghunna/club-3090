@@ -42,7 +42,8 @@ lock, and ``secrets.env`` is created 0600.
 USER-FACING: ``bash scripts/settings.sh`` (show, get, set, unset, migrate, path,
 compose-env-file) is the one command for people to see and change settings; it is
 a thin wrapper around ``settings_main`` here. ``migrate`` copies the repo .env
-into the store and never changes that file. report.sh's "Settings" section is
+into the store and never changes that file; it also copies this rig's own gateway
+routes and their keys out of the checkout (``litellm_local.py``). report.sh's "Settings" section is
 ``settings_report_markdown`` (CLI: ``settings-report --root ROOT``), which has no
 way to print a secret.
 
@@ -429,6 +430,18 @@ def unset_everywhere(keys, repo_root=None, environ=None) -> dict:
     return removed
 
 
+def _gateway_files():
+    """scripts/lib/litellm_local.py: this rig's own gateway routes and their keys,
+    which `migrate`, `show` and `path` cover too (#1466, 4c). Imported late: it
+    imports this module."""
+    try:
+        from scripts.lib import litellm_local
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import litellm_local  # type: ignore
+    return litellm_local
+
+
 def _reason(key: str, err: Exception) -> str:
     msg = str(err)
     return msg[len(key) + 2:] if msg.startswith(f"{key}: ") else msg
@@ -540,6 +553,8 @@ def settings_report_markdown(repo_root, environ=None) -> str:
     pending = pending_migration(repo_root, env)
     if pending:
         out += ["", f"- ⚠ {migrate_hint(len(pending), repo_root, env)}"]
+    for line in _gateway_files().notice_lines(repo_root, env):
+        out += ["", f"- ⚠ {line}"]
     return "\n".join(out) + "\n"
 
 
@@ -566,7 +581,10 @@ commands:
                      copy the settings in the repo .env into your config dir.
                      Keys you have already saved are skipped (the saved value
                      wins); values that can't be stored stay in the repo .env.
-                     The repo .env itself is never changed or deleted.
+                     Also copies this rig's own gateway routes
+                     (services/litellm/config.local.yaml → litellm/) and the keys
+                     they use (services/litellm/local.env → secrets.env).
+                     The repo files themselves are never changed or deleted.
   path               where your settings are stored, and which files exist
   caches [--remove-legacy]
                      the compile caches and the KV-offload disk tier: where they
@@ -638,6 +656,7 @@ def _settings_show(a, root) -> int:
             print(f"{r['key']:<{kw}}  {v:<{vw}}  {r['source']}")
         if not a.show_secrets and any(r["secret"] for r in rows):
             notes.append("Secret values are hidden; add --show-secrets to print them.")
+    notes += _gateway_files().notice_lines(root, env)
     if pending:
         notes.append(migrate_hint(len(pending), root, env))
     if notes:
@@ -685,10 +704,19 @@ def _settings_unset(a, root) -> int:
 def _settings_migrate(a, root) -> int:
     if root is None:
         raise ConfigError(f"migrate needs the repo root: run it as `{SETTINGS_CMD} migrate`")
+    code = _settings_migrate_env(a, root)
+    gf = _gateway_files()
+    lines = gf.migrate_lines(gf.migrate(root, a.dry_run))
+    if lines:
+        print("\n" + "\n".join(lines))
+    return code
+
+
+def _settings_migrate_env(a, root) -> int:
     r = migrate(root, a.dry_run)
     src = r["repo_env"]
     if not r["found"]:
-        print(f"There is no {src} — nothing to migrate.")
+        print(f"There is no {src} — nothing to migrate from it.")
         return 0
     print(f"Settings in {src} → {r['config_dir']}/" + ("   (dry run: nothing is written)" if a.dry_run else ""))
     verb = "would copy to" if a.dry_run else "copied to"
@@ -740,6 +768,7 @@ def _settings_path(a, root) -> int:
         legacy = Path(root) / ".env"
         rows.append((LEGACY_LABEL, legacy, "exists; read last, after the files above" if legacy.is_file()
                      else "none (only older installs have one)"))
+    rows += _gateway_files().path_rows(root, env)
     # #1466 phase 4: where the launchers put compile caches and the KV-offload disk tier.
     # Both can be saved settings, so read them the way a launch does.
     loaded = dict(env)

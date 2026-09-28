@@ -8,8 +8,9 @@
 # The switch recreates a live service, so the ways it can go wrong are silent:
 # recreate from the wrong checkout (the gateway re-mounts a stale runtime view —
 # the worktree desync #1438 fixed for litellm-sync), lose the keys this rig's own
-# routes need (they must come from local.env, which the compose loads on every
-# recreate), or leave the level set when asked for "off". Offline: `docker` and `curl` are shims in $T/bin,
+# routes need (they come from secrets.env through CLUB3090_LITELLM_ROUTE_KEYS, or
+# an older local.env the compose loads on every recreate), or leave the level set
+# when asked for "off". Offline: `docker` and `curl` are shims in $T/bin,
 # prepended INLINE on each call; the shims log what they were asked to do.
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -37,9 +38,11 @@ case "$1" in
       *)              echo "{}" ;;
     esac ;;
   compose)
-    echo "PWD=$PWD ARGS=$* LITELLM_LOG=${LITELLM_LOG-<unset>}" >> "$S/calls"
+    echo "PWD=$PWD ARGS=$* LITELLM_LOG=${LITELLM_LOG-<unset>} ROUTE_KEYS=${CLUB3090_LITELLM_ROUTE_KEYS-<unset>}" >> "$S/calls"
     # keep a copy of any --env-file, which the script deletes on exit
     prev=""; for a in "$@"; do [[ "$prev" == --env-file ]] && cp "$a" "$S/envfile"; prev="$a"; done
+    # …and of the route keys file (#1466, 4c)
+    [[ -n "${CLUB3090_LITELLM_ROUTE_KEYS:-}" ]] && cp "$CLUB3090_LITELLM_ROUTE_KEYS" "$S/routekeys"
     { echo "LITELLM_MASTER_KEY=k"
       if [[ -n "${LITELLM_LOG+x}" ]]; then echo "LITELLM_LOG=$LITELLM_LOG"; fi; } > "$S/env" ;;
   *) exit 0 ;;
@@ -101,19 +104,39 @@ out="$(env -u LITELLM_LOG PATH="$T/bin:$PATH" bash "$ROOT/scripts/litellm-log.sh
 [[ "$(tail -1 "$T/state/calls")" != *"--env-file"* ]] || bad "with nothing configured, no --env-file: $(tail -1 "$T/state/calls")"
 PATH="$T/bin:$PATH" LITELLM_LOG=DEBUG bash "$ROOT/scripts/litellm-log.sh" off >/dev/null 2>&1 || true
 
+# The keys this rig's own routes use (secrets.env, #1466 4c) must survive the recreate
+# too: a 0600 file of just those keys, its path in CLUB3090_LITELLM_ROUTE_KEYS (which
+# the compose loads as an env_file), removed afterwards. Not the HF token.
+mkdir -p "$KC/litellm"
+printf 'model_list:\n  - model_name: c\n    litellm_params:\n      model: openai/c\n      api_key: os.environ/RIG_CLOUD_KEY\n' > "$KC/litellm/config.local.yaml"
+printf 'HF_TOKEN=hf_test_not_for_gateway\nRIG_CLOUD_KEY=sk-route-test0000\n' >> "$KC/secrets.env"
+rm -f "$T/state/routekeys"
+out="$(env -u LITELLM_LOG -u LITELLM_MASTER_KEY -u HF_TOKEN PATH="$T/bin:$PATH" CLUB3090_CONFIG_DIR="$KC" TMPDIR="$T" bash "$ROOT/scripts/litellm-log.sh" on 2>&1)" || bad "on (with a route key) failed: $out"
+last="$(tail -1 "$T/state/calls")"
+[[ "$(cat "$T/state/routekeys" 2>/dev/null)" == "RIG_CLOUD_KEY='sk-route-test0000'" ]] \
+  || bad "the recreate must get the route's key (only it) through CLUB3090_LITELLM_ROUTE_KEYS: $last"
+kpath="$(sed -n 's/.* ROUTE_KEYS=\([^ ]*\)$/\1/p' <<<"$last")"
+[[ -n "$kpath" && "$kpath" != "<unset>" && ! -e "$kpath" ]] || bad "the route keys file must be removed after the recreate: $kpath"
+[[ "$last$out" != *sk-route-test0000* ]] || bad "a route key reached a command line or the output"
+PATH="$T/bin:$PATH" LITELLM_LOG=DEBUG CLUB3090_CONFIG_DIR="$KC" TMPDIR="$T" bash "$ROOT/scripts/litellm-log.sh" off >/dev/null 2>&1 || true
+out="$(env -u LITELLM_LOG PATH="$T/bin:$PATH" bash "$ROOT/scripts/litellm-log.sh" on 2>&1)" || bad "on failed: $out"
+[[ "$(tail -1 "$T/state/calls")" == *"ROUTE_KEYS=<unset>" ]] || bad "no route key saved → CLUB3090_LITELLM_ROUTE_KEYS stays unset: $(tail -1 "$T/state/calls")"
+PATH="$T/bin:$PATH" LITELLM_LOG=DEBUG bash "$ROOT/scripts/litellm-log.sh" off >/dev/null 2>&1 || true
+
 # bad level → refused
 PATH="$T/bin:$PATH" bash "$ROOT/scripts/litellm-log.sh" on TRACE >/dev/null 2>&1 && bad "an unknown level must be refused"
 
 # the compose really forwards it, and only when set (bare pass-through, not `=${X:-}`)
 command grep -qE '^\s*-\s*LITELLM_LOG\s*$' "$ROOT/services/litellm/docker-compose.yml" \
   || bad "services/litellm/docker-compose.yml must pass LITELLM_LOG through bare (- LITELLM_LOG)"
-# keys for this rig's own routes reach every (re)created gateway from the optional local.env
-python3 - "$ROOT/services/litellm/docker-compose.yml" <<'PY' || bad "the gateway compose must load ./local.env as an OPTIONAL env_file (keys for this rig's own routes)"
+# keys for this rig's own routes reach every (re)created gateway: the older ./local.env,
+# then the keys file from the settings (so a saved key wins), both optional
+python3 - "$ROOT/services/litellm/docker-compose.yml" <<'PY' || bad "the gateway compose must load ./local.env, then \${CLUB3090_LITELLM_ROUTE_KEYS:-/dev/null}, as OPTIONAL env_files"
 import io, sys, yaml
 svc = yaml.safe_load(io.open(sys.argv[1], encoding="utf-8"))["services"]["litellm"]
-ok = any(isinstance(e, dict) and e.get("path") == "./local.env" and e.get("required") is False for e in svc.get("env_file") or [])
-sys.exit(0 if ok else 1)
+got = [(e.get("path"), e.get("required")) for e in svc.get("env_file") or [] if isinstance(e, dict)]
+sys.exit(0 if got == [("./local.env", False), ("${CLUB3090_LITELLM_ROUTE_KEYS:-/dev/null}", False)] else 1)
 PY
 
-[[ $fail -eq 0 ]] && echo "test-litellm-log: ok (refuses without a gateway, status, on/off recreate from the running project, keys via optional local.env, unset-not-empty, idempotent, bad level)"
+[[ $fail -eq 0 ]] && echo "test-litellm-log: ok (refuses without a gateway, status, on/off recreate from the running project, keys via optional local.env and the route keys file, unset-not-empty, idempotent, bad level)"
 exit $fail

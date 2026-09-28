@@ -23,8 +23,9 @@
 set -euo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"   # club_config_compose_env_file runs python3 (#779)
 CONTAINER="litellm"
+LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source=lib/club-config.sh
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/club-config.sh"
+. "$LIB_DIR/club-config.sh"
 
 case "${1:-status}" in
   on)     WANT="${2:-DEBUG}" ;;
@@ -72,13 +73,27 @@ for f in "${cfgs[@]}"; do compose_args+=(-f "$f"); done
 # falls back to the public default key and every client carrying the per-install
 # key gets `400 No connected db.`. Settings of the checkout the gateway came from;
 # the shell still wins (LITELLM_LOG below rides the environment).
-CLUB3090_COMPOSE_ENV_FILE="$(club_config_compose_env_file "$(cd "$workdir/../.." 2>/dev/null && pwd)" 2>/dev/null || true)"
+gw_root="$(cd "$workdir/../.." 2>/dev/null && pwd || true)"
+CLUB3090_COMPOSE_ENV_FILE="$(club_config_compose_env_file "$gw_root" 2>/dev/null || true)"
 if [[ -n "$CLUB3090_COMPOSE_ENV_FILE" && -s "$CLUB3090_COMPOSE_ENV_FILE" ]]; then
   compose_args+=(--env-file "$CLUB3090_COMPOSE_ENV_FILE")
-  trap 'rm -f "$CLUB3090_COMPOSE_ENV_FILE"' EXIT
 elif [[ -n "$CLUB3090_COMPOSE_ENV_FILE" ]]; then
-  rm -f "$CLUB3090_COMPOSE_ENV_FILE"
+  rm -f "$CLUB3090_COMPOSE_ENV_FILE"; CLUB3090_COMPOSE_ENV_FILE=""
 fi
+# …and the keys this rig's own routes use, as gpu-mode starts it (club-3090#1466): a
+# 0600 temp file of just those keys, whose path the compose reads from
+# CLUB3090_LITELLM_ROUTE_KEYS. Without it a route whose key is saved in secrets.env
+# would come back without one. Empty when no route needs a saved key.
+ROUTE_KEYS=""
+if [[ -n "$gw_root" ]]; then
+  ROUTE_KEYS="$(python3 "$LIB_DIR/litellm_local.py" route-keys-file --root "$gw_root" || true)"
+fi
+if [[ -n "$ROUTE_KEYS" ]]; then
+  export CLUB3090_LITELLM_ROUTE_KEYS="$ROUTE_KEYS"
+else
+  unset CLUB3090_LITELLM_ROUTE_KEYS
+fi
+trap 'rm -f ${CLUB3090_COMPOSE_ENV_FILE:+"$CLUB3090_COMPOSE_ENV_FILE"} ${ROUTE_KEYS:+"$ROUTE_KEYS"}' EXIT
 
 if [[ -n "$WANT" ]]; then
   export LITELLM_LOG="$WANT"

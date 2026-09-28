@@ -15,6 +15,7 @@ Every setting c3 reads or writes now goes through the ONE loader,
     read      get() / source() / stored()
     write     save()                       club3090.env, or secrets.env (0600)
     compose   compose_env_file()           0600 temp file for ``docker compose --env-file``
+              route_keys_file()            0600 temp file of the gateway routes' keys
     fold-in   fold_in_c3_settings()        one-time move of c3-settings.json's
                                            model_dir / hf_token into the store
 
@@ -141,6 +142,17 @@ def compose_env_file(repo_root, environ: Optional[Mapping[str, str]] = None) -> 
     except OSError:
         pass
     return None
+
+
+def route_keys_file(repo_root, environ: Optional[Mapping[str, str]] = None) -> Optional[Path]:
+    """A 0600 temp file of just the keys this rig's own gateway routes use, for the
+    gateway compose's ``CLUB3090_LITELLM_ROUTE_KEYS`` — the same file gpu-mode.sh
+    hands it (``scripts/lib/litellm_local.py``). The caller removes it. None when
+    no route needs a saved key."""
+    loader()                                  # puts the repo root on sys.path
+    from scripts.lib import litellm_local
+
+    return litellm_local.write_route_keys_file(repo_root, environ=environ)
 
 
 # ── the one-time fold-in of c3-settings.json (club-3090#1466) ───────────────

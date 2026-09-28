@@ -203,10 +203,31 @@ start_service() {
         bash "$GPU_MODE_SCRIPTS/lib/litellm-sync.sh" --no-restart --quiet || true
     fi
     printf "  ${GREEN}▲${NC} Starting %-12s" "$1..."
-    compose_cmd "$1" "up -d" && echo "done" || { echo "failed"; c3_mark_start_failure "$1"; }
+    if [[ "$1" == "litellm" ]]; then
+        compose_litellm_up "up -d" && echo "done" || { echo "failed"; c3_mark_start_failure "$1"; }
+    else
+        compose_cmd "$1" "up -d" && echo "done" || { echo "failed"; c3_mark_start_failure "$1"; }
+    fi
     if [[ "$1" == "litellm" && "$(_gateway_key)" == "$GATEWAY_DEFAULT_KEY" ]]; then
         echo -e "  ${YELLOW}⚠ The gateway is on the public default key — anyone on your network can use it: bash $CLUB3090_DIR/scripts/gateway-key.sh rotate --apply${NC}"
     fi
+}
+
+# Start the gateway with the keys this rig's own routes use (club-3090#1466). They are
+# saved in secrets.env, which the gateway does not get whole: litellm_local.py writes
+# just the keys a route names to a 0600 temp file, and compose loads it through
+# CLUB3090_LITELLM_ROUTE_KEYS (services/litellm/docker-compose.yml). The file's PATH
+# rides sudo's argv, like the studio paths above; the keys never do. Removed as soon
+# as compose returns: it reads an env_file only when it creates the container.
+# Args: <compose action>, e.g. "up -d"
+compose_litellm_up() {
+    local keys="" rc=0
+    if [ -f "$GPU_MODE_SCRIPTS/lib/litellm_local.py" ]; then
+        keys="$(python3 "$GPU_MODE_SCRIPTS/lib/litellm_local.py" route-keys-file --root "$CLUB3090_DIR" || true)"
+    fi
+    compose_at_env "$COMPOSE_BASE/litellm" "$1" docker-compose.yml ${keys:+"CLUB3090_LITELLM_ROUTE_KEYS=$keys"} || rc=$?
+    if [ -n "$keys" ]; then rm -f "$keys"; fi
+    return "$rc"
 }
 
 # The key the gateway gets from compose (club-3090#1467): LITELLM_MASTER_KEY as it
@@ -356,8 +377,9 @@ mode_upgrade() {
 }
 
 # `gpu-mode gateway` (club-3090#1467): recreate ONLY the LiteLLM gateway, the way every
-# mode starts it — routes re-rendered first, then `compose_at`, so the settings (the
-# gateway key in secrets.env above all) reach compose through the per-call --env-file.
+# mode starts it — routes re-rendered first, then `compose_litellm_up`, so the settings
+# (the gateway key in secrets.env above all) reach compose through the per-call
+# --env-file, and the routes' own keys through CLUB3090_LITELLM_ROUTE_KEYS.
 # This is the restart `gateway-key.sh rotate --apply` needs: no model is started or
 # stopped. --force-recreate, because a container keeps the environment it was created
 # with and reads config.runtime.yaml only at start, so a plain `up -d` can leave the old
@@ -383,7 +405,7 @@ mode_gateway() {
         echo "failed — starting with the routes already on disk"
     fi
     printf "  ${GREEN}▲${NC} Recreating %-12s" "litellm..."
-    if ! compose_at "$COMPOSE_BASE/litellm" "up -d --force-recreate"; then
+    if ! compose_litellm_up "up -d --force-recreate"; then
         echo "failed"; c3_mark_start_failure "litellm"; return 0
     fi
     echo "done"

@@ -197,6 +197,12 @@ STUDIO_DIRECTOR_CONTAINER = "studio-director"
 # (_start_raw_logged): a 0600 temp file from the loader, removed when the run
 # ends — or the flag is dropped when nothing is configured, as gpu-mode.sh does.
 SETTINGS_ENV_FILE = "<club-3090-settings>"
+# `env CLUB3090_LITELLM_ROUTE_KEYS=<this>` before the gateway's compose stands for a
+# 0600 file of the keys this rig's own gateway routes use (scripts/lib/litellm_local.py:
+# only those, not all of secrets.env). Written when the command starts and removed
+# when it ends, like SETTINGS_ENV_FILE; dropped when no route needs a saved key.
+ROUTE_KEYS_VAR = "CLUB3090_LITELLM_ROUTE_KEYS"
+ROUTE_KEYS_FILE = "<club-3090-gateway-route-keys>"
 
 # Nested studio sidecars: container-name → services/studio/<subdir> basename. The
 # container suffix usually equals the subdir, EXCEPT the director (container
@@ -569,6 +575,8 @@ class CockpitData:
         env file here (its path is logged, never its contents).
         """
         cmd, env_file = self._materialize_settings_env_file(cmd)
+        cmd, keys_file = self._materialize_route_keys_file(cmd)
+        temp_files = [p for p in (env_file, keys_file) if p is not None]
         existing_event = getattr(runner, "_on_event", None)
         existing_line = getattr(runner, "_on_line", None)
         existing_complete = getattr(runner, "_on_complete", None)
@@ -612,10 +620,11 @@ class CockpitData:
                 on_line=existing_line,
                 on_complete=existing_complete,
             )
-            self._remove_env_file(env_file)
+            for path in temp_files:
+                self._remove_env_file(path)
             raise
-        if env_file is not None:
-            task = asyncio.create_task(self._remove_env_file_when_done(env_file, state))
+        for path in temp_files:
+            task = asyncio.create_task(self._remove_env_file_when_done(path, state))
             self._env_file_tasks.add(task)
             task.add_done_callback(self._env_file_tasks.discard)
         return state
@@ -640,6 +649,28 @@ class CockpitData:
             del out[i - 1 if i > 0 and out[i - 1] == "--env-file" else i:i + 1]
         else:
             out[i] = str(path)
+        return out, path
+
+    def _materialize_route_keys_file(self, cmd: list[str]) -> tuple[list[str], Optional[Path]]:
+        """Replace the :data:`ROUTE_KEYS_FILE` placeholder with a fresh 0600 file of
+        the keys this rig's own gateway routes use, or drop the assignment (and an
+        ``env`` it leaves bare) when no route needs a saved key or the file can't be
+        written — compose then loads only the older services/litellm/local.env."""
+        token = f"{ROUTE_KEYS_VAR}={ROUTE_KEYS_FILE}"
+        if token not in cmd:
+            return list(cmd), None
+        out = list(cmd)
+        i = out.index(token)
+        try:
+            path = _settings.route_keys_file(self.repo_root)
+        except Exception:
+            path = None
+        if path is None:
+            del out[i]
+            if out[:1] == ["env"] and len(out) > 1 and "=" not in out[1]:
+                del out[0]
+        else:
+            out[i] = f"{ROUTE_KEYS_VAR}={path}"
         return out, path
 
     @staticmethod
@@ -3771,6 +3802,10 @@ class CockpitData:
         # `env K=V …` (process env) wins over --env-file for compose interpolation.
         if name == STUDIO_DIRECTOR_CONTAINER:
             cmd = ["env", *(f"{k}={v}" for k, v in self.director_compose_env().items()), *cmd]
+        # The gateway also gets the keys its own routes use, as gpu-mode starts it
+        # (ROUTE_KEYS_FILE, written when the command runs — #1466).
+        if name == "litellm":
+            cmd = ["env", f"{ROUTE_KEYS_VAR}={ROUTE_KEYS_FILE}", *cmd]
         # Reconcile-gated for GPU-holding services only: they can't silently
         # collide with whatever holds the cards; non-GPU web services clear
         # the gate immediately.

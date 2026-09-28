@@ -26,9 +26,14 @@ import sys
 import urllib.error
 import urllib.request
 
+try:                                    # run as a file from scripts/lib (litellm-sync.sh)
+    import litellm_local
+except ImportError:                     # imported as scripts.lib.litellm_sync
+    from scripts.lib import litellm_local
+
 BEGIN = "  # === BEGIN GENERATED LOCAL BLOCK"
 END = "  # === END GENERATED LOCAL BLOCK ==="
-LOCAL_BEGIN = "  # === BEGIN THIS RIG'S OWN ROUTES — services/litellm/config.local.yaml (not tracked) ==="
+LOCAL_BEGIN = "  # === BEGIN THIS RIG'S OWN ROUTES — {src} (not tracked) ==="
 LOCAL_END = "  # === END THIS RIG'S OWN ROUTES ==="
 
 
@@ -312,15 +317,17 @@ def prune(text: str, reg_ports: set[str], live_ports: set[str]) -> str:
 
 
 def local_routes(root: str) -> str:
-    """This rig's own routes — cloud endpoints, private services — from the
-    gitignored services/litellm/config.local.yaml, so they never go into the
-    tracked catalog. Its `model_list:` entries are copied VERBATIM (comments kept;
-    stdlib only, like the rest of the switch path) and re-indented to match the
-    catalog. They are not on registry ports, so the prune never touches them.
-    Returns '' when there is no file or it lists no routes."""
-    path = os.environ.get("C3_LITELLM_LOCAL_CONFIG") or os.path.join(root, "services/litellm/config.local.yaml")
-    if not os.path.isfile(path):
+    """This rig's own routes — cloud endpoints, private services — so they never go
+    into the tracked catalog: litellm/config.local.yaml in the club-3090 config dir,
+    else (an older install) the checkout's gitignored services/litellm/
+    config.local.yaml — see litellm_local.py. Its `model_list:` entries are copied
+    VERBATIM (comments kept; stdlib only, like the rest of the switch path) and
+    re-indented to match the catalog. They are not on registry ports, so the prune
+    never touches them. Returns '' when there is no file or it lists no routes."""
+    found, _origin = litellm_local.active_routes(root)
+    if found is None or not found.is_file():
         return ""
+    path = str(found)
     body, inside = [], False
     for ln in io.open(path, encoding="utf-8").read().splitlines():
         top = bool(ln) and not ln[0].isspace() and not ln.startswith("#") and not ln.startswith("-")
@@ -342,7 +349,8 @@ def local_routes(root: str) -> str:
             fixed.append(" " * shift + ln)
         else:
             fixed.append(ln[min(-shift, len(ln) - len(ln.lstrip())):])
-    return LOCAL_BEGIN + "\n" + "\n".join(fixed).strip("\n") + "\n" + LOCAL_END + "\n"
+    return (LOCAL_BEGIN.format(src=litellm_local.display_path(found, root)) + "\n"
+            + "\n".join(fixed).strip("\n") + "\n" + LOCAL_END + "\n")
 
 
 def mounted_runtime_path() -> "str | None":
@@ -370,6 +378,11 @@ def main() -> int:
     def log(msg: str) -> None:
         if not a.quiet:
             print(f"[litellm-sync] {msg}")
+
+    # Routes or keys still read from the checkout: say so (every run unless
+    # --quiet; quiet — switch.sh, gpu-mode — only once). Never on a --check.
+    if not a.check:
+        litellm_local.notice(a.root, quiet=a.quiet)
 
     template = os.path.join(a.root, "services/litellm/config.yaml")
     runtime = os.path.join(a.root, "services/litellm/config.runtime.yaml")

@@ -368,6 +368,12 @@ class _EnvFileRunner:
             self.env_file = Path(cmd[cmd.index("--env-file") + 1])
             self.text = self.env_file.read_text(encoding="utf-8")
             self.mode = stat.S_IMODE(self.env_file.stat().st_mode)
+        self.keys_file = None
+        for a in cmd:
+            if a.startswith("CLUB3090_LITELLM_ROUTE_KEYS="):
+                self.keys_file = Path(a.split("=", 1)[1])
+                self.keys_text = self.keys_file.read_text(encoding="utf-8")
+                self.keys_mode = stat.S_IMODE(self.keys_file.stat().st_mode)
         self.state = CoreRunState(run_type=run_type, started=time.time())
         return self.state
 
@@ -405,6 +411,49 @@ class TestComposeEnvFile:
         await cd.execute_action(cd.service_start("litellm"))
         assert runner.cmd[:3] == ["docker", "compose", "-f"], runner.cmd
         assert "--env-file" not in runner.cmd
+
+    @pytest.mark.asyncio
+    async def test_gateway_start_gets_only_its_route_keys_and_removes_the_file(self, tmp_path):
+        """#1466 4c: the keys this rig's own gateway routes use are saved in
+        secrets.env. The gateway gets only those (never the HF token), from a 0600
+        file whose path rides `env CLUB3090_LITELLM_ROUTE_KEYS=…`, removed after."""
+        repo = _repo(tmp_path)
+        _seed_service_dirs(repo, ["litellm"])
+        _write("litellm/config.local.yaml",
+               "model_list:\n  - model_name: c\n    litellm_params:\n"
+               "      model: openai/c\n      api_key: os.environ/RIG_KEY\n")
+        _write("secrets.env", "HF_TOKEN=hf_route_tok_1\nRIG_KEY=sk-route-c3\n")
+        runner = _EnvFileRunner()
+        cd = CockpitData(repo, runner=full_runner(), write_runner=runner)
+        executed, _rec, state = await cd.execute_action(cd.service_start("litellm"))
+        assert executed
+        assert runner.cmd[0] == "env" and runner.keys_file is not None, runner.cmd
+        assert runner.keys_text == "RIG_KEY='sk-route-c3'\n"
+        assert runner.keys_mode == 0o600
+        assert "HF_TOKEN='hf_route_tok_1'" in runner.text          # compose still gets the settings
+        assert not any("sk-route-c3" in a for a in runner.cmd)     # never on a command line
+        state.finished = time.time()
+        state.done.set()
+        for _ in range(20):
+            if not runner.keys_file.exists() and not runner.env_file.exists():
+                break
+            await asyncio.sleep(0.01)
+        assert not runner.keys_file.exists()
+        assert not runner.env_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_other_services_get_no_route_keys(self, tmp_path):
+        repo = _repo(tmp_path)
+        _seed_service_dirs(repo, ["qdrant"])
+        _write("litellm/config.local.yaml",
+               "model_list:\n  - model_name: c\n    litellm_params:\n"
+               "      model: openai/c\n      api_key: os.environ/RIG_KEY\n")
+        _write("secrets.env", "RIG_KEY=sk-route-c3\n")
+        runner = _EnvFileRunner()
+        cd = CockpitData(repo, runner=full_runner(), write_runner=runner)
+        await cd.execute_action(cd.service_start("qdrant"))
+        assert runner.cmd[:2] == ["docker", "compose"], runner.cmd
+        assert runner.keys_file is None
 
     @pytest.mark.asyncio
     async def test_legacy_repo_env_reaches_compose_through_the_loader(self, tmp_path):

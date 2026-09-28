@@ -28,10 +28,20 @@ services:
       # Bare pass-through: `- LITELLM_LOG=${LITELLM_LOG:-}` would set it to the EMPTY
       # string instead of leaving it unset. Toggle with scripts/litellm-log.sh on|off.
       - LITELLM_LOG
-    # Keys for this rig's own routes (services/litellm/config.local.yaml, e.g. a cloud
-    # endpoint's `api_key: os.environ/MY_KEY`). Gitignored and optional.
+    # Keys for this rig's own routes (litellm/config.local.yaml in your club-3090
+    # config dir, e.g. a cloud endpoint's `api_key: os.environ/MY_KEY`), saved in
+    # ~/.config/club-3090/secrets.env: `bash scripts/settings.sh set MY_KEY=…`.
+    # The gateway does not get secrets.env itself (your HF token is in there too):
+    # gpu-mode, c3 and scripts/litellm-log.sh write just the keys the routes name to a
+    # 0600 temp file, pass its path as CLUB3090_LITELLM_ROUTE_KEYS, and delete it once
+    # compose has created the container (scripts/lib/litellm_local.py). A plain
+    # `docker compose up` here gets only the older ./local.env below.
     env_file:
+      # Older installs kept these keys in this gitignored file. Still loaded; the keys
+      # from your settings come after it, so they win.
       - path: ./local.env
+        required: false
+      - path: ${CLUB3090_LITELLM_ROUTE_KEYS:-/dev/null}
         required: false
     command: ["--config", "/app/config.yaml", "--port", "4000", "--host", "0.0.0.0", "--num_workers", "1"]
     extra_hosts:
