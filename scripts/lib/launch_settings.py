@@ -47,6 +47,12 @@ DELIVERY (``exports``): switch.sh exports every effective value from ``this slug
 ``model pin`` or a settings file right before ``docker compose up`` — overriding a
 global value the loader exported, never the shell.
 
+CALLERS: switch.sh runs the CLI below (check / exports / explain / set / unset). c3's
+"Launch settings" form calls ``resolve`` / ``to_json`` / ``save_values`` /
+``remove_values`` in-process (tools/serve-cockpit/club3090_cockpit/
+launch_settings_store.py), so the form and ``switch.sh --explain`` / ``--set`` /
+``--unset`` share every value, source and message.
+
 Engine KIND comes from scripts/lib/engine-kind.sh (via launch_knobs_check.engine_kinds),
 never classified here (#1282). Standard library only: this is on the launcher path.
 """
@@ -121,6 +127,8 @@ class Setting:
     default: str | None                 # compose fallback ("" = unset/off, None = varies)
     variant: dict | None
     unset_text: str = ""
+    allowed: str | None = None          # the variant's domain in words (display only)
+    errors: list[str] = field(default_factory=list)   # this knob's share of Resolution.errors
 
     @property
     def source(self) -> str:
@@ -146,6 +154,10 @@ class Resolution:
     unread: list[tuple[str, str, str]] = field(default_factory=list)   # (knob, source, value)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # The compose scan per catalogued knob (launch_knobs.KnobUse): how each knob
+    # reaches the container — c3 reads a running container's environment for the
+    # knobs the compose forwards there (KnobUse.forwarded).
+    uses: dict = field(default_factory=dict)
 
 
 # ── pieces ────────────────────────────────────────────────────────────────────
@@ -259,6 +271,14 @@ def display_value(knob: str, source: str, value: str | None) -> str:
     return value
 
 
+def _refuse(res: Resolution, msg: str, *knobs: str) -> None:
+    """A refusal of the next launch; also filed under each knob it is about."""
+    res.errors.append(msg)
+    for k in knobs:
+        if k in res.settings:
+            res.settings[k].errors.append(msg)
+
+
 # ── the resolver ──────────────────────────────────────────────────────────────
 def resolve(slug: str, root=ROOT, environ=None, loaded=None, force=False, catalogue=None) -> Resolution:
     """Every catalogued knob `slug` reads → its effective value and source, plus
@@ -272,7 +292,7 @@ def resolve(slug: str, root=ROOT, environ=None, loaded=None, force=False, catalo
     entry, kind, text, uses = facts(slug, root, cat)
     model = entry["model"]
     res = Resolution(slug=slug, model=model, engine_kind=kind, compose_path=entry["compose_path"],
-                     store_path=slug_settings.store_path(env))
+                     store_path=slug_settings.store_path(env), uses=uses)
     files = file_values(root, env)
     shell = shell_keys(env, loaded, files)
 
@@ -312,8 +332,9 @@ def resolve(slug: str, root=ROOT, environ=None, loaded=None, force=False, catalo
         if k in files:
             layers.append(Layer(files[k][0], files[k][1]))
         vs = lk.variant_for(knob, kind, model, text)
-        res.settings[k] = Setting(k, layers, uses[k].compose_default(), vs[0] if len(vs) == 1 else None,
-                                  knob.get("unset", ""))
+        variant = vs[0] if len(vs) == 1 else None
+        res.settings[k] = Setting(k, layers, uses[k].compose_default(), variant, knob.get("unset", ""),
+                                  lk.domain_text(knob, variant))
 
     # Saved values this slug doesn't read: they do nothing (#1465 gotcha 4).
     for k, v in sorted(saved.items()):
@@ -354,7 +375,7 @@ def resolve(slug: str, root=ROOT, environ=None, loaded=None, force=False, catalo
         if force and enforced in ("unverified", "none"):
             res.warnings.append(msg + " Launching anyway (--force).")
         else:
-            res.errors.append(msg + (f" Fix: {hint}" if hint else ""))
+            _refuse(res, msg + (f" Fix: {hint}" if hint else ""), k)
 
     # Dependencies between knobs, on the effective values (compose defaults included).
     eff = {k: (None if s.is_unset else s.value) for k, s in res.settings.items()}
@@ -373,7 +394,7 @@ def resolve(slug: str, root=ROOT, environ=None, loaded=None, force=False, catalo
         if res.settings[name].source == DEFAULT and (other not in res.settings
                                                      or res.settings[other].source == DEFAULT):
             continue                                   # never refuse a compose default
-        res.errors.append(f"{lk.requirement_text(name, rule, eff_shown)} ({said(name)}; {said(other)}).")
+        _refuse(res, f"{lk.requirement_text(name, rule, eff_shown)} ({said(name)}; {said(other)}).", name, other)
 
     # Host RAM for the RAM tier.
     s = res.settings.get("KV_OFFLOAD_GB")
@@ -383,8 +404,8 @@ def resolve(slug: str, root=ROOT, environ=None, loaded=None, force=False, catalo
             refusal = "more host RAM than this host has"          # a secrets.env value: never echo it
         if refusal:
             hint = _fix_hint(slug, "KV_OFFLOAD_GB", s.source)
-            res.errors.append(f"KV_OFFLOAD_GB={shown(s)} (from {describe_source(s)}): {refusal}."
-                              + (f" Fix: {hint}" if hint else ""))
+            _refuse(res, f"KV_OFFLOAD_GB={shown(s)} (from {describe_source(s)}): {refusal}."
+                    + (f" Fix: {hint}" if hint else ""), "KV_OFFLOAD_GB")
         if warning:
             res.warnings.append(warning)
     return res
@@ -412,6 +433,8 @@ def to_json(res: Resolution) -> dict:
             "compose_default": s.default,
             "unset_means": s.unset_text,
             "enforced": (s.variant or {}).get("enforced"),
+            "allowed": s.allowed,
+            "errors": s.errors,
         } for k, s in sorted(res.settings.items())],
         "unread": [{"knob": k, "source": src, "value": display_value(k, src, v)} for k, src, v in res.unread],
         "errors": res.errors,
@@ -490,48 +513,109 @@ def _catalogue() -> dict:
         raise ResolveError(str(exc)) from None
 
 
-def cmd_set(a, env, loaded) -> int:
-    vals = _pairs(a.pairs)
+@dataclass
+class Change:
+    """What saving or removing per-slug values did. ``problems`` non-empty means it
+    was refused and nothing was written. switch.sh --set/--unset print it (cmd_set,
+    cmd_unset); c3's launch-settings form shows the same words."""
+    slug: str
+    problems: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    changed: list[str] = field(default_factory=list)     # keys saved / removed
+    path: Path | None = None
+
+
+def save_values(slug: str, vals: dict[str, str], root=ROOT, environ=None) -> Change:
+    """Save KEY=VALUE pairs for one slug, each checked against the slug's catalogued
+    domain, what its compose reads, the store's rules and the host-RAM rule. One bad
+    pair saves nothing. Raises ResolveError (unknown slug, unusable catalogue),
+    slug_settings.StoreError (a store it must not rewrite) or OSError (the write)."""
+    env = os.environ if environ is None else environ
+    ch = Change(slug)
     cat = _catalogue()
-    entry, kind, text, uses = facts(a.slug, a.root, cat)
+    entry, kind, text, uses = facts(slug, root, cat)
     consumed = sorted(n for n, u in uses.items() if u.consumed)
-    problems = []
     for k, v in vals.items():
         if k not in cat["knobs"]:
-            problems.append(f"{k} is not a launch setting club-3090 knows (catalogued: {', '.join(lk.knob_names(cat))})")
+            ch.problems.append(f"{k} is not a launch setting club-3090 knows (catalogued: {', '.join(lk.knob_names(cat))})")
             continue
         if k not in consumed:
-            problems.append(f"{a.slug} doesn't read {k} — its compose reads "
-                            f"{', '.join(consumed) or 'no catalogued launch settings'}; a value saved for it would do nothing")
+            ch.problems.append(f"{slug} doesn't read {k} — its compose reads "
+                               f"{', '.join(consumed) or 'no catalogued launch settings'}; a value saved for it would do nothing")
             continue
         try:
             slug_settings.check_entry(k, v)
         except slug_settings.StoreError as exc:
-            problems.append(str(exc))
+            ch.problems.append(str(exc))
             continue
         vs = lk.variant_for(cat["knobs"][k], kind, entry["model"], text)
         if len(vs) == 1:
             why = lk.value_error(cat["knobs"][k], vs[0], v)
             if why:
                 enforced = vs[0].get("enforced", "unverified")
-                problems.append(f"{k}={v}: {why} (on {a.slug}: {ENFORCED_TEXT.get(enforced, enforced)})")
+                ch.problems.append(f"{k}={v}: {why} (on {slug}: {ENFORCED_TEXT.get(enforced, enforced)})")
                 continue
         else:
-            print(f"{a.prefix} WARN: the catalogue has no single value domain for {k} on {a.slug} "
-                  f"({kind}, {entry['model']}) — saved unchecked", file=sys.stderr)
+            ch.warnings.append(f"the catalogue has no single value domain for {k} on {slug} "
+                               f"({kind}, {entry['model']}) — saved unchecked")
         if k == "KV_OFFLOAD_GB":
             refusal, warning = ram_error(v, kind, env)
             if refusal:
-                problems.append(f"KV_OFFLOAD_GB={v}: {refusal}")
+                ch.problems.append(f"KV_OFFLOAD_GB={v}: {refusal}")
             if warning:
-                print(f"{a.prefix} WARN: {warning}", file=sys.stderr)
-    if problems:
+                ch.warnings.append(warning)
+    if not ch.problems:
+        ch.path = slug_settings.set_values(slug, vals, env)
+        ch.changed = list(vals)
+    return ch
+
+
+def remove_values(slug: str, keys, root=ROOT, environ=None) -> Change:
+    """Remove keys saved for one slug. A saved key always goes, even one the slug no
+    longer reads (the cleanup path for that warning); a typo, or a knob the slug
+    doesn't read and nothing saved, is refused. Raises slug_settings.StoreError or
+    OSError like save_values."""
+    env = os.environ if environ is None else environ
+    ch = Change(slug)
+    keys = list(keys)
+    store = slug_settings.read(env)                 # refuses a store it must not rewrite
+    stored = store.slugs.get(slug, {})
+    cat = _catalogue()
+    consumed = None
+    for k in keys:
+        if k in stored:
+            continue                                 # always removable, even a stale key
+        if consumed is None:
+            try:
+                _, _, _, uses = facts(slug, root, cat)
+            except ResolveError as exc:
+                ch.problems.append(f"{exc} (and nothing is saved for it)")
+                break
+            consumed = {n for n, u in uses.items() if u.consumed}
+        if k not in cat["knobs"]:
+            ch.problems.append(f"{k} is not a launch setting club-3090 knows (catalogued: {', '.join(lk.knob_names(cat))})")
+        elif k not in consumed:
+            ch.problems.append(f"{slug} doesn't read {k}, and nothing is saved for it")
+        else:
+            ch.notes.append(f"{k} is not saved for {slug} — nothing to remove")
+    if not ch.problems:
+        ch.changed = slug_settings.unset_values(slug, [k for k in keys if k in stored], env) if stored else []
+        ch.path = store.path
+    return ch
+
+
+def cmd_set(a, env, loaded) -> int:
+    vals = _pairs(a.pairs)
+    ch = save_values(a.slug, vals, a.root, env)
+    for w in ch.warnings:
+        print(f"{a.prefix} WARN: {w}", file=sys.stderr)
+    if ch.problems:
         print(f"{a.prefix} ERROR: nothing saved for {a.slug}:", file=sys.stderr)
-        for p in problems:
+        for p in ch.problems:
             print(f"{a.prefix}   - {p}", file=sys.stderr)
         return 2
-    path = slug_settings.set_values(a.slug, vals, env)
-    print(f"{a.prefix} saved for {a.slug}: {', '.join(f'{k}={v}' for k, v in vals.items())}  ({path})")
+    print(f"{a.prefix} saved for {a.slug}: {', '.join(f'{k}={v}' for k, v in vals.items())}  ({ch.path})")
     print(f"{a.prefix} applies from the next launch of {a.slug}; a running container keeps the settings it started with.")
     res = resolve(a.slug, a.root, env, loaded)
     for line in _effective_lines(res, vals):
@@ -542,42 +626,21 @@ def cmd_set(a, env, loaded) -> int:
 
 
 def cmd_unset(a, env, loaded) -> int:
-    store = slug_settings.read(env)                 # refuses a store it must not rewrite
-    stored = store.slugs.get(a.slug, {})
-    cat = _catalogue()
-    consumed = None
-    problems, notes = [], []
-    for k in a.keys:
-        if k in stored:
-            continue                                 # always removable, even a stale key
-        if consumed is None:
-            try:
-                _, _, _, uses = facts(a.slug, a.root, cat)
-            except ResolveError as exc:
-                problems.append(f"{exc} (and nothing is saved for it)")
-                break
-            consumed = {n for n, u in uses.items() if u.consumed}
-        if k not in cat["knobs"]:
-            problems.append(f"{k} is not a launch setting club-3090 knows (catalogued: {', '.join(lk.knob_names(cat))})")
-        elif k not in consumed:
-            problems.append(f"{a.slug} doesn't read {k}, and nothing is saved for it")
-        else:
-            notes.append(f"{k} is not saved for {a.slug} — nothing to remove")
-    if problems:
+    ch = remove_values(a.slug, a.keys, a.root, env)
+    if ch.problems:
         print(f"{a.prefix} ERROR: nothing removed for {a.slug}:", file=sys.stderr)
-        for p in problems:
+        for p in ch.problems:
             print(f"{a.prefix}   - {p}", file=sys.stderr)
         return 2
-    gone = slug_settings.unset_values(a.slug, [k for k in a.keys if k in stored], env) if stored else []
-    for n in notes:
+    for n in ch.notes:
         print(f"{a.prefix} {n}")
-    if gone:
-        print(f"{a.prefix} removed for {a.slug}: {', '.join(gone)}  ({store.path})")
+    if ch.changed:
+        print(f"{a.prefix} removed for {a.slug}: {', '.join(ch.changed)}  ({ch.path})")
         try:
             res = resolve(a.slug, a.root, env, loaded)
         except ResolveError:
             return 0                                 # a slug that left the registry: nothing to resolve
-        for line in _effective_lines(res, gone):
+        for line in _effective_lines(res, ch.changed):
             print(f"{a.prefix} {line}")
     return 0
 

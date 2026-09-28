@@ -306,12 +306,7 @@ def value_error(knob: dict, variant: dict, value: str) -> str | None:
     in_vals = isinstance(vals, list) and value in vals
     in_pat = bool(pat) and re.fullmatch(pat, value) is not None
     if not (in_vals or in_pat):
-        allowed = " | ".join(vals) if vals else ""
-        if pat and variant.get("pattern"):
-            allowed = (allowed + " | " if allowed else "") + f"/{pat}/"
-        elif pat:
-            allowed = allowed or ("a whole number" if t == "int" else "a number of GiB, e.g. 64 or 0.5")
-        return f"{value!r} is not one of: {allowed}"
+        return f"{value!r} is not one of: {_values_text(knob, variant)}"
     if in_pat and not in_vals and any(b in variant for b in ("min", "max", "above")):
         num = float(value)
         if "above" in variant and not num > variant["above"]:
@@ -321,6 +316,35 @@ def value_error(knob: dict, variant: dict, value: str) -> str | None:
         if "max" in variant and num > variant["max"]:
             return f"{value} is above the maximum {variant['max']:g}"
     return None
+
+
+def _values_text(knob: dict, variant: dict) -> str:
+    """The accepted spellings, as value_error names them: the listed values, the
+    variant's own /pattern/, or the numeric type in words."""
+    vals = variant.get("values")
+    pat = variant.get("pattern") or _TYPE_PATTERN.get(knob["type"])
+    allowed = " | ".join(vals) if vals else ""
+    if pat and variant.get("pattern"):
+        allowed = (allowed + " | " if allowed else "") + f"/{pat}/"
+    elif pat:
+        allowed = allowed or ("a whole number" if knob["type"] == "int" else "a number of GiB, e.g. 64 or 0.5")
+    return allowed
+
+
+def domain_text(knob: dict, variant: dict | None) -> str | None:
+    """A variant's whole domain in words, for display (c3's launch-settings form,
+    the resolver's JSON): the spellings value_error accepts, its aliases and its
+    numeric bounds. None without a single variant. Display only — value_error is
+    the check."""
+    if variant is None:
+        return None
+    text = _values_text(knob, variant)
+    aliases = variant.get("aliases") or {}
+    if aliases:
+        text += " (" + ", ".join(f"{a} = {c}" for a, c in aliases.items()) + ")"
+    bounds = [f"{word} {variant[b]:g}" for b, word in (("above", "greater than"), ("min", "at least"),
+                                                          ("max", "at most")) if b in variant]
+    return text + (f"; {', '.join(bounds)}" if bounds else "")
 
 
 def _cond_holds(cond, value: str | None) -> bool:

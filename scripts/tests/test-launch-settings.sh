@@ -442,6 +442,19 @@ C3="$(cfg explain2 slugs.json='{"version": 1, "slugs": {"sgl/qwen38-27b-dual-fas
 got="$(env PATH="$T/bin:$PATH" COMPOSE_BIN=: CLUB3090_CONFIG_DIR="$C3" timeout 120 bash "$FIX/scripts/switch.sh" --explain "$SGL" --json 2>/dev/null \
   | python3 -c 'import json,sys; d=json.load(sys.stdin)["launch_settings"]; k={x["knob"]: x for x in d["knobs"]}["KV_OFFLOAD_GB"]; print(k["value"], k["source"], k["overrides"][0]["source"])')"
 [[ "$got" == "64 this slug club3090.env" ]] && ok "--explain --json carries launch_settings (value, source, what it overrides)" || bad "--explain --json: '$got'"
+# c3's Launch settings form (3d) shows these two per-knob fields next to the value.
+C4="$(cfg explain3 slugs.json='{"version": 1, "slugs": {"sgl/qwen38-27b-dual-fast": {"KV_OFFLOAD_DISK": "1"}}}')"
+got="$(env PATH="$T/bin:$PATH" COMPOSE_BIN=: CLUB3090_CONFIG_DIR="$C4" timeout 120 bash "$FIX/scripts/switch.sh" --explain "$SGL" --json 2>/dev/null \
+  | python3 -c '
+import json, sys
+d = json.load(sys.stdin)["launch_settings"]
+k = {x["knob"]: x for x in d["knobs"]}
+dep = [e for e in d["errors"] if "needs KV_OFFLOAD_GB" in e]
+print(k["REASONING_EFFORT"]["allowed"], "/", k["KV_OFFLOAD_GB"]["allowed"], "/",
+      bool(dep) and k["KV_OFFLOAD_DISK"]["errors"] == dep == k["KV_OFFLOAD_GB"]["errors"], "/", k["SPEC_N"]["errors"])')"
+[[ "$got" == "low | medium | xhigh / a number of GiB, e.g. 64 or 0.5; at least 1.86265 / True / []" ]] \
+  && ok "--explain --json: each knob carries its allowed values and the refusals about it (c3's form shows both)" \
+  || bad "--explain --json allowed/errors: '$got'"
 out="$(cli "$C" --help)"
 [[ "$out" == *"--set <slug> KEY=VALUE"* && "$out" == *"--unset <slug> KEY"* ]] && ok "--help lists --set and --unset" || bad "--help lacks --set/--unset"
 
