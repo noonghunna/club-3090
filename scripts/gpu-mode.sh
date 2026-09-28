@@ -182,6 +182,21 @@ start_service() {
     fi
     printf "  ${GREEN}▲${NC} Starting %-12s" "$1..."
     compose_cmd "$1" "up -d" && echo "done" || { echo "failed"; c3_mark_start_failure "$1"; }
+    if [[ "$1" == "litellm" && "$(_gateway_key)" == "$GATEWAY_DEFAULT_KEY" ]]; then
+        echo -e "  ${YELLOW}⚠ The gateway is on the public default key — anyone on your network can use it: bash $CLUB3090_DIR/scripts/gateway-key.sh rotate${NC}"
+    fi
+}
+
+# The key the gateway gets from compose (club-3090#1467): LITELLM_MASTER_KEY as it
+# goes into the --env-file above — the stored value, or the shell's when a config
+# file also sets it — else the compose's public default. A key set ONLY in the shell
+# is not in that file, and sudo strips the shell, so compose falls back to the
+# default there too. Never printed.
+GATEWAY_DEFAULT_KEY="sk-litellm-master-key"
+_gateway_key() {
+    local k
+    k="$(club_config_resolve "$CLUB3090_DIR" 2>/dev/null | awk -F'\t' '$1 == "LITELLM_MASTER_KEY" { print $3; exit }')"
+    printf '%s\n' "${k:-$GATEWAY_DEFAULT_KEY}"
 }
 
 stop_service() {
@@ -680,10 +695,13 @@ show_status() {
         # suppress the "no inference endpoint" warning on an LLM-idle rig.
         echo -e "  ${GREEN}▶${NC} ComfyUI @ :8188          → image/video generation (GPU-bound, mutex with LLM)"
     fi
-    if curl -sf -m 2 -H "Authorization: Bearer sk-litellm-master-key" http://localhost:4000/v1/models >/dev/null 2>&1; then
+    # The header goes in on stdin (-H @-), so the key is never on a command line.
+    local gw_key
+    gw_key="$(_gateway_key)"
+    if curl -sf -m 2 -H @- http://localhost:4000/v1/models <<<"Authorization: Bearer $gw_key" >/dev/null 2>&1; then
         _endpoint_up=1
         local m
-        m=$(curl -sf -m 2 -H "Authorization: Bearer sk-litellm-master-key" http://localhost:4000/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
+        m=$(curl -sf -m 2 -H @- http://localhost:4000/v1/models <<<"Authorization: Bearer $gw_key" | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
         echo -e "  ${GREEN}▶${NC} LiteLLM @ :4000         → ${m:-unknown}"
     fi
     if [ "$_endpoint_up" -eq 0 ]; then

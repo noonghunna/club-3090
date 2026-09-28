@@ -19,6 +19,11 @@
 # model with `hermes model`, per run with `hermes chat --provider custom:club -m
 # qwen3.8-27b`, or in a session with `/model custom:club:qwen3.8-27b`.
 # docs/CODING_AGENTS.md ("Hermes Agent — setup") has what was measured.
+#
+# THE KEY — the gateway's LITELLM_MASTER_KEY from your club-3090 settings
+# (~/.config/club-3090/secrets.env; `bash scripts/gateway-key.sh rotate` makes one),
+# else the public default every install shares. LITELLM_MASTER_KEY set in the shell
+# wins (a gateway on another box). After a rotate, re-run this script.
 set -euo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,15 +34,19 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --print) PRINT=1; shift ;;
     --gateway) GATEWAY="${2:?--gateway needs a URL}"; shift 2 ;;
-    -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "hermes-setup: unknown argument '$1' (see --help)" >&2; exit 2 ;;
   esac
 done
 
 HERMES_BIN="${HERMES_BIN:-hermes}"      # the tests point this at a stub
 MARK="club-3090 local models (scripts/hermes-setup.sh)"
-KEY="$(sed -n 's/^[[:space:]]*-[[:space:]]*LITELLM_MASTER_KEY=\(.*\)$/\1/p' "$ROOT_DIR/services/litellm/docker-compose.yml" | head -1)"
-KEY="${KEY:-sk-litellm-master-key}"
+# The key through the one settings loader (#1466, #1467) — never read out of the
+# compose file, whose line is `${LITELLM_MASTER_KEY:-…}` now, not the key.
+# shellcheck source=lib/club-config.sh
+. "$ROOT_DIR/scripts/lib/club-config.sh"
+KEY="$(club_config_get LITELLM_MASTER_KEY "$ROOT_DIR" || true)"
+KEY="${KEY:-sk-litellm-master-key}"   # the compose's default, when nothing is stored
 
 PROVIDER_JSON="$(python3 - "$GATEWAY" "$KEY" "$MARK" <<'PY'
 import json, sys, urllib.request

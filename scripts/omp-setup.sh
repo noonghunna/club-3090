@@ -20,6 +20,11 @@
 #     omp --config <repo>/services/omp/omp-club.yml
 # so your own roles and settings stay as they are. docs/CODING_AGENTS.md explains
 # every setting and which slug to serve for agent work.
+#
+# THE KEY — the gateway's LITELLM_MASTER_KEY from your club-3090 settings
+# (~/.config/club-3090/secrets.env; `bash scripts/gateway-key.sh rotate` makes one),
+# else the public default every install shares. LITELLM_MASTER_KEY set in the shell
+# wins (a gateway on another box). After a rotate, re-run this script.
 set -euo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,15 +35,19 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --print) PRINT=1; shift ;;
     --gateway) GATEWAY="${2:?--gateway needs a URL}"; shift 2 ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "omp-setup: unknown argument '$1' (see --help)" >&2; exit 2 ;;
   esac
 done
 
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}"
 MODELS_YML="$AGENT_DIR/models.yml"
-KEY="$(sed -n 's/^[[:space:]]*-[[:space:]]*LITELLM_MASTER_KEY=\(.*\)$/\1/p' "$ROOT_DIR/services/litellm/docker-compose.yml" | head -1)"
-KEY="${KEY:-sk-litellm-master-key}"
+# The key through the one settings loader (#1466, #1467) — never read out of the
+# compose file, whose line is `${LITELLM_MASTER_KEY:-…}` now, not the key.
+# shellcheck source=lib/club-config.sh
+. "$ROOT_DIR/scripts/lib/club-config.sh"
+KEY="$(club_config_get LITELLM_MASTER_KEY "$ROOT_DIR" || true)"
+KEY="${KEY:-sk-litellm-master-key}"   # the compose's default, when nothing is stored
 
 python3 - "$MODELS_YML" "$GATEWAY" "$KEY" "$PRINT" <<'PY'
 import datetime, io, os, re, sys

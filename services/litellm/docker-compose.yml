@@ -16,7 +16,14 @@ services:
       # and litellm then fails to parse its config.
       - ./config.runtime.yaml:/app/config.yaml
     environment:
-      - LITELLM_MASTER_KEY=sk-litellm-master-key
+      # The key every client sends (club-3090#1467). `bash scripts/gateway-key.sh rotate`
+      # stores a per-install one in ~/.config/club-3090/secrets.env, which gpu-mode
+      # hands to compose. Unset, it is this public default, the same on every install:
+      # anyone on your network can then use the gateway (gpu-mode warns while it is).
+      # Starting it by hand, a plain `docker compose up` here does NOT read secrets.env
+      # and comes up on the default: use gpu-mode, or the commands `gateway-key.sh rotate`
+      # prints (they pass your settings with --env-file, as gpu-mode does).
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key}
       # Request logging for troubleshooting — OFF unless the starting shell sets it.
       # Bare pass-through: `- LITELLM_LOG=${LITELLM_LOG:-}` would set it to the EMPTY
       # string instead of leaving it unset. Toggle with scripts/litellm-log.sh on|off.
