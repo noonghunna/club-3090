@@ -17,6 +17,8 @@
 #   club_config_unset [--file global|secrets] [--root ROOT] KEY...
 #                                   --root also clears ROOT/.env (read last, so an old
 #                                   copy there would otherwise come back into effect)
+#   club_config_migrate_notice ROOT [PREFIX]   one-time "settings still in this
+#                                   checkout" notice on stderr (switch/launch/gpu-mode)
 #
 # ROOT is a repo checkout whose legacy .env is read last. Precedence, highest
 # first: the shell > club3090.env > secrets.env > ROOT/.env. A variable already
@@ -137,4 +139,11 @@ _club_config_py() {
   python3 "$(dirname -- "${BASH_SOURCE[0]}")/club_config.py" "$@"
 }
 club_config_set()   { _club_config_py set "$@"; }
+# club_config_migrate_notice ROOT [PREFIX] — the one-time "your settings still live in
+# this checkout" notice on stderr (#1466; club_config.migrate_notice). Once per set
+# of pending items; never fails the caller.
+club_config_migrate_notice() { _club_config_py migrate-notice --root "$1" ${2:+--prefix "$2"} || true; }
+# club_config_migrate_pending ROOT — what `settings.sh migrate` would still copy, one
+# line ("; "-joined phrases, no values); empty when nothing. setup.sh's offer uses it.
+club_config_migrate_pending() { _club_config_py migrate-pending --root "$1" 2>/dev/null || true; }
 club_config_unset() { _club_config_py unset "$@"; }

@@ -176,6 +176,10 @@ if [[ -n "$DOWN_ESTATE" ]]; then
   exit $?
 fi
 
+# #1466 — settings still in this checkout: say once how to move them (switch.sh says the
+# same; the stamp makes sure only the first of the two prints it).
+club_config_migrate_notice "${ROOT_DIR}" "[launch]"
+
 # --- pre-flight ---
 if [[ $SKIP_PREFLIGHT -eq 0 ]]; then
   echo "[preflight] checking environment..."

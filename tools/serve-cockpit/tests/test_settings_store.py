@@ -349,6 +349,54 @@ class TestFoldIn:
 # ── docker compose gets the resolved settings ───────────────────────────────
 
 
+class TestMigrateNotice:
+    """The launchers' one-time "your settings still live in this checkout" notice
+    (club_config.migrate_notice, #1466) reaches c3 as a startup toast, shares the
+    launchers' stamp (said once by whichever runs first), and carries no value."""
+
+    def _launch(self, repo):
+        app, _, _ = make_app()
+        app._data.repo_root = repo
+        M.apply_persisted_settings(app, {})
+        return app
+
+    @staticmethod
+    def _said(app) -> list[str]:
+        return [msg for _, msg in app._startup_notices if "still live in this checkout" in msg]
+
+    def test_a_toast_once_shared_with_the_launchers(self, tmp_path):
+        from club3090_cockpit import settings_store as S
+
+        repo = _repo(tmp_path)
+        (repo / ".env").write_text("THREADS=4\nHF_TOKEN=hf_notice_tok_1\n", encoding="utf-8")
+        said = self._said(self._launch(repo))
+        assert len(said) == 1
+        assert "2 setting(s)" in said[0] and "settings.sh migrate" in said[0]
+        assert "hf_notice_tok_1" not in said[0]
+        assert self._said(self._launch(repo)) == []           # once
+        assert S.loader().migrate_notice(repo) == []          # the launchers share the stamp
+
+    def test_quiet_when_nothing_is_pending_or_after_migrate(self, tmp_path):
+        from club3090_cockpit import settings_store as S
+
+        repo = _repo(tmp_path)
+        assert self._said(self._launch(repo)) == []           # no repo .env at all
+        (repo / ".env").write_text("THREADS=4\n", encoding="utf-8")
+        S.loader().migrate(repo)
+        assert self._said(self._launch(repo)) == []
+
+    def test_never_stops_c3(self, tmp_path, monkeypatch):
+        from club3090_cockpit import settings_store as S
+
+        def boom(*_a, **_kw):
+            raise RuntimeError("no notice today")
+
+        monkeypatch.setattr(S.loader(), "migrate_notice", boom)
+        repo = _repo(tmp_path)
+        (repo / ".env").write_text("THREADS=4\n", encoding="utf-8")
+        assert self._said(self._launch(repo)) == []
+
+
 class _EnvFileRunner:
     """A write runner that records what `docker compose --env-file` would read."""
 

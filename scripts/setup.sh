@@ -597,6 +597,28 @@ load_weight_recipe "${PRIMARY_WEIGHT_KEY}"
 source "${ROOT_DIR}/scripts/lib/club-config.sh"
 club_config_load "${ROOT_DIR}"
 
+# An older install keeps its settings in the repo .env (and its gateway routes/keys in
+# services/litellm). They keep working; re-running setup after a pull is the natural
+# moment to offer the move to ~/.config/club-3090 (#1466). A copy — the repo files stay.
+# Offered only where the copy can land (a config dir that exists or can be created);
+# end of input (Ctrl-D, a scripted run) counts as "no", never as a setup failure.
+if [[ -t 0 && -t 1 ]] && mkdir -p "$(club_config_dir)" 2>/dev/null; then
+  _pending="$(club_config_migrate_pending "${ROOT_DIR}")"
+  if [[ -n "$_pending" ]]; then
+    echo ""
+    echo "Your settings still live in this checkout (${_pending})."
+    echo "  Copying them to $(club_config_dir)/ lets every checkout and worktree share them; the repo files stay as they are."
+    read -rp "Copy them now? [Y/n]: " _ans || _ans=n
+    if [[ ! "${_ans:-}" =~ ^[Nn] ]]; then
+      bash "${ROOT_DIR}/scripts/settings.sh" migrate || echo "  → migrate failed; your settings still work from the checkout." >&2
+    else
+      echo "  → left as they are. Any time: bash scripts/settings.sh migrate --dry-run"
+    fi
+  fi
+else
+  club_config_migrate_notice "${ROOT_DIR}" "[setup]"
+fi
+
 # Step 3: prompt if still unset + interactive
 if [[ -z "${MODEL_DIR:-}" && -t 0 && -t 1 ]]; then
   echo ""

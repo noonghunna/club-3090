@@ -18,6 +18,8 @@ Every setting c3 reads or writes now goes through the ONE loader,
               route_keys_file()            0600 temp file of the gateway routes' keys
     fold-in   fold_in_c3_settings()        one-time move of c3-settings.json's
                                            model_dir / hf_token into the store
+    notice    migrate_notice()             the launchers' one-time "settings still in
+                                           this checkout" notice, as a toast
 
 Nothing here parses or writes a settings file itself — it adapts the loader to
 c3 (an error type whose message never carries the value, and the fold-in).
@@ -153,6 +155,18 @@ def route_keys_file(repo_root, environ: Optional[Mapping[str, str]] = None) -> O
     from scripts.lib import litellm_local
 
     return litellm_local.write_route_keys_file(repo_root, environ=environ)
+
+
+def migrate_notice(repo_root, environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """The one-time "your settings still live in this checkout" notice that
+    switch.sh / launch.sh / gpu-mode print (``club_config.migrate_notice``), as
+    one toast; None when there is nothing to say or it was already shown (by any
+    of them — they share one stamp). Never raises: a notice must not stop c3."""
+    try:
+        lines = loader().migrate_notice(repo_root, environ)
+    except Exception:  # noqa: BLE001
+        return None
+    return _esc(" ".join(lines)) if lines else None
 
 
 # ── the one-time fold-in of c3-settings.json (club-3090#1466) ───────────────

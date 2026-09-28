@@ -91,18 +91,27 @@ PY
 )"
 [[ "$got" == "''" ]] && ok "C3_LITELLM_LOCAL_CONFIG (the test seam) still overrides both" || bad "override: $got"
 
-# One-time notice: a quiet sync (switch.sh, gpu-mode) says it once; a plain run every time.
+# "Still read from the checkout": a plain sync says it every time. A quiet sync (switch.sh,
+# gpu-mode) leaves it to their own one-time migrate notice (club_config.migrate_notice,
+# test-migrate-notice.sh), which counts these files too — so it isn't said twice.
 CFG="$T/cfg-notice"; mk_cfg "$CFG"
 notice() { CLUB3090_CONFIG_DIR="$CFG" py "$R" "$1" <<'PY' 2>&1
 import sys; sys.path.insert(0, sys.argv[1]); import litellm_local as l
 l.notice(sys.argv[2], quiet=sys.argv[3] == "quiet")
 PY
 }
-n1="$(notice quiet)"; n2="$(notice quiet)"; n3="$(notice loud)"
-[[ "$n1" == *"still come from the checkout"* && "$n1" == *"settings.sh migrate"* && -z "$n2" && "$n3" == *"settings.sh migrate"* ]] \
-  && ok "legacy files: a quiet sync notes it once (then a stamp in the config dir), a plain sync every time" \
-  || bad "notice: first=[$n1] second=[$n2] loud=[$n3]"
-nosecret "the notice names files and counts keys, never a value" "$n1$n3"
+n1="$(notice quiet)"; n3="$(notice loud)"; n5="$(notice loud)"
+[[ -z "$n1" && "$n3" == *"still come from the checkout"* && "$n3" == *"settings.sh migrate"* && "$n5" == "$n3" ]] \
+  && ok "legacy files: a plain sync notes it every time; a quiet one leaves it to the launchers' one-time notice" \
+  || bad "notice: quiet=[$n1] loud=[$n3] loud-again=[$n5]"
+got="$(CLUB3090_CONFIG_DIR="$CFG" py "$R" <<'PY' 2>&1
+import sys; sys.path.insert(0, sys.argv[1]); import club_config as c
+print("; ".join(c.migrate_pending(sys.argv[2])[0]))
+PY
+)"
+[[ "$got" == *"config.local.yaml"* && "$got" == *"route key(s)"* ]] \
+  && ok "the launchers' migrate notice counts the gateway files" || bad "migrate_pending: $got"
+nosecret "the notice names files and counts keys, never a value" "$n1$n3$got"
 n4="$(CLUB3090_CONFIG_DIR="$CFG" C3_LITELLM_LOCAL_CONFIG="$T/x.yaml" py "$R" <<'PY' 2>&1
 import sys; sys.path.insert(0, sys.argv[1]); import litellm_local as l
 l.notice(sys.argv[2], quiet=False)

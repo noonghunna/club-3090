@@ -86,7 +86,7 @@ def apply_persisted_settings(app, environ) -> None:
     First, a model dir / HF token that an older c3 saved in c3-settings.json
     moves into the store once (``settings_store.fold_in_c3_settings``); what
     happened is queued for the UI as a toast, never with a token in it."""
-    from .settings_store import fold_in_c3_settings, stored
+    from .settings_store import fold_in_c3_settings, migrate_notice, stored
 
     s = load_settings()
     data = app._data
@@ -96,6 +96,11 @@ def apply_persisted_settings(app, environ) -> None:
     queue = getattr(app, "_startup_notices", None)
     if isinstance(queue, list):
         queue.extend(notices)
+        # Settings still in the checkout (repo .env, gateway files): the same one-time
+        # notice switch.sh / gpu-mode print, shown once by whichever runs first (#1466).
+        text = migrate_notice(data.repo_root)
+        if text:
+            queue.append(("information", text))
     # A value the store refused keeps working in c3 for now (the warning above
     # says why) — the pre-#1466 behaviour, shell still first.
     if fallbacks.get("MODEL_DIR") and not str(environ.get("MODEL_DIR") or "").strip():

@@ -334,14 +334,16 @@ def pending(root, environ=None) -> list:
     return out
 
 
-def notice_lines(root, environ=None) -> list:
+def notice_lines(root, environ=None, include_pending: bool = True) -> list:
     """Why the checkout's gateway files still matter, for litellm-sync and
-    ``settings.sh show`` (``[]`` when they don't)."""
+    ``settings.sh show`` (``[]`` when they don't). ``include_pending=False`` leaves
+    out "still read from the checkout", which the launchers' one-time notice
+    (club_config.migrate_notice) already says."""
     if root is None:
         return []
     env = os.environ if environ is None else environ
     out = []
-    todo = pending(root, env)
+    todo = pending(root, env) if include_pending else []
     if todo:
         out.append(f"This rig's own gateway routes still come from the checkout ({'; '.join(todo)}). "
                    f"They keep working; `{MIGRATE_CMD}` copies them to {club_config.config_dir(env)}/ "
@@ -362,7 +364,10 @@ def notice(root, quiet: bool = False, environ=None, stream=None) -> None:
     env = os.environ if environ is None else environ
     if env.get("C3_LITELLM_LOCAL_CONFIG"):
         return
-    lines = notice_lines(root, env)
+    # Quiet runs come from switch.sh / gpu-mode, which print the combined one-time
+    # migrate notice (club_config.migrate_notice) themselves; only the "two copies
+    # differ" warning is left for this one.
+    lines = notice_lines(root, env, include_pending=not quiet)
     if not lines:
         return
     d = club_config.config_dir(env)

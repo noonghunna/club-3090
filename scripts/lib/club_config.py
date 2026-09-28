@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -513,6 +514,58 @@ def migrate_hint(count: int, repo_root, environ=None) -> str:
             f"{SETTINGS_CMD} migrate moves them to {config_dir(environ)}/.")
 
 
+MIGRATE_NOTICE_STAMP = ".notice-migrate"
+
+
+def migrate_pending(repo_root, environ=None) -> tuple[list[str], str]:
+    """Everything `settings.sh migrate` would still copy out of the checkout: the
+    repo .env's settings and this rig's own gateway routes and keys
+    (litellm_local). Returns ``(phrases, fingerprint)``: one phrase per source
+    (names and counts, never a value) and a hash of the pending key NAMES, which
+    changes when something new lands in the checkout. ``([], "")`` when nothing
+    is pending."""
+    if repo_root is None:
+        return [], ""
+    keys = pending_migration(repo_root, environ)
+    gateway = _gateway_files().pending(repo_root, environ)
+    phrases = ([f"{len(keys)} setting(s) in {Path(repo_root) / '.env'}"] if keys else []) + gateway
+    if not phrases:
+        return [], ""
+    return phrases, hashlib.sha256("\n".join(sorted(keys) + gateway).encode()).hexdigest()
+
+
+def migrate_notice(repo_root, environ=None) -> list[str]:
+    """The one-time "your settings still live in this checkout" notice (#1466) that
+    the launchers, gpu-mode and c3 show, as lines; ``[]`` when there is nothing to
+    say. Settings in the checkout keep working (the repo .env is read last), so
+    this only points at `settings.sh migrate`.
+
+    Shown ONCE per set of pending items: the config dir's stamp file holds the
+    fingerprint (a hash of key names, no values). It comes back when something new
+    lands in the checkout and goes quiet once migrated. Nothing is shown when the
+    stamp can't be written — a notice that can't remember it was shown would
+    repeat on every launch; `settings.sh show` lists the same any time."""
+    env = os.environ if environ is None else environ
+    phrases, fingerprint = migrate_pending(repo_root, env)
+    if not phrases:
+        return []
+    d = config_dir(env)
+    stamp = d / MIGRATE_NOTICE_STAMP
+    with contextlib.suppress(OSError):
+        if stamp.read_text(encoding="utf-8").strip() == fingerprint:
+            return []
+    try:
+        d.mkdir(mode=0o700, parents=True, exist_ok=True)
+        stamp.write_text(fingerprint + "\n", encoding="utf-8")
+    except OSError:
+        return []
+    return [f"Your settings still live in this checkout ({'; '.join(phrases)}). They keep working.",
+            f"To share them with every checkout and worktree, copy them to {d}/: "
+            f"{SETTINGS_CMD} migrate --dry-run, then {SETTINGS_CMD} migrate "
+            "(a copy — the repo files are left as they are).",
+            f"Shown once; {SETTINGS_CMD} show lists them any time."]
+
+
 def settings_rows(repo_root=None, environ=None, show_secrets: bool = False) -> list[dict]:
     """Every configured setting as {key, value, source, secret}, sorted by key.
     Secret values (is_secret, or held in secrets.env) are redacted unless
@@ -878,7 +931,26 @@ def main(argv=None) -> int:
     u.add_argument("--file", choices=("global", "secrets"), default="global")
     u.add_argument("--root", help="also remove the keys from this checkout's legacy .env")
     u.add_argument("keys", nargs="+", metavar="KEY")
+    n = sub.add_parser("migrate-notice", help="print the one-time 'settings still in the checkout' notice to stderr")
+    n.add_argument("--root", required=True, help="repo root")
+    n.add_argument("--prefix", default="[club-3090]", help="line prefix, e.g. [switch]")
+    mp = sub.add_parser("migrate-pending", help="print what `settings.sh migrate` would still copy, '; '-joined (empty: nothing)")
+    mp.add_argument("--root", required=True, help="repo root")
     a = ap.parse_args(argv)
+    if a.cmd == "migrate-pending":
+        try:
+            print("; ".join(migrate_pending(a.root)[0]))
+        except Exception:   # noqa: BLE001 — setup.sh treats "can't tell" as "nothing pending"
+            pass
+        return 0
+    if a.cmd == "migrate-notice":
+        # Never fails a launch: any problem just means no notice this time.
+        try:
+            for line in migrate_notice(a.root):
+                print(f"{a.prefix} NOTE: {line}", file=sys.stderr)
+        except Exception:   # noqa: BLE001 — a notice must not break the caller
+            pass
+        return 0
     try:
         if a.cmd == "dir":
             print(config_dir())

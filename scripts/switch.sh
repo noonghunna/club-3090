@@ -1754,6 +1754,9 @@ VARIANT="$(resolve_default_variant "$VARIANT")"
 warn_if_default_arch_gated "$ROOT_DIR" "$VARIANT" "$(primary_sm_from_gpu_spec "$(switch_gpu_profile_spec 2>/dev/null || true)")"
 
 resolve_ready_url "${VARIANT}"
+# #1466 — settings still in this checkout (repo .env, gateway files): say once how to
+# move them to ~/.config/club-3090. They keep working either way.
+club_config_migrate_notice "${ROOT_DIR}" "[switch]"
 check_variant "${VARIANT}"   # every refusal that doesn't need freed resources, BEFORE the teardown
 down_running
 up_variant "${VARIANT}"

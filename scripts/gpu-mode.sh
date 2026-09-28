@@ -1539,6 +1539,12 @@ usage() {
     echo ""
 }
 
+# #1466 — settings still in this checkout: say once how to move them to ~/.config/club-3090.
+case "${1:-}" in
+    chat|qwen27b|27b|qwen35b-a3b|35b-a3b|a3b|35b|gemma-31b|gemma|gemma12b|gemma-12b|deckard|ai-studio|aistudio|off|upgrade|gateway)
+        club_config_migrate_notice "$CLUB3090_DIR" "[gpu-mode]" ;;
+esac
+
 case "${1:-}" in
     chat)               mode_chat ;;
     qwen27b|27b)        mode_27b ;;
