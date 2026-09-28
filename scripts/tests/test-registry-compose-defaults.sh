@@ -25,7 +25,7 @@ FLAGS = {  # engine dir -> (concurrency flag, memory flag)
     "vllm": ("--max-num-seqs", "--gpu-memory-utilization"),
     "sglang": ("--max-running-requests", "--mem-fraction-static"),
 }
-VALUE = r'"?\$?\{?(?:[A-Z_]+:-)?([0-9.]+)\}?"?'
+VALUE = r'"?\$*\{?(?:[A-Z_]+:-)?([0-9.]+)\}?"?'  # \$* also reads a runtime-deferred $${V:-X}
 
 def flag_default(txt, flag):
     """The default a compose boots with for `flag`: inline (`flag X` / `flag=X` / `flag "${V:-X}"`) or the

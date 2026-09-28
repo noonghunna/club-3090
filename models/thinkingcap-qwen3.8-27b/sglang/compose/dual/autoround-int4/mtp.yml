@@ -344,6 +344,24 @@ services:
           echo "[spec] native MTP ON (n=$$_n)" >&2
         else
           echo "[spec] drafter OFF (SPEC_N=0)" >&2
+          # ⚠️ Drafter off -> the MEM_FRACTION default drops 0.95 -> 0.90 (your own
+          # MEM_FRACTION still wins). Same fix, same reason as the Qwen3.8 twin
+          # (sgl/qwen38-27b-dual-fast, identical shape and weight size): without the
+          # drafter's weights and draft KV the pool takes their share, and at 0.95 the
+          # prefill CUDA-graph capture (1.30 GB) finds ~0.75 GB -> CUDA OOM, so
+          # SPEC_N=0 did not boot. On that twin, 2026-09-28: 0.92-0.94 OOM at capture,
+          # 0.91 captures but NCCL fails on the first request (0.03 GiB free), 0.90 is
+          # the highest that boots and serves (bench incl. 90K prefill + verify-full).
+          # ThinkingCap itself at 0.90: 710,073-token pool, 0.58 GB after capture,
+          # bench incl. 90K prefill + verify-full pass (2026-09-28).
+          # ⚠️ The margin is thin: right after a 90K prefill, a lazily loaded Triton
+          # kernel found 0.05-0.21 GiB free on GPU0 (it varies boot to boot). If a
+          # spec-off boot ever hits CUDA OOM on a Triton load, MEM_FRACTION=0.89
+          # buys ~0.24 GB per card for ~2% of the KV pool.
+          if [ -z "$${MEM_FRACTION:-}" ]; then
+            export MEM_FRACTION=0.90
+            echo "[mem] SPEC_N=0: mem-fraction-static 0.90 (0.95 leaves too little to capture CUDA graphs without the drafter; set MEM_FRACTION to override)" >&2
+          fi
         fi
         # --- Prefix-cache policy opt-ins (club-3090#1319) -------------------
         # ⚠️ SESSION_RADIX_CACHE is a 0/1 GATE, not the flag: the feature needs
@@ -718,7 +736,7 @@ services:
           --chunked-prefill-size "${CHUNKED_PREFILL_SIZE:-2048}" \
           --attention-backend "${ATTENTION_BACKEND:-flashinfer}" \
           --context-length "${CONTEXT_LENGTH:-262144}" \
-          --mem-fraction-static "${MEM_FRACTION:-0.95}" \
+          --mem-fraction-static "$${MEM_FRACTION:-0.95}" \
           --max-running-requests "${MAX_RUNNING_REQUESTS:-2}" \
           "$${CACHE[@]}" \
           "$${OFFLOAD_ARGS[@]}" \
