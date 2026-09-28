@@ -18,7 +18,7 @@
 #   bash scripts/switch.sh --local              # only models YOU registered (local layer)
 #   bash scripts/switch.sh --defaults           # just the per-model defaults view
 #   bash scripts/switch.sh --down               # just bring down whatever's up
-#   bash scripts/switch.sh --set-default <slug>  # pin <slug> as YOUR default for its model (.env)
+#   bash scripts/switch.sh --set-default <slug>  # pin <slug> as YOUR default for its model (saved in club3090.env)
 #   bash scripts/switch.sh --clear-default <model>  # remove your pinned default for <model>
 #   bash scripts/switch.sh --explain <slug>      # one slug's full story: registry row + engine/model/hardware/drafter facts + kv-calc fit verdict + measured BENCHMARKS row
 #   bash scripts/switch.sh --explain <slug> --json  # same, as a structured JSON object
@@ -28,7 +28,7 @@
 #                           config for that engine on the detected topology.
 #   <engine>/<topo>/default e.g. vllm/dual/default — force the topology.
 #   <model>/default         e.g. qwen3.6-27b/default — YOUR preferred config:
-#                           your `.env` pin if set, else the curated pick
+#                           your saved pin (--set-default) if set, else the curated pick
 #                           (ENGINE_PREFERENCE walk) for the detected topology.
 #
 # Variant names are derived from the compose registry (the single source of
@@ -75,7 +75,7 @@
 #                 port is bound, and warms the moe-cache expert pool (allocated
 #                 on first inference). Set 0 to skip.
 #   READY_PROBE_TIMEOUT  Default: 90 (seconds) — hard cap on that one probe.
-#   CLUB3090_THINKING_<MODEL>  .env pin (on|off|inherit) → ENABLE_THINKING at
+#   CLUB3090_THINKING_<MODEL>  saved pin (on|off|inherit) → ENABLE_THINKING at
 #                 launch (#1014 follow-up; set it from the serve-confirm [T]).
 #                 An ENABLE_THINKING exported in the shell wins over the pin.
 
@@ -194,7 +194,7 @@ resolve_default_variant() {
   #   <engine>/<topology>/default  → engine-recommendation, explicit topology
   #   <X>/default                  → dispatch on X: engine name → engine
   #                                   recommendation; model-id → the user's
-  #                                   model default (.env pin ‖ curated walk)
+  #                                   model default (saved pin ‖ curated walk)
   #   anything else                → passthrough (already a concrete slug)
   local variant="$1" engine topology target
   if [[ "$variant" =~ ^([^/]+)/(single|dual|multi[0-9]+)/default$ ]]; then
@@ -223,8 +223,12 @@ usage() {
   exit 0
 }
 
-# --- PR-B: user-pinnable model defaults (.env) -------------------------------
-ENV_FILE="${ROOT_DIR}/.env"
+# --- PR-B: user-pinnable model defaults ---------------------------------------
+# Pins are saved through the ONE writer (club_config_set, club-3090#1466) in your
+# club-3090 settings — club3090.env in $(club_config_dir), which every checkout
+# reads — not in this checkout's .env any more. A pin still sitting in the repo .env
+# is read (it is the lowest-precedence file), and --clear-default removes it from
+# there too, so a cleared pin can't come back from an old copy.
 
 # Derive (model, pin-key) from a slug, or fail with a message. Echoes
 # "<model>\t<pin-key>".
@@ -248,30 +252,31 @@ PY_SLUGINFO
   printf '%s' "$out"
 }
 
-# Write KEY=VALUE into .env, replacing any existing line for KEY (round-trips
-# with --clear-default). Preserves all other lines + ordering.
-env_set_key() {
-  local key="$1" value="$2" tmp
-  tmp="$(mktemp)"
-  if [[ -f "$ENV_FILE" ]]; then
-    # Drop any existing assignment for KEY (with or without `export`).
-    command grep -vE "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_FILE" > "$tmp" || true
-  fi
-  printf '%s=%s\n' "$key" "$value" >> "$tmp"
-  mv "$tmp" "$ENV_FILE"
+# switch_saved_source KEY → the settings FILE holding KEY (club3090.env, secrets.env or
+# repo .env), ignoring the environment; empty when no file does. club_config_load
+# exported every saved value at startup, so the environment alone can't tell.
+# (awk reads to the end rather than `exit`: an early exit can SIGPIPE the writer,
+# which pipefail + set -e would turn into a silent exit.)
+switch_saved_source() {
+  ( unset "$1"; club_config_resolve "$ROOT_DIR" ) | awk -F'\t' -v k="$1" '$1 == k && !n++ { print $2 }'
 }
 
-# Remove any assignment for KEY from .env (no-op if .env or the key is absent).
-env_clear_key() {
-  local key="$1" tmp
-  [[ -f "$ENV_FILE" ]] || return 0
-  tmp="$(mktemp)"
-  command grep -vE "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_FILE" > "$tmp" || true
-  mv "$tmp" "$ENV_FILE"
+# switch_setting_source KEY → where the value switch.sh sees for KEY comes from: the
+# settings file that holds that same value, else "your environment" (exported in the
+# shell, which beats every file).
+switch_setting_source() {
+  local key="$1" line rest
+  line="$( (unset "$key"; club_config_resolve "$ROOT_DIR") | awk -F'\t' -v k="$key" '$1 == k && !n++ { print }')"
+  rest="${line#*$'\t'}"
+  if [[ -n "$line" && "${rest#*$'\t'}" == "${!key-}" ]]; then
+    printf '%s' "${rest%%$'\t'*}"
+  else
+    printf 'your environment'
+  fi
 }
 
 set_default() {
-  local slug="$1" info model key
+  local slug="$1" info model key out
   if [[ -z "${VARIANTS[$slug]:-}" ]]; then
     echo "[switch] ERROR: '${slug}' is not a known variant — can't pin it." >&2
     echo "[switch]        Run: bash scripts/switch.sh --list" >&2
@@ -281,15 +286,21 @@ set_default() {
     exit 1
   fi
   IFS=$'\t' read -r model key <<< "$info"
-  env_set_key "$key" "$slug"
-  echo "[switch] pinned '${slug}' as your default for ${model} (${key} in .env)."
+  # The writer says where it saved ("[config] saved KEY to …/club3090.env"); on failure its
+  # last line says why (a refused value, or an unwritable settings dir).
+  if ! out="$(club_config_set "${key}=${slug}" 2>&1)"; then
+    echo "[switch] ERROR: your default for ${model} was NOT pinned: $(printf '%s\n' "$out" | tail -n 1)" >&2
+    exit 1
+  fi
+  printf '%s\n' "$out"
+  echo "[switch] pinned '${slug}' as your default for ${model} (${key} in club3090.env)."
   echo "[switch] bare 'launch.sh' / '${model%%/*}…' resolves there now; clear it with:"
   echo "[switch]   bash scripts/switch.sh --clear-default ${model}"
   exit 0
 }
 
 clear_default() {
-  local model="$1" key
+  local model="$1" key left out
   key="$(python3 - "$ROOT_DIR" "$model" <<'PY_CLEARKEY'
 import sys
 from pathlib import Path
@@ -298,23 +309,36 @@ from scripts.lib.profiles.compose_registry import model_default_pin_key  # noqa:
 print(model_default_pin_key(sys.argv[2]))
 PY_CLEARKEY
 )"
-  if [[ -f "$ENV_FILE" ]] && command grep -qE "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_FILE"; then
-    env_clear_key "$key"
-    echo "[switch] cleared your pinned default for ${model} (removed ${key} from .env)."
-  else
-    echo "[switch] no pinned default set for ${model} (${key} not in .env) — nothing to clear."
+  if [[ -z "$(switch_saved_source "$key")" ]]; then
+    echo "[switch] no pinned default saved for ${model} (${key} is in neither $(club_config_dir)/club3090.env nor the repo .env) — nothing to clear."
+    if [[ -n "${!key:-}" ]]; then
+      echo "[switch] note: ${key}=${!key} is set in your environment, which no saved setting overrides — unset it there."
+    fi
+    exit 0
   fi
+  # --root also removes it from this checkout's legacy .env; the writer says from where.
+  if ! out="$(club_config_unset --root "$ROOT_DIR" "$key" 2>&1)"; then
+    echo "[switch] ERROR: your pinned default for ${model} was NOT cleared: $(printf '%s\n' "$out" | tail -n 1)" >&2
+    exit 1
+  fi
+  printf '%s\n' "$out"
+  left="$(switch_saved_source "$key")"
+  if [[ -n "$left" ]]; then
+    echo "[switch] ERROR: ${key} is still set in ${left} — remove it there." >&2
+    exit 1
+  fi
+  echo "[switch] cleared your pinned default for ${model}."
   exit 0
 }
 
-# --- #1014 follow-up: persisted per-model THINKING pin (.env) ----------------
+# --- #1014 follow-up: persisted per-model THINKING pin ------------------------
 #
-# The serve-confirm modal's [T] persists the tri-state thinking choice as
-# CLUB3090_THINKING_<MODEL> in .env (same mechanism --set-default uses for
+# The serve-confirm modal's [T] persists the tri-state thinking choice as the saved
+# setting CLUB3090_THINKING_<MODEL> (the same kind of pin --set-default saves for
 # CLUB3090_DEFAULT_<MODEL>). This side makes that pin REAL: when resolving the
 # serve env for a launch we read it and inject ENABLE_THINKING accordingly.
 
-# Echo the .env pin key for a model's thinking default — normalization identical
+# Echo the pin key for a model's thinking default — normalization identical
 # to model_default_pin_key (compose_registry.model_thinking_pin_key).
 thinking_pin_key_for() {
   local model="$1"
@@ -328,7 +352,7 @@ PY_THINKKEY
 }
 
 # Resolve a model's persisted thinking state to on | off | inherit. Reads the
-# ALREADY-LOADED environment (switch.sh loads .env above; shell-env-wins per
+# ALREADY-LOADED environment (club_config_load above; shell-env-wins per
 # commit 9a27de83). Unknown/empty values degrade to inherit (the entrypoint default).
 thinking_pin_state() {
   local model="$1" key val
@@ -346,7 +370,7 @@ thinking_pin_state() {
 #   off     → ENABLE_THINKING=false (explicit, per the #1010 lesson)
 #   inherit → nothing injected.
 # An ENABLE_THINKING already present in the SHELL wins (shell-wins precedence, 9a27de83): the
-# .env pin is file-tier defaulting, never a shell override.
+# saved pin is file-tier defaulting, never a shell override.
 apply_thinking_pin_env() {
   local variant="$1" eng dir file model state key
   IFS='|' read -r eng dir file <<< "${VARIANTS[$variant]:-}"
@@ -364,7 +388,7 @@ apply_thinking_pin_env() {
       if [[ "$state" == on ]]; then ENABLE_THINKING=true; else ENABLE_THINKING=false; fi
       export ENABLE_THINKING
       key="$(thinking_pin_key_for "$model")"
-      echo "[switch] thinking pinned ${state} for ${model} (${key} in .env) → ENABLE_THINKING=${ENABLE_THINKING}."
+      echo "[switch] thinking pinned ${state} for ${model} (${key} from $(switch_setting_source "$key")) → ENABLE_THINKING=${ENABLE_THINKING}."
       ;;
   esac
 }
@@ -605,14 +629,15 @@ list_variants() {
 
 # Discoverability (design §7): per model, what `<model>/default` resolves to on
 # the DETECTED topology, marked user-pin vs curated, with a hint to pin. Shared
-# between `--list` (appended) and `--defaults` (standalone). Reads the .env pin
-# straight from the loaded environment (callers load .env above).
+# between `--list` (appended) and `--defaults` (standalone). Reads the pin
+# straight from the environment club_config_load filled above; a pin that isn't
+# from club3090.env (the legacy repo .env, or your environment) is labelled so.
 show_defaults_view() {
   local topology
   topology="$(switch_topology_from_gpus)"
   echo "Defaults — what \`<model>/default\` resolves to on this rig (${topology}):"
-  echo "  (pin = your .env pin · curated = ENGINE_PREFERENCE walk · — = none for this topology)"
-  local models model pin_key pin_value resolved source note
+  echo "  (pin = your --set-default pin, saved in $(club_config_dir)/club3090.env · curated = ENGINE_PREFERENCE walk · — = none for this topology)"
+  local models model pin_key pin_value pin_from resolved source note
   models="$(python3 -c "import sys; sys.path.insert(0,'$ROOT_DIR'); from scripts.lib.profiles.compose_registry import model_set; print('\n'.join(sorted(model_set())))")"
   while IFS= read -r model; do
     [[ -n "$model" ]] || continue
@@ -622,6 +647,8 @@ show_defaults_view() {
     if resolved="$(model_default_target "$ROOT_DIR" "$model" "$topology" 2>/dev/null)"; then
       if [[ -n "$pin_value" && "$resolved" == "$pin_value" ]]; then
         source="pin"
+        pin_from="$(switch_setting_source "$pin_key")"
+        if [[ "$pin_from" != club3090.env ]]; then note="  (from ${pin_from})"; fi
       elif [[ -n "$pin_value" ]]; then
         source="curated"
         note="  (your pin ${pin_value} was ignored — invalid/mismatched; see warnings)"
@@ -651,7 +678,7 @@ defaults_view_standalone() {
 # data as a structured object; the default is a readable block.
 #
 # This is a READ-ONLY, terminal action — it never brings a container up/down,
-# never touches .env, and is strictly additive to the existing flag set.
+# never writes a setting, and is strictly additive to the existing flag set.
 
 # Map the local GPU (nvidia-smi name) to a hardware-profile id under
 # scripts/lib/profiles/hardware/<id>.yml, which is what kv-calc's `--fit --card`
@@ -1508,8 +1535,8 @@ wait_ready() {
 
   # F3 (CLI parity with c3's serving card): print the USABLE endpoint — the LAN
   # URL an agent/client should point at, the served model id, and the auth
-  # status. LANIP's source of truth is the repo .env (#512, loaded above; shell
-  # env wins); fall back to the shared c3_lan_ip helper in a SUBSHELL
+  # status. LANIP comes from your saved settings (#512: club3090.env, or the legacy
+  # repo .env; loaded above; shell env wins); fall back to the shared c3_lan_ip helper in a SUBSHELL
   # (comfyui-paths.sh sets studio paths at source time — keep that contained),
   # then localhost.
   local _lanip _served _port

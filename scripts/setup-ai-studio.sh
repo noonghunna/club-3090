@@ -13,8 +13,8 @@
 #   SKIP_DISK_CHECK=1 bypass the free-space preflight (resume an idempotent download)
 #   SKIP_PIPE=1      skip installing the OWUI Studio pipe (do it later)
 #   ASSUME_YES=1     same as --yes (also auto-yes when not a TTY / under CI)
-#   LANIP=<ip>       host IP shown in the final URLs. Auto-detected + saved to .env on first run;
-#                    pin it in .env (or via this env var) if it picks the wrong NIC / can't detect.
+#   LANIP=<ip>       host IP shown in the final URLs. Auto-detected + saved to club3090.env (your
+#                    club-3090 settings) on first run; edit it there if it picks the wrong NIC.
 #   MODEL_DIR=<dir>  HF/GGUF cache root; the ComfyUI tree goes to a "comfyui" sibling
 #                    of it (override COMFYUI_ROOT / COMFYUI_MODELS_DIR to decouple).
 #
@@ -37,9 +37,9 @@ export OWUI_PORT
 # Testability hook (#715 gap 5 regression test): the bring-up step must run even under
 # SKIP_BUILD/SKIP_DOWNLOAD — the test stubs this to assert it was reached.
 GPU_MODE_BIN="${GPU_MODE_BIN:-$REPO_DIR/scripts/gpu-mode.sh}"
-# LAN IP for the final URLs. Resolve via the shared helper: env / .env win, else auto-detect and
-# PERSIST to .env (the source of truth) — or, if nothing detects, fall back to localhost and tell
-# the user to set LANIP in .env. Keeps setup + gpu-mode from drifting. (#504, #512)
+# LAN IP for the final URLs. Resolve via the shared helper: env / saved settings win, else
+# auto-detect and SAVE it to club3090.env (club-3090#1466) — or, if nothing detects, fall back to
+# localhost and tell the user where to set LANIP. Keeps setup + gpu-mode from drifting. (#504, #512)
 c3_resolve_lanip
 
 ASSUME_YES="${ASSUME_YES:-}"

@@ -583,7 +583,7 @@ load_weight_recipe "${PRIMARY_WEIGHT_KEY}"
 # ---------- MODEL_DIR resolution ----------
 # Order of precedence:
 #   1. MODEL_DIR already exported in the calling shell  → use as-is
-#   2. .env at repo root sets MODEL_DIR                  → source it
+#   2. saved settings set MODEL_DIR (club3090.env, or the legacy repo .env) → use it
 #   3. Interactive prompt (only if stdin is a TTY)       → ask user
 #   4. Silent fallback to <repo>/models-cache            → in-repo default
 #
@@ -626,20 +626,19 @@ if [[ -z "${MODEL_DIR:-}" && -t 0 && -t 1 ]]; then
   done
   echo ""
 
-  # Offer to persist the choice so future runs skip the prompt
-  read -rp "Save MODEL_DIR=${MODEL_DIR} to .env so we skip this next time? [Y/n]: " save
+  # Offer to persist the choice so future runs skip the prompt. Saved through the ONE
+  # writer (club-3090#1466) in your club-3090 settings, which every checkout reads —
+  # not in this checkout's .env. The writer refuses a value that bash, docker compose
+  # and systemd would read differently (quotes, `$`, backslashes, ` #`) and says why;
+  # this run still uses the path, it just isn't saved.
+  read -rp "Save MODEL_DIR=${MODEL_DIR} to your club-3090 settings ($(club_config_dir)/club3090.env) so we skip this next time? [Y/n]: " save
   if [[ "${save:-y}" =~ ^[Yy]$ || -z "${save:-}" ]]; then
-    if [[ -f "${ROOT_DIR}/.env" ]]; then
-      # Update existing .env (replace MODEL_DIR= line if present, else append)
-      if grep -qE "^MODEL_DIR=" "${ROOT_DIR}/.env"; then
-        sed -i "s|^MODEL_DIR=.*|MODEL_DIR=${MODEL_DIR}|" "${ROOT_DIR}/.env"
-      else
-        echo "MODEL_DIR=${MODEL_DIR}" >> "${ROOT_DIR}/.env"
-      fi
+    if _saved="$(club_config_set "MODEL_DIR=${MODEL_DIR}" 2>&1)"; then
+      echo "  → saved to $(club_config_dir)/club3090.env (every checkout reads it; an exported MODEL_DIR still wins)."
     else
-      echo "MODEL_DIR=${MODEL_DIR}" > "${ROOT_DIR}/.env"
+      echo "  → NOT saved: $(printf '%s\n' "$_saved" | tail -n 1)" >&2
+      echo "    Using ${MODEL_DIR} for this run only; set MODEL_DIR=... when re-running, or you'll get this prompt again." >&2
     fi
-    echo "  → saved. (.env is gitignored.)"
   else
     echo "  → not saved. Set MODEL_DIR=... when re-running, or you'll get this prompt again."
   fi
@@ -747,37 +746,48 @@ preflight_hf_token  # soft-warn only; downloads will surface the hard failure
 echo "[preflight] ok."
 echo ""
 
-# ---------- WSL2 detection — auto-configure .env for known WSL2 boot crash ----------
+# ---------- WSL2 detection — save the known WSL2 boot-crash workaround ----------
 # WSL2 + driver 596.36 + vLLM nightly hit a `gptq_marlin_repack` boot crash
 # with `cudaErrorNotReady`. Workaround is `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False`
 # (PR #84). The compose default is `expandable_segments:True,max_split_size_mb:512`
-# which works on bare-metal Linux but fails on WSL2 — so we auto-create a .env
-# override here on detected WSL2 systems. Cross-rig validated by @timxx (issue #60),
+# which works on bare-metal Linux but fails on WSL2 — so we save an override
+# here on detected WSL2 systems. Cross-rig validated by @timxx (issue #60),
 # @easel, and others. Safe no-op on bare-metal (only runs when /proc/version
-# contains "microsoft").
+# contains "microsoft"; SETUP_PROC_VERSION points the check at another file, for tests).
+#
+# Where it goes (club-3090#1466): your club-3090 settings (club3090.env), through the
+# ONE writer. switch.sh / launch.sh export saved settings before `docker compose`, and
+# gpu-mode passes them as --env-file, so every vLLM compose's
+# `${PYTORCH_CUDA_ALLOC_CONF:-…}` picks it up. It used to be written to
+# models/<model>/vllm/compose/.env, which docker compose never reads: every compose lives
+# in <topology>/<quant>/, and compose loads .env from the compose FILE's directory, not
+# the working directory (checked with `docker compose config`, v5.5.1). A value already
+# set anywhere — shell, club3090.env, the legacy repo .env — is never replaced.
 COMPOSE_DIR="${ROOT_DIR}/models/${MODEL_NAME}/vllm/compose"
-if [[ -f /proc/version ]] && command grep -qi microsoft /proc/version 2>/dev/null; then
-  ENV_FILE="${COMPOSE_DIR}/.env"
-  if [[ -d "${COMPOSE_DIR}" ]]; then
-    if [[ ! -f "${ENV_FILE}" ]]; then
-      cat > "${ENV_FILE}" <<'EOF'
-# WSL2 boot-crash workaround — see PR #84 + issue #60.
-# vLLM + WSL2 + driver 596.36 hit `gptq_marlin_repack` cudaErrorNotReady on boot
-# with the default `expandable_segments:True`. This override fixes it.
-# Auto-created by scripts/setup.sh on detected WSL2 systems. Safe to delete
-# on bare-metal Linux (the compose default works there).
-PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
-EOF
-      echo "[wsl2] detected WSL2 — created ${ENV_FILE} with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False"
+_proc_version="${SETUP_PROC_VERSION:-/proc/version}"
+if [[ -f "${_proc_version}" ]] && command grep -qi microsoft "${_proc_version}" 2>/dev/null; then
+  _wsl_fix="PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False"
+  if [[ -z "${PYTORCH_CUDA_ALLOC_CONF+x}" ]]; then        # set nowhere (club_config_load exported any saved value)
+    if _saved="$(club_config_set "${_wsl_fix}" 2>&1)"; then
+      echo "[wsl2] detected WSL2 — saved ${_wsl_fix} to $(club_config_dir)/club3090.env"
       echo "[wsl2] this fixes the known gptq_marlin_repack boot crash on WSL2 + driver ≥596.36 (issue #60)."
-    elif ! grep -q "expandable_segments:False" "${ENV_FILE}"; then
-      echo "[wsl2] WARN: detected WSL2 but ${ENV_FILE} exists without the expandable_segments:False override."
-      echo "[wsl2]       If vLLM fails to boot with cudaErrorNotReady, add:"
-      echo "[wsl2]         PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False"
-      echo "[wsl2]       See PR #84 / issue #60 for context."
     else
-      echo "[wsl2] detected WSL2 — ${ENV_FILE} already has the expandable_segments:False override. ✓"
+      echo "[wsl2] WARN: detected WSL2 but could not save ${_wsl_fix}: $(printf '%s\n' "$_saved" | tail -n 1)" >&2
+      echo "[wsl2]       If vLLM fails to boot with cudaErrorNotReady, export it before launching." >&2
     fi
+  elif [[ "${PYTORCH_CUDA_ALLOC_CONF}" != *expandable_segments:False* ]]; then
+    echo "[wsl2] WARN: detected WSL2 but PYTORCH_CUDA_ALLOC_CONF is already set to '${PYTORCH_CUDA_ALLOC_CONF}'"
+    echo "[wsl2]       (from ${CLUB3090_CONFIG_SOURCE[PYTORCH_CUDA_ALLOC_CONF]:-your environment}) without the expandable_segments:False override."
+    echo "[wsl2]       If vLLM fails to boot with cudaErrorNotReady, change it to:"
+    echo "[wsl2]         ${_wsl_fix}"
+    echo "[wsl2]       See PR #84 / issue #60 for context."
+  else
+    echo "[wsl2] detected WSL2 — PYTORCH_CUDA_ALLOC_CONF already has the expandable_segments:False override. ✓"
+  fi
+  if [[ -f "${COMPOSE_DIR}/.env" ]]; then
+    echo "[wsl2] note: ${COMPOSE_DIR}/.env (written by an older setup.sh, or by hand) is not read by docker compose —"
+    echo "[wsl2]       the composes live in subdirectories, and compose reads .env next to the compose file."
+    echo "[wsl2]       Settings belong in $(club_config_dir)/club3090.env; that file can be deleted once moved."
   fi
 fi
 

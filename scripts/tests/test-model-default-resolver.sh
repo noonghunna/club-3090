@@ -7,7 +7,7 @@
 #   - (NA) candidates are skipped (never auto-default a broken config)
 #   - X/default dispatch: engine name → engine rec; model-id → model default;
 #     unknown → error; precedence is explicit
-#   - .env pin overrides; invalid / (NA) / topology-mismatch pin → warn + fall
+#   - a saved pin overrides; invalid / (NA) / topology-mismatch pin → warn + fall
 #     back to curated (never blocks)
 #   - degradation: no functional default at the detected topology → notice +
 #     nearest-lower topology, else a clear "pick explicitly" message (no crash)
@@ -198,36 +198,75 @@ key="$(python3 -c "import sys; sys.path.insert(0,'$ROOT_DIR'); from scripts.lib.
 assert_eq "$key" "CLUB3090_DEFAULT_QWEN3_6_27B" "pin key normalization"
 
 # --- switch.sh --set-default / --clear-default round-trip --------------------
-# --set-default / --clear-default write ROOT_DIR/.env. ROOT_DIR is derived from
-# the script's own BASH_SOURCE, so the round-trip is exercised against the repo
-# .env, saved + restored around the test (it's gitignored either way).
-SAVED_ENV=""
-if [[ -f "$ROOT_DIR/.env" ]]; then SAVED_ENV="$(mktemp)"; cp "$ROOT_DIR/.env" "$SAVED_ENV"; fi
-cleanup() {
-  if [[ -n "$SAVED_ENV" ]]; then cp "$SAVED_ENV" "$ROOT_DIR/.env"; rm -f "$SAVED_ENV";
-  else rm -f "$ROOT_DIR/.env"; fi
-}
+# Pins are saved through the one writer (club-3090#1466) in the settings dir
+# (CLUB3090_CONFIG_DIR → club3090.env), no longer in the checkout's .env. The
+# checkout here is a FIXTURE — symlinks to this tree, so switch.sh (which derives
+# ROOT_DIR from its own path with a logical `cd`) treats it as the repo root and its
+# legacy .env is ours. Nothing touches this checkout's real .env.
+FX="$(mktemp -d)"; CFG="$FX/cfg"
+cleanup() { rm -rf "$FX"; }
 trap cleanup EXIT
+mkdir -p "$FX/checkout"
+for e in "$ROOT_DIR"/* "$ROOT_DIR"/.[!.]*; do
+  case "$(basename "$e")" in .git|.env) continue ;; esac
+  ln -s "$e" "$FX/checkout/$(basename "$e")"
+done
+SW=("$FX/checkout/scripts/switch.sh")
+# sw <args> — switch.sh on the fixture, output on stdout. Exit status returned; callers that
+# don't assert it add `|| true`, so a failing switch.sh reports through an assertion instead of
+# killing this `set -e` script silently.
+sw() { env -u CLUB3090_DEFAULT_QWEN3_6_27B CLUB3090_CONFIG_DIR="$CFG" bash "${SW[@]}" "$@" 2>&1; }
+pinline() { command grep -E '^CLUB3090_DEFAULT_QWEN3_6_27B=' "$1" 2>/dev/null || true; }
 
-rm -f "$ROOT_DIR/.env"
-bash "$ROOT_DIR/scripts/switch.sh" --set-default vllm/dual >/dev/null 2>&1
-grep -q "^CLUB3090_DEFAULT_QWEN3_6_27B=vllm/dual$" "$ROOT_DIR/.env" \
-  || note "--set-default did not write the pin key/value"
-# Resolve through the script's loaded .env on a dual rig → honour the pin.
-out="$(NVIDIA_VISIBLE_DEVICES=0,1 bash "$ROOT_DIR/scripts/switch.sh" --defaults 2>&1)"
+rc=0; out="$(sw --set-default vllm/dual)" || rc=$?
+assert_eq "$rc" "0" "--set-default exits 0"
+assert_eq "$(pinline "$CFG/club3090.env")" "CLUB3090_DEFAULT_QWEN3_6_27B=vllm/dual" "--set-default saves the pin to club3090.env"
+assert_contains "$out" "saved CLUB3090_DEFAULT_QWEN3_6_27B to $CFG/club3090.env" "--set-default says where the pin went"
+[[ -e "$FX/checkout/.env" ]] && note "--set-default wrote the checkout's .env: $(cat "$FX/checkout/.env")"
+# Resolve through the script's loaded settings on a dual rig → honour the pin.
+out="$(NVIDIA_VISIBLE_DEVICES=0,1 sw --defaults)" || true
 assert_contains "$out" "vllm/dual" "set-default reflected in --defaults"
 assert_contains "$out" "[pin]" "set-default marked as [pin] in --defaults"
+assert_contains "$out" "saved in $CFG/club3090.env" "--defaults legend names where pins live"
 # Clear → key removed, round-trips.
-bash "$ROOT_DIR/scripts/switch.sh" --clear-default qwen3.6-27b >/dev/null 2>&1
-if grep -q "CLUB3090_DEFAULT_QWEN3_6_27B" "$ROOT_DIR/.env" 2>/dev/null; then
-  note "--clear-default did not remove the pin key"
-fi
-# Invalid slug → rejected, no .env write.
-rm -f "$ROOT_DIR/.env"
-if bash "$ROOT_DIR/scripts/switch.sh" --set-default vllm/not-a-real-slug >/dev/null 2>&1; then
+sw --clear-default qwen3.6-27b >/dev/null || note "--clear-default exited non-zero"
+[[ -n "$(pinline "$CFG/club3090.env")" ]] && note "--clear-default did not remove the pin from club3090.env"
+
+# A pin still in the LEGACY checkout .env is read, and labelled as such…
+printf '# kept\nFOO=bar\nCLUB3090_DEFAULT_QWEN3_6_27B=vllm/dual\n' > "$FX/checkout/.env"
+out="$(NVIDIA_VISIBLE_DEVICES=0,1 sw --defaults | command grep -E '^  qwen3\.6-27b ')" || true
+assert_contains "$out" "[pin]  (from repo .env)" "a legacy .env pin is still honoured and labelled"
+# …and --clear-default removes it from there, so it can't come back; other lines stay.
+rc=0; out="$(sw --clear-default qwen3.6-27b)" || rc=$?
+assert_eq "$rc" "0" "--clear-default of a legacy pin exits 0 ($out)"
+assert_contains "$out" "cleared your pinned default for qwen3.6-27b" "clear reports success"
+[[ -n "$(pinline "$FX/checkout/.env")" ]] && note "--clear-default left the pin in the legacy .env"
+assert_eq "$(cat "$FX/checkout/.env")" "$(printf '# kept\nFOO=bar')" "clear keeps the legacy .env's other lines"
+out="$(NVIDIA_VISIBLE_DEVICES=0,1 sw --defaults | command grep -E '^  qwen3\.6-27b ')" || true
+assert_contains "$out" "[curated]" "after clear the model falls back to the curated walk"
+# A pin in BOTH places is removed from both. (Both written by hand, so this leg can't pass
+# on a --clear-default that only knows one of the two files.)
+mkdir -p "$CFG"; printf 'CLUB3090_DEFAULT_QWEN3_6_27B=vllm/dual\n' >> "$CFG/club3090.env"
+printf 'CLUB3090_DEFAULT_QWEN3_6_27B=vllm/dual\n' >> "$FX/checkout/.env"
+sw --clear-default qwen3.6-27b >/dev/null || note "--clear-default of a pin in both files exited non-zero"
+[[ -n "$(pinline "$CFG/club3090.env")$(pinline "$FX/checkout/.env")" ]] && note "a pin in both files survived --clear-default"
+# Nothing saved → a clear says so and succeeds.
+rc=0; out="$(sw --clear-default qwen3.6-27b)" || rc=$?
+assert_eq "$rc" "0" "clearing an absent pin exits 0"
+assert_contains "$out" "nothing to clear" "clearing an absent pin says so"
+
+# Invalid slug → rejected, nothing written anywhere.
+rm -rf "$CFG" "$FX/checkout/.env"
+if sw --set-default vllm/not-a-real-slug >/dev/null; then
   note "--set-default accepted an unknown slug"
 fi
-[[ -f "$ROOT_DIR/.env" ]] && note "--set-default wrote .env for an unknown slug"
+[[ -e "$CFG/club3090.env" || -e "$FX/checkout/.env" ]] && note "--set-default wrote a file for an unknown slug"
+
+# An unwritable settings dir fails the pin loudly (exit 1, the writer's reason) — never silently.
+: > "$FX/not-a-dir"
+rc=0; out="$(env -u CLUB3090_DEFAULT_QWEN3_6_27B CLUB3090_CONFIG_DIR="$FX/not-a-dir/cfg" bash "${SW[@]}" --set-default vllm/dual 2>&1)" || rc=$?
+assert_eq "$rc" "1" "--set-default with an unwritable settings dir exits 1"
+assert_contains "$out" "was NOT pinned: NotADirectoryError" "--set-default surfaces the writer's reason"
 
 if [[ "$fail" -ne 0 ]]; then
   echo "[model-default-resolver] FAIL" >&2

@@ -8,12 +8,14 @@
 #     on | off | inherit; unknown/empty → inherit
 #   - apply_thinking_pin_env injects ENABLE_THINKING=true/false for on/off and
 #     NOTHING for inherit; an ENABLE_THINKING the shell already exports wins
-#     (shell-wins precedence, 9a27de83 — the .env pin is file-tier defaulting, never an override)
+#     (shell-wins precedence, 9a27de83 — the saved pin is file-tier defaulting, never an override)
+#   - the launch line names where the pin came from: the settings file holding that
+#     value (club3090.env, or the legacy repo .env), else "your environment" (#1466)
 #   - the launch path actually calls apply_thinking_pin_env (wiring seam)
 #
 # Hermetic: functions are extracted from switch.sh (the proven
 # test-switch-orphan-teardown.sh pattern) so the script's main never runs; the
-# .env side is exercised through the environment switch.sh loads at startup.
+# saved-settings side is exercised through the environment switch.sh loads at startup.
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
@@ -42,9 +44,11 @@ assert_eq "$defkey" "CLUB3090_DEFAULT_QWEN3_6_27B" "default pin key unchanged by
 HELPERS_FILE="$(mktemp --suffix=.sh)"
 cleanup() { rm -f "$HELPERS_FILE"; }
 trap cleanup EXIT
-for fn in thinking_pin_key_for thinking_pin_state apply_thinking_pin_env; do
+for fn in thinking_pin_key_for thinking_pin_state apply_thinking_pin_env switch_setting_source; do
   sed -n "/^${fn}()/,/^}/p" scripts/switch.sh >> "$HELPERS_FILE"
 done
+# switch_setting_source asks the loader which file holds a value (switch.sh sources it at the top).
+printf 'source %q\n' "$ROOT_DIR/scripts/lib/club-config.sh" >> "$HELPERS_FILE"
 # shellcheck source=/dev/null
 source "$HELPERS_FILE"
 
@@ -105,6 +109,28 @@ for pin in on off; do
   ' _ "$HELPERS_FILE")"
   assert_eq "$(tail -n1 <<<"$out")" "true" "apply: shell ENABLE_THINKING=true beats pin $pin"
 done
+
+# --- the launch line says where the pin came from (#1466) ---------------------
+# A settings dir and a fixture checkout of our own: never the real settings or .env.
+SRC_T="$(mktemp -d)"; trap 'rm -f "$HELPERS_FILE"; rm -rf "$SRC_T"' EXIT
+mkdir -p "$SRC_T/cfg" "$SRC_T/root" && ln -s "$ROOT_DIR/scripts" "$SRC_T/root/scripts"   # thinking_pin_key_for imports via ROOT_DIR
+launch_line() {  # launch_line <config-dir> [VAR=val ...] → apply_thinking_pin_env's message
+  local cfg="$1"; shift
+  env -u "$KEY" CLUB3090_CONFIG_DIR="$cfg" ROOT_DIR="$SRC_T/root" "$@" bash -c '
+    source "$1"
+    club_config_load "$ROOT_DIR"
+    declare -A VARIANTS=( ["vllm/dual"]="vllm|models/qwen3.6-27b/vllm/compose|dual/quant/serving.yml" )
+    apply_thinking_pin_env vllm/dual' _ "$HELPERS_FILE" 2>&1 | command grep -m1 'thinking pinned'
+}
+printf '%s=on\n' "$KEY" > "$SRC_T/cfg/club3090.env"
+out="$(launch_line "$SRC_T/cfg")"
+[[ "$out" == *"($KEY from club3090.env)"* ]] || note "pin from club3090.env not labelled so: '$out'"
+rm -f "$SRC_T/cfg/club3090.env"; printf '%s=off\n' "$KEY" > "$SRC_T/root/.env"
+out="$(launch_line "$SRC_T/cfg")"
+[[ "$out" == *"($KEY from repo .env)"* ]] || note "pin from the legacy repo .env not labelled so: '$out'"
+out="$(launch_line "$SRC_T/cfg" "$KEY=on")"
+[[ "$out" == *"($KEY from your environment)"* ]] || note "a pin exported in the shell (differing from the file) not labelled so: '$out'"
+[[ "$out" == *"thinking pinned on"* ]] || note "the shell's pin value did not win over the file's: '$out'"
 
 # --- wiring: the launch path calls the applier -------------------------------
 command grep -q 'apply_thinking_pin_env "\$v"' scripts/switch.sh \

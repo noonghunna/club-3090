@@ -25,9 +25,6 @@ bad() { echo "  ✗ $*" >&2; fail=1; }
 
 # Files allowed to read or write .env privately until their phase lands.
 ALLOWLIST=$(cat <<'EOF'
-scripts/switch.sh                                   1c --set-default / thinking-pin writer (reads moved in 1b-1)
-scripts/setup.sh                                    1c MODEL_DIR writer + WSL2 compose-dir .env (reads moved in 1b-1)
-services/comfyui/comfyui-paths.sh                   1c LANIP / COMFYUI_* writer (reads moved in 1b-2)
 EOF
 )
 
@@ -115,7 +112,12 @@ if [[ -n "$new" ]]; then
   bad "new private .env parser(s) — read settings with scripts/lib/club-config.sh (bash) or scripts/lib/club_config.py (Python), and write them with club_config_set / club_config.py set:"
   sed 's/^/      /' <<<"$new" >&2
 else
-  ok "no new private .env parsers ($(wc -l <<<"$found") known ones left, each with its #1466 phase)"
+  left_n="$(awk 'NF' <<<"$found" | wc -l)"
+  if [[ "$left_n" -eq 0 ]]; then
+    ok "no private .env parsers left anywhere — every setting goes through the one loader (#1466)"
+  else
+    ok "no new private .env parsers ($left_n known ones left, each with its #1466 phase)"
+  fi
 fi
 if [[ -n "$gone" ]]; then
   bad "no longer parses .env itself — remove it from the ALLOWLIST in this test (the list only shrinks):"
