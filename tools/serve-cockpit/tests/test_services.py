@@ -4460,6 +4460,50 @@ class TestServeOverrides:
         # no overrides → only the pinned MODEL_DIR rides
         assert cd.serve_generated("/tmp/x.yml").env == {"MODEL_DIR": cd.weights_model_dir()}
 
+    def test_serve_generated_gives_a_shared_cache_compose_its_dirs(self, tmp_path, monkeypatch):
+        """#1466 4a/4b — a brought compose (a clone of a vLLM sibling) mounts the shared
+        compile cache and the KV disk tier. c3's raw `docker compose up` must get the
+        same per-user dirs switch.sh would, created before compose runs (docker would
+        create them root:root), keyed by the image — and never pull at plan time."""
+        import shutil
+        import subprocess
+        if shutil.which("docker") is None or subprocess.run(
+                ["docker", "compose", "version"], capture_output=True).returncode != 0:
+            pytest.skip("docker compose not available (the helper renders the compose with it)")
+        repo_root = Path(__file__).resolve().parents[3]
+        compose = tmp_path / "models/m/vllm/compose/single/q/_brought-x.yml"
+        compose.parent.mkdir(parents=True)
+        compose.write_text(
+            "services:\n  s:\n    image: example/engine:1\n    volumes:\n"
+            "      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton:/root/.triton/cache\n"
+            "      - ${KV_OFFLOAD_DIR:-${CLUB3090_DATA_DIR:-../../../../../..}/kv-offload}:/kv-offload\n",
+            encoding="utf-8")
+        monkeypatch.setenv("CLUB3090_CONFIG_DIR", str(tmp_path / "cfg"))
+        monkeypatch.setenv("CLUB3090_CACHE_DIR", str(tmp_path / "cache"))
+        monkeypatch.setenv("CLUB3090_DATA_DIR", str(tmp_path / "data"))
+        monkeypatch.delenv("KV_OFFLOAD_DIR", raising=False)
+        cd = CockpitData(repo_root, runner=full_runner())
+        from scripts.lib import engine_cache
+        calls = []
+
+        def fake_image_id(ref, docker_cmd, pull=True):
+            calls.append((ref, pull))
+            return "sha256:" + "ab" * 32 if ref == "example/engine:1" else None
+
+        monkeypatch.setattr(engine_cache, "image_id", fake_image_id)
+        plan = cd.serve_generated(str(compose))
+        keyed = tmp_path / "cache" / ("example-engine-1-" + "ab" * 6)
+        assert plan.env["CLUB3090_ENGINE_CACHE_DIR"] == str(keyed)
+        assert plan.env["CLUB3090_DATA_DIR"] == str(tmp_path / "data")
+        assert (keyed / "triton").is_dir() and (tmp_path / "data" / "kv-offload").is_dir()
+        assert calls == [("example/engine:1", False)]          # plan time: never a pull
+        assert plan.cmd == ["docker", "compose", "-f", str(compose), "up", "-d"]
+        # An image that isn't on the machine: nothing handed over, the in-repo default stays.
+        compose.write_text(compose.read_text(encoding="utf-8").replace("example/engine:1", "example/missing:2"),
+                           encoding="utf-8")
+        plan = cd.serve_generated(str(compose))
+        assert "CLUB3090_ENGINE_CACHE_DIR" not in plan.env
+
     def test_serve_override_defaults_parses_sibling_compose(self):
         repo_root = Path(__file__).resolve().parents[3]
         cd = CockpitData(repo_root, runner=full_runner())

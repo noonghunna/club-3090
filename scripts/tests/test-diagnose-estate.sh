@@ -139,7 +139,9 @@ def fake_run(cmd, **kwargs):
 ec.subprocess.run = fake_run
 inst = InstanceSpec(name="gemma-dual", compose_name="vllm/gemma-int8-mtp", gpu_indices=(2, 3), port=8032)
 ec.run_compose(inst, "up")
-cmd = calls[0]
+# The compose `up` call itself: run_compose first renders the compose (docker compose
+# config) to prepare the shared cache dirs (#1466 phase 4), so it isn't always calls[0].
+cmd = next(c for c in calls if "up" in c)
 print(" ".join(cmd))
 print(f"f_count={sum(1 for part in cmd if part == '-f')}")
 PY

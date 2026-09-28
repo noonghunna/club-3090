@@ -80,6 +80,30 @@ def config_dir(environ=None) -> Path:
     return Path(base) / "club-3090"
 
 
+# The per-user cache and data directories (#1466 phase 4). Same rule as config_dir:
+# the override, else the XDG variable, else under HOME; not created, not expanded.
+# Unlike the config dir they can be SAVED settings (settings.sh set CLUB3090_CACHE_DIR=…),
+# so pass an environment the loader has filled (load()) when that matters.
+#   cache_dir  compile caches, one subdirectory per engine image (engine_cache.py)
+#   data_dir   the KV-offload disk tier's default home (<data_dir>/kv-offload)
+def cache_dir(environ=None) -> Path:
+    """The per-user cache directory (not created)."""
+    env = os.environ if environ is None else environ
+    if env.get("CLUB3090_CACHE_DIR"):
+        return Path(env["CLUB3090_CACHE_DIR"])
+    base = env.get("XDG_CACHE_HOME") or os.path.join(env.get("HOME", "~"), ".cache")
+    return Path(base) / "club-3090"
+
+
+def data_dir(environ=None) -> Path:
+    """The per-user data directory (not created)."""
+    env = os.environ if environ is None else environ
+    if env.get("CLUB3090_DATA_DIR"):
+        return Path(env["CLUB3090_DATA_DIR"])
+    base = env.get("XDG_DATA_HOME") or os.path.join(env.get("HOME", "~"), ".local", "share")
+    return Path(base) / "club-3090"
+
+
 def parse_env_file(path) -> dict[str, str]:
     """``KEY=value`` file → ``{KEY: value}`` under the rules above. ``{}`` when the
     file is absent or unreadable; never raises (a malformed file must not take
@@ -544,6 +568,10 @@ commands:
                      wins); values that can't be stored stay in the repo .env.
                      The repo .env itself is never changed or deleted.
   path               where your settings are stored, and which files exist
+  caches [--remove-legacy]
+                     the compile caches and the KV-offload disk tier: where they
+                     are and how big; --remove-legacy asks, then deletes the old
+                     caches this checkout kept inside the repo
   compose-env-file [--out PATH]
                      for running `docker compose` yourself: write every resolved
                      setting (the shell winning, as in a launch) to a 0600 file
@@ -712,6 +740,17 @@ def _settings_path(a, root) -> int:
         legacy = Path(root) / ".env"
         rows.append((LEGACY_LABEL, legacy, "exists; read last, after the files above" if legacy.is_file()
                      else "none (only older installs have one)"))
+    # #1466 phase 4: where the launchers put compile caches and the KV-offload disk tier.
+    # Both can be saved settings, so read them the way a launch does.
+    loaded = dict(env)
+    load(root, loaded, warn=False)
+    for label, var, xdg, p, what in (
+            ("cache dir", "CLUB3090_CACHE_DIR", "XDG_CACHE_HOME", cache_dir(loaded),
+             f"compile caches, one folder per engine image; sizes: {SETTINGS_CMD} caches"),
+            ("data dir", "CLUB3090_DATA_DIR", "XDG_DATA_HOME", data_dir(loaded),
+             "the KV-offload disk tier's default home, <data dir>/kv-offload")):
+        how = f"from ${var}" if loaded.get(var) else f"from ${xdg}" if loaded.get(xdg) else "the default"
+        rows.append((label, p, f"{'exists' if p.is_dir() else 'not created yet'}, {how}; {what}"))
     w = max(len(r[0]) for r in rows) + 1
     for label, p, state in rows:
         print(f"{label + ':':<{w}}  {p}  ({state})")
@@ -790,6 +829,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="club_config.py", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("dir", help="print the config directory")
+    sub.add_parser("cache-dir", help="print the cache directory (compile caches)")
+    sub.add_parser("data-dir", help="print the data directory (the KV-offload disk tier)")
     r = sub.add_parser("resolve", help="print every configured key: KEY<TAB>SOURCE<TAB>VALUE")
     r.add_argument("--root", help="repo root, to include its legacy .env")
     r.add_argument("--json", action="store_true")
@@ -812,6 +853,10 @@ def main(argv=None) -> int:
     try:
         if a.cmd == "dir":
             print(config_dir())
+        elif a.cmd == "cache-dir":
+            print(cache_dir())
+        elif a.cmd == "data-dir":
+            print(data_dir())
         elif a.cmd == "resolve":
             res = resolve(a.root)
             if not a.show_secrets:

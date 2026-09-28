@@ -81,8 +81,8 @@ services:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
       # subsequent boots reuse cached graphs.
-      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../../../cache/triton:/root/.triton/cache
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton:/root/.triton/cache
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection

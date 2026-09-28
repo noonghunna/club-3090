@@ -34,6 +34,8 @@ GPU_MODE_SCRIPTS="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 # only the clone whose settings (its legacy .env) are read.
 # shellcheck source=lib/club-config.sh
 . "$GPU_MODE_SCRIPTS/lib/club-config.sh"
+# shellcheck source=lib/engine-cache.sh
+. "$GPU_MODE_SCRIPTS/lib/engine-cache.sh"
 # Studio paths YOU exported, captured BEFORE comfyui-paths.sh (below) exports its derived
 # ones: passed through sudo on every compose call, so a one-run override reaches the
 # containers without being saved. Derived values are not passed — the saved value, else
@@ -164,6 +166,16 @@ compose_at_env() {
     CLUB3090_COMPOSE_ENV_FILE="$(club_config_compose_env_file "$CLUB3090_DIR" 2>/dev/null || true)"
     if [ -s "$CLUB3090_COMPOSE_ENV_FILE" ]; then
         env_args=(--env-file "$CLUB3090_COMPOSE_ENV_FILE")
+    fi
+    # #1466 4a/4b — the compile-cache / KV-disk-tier dirs, computed HERE, as you: sudo drops
+    # HOME, and docker would create a missing dir as root. Rendered the way sudo will see it
+    # (--clean-env: only the env file and these assignments), so the image key matches the
+    # image compose runs. Prints nothing for a compose that mounts neither.
+    if [[ "$action" == up* ]]; then
+        local _ec
+        while IFS= read -r _ec; do envs+=("$_ec"); done < <(club_engine_cache_env "$dir" "$file" \
+            --root "$CLUB3090_DIR" --compose-bin "docker compose" --docker "sudo docker" --clean-env \
+            "${env_args[@]}" -- "${envs[@]}")
     fi
     (cd "$dir" && sudo "${envs[@]}" docker compose "${env_args[@]}" -f "$file" $action) || rc=$?
     rm -f "$CLUB3090_COMPOSE_ENV_FILE"

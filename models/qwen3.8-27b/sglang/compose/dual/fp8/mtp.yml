@@ -321,7 +321,7 @@ services:
       # below and patches.yml qwen38-reasoning-effort-template.
       - ../../../../vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja:/models/qwen3.8-27b-fp8/chat_template.jinja:ro
       - "${W4A8_PATCH_DIR:-../../../patches/sglang-autoround-w4a8-v0.5.19}:/etc/club3090/w4a8:ro"
-      - ${KV_OFFLOAD_DIR:-../../../../../../kv-offload}:/kv-offload
+      - ${KV_OFFLOAD_DIR:-${CLUB3090_DATA_DIR:-../../../../../..}/kv-offload}:/kv-offload
     ipc: host
     shm_size: "16gb"
     environment:
@@ -438,7 +438,8 @@ services:
         # SGLang sizes --hicache-size in GB (1e9 bytes) PER GPU, so the GiB total is
         # converted below.
         # KV_OFFLOAD_DISK=1 adds HiCache's `file` backend below RAM, at /kv-offload (the
-        # KV_OFFLOAD_DIR mount; repo kv-offload/ by default). Keys carry the model name and
+        # KV_OFFLOAD_DIR mount; by default <data dir>/kv-offload from the launchers, the repo's
+        # kv-offload/ from a plain docker compose up). Keys carry the model name and
         # TP rank, and the directory is re-scanned at boot, so blocks survive a container
         # restart. Unlike vLLM's disk tier it CAN be capped: KV_OFFLOAD_DISK_GB (GiB total
         # across both GPUs, LRU eviction past it; the cap is per model, so a second model

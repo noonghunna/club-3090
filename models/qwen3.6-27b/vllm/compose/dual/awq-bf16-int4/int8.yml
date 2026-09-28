@@ -71,8 +71,8 @@ services:
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
       # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
       # Closes club-3090 #22.
-      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../../../cache/triton:/root/.triton/cache
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton:/root/.triton/cache
       # NOTE: vLLM source overlays (marlin-pad #40361, PR-35936 required-tool
       # fallback, PR-41800 truncate_prompt_tokens) were dropped 2026-05-25 — all
       # confirmed unnecessary on stable v0.21.0 (PR-41800 merged upstream; the

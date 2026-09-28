@@ -3523,6 +3523,7 @@ class CockpitData:
         for k, v in (overrides or {}).items():
             if v is not None and str(v) != "":
                 env[k] = str(v)
+        env.update(self._engine_cache_env(compose_path, env))   # #1466 4a/4b
         return ActionPlan(
             kind="serve",
             cmd=["docker", "compose", "-f", compose_path, "up", "-d"],
@@ -3531,6 +3532,29 @@ class CockpitData:
             requires_confirm=True,
             env=env,
         )
+
+    def _engine_cache_env(self, compose_path: str, plan_env: dict[str, str]) -> dict[str, str]:
+        """#1466 4a/4b — a generated or brought compose that mounts the shared compile
+        cache or the KV disk tier (a clone of a vLLM sibling does) gets the same per-user
+        directories ``switch.sh`` would give it: created now, as you, keyed by the image
+        it will run (scripts/lib/engine_cache.py). Rendered in the environment the serve
+        runs with (os.environ + the plan env); the directories honour the saved settings.
+        Never pulls — this runs when the plan is built — so an image that isn't on the
+        machine yet keeps the compose's in-repo default for this serve. {} on any problem."""
+        try:
+            p = Path(compose_path)
+            if not p.is_absolute():
+                p = self.repo_root / p
+            if not p.is_file():
+                return {}
+            from scripts.lib import engine_cache
+            render_env = {**os.environ, **plan_env}
+            resolve_env = dict(render_env)
+            _settings.loader().load(self.repo_root, resolve_env, warn=False)
+            return engine_cache.prepare([p], env=resolve_env, render_env=render_env, pull=False,
+                                        repo_root=self.repo_root)
+        except Exception:
+            return {}
 
     def set_default(self, slug: str) -> ActionPlan:
         return ActionPlan(

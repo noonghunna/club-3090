@@ -128,8 +128,8 @@ services:
       # subsequent boots reuse cached graphs (~3 min). Separate cache dirs
       # from dual.yml because the overlay file set differs (cudagraph
       # capture would re-key on the patched kernel paths anyway).
-      - ../../../cache/torch_compile_int8:/root/.cache/vllm/torch_compile_cache
-      - ../../../cache/triton_int8:/root/.triton/cache
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/torch_compile_int8:/root/.cache/vllm/torch_compile_cache
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton_int8:/root/.triton/cache
       # ---- vLLM PR #40391 — LEAN diff-apply overlay (install_script) ----
       # The ONLY remaining overlay. Mounts the patch dir (the ~240-line #40391
       # diff + the one new helper file) and applies it to stock v0.22.0 at boot

@@ -533,18 +533,26 @@ def append_log(path: Path, message: str) -> None:
 
 
 def run_compose(inst: InstanceSpec, action: str, log_path: Path | None = None) -> None:
-    cmd = compose_cmd() + ["-p", project_name(inst.name), "-f", str(compose_abs_path(inst.compose_name))]
+    compose_path = compose_abs_path(inst.compose_name)
+    cmd = compose_cmd() + ["-p", project_name(inst.name), "-f", str(compose_path)]
+    env = compose_env(inst)
     if action == "up":
-        cmd += ["-f", str(write_compose_override(inst))]
+        override = write_compose_override(inst)
+        cmd += ["-f", str(override)]
+        # #1466 4a/4b — the shared compile-cache and KV-disk-tier dirs, created as you and
+        # keyed by the image this instance runs; same helper as switch.sh and gpu-mode.
+        from scripts.lib.engine_cache import prepare as engine_cache_prepare
+        env.update(engine_cache_prepare([compose_path, override], env=env, compose_cmd=compose_cmd(),
+                                        repo_root=REPO_ROOT))
     cmd.append(action)
     if action == "up":
         cmd.append("-d")
     if log_path is not None:
         append_log(log_path, f"$ {' '.join(cmd)}")
         with log_path.open("a", encoding="utf-8") as fh:
-            proc = subprocess.run(cmd, cwd=REPO_ROOT, env=compose_env(inst), text=True, stdout=fh, stderr=subprocess.STDOUT)
+            proc = subprocess.run(cmd, cwd=REPO_ROOT, env=env, text=True, stdout=fh, stderr=subprocess.STDOUT)
     else:
-        proc = subprocess.run(cmd, cwd=REPO_ROOT, env=compose_env(inst), text=True)
+        proc = subprocess.run(cmd, cwd=REPO_ROOT, env=env, text=True)
     if proc.returncode != 0:
         raise EstateCliError(f"`{' '.join(cmd)}` failed with exit {proc.returncode}")
 

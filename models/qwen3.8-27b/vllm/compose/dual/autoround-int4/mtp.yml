@@ -208,11 +208,13 @@ services:
       # DATA-ONLY mount, not an engine-code overlay, so the engine's overlay-free
       # contract is unaffected. See patches.yml qwen38-reasoning-effort-template.
       - ../../../patches/qwen38-reasoning-effort-template/chat_template.jinja:/root/.cache/huggingface/qwen3.8-27b-autoround-int4/chat_template.jinja:ro
-      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../../../cache/triton:/root/.triton/cache
-      # KV offload disk tier (used only with KV_OFFLOAD_DISK=1). Default = the repo's gitignored
-      # kv-offload/; override with KV_OFFLOAD_DIR (an ABSOLUTE host path) in .env or the shell.
-      - ${KV_OFFLOAD_DIR:-../../../../../../kv-offload}:/kv-offload
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton:/root/.triton/cache
+      # KV offload disk tier (used only with KV_OFFLOAD_DISK=1). The launchers default it to
+      # <data dir>/kv-offload (CLUB3090_DATA_DIR, else ~/.local/share/club-3090); a plain
+      # `docker compose up` uses the repo's gitignored kv-offload/. KV_OFFLOAD_DIR (an ABSOLUTE
+      # host path, in your settings or the shell) overrides both.
+      - ${KV_OFFLOAD_DIR:-${CLUB3090_DATA_DIR:-../../../../../..}/kv-offload}:/kv-offload
     environment:
       # Drafter toggle — docker only forwards what is declared here. The DEFAULT
       # lives in the entrypoint, not in these lines, so it cannot drift.
@@ -371,7 +373,8 @@ services:
         #                       (~36 KiB/token here): a smaller tier only mirrors what the GPU holds.
         #                       vLLM's native OffloadingConnector: pinned RAM, async DMA.
         #   KV_OFFLOAD_DISK=1   add a disk tier below RAM at /kv-offload (vLLM's fs secondary tier).
-        #                       Host dir = KV_OFFLOAD_DIR (default: the repo's gitignored kv-offload/).
+        #                       Host dir = KV_OFFLOAD_DIR, else <data dir>/kv-offload from the launchers
+        #                       (~/.local/share/club-3090: your HOME filesystem), else the repo's kv-offload/.
         #                       Survives restarts and model swaps (same config = same subdir).
         #                       ⚠️ the fs tier has NO size cap — it grows until the disk is full,
         #                       and its files are root-owned. Point KV_OFFLOAD_DIR at a dedicated volume.

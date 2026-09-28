@@ -43,7 +43,7 @@
       "interacts": [
         {"knob": "PYTORCH_CUDA_ALLOC_CONF", "effect": "vLLM: dropped whenever the tier is on, because vLLM rejects a KV connector with expandable_segments:True", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "entrypoint unsets PYTORCH_CUDA_ALLOC_CONF inside the KV_OFFLOAD_GB branch"}},
         {"knob": "RADIX_EVICTION_POLICY", "effect": "SGLang: defaults to slru while the tier is on; an explicit value wins", "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "adds --radix-eviction-policy slru only when RADIX_EVICTION_POLICY is empty"}},
-        {"knob": "KV_OFFLOAD_DIR", "effect": "host directory mounted at /kv-offload for the disk tier (default: the repo's gitignored kv-offload/)", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "volumes: ${KV_OFFLOAD_DIR:-../../../../../../kv-offload}:/kv-offload"}}
+        {"knob": "KV_OFFLOAD_DIR", "effect": "host directory mounted at /kv-offload for the disk tier (default: <data dir>/kv-offload, i.e. ~/.local/share/club-3090/kv-offload or CLUB3090_DATA_DIR, from the launchers; the repo's gitignored kv-offload/ from a raw docker compose up)", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "volumes: ${KV_OFFLOAD_DIR:-${CLUB3090_DATA_DIR:-../../../../../..}/kv-offload}:/kv-offload"}}
       ],
       "caveats": [
         {"text": "Only the dual MTP composes read it. On the vLLM DFlash tiers the same connector stores every block and never serves one back (write-only, dual-superfast measured 0 hits), so it is deliberately not wired there; SGLang DFlash2 and multi-N composes are not probed.", "source": {"file": "scripts/tests/test-kv-offload-knob.sh", "what": "header rationale, and the arm that fails any other compose carrying OFFLOAD_ARGS"}},
@@ -83,7 +83,7 @@
         {"when": {"equals": "1"}, "knob": "KV_OFFLOAD_GB", "then": "set", "why": "every disk read stages through the RAM tier", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "\"[kv-offload] KV_OFFLOAD_DISK=1 needs KV_OFFLOAD_GB\" then exit 1 (same on the SGLang dual MTP composes)"}}
       ],
       "interacts": [
-        {"knob": "KV_OFFLOAD_DIR", "effect": "the host directory behind /kv-offload; files there are root-owned", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "volumes line and the KV_OFFLOAD_DISK comment in the entrypoint"}},
+        {"knob": "KV_OFFLOAD_DIR", "effect": "the host directory behind /kv-offload (default <data dir>/kv-offload, on your home filesystem unless CLUB3090_DATA_DIR says otherwise); files there are written by root in the container", "source": {"file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml", "what": "volumes line and the KV_OFFLOAD_DISK comment in the entrypoint"}},
         {"knob": "KV_OFFLOAD_DISK_GB", "effect": "SGLang only: optional cap; there is no cap otherwise", "source": {"file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml", "what": "SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE is exported only when KV_OFFLOAD_DISK_GB is set"}}
       ],
       "caveats": [

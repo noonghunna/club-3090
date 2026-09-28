@@ -29,13 +29,27 @@ compose_files = sorted(Path("models").glob("*/*/compose/*/*/*.yml"))
 failures: list[str] = []
 
 ENV_DEFAULT = re.compile(r"^\$\{[^}:]+:-(.+)\}$")
+# One ${VAR:-default} with no ${ inside its default: the innermost of a nested one.
+INNER_DEFAULT = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-([^${}]*)\}")
+
+def interpolate_unset(source: str) -> str:
+    """What a raw `docker compose up` with none of the variables set mounts: every
+    ${VAR:-default} replaced by its default, innermost first. #1466 phase 4 made the
+    shared-dir mounts nested and suffixed —
+        ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton
+        ${KV_OFFLOAD_DIR:-${CLUB3090_DATA_DIR:-../../../../../..}/kv-offload}
+    — and the whole-string pattern above skipped both, so their in-repo fallbacks
+    (the raw-compose path) went unchecked."""
+    prev = None
+    while prev != source:
+        prev, source = source, INNER_DEFAULT.sub(lambda m: m.group(1), source)
+    return source
 
 def host_source(source: str) -> str | None:
-    match = ENV_DEFAULT.match(source)
-    if match:
-        return match.group(1)
-    if source.startswith("${"):
-        return None
+    if "${" in source:
+        resolved = interpolate_unset(source)
+        # A variable without a default (${MODEL_DIR}) has nothing in-repo to check.
+        return resolved if resolved and "${" not in resolved else None
     if source.startswith("/") or source.startswith("~"):
         return None
     if not source.startswith("."):
@@ -44,8 +58,24 @@ def host_source(source: str) -> str | None:
 
 def split_volume(value: str) -> tuple[str, str | None]:
     # Compose short-form host paths in this repo do not contain ':' except as
-    # the source/target separator. Preserve the first two fields and ignore ro/rw.
-    parts = value.split(":")
+    # the source/target separator — and inside ${VAR:-default}, where a plain
+    # split(":") cut the source at the ':-' and every such mount was skipped
+    # unchecked (#1466 phase 4). Preserve the first two fields and ignore ro/rw.
+    parts, cur, depth, i = [], "", 0, 0
+    while i < len(value):
+        if value.startswith("${", i):
+            depth, cur, i = depth + 1, cur + "${", i + 2
+            continue
+        ch = value[i]
+        if ch == "}" and depth:
+            depth -= 1
+        if ch == ":" and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+        i += 1
+    parts.append(cur)
     if len(parts) < 2:
         return value, None
     return parts[0], parts[1]

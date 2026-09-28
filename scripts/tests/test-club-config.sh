@@ -185,6 +185,22 @@ for case in "CLUB3090_CONFIG_DIR=/x/y|/x/y" "XDG_CONFIG_HOME=/xdg|/xdg/club-3090
 done
 [[ $fail -eq 0 ]] && ok "config dir: CLUB3090_CONFIG_DIR > XDG_CONFIG_HOME > HOME/.config, both loaders"
 
+# ── cache and data dirs (#1466 phase 4): the same rule, identical in both ─────
+# Each case also sets the OTHER two variables of its family to decoys, so a twin that
+# read the wrong one (XDG_CONFIG_HOME for the cache dir, say) can't pass by accident.
+cd_fail=0
+for case in "cache|CLUB3090_CACHE_DIR=/c/d|/c/d" "cache|XDG_CACHE_HOME=/xc|/xc/club-3090" "cache|XDG_CACHE_HOME=|/h/.cache/club-3090" "cache||/h/.cache/club-3090" \
+            "data|CLUB3090_DATA_DIR=/d/e|/d/e" "data|XDG_DATA_HOME=/xd|/xd/club-3090" "data|XDG_DATA_HOME=|/h/.local/share/club-3090" "data||/h/.local/share/club-3090"; do
+  kind="${case%%|*}"; rest="${case#*|}"; assign="${rest%%|*}"; want="${rest##*|}"
+  decoys=(XDG_CONFIG_HOME=/decoy-config CLUB3090_CONFIG_DIR=/decoy-cfgdir)
+  [[ "$kind" == cache ]] && decoys+=(XDG_DATA_HOME=/decoy-data CLUB3090_DATA_DIR=/decoy-datadir) \
+                         || decoys+=(XDG_CACHE_HOME=/decoy-cache CLUB3090_CACHE_DIR=/decoy-cachedir)
+  b="$(env -i PATH="$PATH" HOME=/h "${decoys[@]}" ${assign:+"$assign"} bash -c '. "$1"; "club_config_$2_dir"' _ "$SH" "$kind")"
+  p="$(env -i PATH="$PATH" HOME=/h "${decoys[@]}" ${assign:+"$assign"} python3 "$PY" "$kind-dir")"
+  [[ "$b" == "$want" && "$p" == "$want" ]] || { bad "$kind dir with '${assign:-nothing}': bash '$b', python '$p', want '$want'"; cd_fail=1; }
+done
+[[ $cd_fail -eq 0 ]] && ok "cache dir (CLUB3090_CACHE_DIR > XDG_CACHE_HOME > HOME/.cache) and data dir (CLUB3090_DATA_DIR > XDG_DATA_HOME > HOME/.local/share): bash = Python"
+
 # ── writer ──────────────────────────────────────────────────────────────────
 W="$T/w"
 wr() { env -i PATH="$PATH" HOME="$T/home" CLUB3090_CONFIG_DIR="$W" python3 "$PY" "$@" 2>"$T/wr.err"; }

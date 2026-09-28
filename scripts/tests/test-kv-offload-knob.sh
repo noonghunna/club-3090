@@ -25,7 +25,10 @@ fail() { echo "✗ $*" >&2; fails=$((fails+1)); }
 
 mapfile -t FILES < <(ls models/qwen3.8-27b/vllm/compose/dual/*/mtp.yml models/thinkingcap-qwen3.8-27b/vllm/compose/dual/*/mtp.yml 2>/dev/null | sort)
 [[ ${#FILES[@]} -eq 5 ]] || fail "expected the 5 Qwen3.8-family dual MTP composes, found ${#FILES[@]}"
-[[ -f kv-offload/.gitignore ]] || fail "kv-offload/.gitignore missing — the default disk-tier dir must exist and be gitignored"
+# #1466 phase 4: the launchers default the disk tier to <data dir>/kv-offload; the repo's kv-offload/ stays
+# as what a raw `docker compose up` (nothing set) mounts, so it must still exist and be gitignored.
+MOUNT='- ${KV_OFFLOAD_DIR:-${CLUB3090_DATA_DIR:-../../../../../..}/kv-offload}:/kv-offload'
+[[ -f kv-offload/.gitignore ]] || fail "kv-offload/.gitignore missing — the raw-compose fallback for the disk tier must exist and be gitignored"
 
 # The real block: from `OFFLOAD_ARGS=()` to the `fi` after the summary echo, compose `$$` unescaped.
 block_of() {
@@ -42,7 +45,7 @@ for f in "${FILES[@]}"; do
     command grep -qE "^      - ${v}=\\\$\\{${v}:-\\}\$" "$f" || fail "$f: $v not declared in environment: (docker would not forward it)"
   done
   command grep -q 'VLLM_USE_SIMPLE_KV_OFFLOAD' "$f" && fail "$f: exposes SimpleCPUOffloadConnector (vllm#53868 TP=2 wedge; not validated here)"
-  command grep -qF -- '- ${KV_OFFLOAD_DIR:-../../../../../../kv-offload}:/kv-offload' "$f" || fail "$f: disk-tier mount with the repo kv-offload/ default missing"
+  command grep -qF -- "$MOUNT" "$f" || fail "$f: disk-tier mount with the <data dir>/kv-offload default (repo kv-offload/ for a raw compose) missing"
   ex="$(command grep -c 'exec vllm serve' "$f")"; ox="$(command grep -c 'exec vllm serve.*OFFLOAD_ARGS\[@\]' "$f")"
   [[ "$ex" -gt 0 && "$ex" == "$ox" ]] || fail "$f: $ox of $ex 'exec vllm serve' lines pass OFFLOAD_ARGS"
   [[ -n "$(block_of "$f")" ]] || { fail "$f: OFFLOAD_ARGS block not found"; continue; }
@@ -74,10 +77,14 @@ assert c["engine_id"].startswith("club3090-")' 2>/dev/null \
     [[ "$out" != *"rc=0"* ]] || fail "$f: [$bad] booted instead of failing (got: ${out//$'\n'/ })"
   done
   if docker compose version >/dev/null 2>&1; then
-    src="$(env -u KV_OFFLOAD_DIR MODEL_DIR=/nonexistent docker compose -f "$f" config 2>/dev/null | command grep -B1 -E 'target: /kv-offload$' | command grep -oE 'source: .*' | sed 's/source: //')"
-    [[ "$src" == "$ROOT/kv-offload" ]] || fail "$f: default disk-tier mount resolves to '$src', expected $ROOT/kv-offload"
-    src="$(KV_OFFLOAD_DIR=/srv/kv MODEL_DIR=/nonexistent docker compose -f "$f" config 2>/dev/null | command grep -B1 -E 'target: /kv-offload$' | command grep -oE 'source: .*' | sed 's/source: //')"
-    [[ "$src" == "/srv/kv" ]] || fail "$f: KV_OFFLOAD_DIR override renders '$src', expected /srv/kv"
+    kvsrc() { env -u KV_OFFLOAD_DIR -u CLUB3090_DATA_DIR MODEL_DIR=/nonexistent "$@" docker compose --env-file /dev/null -f "$f" config 2>/dev/null \
+                | command grep -B1 -E 'target: /kv-offload$' | command grep -oE 'source: .*' | sed 's/source: //'; }
+    src="$(kvsrc)"
+    [[ "$src" == "$ROOT/kv-offload" ]] || fail "$f: a raw compose (nothing set) mounts '$src', expected the repo's $ROOT/kv-offload"
+    src="$(kvsrc CLUB3090_DATA_DIR=/data/club-3090)"
+    [[ "$src" == "/data/club-3090/kv-offload" ]] || fail "$f: with the launchers' CLUB3090_DATA_DIR the tier renders at '$src', expected /data/club-3090/kv-offload"
+    src="$(kvsrc KV_OFFLOAD_DIR=/srv/kv CLUB3090_DATA_DIR=/data/club-3090)"
+    [[ "$src" == "/srv/kv" ]] || fail "$f: an explicit KV_OFFLOAD_DIR must beat the data dir; renders '$src', expected /srv/kv"
   fi
 done
 
@@ -107,7 +114,7 @@ for f in "${SFILES[@]}"; do
   for v in KV_OFFLOAD_GB KV_OFFLOAD_DISK KV_OFFLOAD_DISK_GB; do
     command grep -qE "^      - ${v}\$" "$f" || fail "$f: $v not declared (bare) in environment: (docker would not forward it)"
   done
-  command grep -qF -- '- ${KV_OFFLOAD_DIR:-../../../../../../kv-offload}:/kv-offload' "$f" || fail "$f: disk-tier mount with the repo kv-offload/ default missing"
+  command grep -qF -- "$MOUNT" "$f" || fail "$f: disk-tier mount with the <data dir>/kv-offload default (repo kv-offload/ for a raw compose) missing"
   ex="$(command grep -c 'exec python3 -m sglang.launch_server' "$f")"; ox="$(command grep -cF '"$${OFFLOAD_ARGS[@]}"' "$f")"
   [[ "$ex" -gt 0 && "$ex" == "$ox" ]] || fail "$f: $ox of $ex launch_server lines pass OFFLOAD_ARGS"
   [[ -n "$(sblock_of "$f")" ]] || { fail "$f: OFFLOAD_ARGS block not found"; continue; }
@@ -128,8 +135,12 @@ for f in "${SFILES[@]}"; do
     [[ "$out" != *"rc=0"* ]] || fail "$f: [$bad] booted instead of failing (got: ${out//$'\n'/ })"
   done
   if docker compose version >/dev/null 2>&1; then
-    src="$(env -u KV_OFFLOAD_DIR MODEL_DIR=/nonexistent docker compose -f "$f" config 2>/dev/null | command grep -B1 -E 'target: /kv-offload$' | command grep -oE 'source: .*' | sed 's/source: //')"
-    [[ "$src" == "$ROOT/kv-offload" ]] || fail "$f: default disk-tier mount resolves to '$src', expected $ROOT/kv-offload"
+    kvsrc() { env -u KV_OFFLOAD_DIR -u CLUB3090_DATA_DIR MODEL_DIR=/nonexistent "$@" docker compose --env-file /dev/null -f "$f" config 2>/dev/null \
+                | command grep -B1 -E 'target: /kv-offload$' | command grep -oE 'source: .*' | sed 's/source: //'; }
+    src="$(kvsrc)"
+    [[ "$src" == "$ROOT/kv-offload" ]] || fail "$f: a raw compose (nothing set) mounts '$src', expected the repo's $ROOT/kv-offload"
+    src="$(kvsrc CLUB3090_DATA_DIR=/data/club-3090)"
+    [[ "$src" == "/data/club-3090/kv-offload" ]] || fail "$f: with the launchers' CLUB3090_DATA_DIR the tier renders at '$src', expected /data/club-3090/kv-offload"
   fi
 done
 # The dual-fast pair ships K=20 (2 x 262,144 fits; =auto restores auto-fit); dual-max keeps its pinned K=10.

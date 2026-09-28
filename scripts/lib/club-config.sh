@@ -6,6 +6,8 @@
 # parses these files. Change a rule here and there, or not at all.
 #
 #   club_config_dir                 the per-user config directory
+#   club_config_cache_dir           the per-user cache dir (compile caches)
+#   club_config_data_dir            the per-user data dir (the KV-offload disk tier)
 #   club_config_resolve [ROOT]      KEY<TAB>SOURCE<TAB>VALUE for every configured key
 #   club_config_load [ROOT]         export every key the environment doesn't already
 #                                   set; CLUB3090_CONFIG_SOURCE[KEY] says which file
@@ -27,6 +29,25 @@ club_config_dir() {
     printf '%s\n' "$CLUB3090_CONFIG_DIR"
   else
     printf '%s/club-3090\n' "${XDG_CONFIG_HOME:-${HOME:-~}/.config}"
+  fi
+}
+
+# The per-user cache and data dirs (#1466 phase 4) — club_config.py cache_dir /
+# data_dir, same rule as the config dir. Both can be saved settings, so call them
+# after club_config_load when that matters. Not created here: the launchers create
+# the directories a compose mounts (scripts/lib/engine_cache.py).
+club_config_cache_dir() {
+  if [[ -n "${CLUB3090_CACHE_DIR:-}" ]]; then
+    printf '%s\n' "$CLUB3090_CACHE_DIR"
+  else
+    printf '%s/club-3090\n' "${XDG_CACHE_HOME:-${HOME:-~}/.cache}"
+  fi
+}
+club_config_data_dir() {
+  if [[ -n "${CLUB3090_DATA_DIR:-}" ]]; then
+    printf '%s\n' "$CLUB3090_DATA_DIR"
+  else
+    printf '%s/club-3090\n' "${XDG_DATA_HOME:-${HOME:-~}/.local/share}"
   fi
 }
 

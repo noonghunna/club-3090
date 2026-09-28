@@ -118,6 +118,8 @@ LAUNCH_PROFILE="${LAUNCH_PROFILE:-${ROOT_DIR}/scripts/lib/profiles/launch_compat
 # shellcheck source=lib/club-config.sh
 source "${ROOT_DIR}/scripts/lib/club-config.sh"
 club_config_load "${ROOT_DIR}"
+# shellcheck source=lib/engine-cache.sh
+source "${ROOT_DIR}/scripts/lib/engine-cache.sh"
 # #632 — surface a user engine-image pin (ik-llama / llama.cpp images are NOT
 # profile-injected, so a .env/shell pin is the only override path; echo it so a
 # wrong-image boot is never silent).  Fires only when actually set.
@@ -1397,6 +1399,11 @@ up_variant() {
   export_variant_engine_pin "$v"
   preflight_ik_llama_image "$v"   # #633 — cu12 fallback on <13.2 drivers (unless pinned)
   apply_launch_settings "$v"      # #1465 — per-slug / thinking-pin / global launch settings → the compose env
+  # #1466 4a/4b — compile caches in ~/.cache/club-3090/<engine image>/, the KV disk tier in
+  # ~/.local/share/club-3090/kv-offload: created as you, keyed by the image this compose
+  # is about to run (so AFTER the engine pin and launch settings above). No-op for a
+  # compose that mounts neither; on any problem the compose keeps its in-repo default.
+  club_engine_cache_export "${full_dir}" "${file}" --root "${ROOT_DIR}" --compose-bin "${COMPOSE_BIN}"
   (cd "${full_dir}" && ${COMPOSE_BIN} -f "${file}" up -d --remove-orphans)
 }
 
