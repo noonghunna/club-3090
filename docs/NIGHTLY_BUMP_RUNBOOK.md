@@ -97,7 +97,7 @@ whether to:
 gpu-mode <appropriate-mode>
 # or, manually for one compose. sudo drops your environment, so hand compose the
 # resolved settings (shell > ~/.config/club-3090/ > repo .env) the way gpu-mode does:
-envf="$(python3 <repo>/scripts/lib/club_config.py compose-env-file --root <repo>)"   # 0600 temp file
+envf="$(bash <repo>/scripts/settings.sh compose-env-file)"   # 0600 temp file; it holds your secrets too
 sudo docker compose --env-file "$envf" -f <compose-file> up -d; rm -f "$envf"
 docker logs -f <container-name>
 ```

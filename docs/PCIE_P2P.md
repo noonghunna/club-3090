@@ -213,7 +213,7 @@ A driver grant does **not** mean your engine uses it. Each engine has its own sw
 > bash scripts/settings.sh set DISABLE_CUSTOM_ALL_REDUCE=1
 > ```
 >
-> ⚠️ **One exception: a raw `docker compose -f …` invocation.** Compose reads `.env` from the *project directory* — the directory of the first `-f` file — so running a compose file directly never picks up your saved settings or the repo-root `.env`, from any working directory, unless you pass `--env-file` (e.g. `--env-file ~/.config/club-3090/club3090.env`). Use the launchers, or pass the variable on the command line. (`NVLINK_MODE` behaves the same way.)
+> ⚠️ **One exception: a raw `docker compose -f …` invocation.** Compose reads `.env` from the *project directory* — the directory of the first `-f` file — so running a compose file directly never picks up your saved settings or the repo-root `.env`, from any working directory, unless you pass `--env-file` — `bash scripts/settings.sh compose-env-file` writes one with all your settings resolved the way the launchers do (remove it afterwards: it holds your secrets too). Use the launchers, or pass the variable on the command line. (`NVLINK_MODE` behaves the same way.)
 >
 > An invalid value is a hard error rather than a silent no-op. The knob works on **every** compose that auto-enables the kernel, including ones this repo does not ship — it is wired at the detector, not per-file.
 

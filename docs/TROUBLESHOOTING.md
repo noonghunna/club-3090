@@ -67,7 +67,7 @@ docker compose -f <the-same-compose-file> down
 `MODEL_DIR` is the only variable you must set; it defaults to the in-repo `models-cache/`.
 Everything else has a default, and each compose's **header** documents its own overrides and its
 port. Booting directly doesn't read your saved settings, so pass anything else you rely on the same
-way, or hand compose the settings file with `--env-file ~/.config/club-3090/club3090.env`. The card
+way, or hand compose all your settings with `envf="$(bash scripts/settings.sh compose-env-file)"` and `--env-file "$envf"` (remove the file afterwards: it holds your secrets too). The card
 pages ([single](SINGLE_CARD.md) · [dual](DUAL_CARD.md) · [multi](MULTI_CARD.md)) link every slug's
 compose file, and a successful `switch.sh` run prints the path it used.
 
