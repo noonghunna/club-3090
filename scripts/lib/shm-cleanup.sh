@@ -57,13 +57,13 @@ club_shm_cleanup() {
       inuse="$(for p in /proc/[0-9]*; do
                  cat "$p/maps" 2>/dev/null
                  for fd in "$p"/fd/*; do readlink "$fd" 2>/dev/null; done
-               done | grep -oE "/dev/shm/[^ ]+" | sed "s/ (deleted)\$//" | sort -u)"
+               done | command grep -oE "/dev/shm/[^ ]+" | sed "s/ (deleted)\$//" | sort -u)"
       n=0; kb=0
       for f in $(find /shm -maxdepth 1 -type f -user 0 -mmin "+$AGE" \
                    \( -name "psm_*" -o -name "sgl_*" -o -name "sglang_*" -o -name "torch_*" \
                       -o -name "sem.mp-*" -o -name "vllm_offload_*.mmap" \)); do
         b="${f#/shm/}"
-        printf "%s\n" "$inuse" | grep -qxF "/dev/shm/$b" && continue
+        printf "%s\n" "$inuse" | command grep -qxF "/dev/shm/$b" && continue
         k=$(du -k "$f" | cut -f1)
         rm -f "$f" && n=$((n+1)) && kb=$((kb+k))
       done
