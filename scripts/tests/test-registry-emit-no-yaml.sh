@@ -15,6 +15,7 @@
 # The --json contract path (c3 / baselines join) legitimately requires PyYAML
 # and must fail with an actionable Fix: line, not a bare traceback.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../lib/registry-emit.sh
 source "$ROOT/scripts/lib/registry-emit.sh"

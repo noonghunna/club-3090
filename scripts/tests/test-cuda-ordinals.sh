@@ -6,6 +6,7 @@
 # it must leave CUDA_VISIBLE_DEVICES exactly as it was whenever it cannot resolve
 # every entry — a half-remapped list would put ranks on the wrong cards.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 LIB="$ROOT/scripts/lib/cuda-ordinals.sh"
 fail=0

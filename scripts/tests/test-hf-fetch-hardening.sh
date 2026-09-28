@@ -10,6 +10,7 @@
 #   3. FALSE DONE (#715): rc=0 with leftover *.incomplete (huggingface_hub
 #      offline-degrade) is treated as failure and retried.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"

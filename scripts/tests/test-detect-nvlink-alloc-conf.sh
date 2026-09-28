@@ -5,6 +5,7 @@
 # compose / user set (max_split_size_mb, garbage_collection_threshold, ...). On
 # the PCIe path (custom AR off) expandable_segments is kept untouched.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # ⚠️ Pin the knob, like NVLINK_MODE. Nothing else scrubs it, so an operator with
 # DISABLE_CUSTOM_ALL_REDUCE exported in their shell — which our own boot warning

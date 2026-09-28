@@ -455,13 +455,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     root = Path(args.root).resolve()
-    # #1142: same as promote.py — no shell wrapper sources .env for this tool, so
-    # honour it here too (real environment wins). Matters for --spec-env.
+    # #1142 / #1466: same as promote.py — no shell wrapper loads settings for this
+    # tool, so do it here through the one loader (real environment wins). Matters
+    # for --spec-env.
     try:  # package context
-        from scripts.lib.profiles.repo_dotenv import apply_dotenv
+        from scripts.lib.club_config import load as load_config
     except ImportError:  # direct-script context
-        from repo_dotenv import apply_dotenv
-    apply_dotenv(root)
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from club_config import load as load_config
+    load_config(root)
     out = Path(args.out).resolve()
     try:
         if args.spec_env:

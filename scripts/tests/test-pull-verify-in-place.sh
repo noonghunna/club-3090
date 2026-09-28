@@ -28,6 +28,7 @@
 #   8. a partially-present pull dir adopts what it can and fetches only the
 #      remainder (one missing sibling must not re-pull three good shards).
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # Force Python's UTF-8 mode (PEP 540) for every python3 this script runs.
 # Repo sources are full of unicode (— × → ⚠), and without this a rig on a real

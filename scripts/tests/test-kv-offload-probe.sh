@@ -9,6 +9,7 @@
 # cached_tokens source) turns a plain GPU hit into a PASS. This feeds real metric lines from both engines
 # and asserts exactly which ones count as offload evidence. Offline: no server, no GPU.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1

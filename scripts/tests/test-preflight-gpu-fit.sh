@@ -5,6 +5,7 @@
 # nvidia-smi (a shell function satisfies `command -v`) and no-op sleep so the settle-retry
 # doesn't actually wait.
 set -u
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../preflight.sh
 source "${ROOT_DIR}/scripts/preflight.sh"

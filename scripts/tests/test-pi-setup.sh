@@ -13,6 +13,7 @@
 # and PI_CODING_AGENT_DIR points pi's agent dir at a scratch directory; pi itself
 # is only used, when installed, to confirm it accepts the file.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 T="$(mktemp -d)"; STUB_PID=""

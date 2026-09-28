@@ -14,6 +14,7 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #      the wrapper rejected it (#1023).
 #
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

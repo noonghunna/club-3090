@@ -9,6 +9,7 @@
 #       Genesis)"-style non-enum strings);
 #   (c) the registry `status` is consistent with its compose header.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # Force Python's UTF-8 mode (PEP 540) for every python3 this script runs.
 # Repo sources are full of unicode (— × → ⚠), and without this a rig on a real

@@ -74,41 +74,14 @@ SWITCH="${SWITCH:-${ROOT_DIR}/scripts/switch.sh}"
 VERIFY="${VERIFY:-${ROOT_DIR}/scripts/verify-full.sh}"
 LAUNCH_PROFILE="${LAUNCH_PROFILE:-${ROOT_DIR}/scripts/lib/profiles/launch_compat.py}"
 ESTATE_HELPER="${ESTATE_HELPER:-${ROOT_DIR}/scripts/lib/profiles/estate_cli.py}"
-if [[ -z "${MODEL_DIR:-}" && -f "${ROOT_DIR}/.env" ]]; then
-  set -a
-  # shellcheck source=/dev/null
-  source "${ROOT_DIR}/.env"
-  set +a
-fi
-# PR-B: the above only sources .env when MODEL_DIR is unset, so a user with
-# `export MODEL_DIR=…` in their shell would never see their `.env` model-default
-# pins (CLUB3090_DEFAULT_*). Load just those keys here, regardless — with
-# shell-env-wins precedence (matching switch.sh's loader / #425). Values are
-# taken literally (no shell expansion), CRLF-tolerant.
-if [[ -f "${ROOT_DIR}/.env" ]]; then
-  while IFS= read -r _env_line || [[ -n "$_env_line" ]]; do
-    _env_line="${_env_line#"${_env_line%%[![:space:]]*}"}"   # strip leading whitespace
-    _env_line="${_env_line%$'\r'}"                           # strip trailing CR
-    [[ "$_env_line" == "export "* ]] && _env_line="${_env_line#export }"
-    # #632 — pass model-default pins AND user engine-image overrides through to
-    # docker compose.  IK_LLAMA_IMAGE/LLAMACPP_IMAGE were silently dropped here
-    # (only CLUB3090_DEFAULT_* passed), so a .env cu12 pin never reached the
-    # ik-llama/llama.cpp composes.  Shell env still wins (checked below); the
-    # vllm/beellama images get profile-injected later regardless.
-    case "$_env_line" in
-      CLUB3090_DEFAULT_*|VLLM_IMAGE=*|BEELLAMA_IMAGE=*|IK_LLAMA_IMAGE=*|LLAMACPP_IMAGE=*|VLLM_NIGHTLY_SHA=*) ;;
-      *) continue ;;
-    esac
-    _env_key="${_env_line%%=*}"
-    [[ "$_env_key" == "$_env_line" || -z "$_env_key" ]] && continue
-    [[ -n "${!_env_key+x}" ]] && continue                    # already set in env → shell wins
-    _env_val="${_env_line#*=}"
-    _env_val="${_env_val#\"}"; _env_val="${_env_val%\"}"
-    _env_val="${_env_val#\'}"; _env_val="${_env_val%\'}"
-    export "${_env_key}=${_env_val}"
-  done < "${ROOT_DIR}/.env"
-  unset _env_line _env_key _env_val
-fi
+# Settings through the ONE loader (club-3090#1466): your club-3090 config
+# (~/.config/club-3090/), then the repo .env as a fallback. ⚠️ Behaviour change: this
+# used to `source` .env, which let it override your shell for every key unless
+# MODEL_DIR was exported (and then read only the pin/image keys). Now the shell wins
+# for every key, exactly as in switch.sh, and values are taken literally.
+# shellcheck source=lib/club-config.sh
+source "${ROOT_DIR}/scripts/lib/club-config.sh"
+club_config_load "${ROOT_DIR}"
 # #632 — surface a user engine-image pin (ik-llama / llama.cpp images are NOT
 # profile-injected, so a .env/shell pin is the only override path; echo it so a
 # wrong-image boot is never silent).  Fires only when actually set.
@@ -438,7 +411,7 @@ choose_model() {
       echo "[launch] ERROR: ${MODEL_NAME} is not installed under ${MODEL_DIR}." >&2
       echo "[launch]        Run: bash scripts/setup.sh ${MODEL_NAME}" >&2
       echo "[launch]        Already have weights elsewhere? Point MODEL_DIR at them, e.g.:" >&2
-      echo "[launch]          echo 'MODEL_DIR=/path/to/your/models' >> .env   # launch.sh, switch.sh + docker compose all read it" >&2
+      echo "[launch]          python3 scripts/lib/club_config.py set MODEL_DIR=/path/to/your/models   # saved in ~/.config/club-3090/; every launcher reads it" >&2
       exit 1
     fi
     return
@@ -447,7 +420,7 @@ choose_model() {
     echo "[launch] ERROR: no supported model weights found under ${MODEL_DIR}." >&2
     echo "[launch]        Run: bash scripts/setup.sh" >&2
     echo "[launch]        Already have weights elsewhere? Point MODEL_DIR at them, e.g.:" >&2
-    echo "[launch]          echo 'MODEL_DIR=/path/to/your/models' >> .env   # launch.sh, switch.sh + docker compose all read it" >&2
+    echo "[launch]          python3 scripts/lib/club_config.py set MODEL_DIR=/path/to/your/models   # saved in ~/.config/club-3090/; every launcher reads it" >&2
     exit 1
   fi
   if [[ "${#MODEL_ORDER[@]}" -eq 1 ]]; then

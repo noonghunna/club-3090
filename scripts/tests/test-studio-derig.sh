@@ -8,6 +8,7 @@
 #   #504 — gpu-mode.sh hard-coded the rig LAN IP 192.168.86.33 in its URL banners.
 #          Fix: auto-detect LANIP (LANIP-overridable), like setup-ai-studio.sh.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 fails=0
 chk() { if [ "$1" = ok ]; then echo "  ok: $2"; else echo "  FAIL: $2"; fails=$((fails+1)); fi; }

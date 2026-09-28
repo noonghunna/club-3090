@@ -7,6 +7,7 @@
 # Agreement alone could mean both are wrong the same way, so the output is also
 # pinned to a golden list, and a self-test proves the parity check can fail.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 SH="$ROOT/scripts/lib/club-config.sh"
@@ -117,6 +118,20 @@ print(os.environ["THREADS"], os.environ["SHELLWINS"], repr(os.environ["EMPTYSHEL
 PY
 )"
 [[ "$out" == "32 shell '' club3090.env False" ]] && ok "Python load: same result" || bad "Python load: got '$out'"
+
+# ── literal values: warn when one looks like it expected shell expansion ────
+# launch.sh/report.sh/setup.sh used to `source` the repo .env; now nothing expands.
+X="$T/x"; XR="$T/xr"; mkdir -p "$X" "$XR"
+printf 'W_HOME=$HOME/models\nW_TILDE=~/models\nW_BRACE=${ROOT}/x\nQ_DIGIT=cost$5\nQ_TILDEUSER=~bob/x\nMY_TOKEN=$tok\n' > "$XR/.env"
+printf 'PASSWORD_ISH=$ecret\n' > "$X/secrets.env"
+xenv() { env -i PATH="$PATH" HOME="$T/home" CLUB3090_CONFIG_DIR="$X" "$@"; }
+bw="$(xenv bash -c '. "$1"; club_config_load "$2"' _ "$SH" "$XR" 2>&1 >/dev/null | command grep -oE 'WARN: [A-Z_]+' | sort)"
+pw="$(xenv python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import club_config as c; c.load(sys.argv[2])' "$ROOT/scripts/lib" "$XR" 2>&1 >/dev/null | command grep -oE 'WARN: [A-Z_]+' | sort)"
+want=$'WARN: W_BRACE\nWARN: W_HOME\nWARN: W_TILDE'
+[[ "$bw" == "$want" && "$pw" == "$want" ]] && ok "expansion warnings: \$VAR, \${VAR} and ~/ flagged; secrets, \$5 and ~user left alone; bash = Python" \
+  || bad "expansion warnings: bash [$bw] python [$pw] want [$want]"
+xenv bash -c '. "$1"; club_config_load "$2"' _ "$SH" "$XR" 2>&1 >/dev/null | command grep -q 'models' \
+  && bad "a warning printed the value" || ok "warnings name the key and file, never the value"
 
 # ── config dir: override > XDG > HOME, identical in both ────────────────────
 for case in "CLUB3090_CONFIG_DIR=/x/y|/x/y" "XDG_CONFIG_HOME=/xdg|/xdg/club-3090" "XDG_CONFIG_HOME=|/h/.config/club-3090" "|/h/.config/club-3090"; do

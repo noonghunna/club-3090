@@ -4,6 +4,7 @@
 # otherwise. Runs the real function against a docker shim; the decision itself is
 # the shared classifier's (test-p2p-state.sh covers its rules).
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 fail=0

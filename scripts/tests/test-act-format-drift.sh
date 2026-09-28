@@ -16,6 +16,7 @@
 #   4. no activation knob at all: 16bit.
 # and, for a gate that defaults ON, refuses the retired "OPT-IN / OFF by default" header wording.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1

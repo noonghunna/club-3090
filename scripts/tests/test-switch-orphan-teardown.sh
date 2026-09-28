@@ -20,6 +20,7 @@
 # Harness: extract down_running() via sed, source it, inject a VARIANT_CONTAINER
 # managed set + a mock `docker` on PATH that records compose-down / stop calls.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

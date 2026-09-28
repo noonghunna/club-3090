@@ -124,23 +124,6 @@ def resolve(repo_root=None, environ=None) -> dict[str, tuple[str, str]]:
     return out
 
 
-def load(repo_root=None, environ=None) -> dict[str, str]:
-    """Fill UNSET keys of the environment from the config files. Returns
-    {key: source label} for the keys actually injected."""
-    env = os.environ if environ is None else environ
-    injected = {}
-    for key, (label, value) in resolve(repo_root, env).items():
-        if label != SHELL_LABEL:
-            env[key] = value
-            injected[key] = label
-    return injected
-
-
-def format_resolved(resolved: dict[str, tuple[str, str]]) -> str:
-    """The parity format shared with club-config.sh: KEY<TAB>SOURCE<TAB>VALUE."""
-    return "".join(f"{k}\t{src}\t{val}\n" for k, (src, val) in resolved.items())
-
-
 _SECRET_NAME_RE = re.compile(r"(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|MASTER_KEY|_KEY)\Z")
 
 
@@ -153,6 +136,44 @@ def is_secret(key: str, source: str) -> bool:
 def redact(resolved: dict[str, tuple[str, str]]) -> dict[str, tuple[str, str]]:
     return {k: (s, ("<set, hidden>" if v else "<empty>") if is_secret(k, s) else v)
             for k, (s, v) in resolved.items()}
+
+
+# A value that looks like it expected shell expansion: `$VAR`, `${VAR}` or a
+# leading `~`. launch.sh, report.sh and setup.sh used to `source` the repo .env,
+# which expanded these; every reader now takes values literally (as switch.sh and
+# docker compose --env-file with a quoted value always did), so say so.
+_EXPANSION_RE = re.compile(r"\$\{?[A-Za-z_]|\A~(/|\Z)")
+
+
+def expansion_warnings(resolved: dict[str, tuple[str, str]]) -> list[str]:
+    """One message per file value that looks like it expected expansion. Never
+    includes the value, and skips secrets (a `$` in a password is just a `$`)."""
+    return [f"[config] WARN: {k} (from {src}) contains '$VAR' or a leading '~'. Settings are read literally now, "
+            f"not expanded the way 'source .env' did — write the full path."
+            for k, (src, v) in resolved.items()
+            if src != SHELL_LABEL and not is_secret(k, src) and _EXPANSION_RE.search(v)]
+
+
+def load(repo_root=None, environ=None, warn=True) -> dict[str, str]:
+    """Fill UNSET keys of the environment from the config files. Returns
+    {key: source label} for the keys actually injected. Prints expansion warnings
+    to stderr unless warn=False."""
+    env = os.environ if environ is None else environ
+    injected = {}
+    res = resolve(repo_root, env)
+    for key, (label, value) in res.items():
+        if label != SHELL_LABEL:
+            env[key] = value
+            injected[key] = label
+    if warn:
+        for msg in expansion_warnings(res):
+            print(msg, file=sys.stderr)
+    return injected
+
+
+def format_resolved(resolved: dict[str, tuple[str, str]]) -> str:
+    """The parity format shared with club-config.sh: KEY<TAB>SOURCE<TAB>VALUE."""
+    return "".join(f"{k}\t{src}\t{val}\n" for k, (src, val) in resolved.items())
 
 
 # ── writer ───────────────────────────────────────────────────────────────────

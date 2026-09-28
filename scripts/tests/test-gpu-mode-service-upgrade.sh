@@ -16,6 +16,7 @@
 # Offline: `docker` and `sudo` are PATH shims driven by fixture files, and
 # CLUB3090_DIR points at a scratch tree. No containers are touched.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 T="$(mktemp -d)"

@@ -45,6 +45,7 @@
 # If it needs to tell a user how to fetch something, point at an IN-REPO command
 # (`bash scripts/setup.sh <model>`), never at a script on the maintainer's rig.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 

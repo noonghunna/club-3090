@@ -41,7 +41,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now club3090-model-switch.service
 ```
 
-## Config (env — systemd loads them from the repo-root `.env`)
+## Config (env, or the club-3090 settings — `~/.config/club-3090/`, then the repo-root `.env` — which the server loads itself at start; the environment wins)
 
 | Var | Default | Purpose |
 |---|---|---|

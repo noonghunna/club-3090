@@ -26,6 +26,7 @@
 # No GPU is touched: nvidia-smi, sudo and systemctl are all recording stubs, and
 # the harness refuses to run unless it has verified it shadowed the real ones.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 

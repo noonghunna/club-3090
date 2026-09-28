@@ -13,6 +13,7 @@
 # container name lands on the "✓ Container <name> ..." line. We mock docker /
 # curl / nvidia-smi on PATH so the test is hermetic (no real engine needed).
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 HEALTH="$ROOT_DIR/scripts/health.sh"

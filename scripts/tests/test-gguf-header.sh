@@ -21,6 +21,7 @@
 #      general.architecture → None; 404/NetworkError → None.
 #   7. general.file_type → quant label (15 → Q4_K_M); unknown → None.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 

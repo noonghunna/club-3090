@@ -95,31 +95,14 @@ COMPOSE_BIN="${COMPOSE_BIN:-docker compose}"
 READY_TIMEOUT="${READY_TIMEOUT:-600}"
 LAUNCH_PROFILE="${LAUNCH_PROFILE:-${ROOT_DIR}/scripts/lib/profiles/launch_compat.py}"
 
-# Load .env if present, so PORT / MODEL_DIR / etc. flow through to docker
-# compose AND to the ready-URL probe below.
-#
-# Precedence matches docker compose (and launch.sh): a variable already set in
-# the shell environment WINS over the .env file — so `export MODEL_DIR=…` is no
-# longer clobbered by a stale .env entry (#425). We parse line-by-line instead
-# of `source` (a) to honour that precedence per-variable and (b) to tolerate
-# CRLF line endings from Windows editors (#187). Values are taken literally
-# (no shell expansion), matching docker compose's own .env semantics.
-if [[ -f "${ROOT_DIR}/.env" ]]; then
-  while IFS= read -r _env_line || [[ -n "$_env_line" ]]; do
-    _env_line="${_env_line#"${_env_line%%[![:space:]]*}"}"   # strip leading whitespace
-    _env_line="${_env_line%$'\r'}"                           # strip trailing CR (CRLF .env)
-    [[ -z "$_env_line" || "$_env_line" == '#'* ]] && continue
-    _env_line="${_env_line#export }"
-    _env_key="${_env_line%%=*}"
-    [[ "$_env_key" == "$_env_line" || -z "$_env_key" ]] && continue   # no '=' on the line
-    [[ -n "${!_env_key+x}" ]] && continue                    # already set in env → shell wins
-    _env_val="${_env_line#*=}"
-    _env_val="${_env_val#\"}"; _env_val="${_env_val%\"}"     # strip surrounding double quotes
-    _env_val="${_env_val#\'}"; _env_val="${_env_val%\'}"     # strip surrounding single quotes
-    export "${_env_key}=${_env_val}"
-  done < "${ROOT_DIR}/.env"
-  unset _env_line _env_key _env_val
-fi
+# Load settings so PORT / MODEL_DIR / etc. flow through to docker compose AND to
+# the ready-URL probe below — through the ONE loader (club-3090#1466): your
+# club-3090 config (~/.config/club-3090/club3090.env + secrets.env), then the repo
+# .env as a fallback. A variable already set in the shell wins, values are taken
+# literally, CRLF and `export ` are tolerated.
+# shellcheck source=lib/club-config.sh
+source "${ROOT_DIR}/scripts/lib/club-config.sh"
+club_config_load "${ROOT_DIR}"
 # #632 — surface a user engine-image pin (ik-llama / llama.cpp images are NOT
 # profile-injected, so a .env/shell pin is the only override path; echo it so a
 # wrong-image boot is never silent).  Fires only when actually set.
@@ -127,7 +110,7 @@ fi
 [[ -n "${LLAMACPP_IMAGE:-}" ]] && echo "[switch] llama.cpp image pinned: ${LLAMACPP_IMAGE}"
 
 # Surface the resolved MODEL_DIR + its source so the precedence is unambiguous
-# (the exact confusion behind #425 / #187). Unset → the compose's built-in
+# (the exact confusion fixed in 9a27de83 / #187). Unset → the compose's built-in
 # default applies; preflight_compose_deps notes that case.
 #
 # Routing: normally stdout (unchanged). But on the new `--explain … --json`
@@ -346,7 +329,7 @@ PY_THINKKEY
 
 # Resolve a model's persisted thinking state to on | off | inherit. Reads the
 # ALREADY-LOADED environment (switch.sh loads .env above; shell-env-wins per
-# #425). Unknown/empty values degrade to inherit (the entrypoint default).
+# commit 9a27de83). Unknown/empty values degrade to inherit (the entrypoint default).
 thinking_pin_state() {
   local model="$1" key val
   key="$(thinking_pin_key_for "$model")" || { printf 'inherit'; return 0; }
@@ -362,7 +345,7 @@ thinking_pin_state() {
 #   on      → ENABLE_THINKING=true (explicit — beats the passthrough default)
 #   off     → ENABLE_THINKING=false (explicit, per the #1010 lesson)
 #   inherit → nothing injected.
-# An ENABLE_THINKING already present in the SHELL wins (#425 precedence): the
+# An ENABLE_THINKING already present in the SHELL wins (shell-wins precedence, 9a27de83): the
 # .env pin is file-tier defaulting, never a shell override.
 apply_thinking_pin_env() {
   local variant="$1" eng dir file model state key
@@ -375,7 +358,7 @@ apply_thinking_pin_env() {
   case "$state" in
     on|off)
       if [[ -n "${ENABLE_THINKING+x}" ]]; then
-        echo "[switch] thinking pin '${state}' for ${model} ignored — shell exported ENABLE_THINKING=${ENABLE_THINKING} wins (#425)."
+        echo "[switch] thinking pin '${state}' for ${model} ignored — shell exported ENABLE_THINKING=${ENABLE_THINKING} wins."
         return 0
       fi
       if [[ "$state" == on ]]; then ENABLE_THINKING=true; else ENABLE_THINKING=false; fi

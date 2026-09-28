@@ -16,6 +16,7 @@
 # run the real argv through the helper, and assert the chunk that reaches vLLM is
 # <= 2048 — with a NEGATIVE CONTROL showing the same argv WITHOUT the helper is over.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"

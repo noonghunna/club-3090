@@ -10,6 +10,7 @@
 # themselves would destroy real configuration. Offline: PI_CODING_AGENT_DIR points
 # omp's agent dir at a scratch directory; omp itself is not needed.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT

@@ -12,6 +12,7 @@
 # recreate), or leave the level set when asked for "off". Offline: `docker` and `curl` are shims in $T/bin,
 # prepended INLINE on each call; the shims log what they were asked to do.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT

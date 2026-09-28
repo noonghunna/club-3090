@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # Force Python's UTF-8 mode (PEP 540) for every python3 this script runs --
 # repo sources carry unicode and a non-UTF-8 locale breaks the parser paths

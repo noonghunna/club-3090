@@ -35,6 +35,7 @@
 # are resolved by model_default_target(), documented in FAQ.md.
 
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # Force Python's UTF-8 mode (PEP 540) for every python3 this script runs — repo
 # docs are full of unicode (— × → ⚠) and a non-UTF-8, non-C locale otherwise

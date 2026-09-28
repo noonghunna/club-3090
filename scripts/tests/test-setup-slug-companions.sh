@@ -11,6 +11,7 @@
 #     model's always-fetched drafter), and resolves in the weights catalog;
 # plus the overrides and the unknown-slug refusal, as negative controls.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"

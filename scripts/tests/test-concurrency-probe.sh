@@ -5,6 +5,7 @@
 # without one: syntax, SWEEP-needs-SLUG, SWEEP_DRY reboot plans, --sweep dry
 # plans (no SLUG, no reboot), planner clips, and the card renderer.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # Force Python UTF-8 mode (PEP 540) before the first python3 call (#779).
 export PYTHONUTF8="${PYTHONUTF8:-1}"

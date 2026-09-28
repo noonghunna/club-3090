@@ -115,14 +115,13 @@ source "$REPO_ROOT/scripts/lib/report_calib.sh"
 # shellcheck source=lib/p2p-state.sh
 source "$REPO_ROOT/scripts/lib/p2p-state.sh"
 
-# Pick up a saved MODEL_DIR (and other config) from the repo .env — same as
-# launch.sh / switch.sh, and what setup.sh writes there. An explicit exported
-# MODEL_DIR still wins. This makes the Disk section report the user's real
-# models path instead of falling back to the hardcoded mount below.
-if [[ -z "${MODEL_DIR:-}" && -f "${REPO_ROOT}/.env" ]]; then
-  # shellcheck disable=SC1091
-  source "${REPO_ROOT}/.env"
-fi
+# Pick up a saved MODEL_DIR (and other settings) through the ONE loader, as
+# launch.sh / switch.sh do (club-3090#1466): your club-3090 config, then the repo
+# .env. An exported value still wins. This makes the Disk section report the
+# user's real models path instead of falling back to the hardcoded mount below.
+# shellcheck source=lib/club-config.sh
+source "${REPO_ROOT}/scripts/lib/club-config.sh"
+club_config_load "${REPO_ROOT}"
 
 HOST_SHORT="$(hostname -s 2>/dev/null || echo unknown)"
 USER_NAME="${USER:-$(whoami 2>/dev/null || echo unknown)}"

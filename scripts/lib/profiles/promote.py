@@ -92,13 +92,15 @@ _LOCAL_FORCED_STATUS = "incubating"
 # core must be present, or the core catalog is untouchable.
 _CORE_GATE_ENV = "C3_ALLOW_CORE_PROMOTE"
 
-# #1142: repo-root .env support. Kept as a dual import so this file works both as
-# a script (`python3 scripts/lib/profiles/promote.py` — own dir on sys.path) and
-# as a package module (`from scripts.lib.profiles import promote`, as the tests do).
+# #1142 / #1466: settings (club-3090 config, then the repo-root .env) through the ONE
+# loader. Dual import so this file works both as a script (`python3
+# scripts/lib/profiles/promote.py` — own dir on sys.path) and as a package module
+# (`from scripts.lib.profiles import promote`, as the tests do).
 try:  # package context
-    from scripts.lib.profiles.repo_dotenv import apply_dotenv
+    from scripts.lib.club_config import load as load_config
 except ImportError:  # direct-script context
-    from repo_dotenv import apply_dotenv
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from club_config import load as load_config
 
 
 _MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -705,13 +707,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             return EXIT_COLLISION
 
     root = Path(args.root).resolve()
-    # #1142: the shell launchers source <root>/.env, but these tools are invoked
-    # directly (no wrapper in scripts/ runs them), so a gate parked there used to
-    # be a SILENT no-op — no error, no effect. Fill UNSET keys from it, and say so
-    # when the maintainer gate is one of them: .env stops being silent BOTH ways.
-    _from_dotenv = apply_dotenv(root)
-    if _CORE_GATE_ENV in _from_dotenv:
-        print(f"[promote] {_CORE_GATE_ENV} read from {root}/.env "
+    # #1142: these tools are invoked directly (no wrapper in scripts/ runs them),
+    # so a gate parked in the settings used to be a SILENT no-op — no error, no
+    # effect. Fill UNSET keys through the one loader (#1466), and say so when the
+    # maintainer gate is one of them: settings stop being silent BOTH ways.
+    _from_config = load_config(root)
+    if _CORE_GATE_ENV in _from_config:
+        _where = f"{root}/.env" if _from_config[_CORE_GATE_ENV] == "repo .env" else _from_config[_CORE_GATE_ENV]
+        print(f"[promote] {_CORE_GATE_ENV} read from {_where} "
               f"(export it in the shell to override)", file=sys.stderr)
     try:
         if args.spec_env:

@@ -26,6 +26,7 @@
 # behaviour is to boot. `switch.sh` / `launch.sh` are policed for a neutralizer.
 # Read-only sub-commands are not launches and are listed as such.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export PYTHONUTF8="${PYTHONUTF8:-1}"

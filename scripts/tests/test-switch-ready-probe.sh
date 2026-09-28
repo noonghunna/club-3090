@@ -36,6 +36,7 @@
 # Harness: extract ready_probe()/wait_ready() via sed, source them, and put mock
 # `docker`, `curl` and `sleep` on PATH. Fully offline — no docker, no GPU.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # wait_ready() parses the served-model id with python3 (via the sourced helper),
 # so carry the repo's UTF-8-mode default here too (#779; test-locale-utf8.sh).

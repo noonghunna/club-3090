@@ -12,6 +12,7 @@
 # STRING, which differs from unset and, for numeric knobs, atoi("") == 0 silently
 # DISABLES the feature. Use the bare form `- FOO`.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export PYTHONUTF8="${PYTHONUTF8:-1}"

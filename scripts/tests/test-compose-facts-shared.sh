@@ -12,6 +12,7 @@
 # consumer and the two drift. The test derives the SAME compose through BOTH
 # import paths and requires byte-identical results.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 # Non-UTF-8 locales break python3 reads/writes on this rig (#599/#584).
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."

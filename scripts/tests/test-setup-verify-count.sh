@@ -28,6 +28,7 @@
 #   6. a SIZE mismatch on a hashless file hard-fails too — it is the only
 #      cross-check left, so a failure there is real evidence of corruption.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # Force Python's UTF-8 mode (PEP 540) for every python3 this script runs.
 # Repo sources are full of unicode (— × → ⚠), and without this a rig on a real

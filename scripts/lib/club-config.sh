@@ -71,6 +71,12 @@ club_config_resolve() {
   done | LC_ALL=C sort
 }
 
+# Same rules as club_config.py: a secret is anything from secrets.env or a
+# credential-looking name; an "expansion" is $VAR, ${VAR} or a leading ~.
+_club_config_is_secret() {
+  [[ "$2" == secrets.env || "$1" =~ (TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|MASTER_KEY|_KEY)$ ]]
+}
+
 club_config_load() {
   local __cc_k __cc_src __cc_val
   declare -gA CLUB3090_CONFIG_SOURCE=()
@@ -78,6 +84,12 @@ club_config_load() {
     [[ -z "$__cc_k" || "$__cc_src" == shell ]] && continue
     export "$__cc_k=$__cc_val"
     CLUB3090_CONFIG_SOURCE["$__cc_k"]="$__cc_src"
+    # launch.sh/report.sh/setup.sh used to `source` the repo .env, which expanded
+    # these. Values are literal now; say so (key and file only, never the value).
+    if ! _club_config_is_secret "$__cc_k" "$__cc_src" \
+       && [[ "$__cc_val" =~ \$\{?[A-Za-z_] || "$__cc_val" =~ ^~(/|$) ]]; then
+      echo "[config] WARN: $__cc_k (from $__cc_src) contains '\$VAR' or a leading '~'. Settings are read literally now, not expanded the way 'source .env' did — write the full path." >&2
+    fi
   done < <(club_config_resolve "${1:-}")
 }
 

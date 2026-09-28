@@ -10,6 +10,7 @@
 # upstream flag that stops it defaults OFF, so a new SGLang compose copied from an
 # upstream recipe silently brings the busy-poll back (#1443).
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 fail=0; n=0

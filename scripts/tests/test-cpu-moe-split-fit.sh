@@ -12,6 +12,7 @@
 # that notices when they rot. It pins BOTH tiers at the anchor rig; if you change
 # an engine pin, CTX or KV_TYPE, re-measure and update the header AND this file.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

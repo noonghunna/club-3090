@@ -20,6 +20,7 @@
 #   OFFLOAD_MATRIX_TIER2=1 MODEL=/path/to/model.gguf LLAMA_SERVER=/path/to/llama-server \
 #     bash scripts/tests/tier2/test-offload-matrix-real.sh
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SWEEP="$ROOT_DIR/scripts/offload-matrix.sh"
 REND="$ROOT_DIR/scripts/offload-matrix-render.py"

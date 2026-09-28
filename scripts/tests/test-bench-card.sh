@@ -15,6 +15,7 @@
 # in-process and the record card.sh parses back out of a saved log must AGREE.
 # If they drift, an A/B silently compares two different measurements.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export PYTHONUTF8="${PYTHONUTF8:-1}"   # repo rule: locale must not decide python decoding
 BENCH="$ROOT_DIR/scripts/bench.sh"

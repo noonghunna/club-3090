@@ -18,6 +18,7 @@
 # ⚠️ This test must FAIL against the pre-fix tree. If it passes before the fix,
 # it is asserting the wrong thing.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

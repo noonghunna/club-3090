@@ -35,6 +35,7 @@
 # sibling kept "*Compact.gguf" put them in different groups, so the gate
 # passed on exactly the regression it exists to catch. Overlap, not equality.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export PYTHONUTF8="${PYTHONUTF8:-1}"

@@ -12,6 +12,7 @@
 # copied) with `curl` stubbed to serve each response shape, and checks the verdict.
 # NEGATIVE CONTROL: against the pre-fix verify-full the short-reasoning case fails.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VF="${VERIFY_FULL:-$ROOT/scripts/verify-full.sh}"

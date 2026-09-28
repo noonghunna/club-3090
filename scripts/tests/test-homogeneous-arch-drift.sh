@@ -26,6 +26,7 @@
 # selector and mixed-arch is solvable for them (disc #768 Test 6, DiffusionGemma).
 # Gating by `weights_variant == "nvfp4"` would foreclose that. See #783.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # Force Python's UTF-8 mode (PEP 540) for every python3 this script runs.
 # Repo sources are full of unicode (— × → ⚠), and without this a rig on a real

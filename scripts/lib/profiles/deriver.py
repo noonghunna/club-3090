@@ -213,28 +213,18 @@ def _load_kv_calc():
 #   --hf-home > $HF_HOME > $MODEL_DIR/.cache/huggingface > $XDG_CACHE_HOME/hf > ~
 # ---------------------------------------------------------------------------
 def _model_dir_from_env_or_dotenv() -> Optional[str]:
-    """MODEL_DIR from the environment, else parsed from the repo `.env` (the
-    SAME value switch.sh / launch.sh / c3 resolve). `None` if set in neither.
-    Read with `encoding="utf-8"` (non-UTF-8-locale rigs, #599)."""
+    """MODEL_DIR from the environment, else from the saved settings through the ONE
+    loader (club-3090 config, then the repo .env; club-3090#1466) — the SAME value
+    switch.sh / launch.sh resolve. `None` if set in neither."""
     env = os.environ.get("MODEL_DIR")
     if env:
         return env
-    try:
-        for raw in (REPO_ROOT / ".env").read_text(
-            encoding="utf-8", errors="replace"
-        ).splitlines():
-            s = raw.strip().rstrip("\r")
-            if not s or s.startswith("#") or "=" not in s:
-                continue
-            if s.startswith("export "):
-                s = s[len("export "):]
-            key, _, val = s.partition("=")
-            if key.strip() == "MODEL_DIR":
-                val = val.strip().strip('"').strip("'")
-                return val or None
-    except OSError:
-        pass
-    return None
+    try:  # package context
+        from scripts.lib.club_config import resolve
+    except ImportError:  # direct-script context (scripts/lib/profiles on sys.path)
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from club_config import resolve
+    return resolve(REPO_ROOT).get("MODEL_DIR", ("", ""))[1] or None
 
 
 def resolve_hf_home(hf_home: Optional[str] = None) -> Path:

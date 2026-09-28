@@ -16,6 +16,7 @@
 #   to the model's float32, and every `exec vllm serve` line actually passes MAMBA_ARGS.
 #   the CUDA-graph memory estimate is off by default on the two dual-fast composes ONLY.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 fails=0

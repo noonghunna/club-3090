@@ -2,6 +2,7 @@
 # Guard for scripts/rerun-failed-packs.sh: syntax, arg refusal, dry-run plan
 # (pack extraction + thinking-mode derivation from a synthetic RunResult).
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 S="${ROOT_DIR}/scripts/rerun-failed-packs.sh"
 

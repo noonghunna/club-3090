@@ -15,6 +15,7 @@
 #   4. The recently added entry fields (served_name / gateway / serve_aliases /
 #      sampler_profiles with multi-row dicts) survive dump → parse → _entry().
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export PYTHONUTF8="${PYTHONUTF8:-1}"

@@ -18,7 +18,8 @@ Endpoints (Bearer auth on all but /healthz, when a token is configured):
                      blocks until ready; 200 {"ok","slug","model","took_s"}
                      400 unknown/ambiguous · 401 bad token · 409 in-progress · 500 {ok:false,detail}
 
-Config (env; systemd loads them from the repo-root .env):
+Config (env, or the club-3090 settings — ~/.config/club-3090/ then the repo-root .env —
+loaded at start through the one loader, club-3090#1466; the environment wins):
   CLUB3090_API_TOKEN  control-endpoint bearer token (falls back to VLLM_API_KEY).
                       If neither is set, the endpoint is UNAUTHENTICATED (loopback only).
   MODEL_SWITCH_PORT   listen port (default 8099)
@@ -46,6 +47,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
+from scripts.lib.club_config import load as _load_config  # noqa: E402
+
+# Settings first: every constant below reads the environment (club-3090#1466). The
+# systemd unit used to supply these with EnvironmentFile=<repo>/.env; the loader
+# reads that file too (after the user's club-3090 config), so an old unit still works.
+_load_config(REPO_ROOT)
+
 from scripts.lib.profiles.compose_registry import (  # noqa: E402
     COMPOSE_REGISTRY,
     curated_default_target,

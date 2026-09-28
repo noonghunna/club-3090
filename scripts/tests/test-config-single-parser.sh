@@ -17,6 +17,7 @@
 # Scope: tracked .sh / .service files for the shell patterns, tracked .py for the
 # Python ones; comment lines, tests and the two loaders themselves are excluded.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 fail=0
 ok()  { echo "  ✓ $*"; }
@@ -24,21 +25,14 @@ bad() { echo "  ✗ $*" >&2; fail=1; }
 
 # Files allowed to read or write .env privately until their phase lands.
 ALLOWLIST=$(cat <<'EOF'
-scripts/switch.sh                                   1b loader, 1c --set-default / thinking pin writer
-scripts/launch.sh                                   1b loader
-scripts/report.sh                                   1b loader
-scripts/setup.sh                                    1b loader, 1c MODEL_DIR writer, WSL2 compose-dir .env
-scripts/gpu-mode.sh                                 1b docker compose --env-file, single-key reads
-scripts/systemd/club3090-model-switch.service       1b EnvironmentFile path
-scripts/lib/profiles/repo_dotenv.py                 1b becomes a wrapper over club_config.py
-scripts/lib/profiles/estate_cli.py                  1b loader
-scripts/lib/profiles/deriver.py                     1b MODEL_DIR read
-services/comfyui/comfyui-paths.sh                   1b reads, 1c LANIP / COMFYUI_* writer
-services/comfyui/download_director.sh               1b MODEL_DIR read
-services/studio/push-pipe-to-owui.sh                1b LANIP read
-tools/residency-instrument/run-instrumented-soak.sh 1b loader
+scripts/switch.sh                                   1c --set-default / thinking-pin writer (reads moved in 1b-1)
+scripts/setup.sh                                    1c MODEL_DIR writer + WSL2 compose-dir .env (reads moved in 1b-1)
+scripts/gpu-mode.sh                                 1b-2 sudo docker compose --env-file, single-key reads
+services/comfyui/comfyui-paths.sh                   1b-2 reads, 1c LANIP / COMFYUI_* writer
+services/comfyui/download_director.sh               1b-2 MODEL_DIR read
+services/studio/push-pipe-to-owui.sh                1b-2 LANIP read
 tools/serve-cockpit/club3090_cockpit/app.py         1c thinking-pin / director writer
-tools/serve-cockpit/club3090_cockpit/services.py    1b reads + docker compose --env-file, 1c writer
+tools/serve-cockpit/club3090_cockpit/services.py    1b-3 reads + docker compose --env-file, 1c writer
 EOF
 )
 
@@ -127,6 +121,26 @@ fi
 if [[ -n "$gone" ]]; then
   bad "no longer parses .env itself — remove it from the ALLOWLIST in this test (the list only shrinks):"
   sed 's/^/      /' <<<"$gone" >&2
+fi
+
+# ── tests never read the real settings ──────────────────────────────────────
+# Every launcher now reads ~/.config/club-3090/. A test that inherits the maintainer's
+# real settings (model-default pins, MODEL_DIR, …) passes or fails for reasons that
+# aren't in the repo. Each test file exports CLUB3090_CONFIG_DIR at the top — a path
+# that doesn't exist, so the loader finds no files — and tests that exercise the
+# config point it at their own temporary directory per call.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  mapfile -t TESTS < <(git ls-files -- 'scripts/tests/test-*.sh' 'scripts/tests/*/test-*.sh' | sort -u)
+else
+  mapfile -t TESTS < <(find scripts/tests -name 'test-*.sh' | sort)
+fi
+missing="$(for t in "${TESTS[@]}"; do command grep -qE '^export CLUB3090_CONFIG_DIR=' "$t" || echo "$t"; done)"
+if [[ -n "$missing" ]]; then
+  bad "test(s) that could read your real settings — add, right after the 'set -…' line:"
+  echo "      export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)" >&2
+  sed 's/^/      /' <<<"$missing" >&2
+else
+  ok "all ${#TESTS[@]} test files isolate CLUB3090_CONFIG_DIR"
 fi
 
 [[ $fail -eq 0 ]] && echo "test-config-single-parser: ok" || echo "test-config-single-parser: FAIL"

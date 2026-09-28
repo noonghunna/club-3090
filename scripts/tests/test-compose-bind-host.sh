@@ -13,6 +13,7 @@
 # The default stays 0.0.0.0, so this guard does NOT assert a loopback default —
 # only that the operator has the choice.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 

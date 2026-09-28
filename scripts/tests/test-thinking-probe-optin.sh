@@ -14,6 +14,7 @@
 # MEASUREMENT scripts (bench*, soak, concurrency) are deliberately NOT listed:
 # the probe fires real requests and they must not perturb their own numbers.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 rc=0
 for f in scripts/verify-full.sh scripts/verify.sh scripts/verify-stress.sh; do

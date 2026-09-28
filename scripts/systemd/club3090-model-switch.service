@@ -10,9 +10,10 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now club3090-model-switch.service
 #
-# The token + model port are read from the repo-root .env via EnvironmentFile
-# (CLUB3090_API_TOKEN / VLLM_API_KEY, PORT, MODEL_DIR, …), so switch.sh's child
-# `docker compose` inherits the same environment the CLI uses.
+# The token + model port (CLUB3090_API_TOKEN / VLLM_API_KEY, PORT, MODEL_DIR, …) come
+# from the club-3090 settings: server.py and switch.sh load them themselves through
+# the one loader (club-3090#1466) — ~/.config/club-3090/ of the User= below (systemd
+# sets HOME for it), then the repo-root .env — so the service sees what the CLI sees.
 [Unit]
 Description=club-3090 model-switch HTTP control plane
 After=docker.service
@@ -23,9 +24,10 @@ Type=simple
 # The account that owns the repo checkout AND is in the `docker` group.
 User=youruser
 WorkingDirectory=/opt/club-3090
-# Leading '-' = optional: a fresh checkout has no root .env yet (loopback + a
-# token passed another way still works). Add the token/port here for the tailnet.
-EnvironmentFile=-/opt/club-3090/.env
+# No EnvironmentFile: settings are loaded by server.py itself (see above). An
+# installed copy of the older unit, which had EnvironmentFile=<repo>/.env, keeps
+# working, but its values count as "shell" and outrank ~/.config/club-3090/ —
+# re-install the unit to drop it.
 ExecStart=/usr/bin/python3 /opt/club-3090/tools/model-switch/server.py
 Restart=on-failure
 RestartSec=3

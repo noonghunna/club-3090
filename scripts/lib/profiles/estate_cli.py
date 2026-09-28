@@ -78,18 +78,12 @@ def utc_now() -> str:
 
 
 def load_dotenv() -> dict[str, str]:
+    """The environment an estate launch runs with: the real environment, plus any
+    setting it doesn't already set, through the ONE loader (club-3090 config, then
+    the repo .env; club-3090#1466). The environment wins."""
+    from scripts.lib.club_config import load as load_config
     env = dict(os.environ)
-    path = REPO_ROOT / ".env"
-    if not path.exists():
-        return env
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        env.setdefault(key, value)
+    load_config(REPO_ROOT, env)
     return env
 
 

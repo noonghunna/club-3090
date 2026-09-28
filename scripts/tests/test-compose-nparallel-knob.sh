@@ -15,6 +15,7 @@
 # checks the DELIVERY PATH and carries a NEGATIVE CONTROL — asserting the literal
 # is gone would pass on a compose that interpolates to the wrong thing.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 

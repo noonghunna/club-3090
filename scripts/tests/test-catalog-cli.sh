@@ -12,6 +12,7 @@
 #   3. register -> unregister is a clean round trip in a throwaway root;
 #   4. `unregister` cannot reach the curated catalog.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 ROOT="$PWD"

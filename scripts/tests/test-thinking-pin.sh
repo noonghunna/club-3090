@@ -8,13 +8,14 @@
 #     on | off | inherit; unknown/empty → inherit
 #   - apply_thinking_pin_env injects ENABLE_THINKING=true/false for on/off and
 #     NOTHING for inherit; an ENABLE_THINKING the shell already exports wins
-#     (#425 precedence — the .env pin is file-tier defaulting, never an override)
+#     (shell-wins precedence, 9a27de83 — the .env pin is file-tier defaulting, never an override)
 #   - the launch path actually calls apply_thinking_pin_env (wiring seam)
 #
 # Hermetic: functions are extracted from switch.sh (the proven
 # test-switch-orphan-teardown.sh pattern) so the script's main never runs; the
 # .env side is exercised through the environment switch.sh loads at startup.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # Force Python's UTF-8 mode (PEP 540) for every python3 this script runs.
 export PYTHONUTF8="${PYTHONUTF8:-1}"
@@ -94,7 +95,7 @@ out="$(bash -c '
 ' _ "$HELPERS_FILE")"
 assert_eq "$(tail -n1 <<<"$out")" "<unset>" "apply: no pin → nothing injected"
 
-# Shell wins (#425): an exported ENABLE_THINKING is never overridden by the pin.
+# Shell wins (9a27de83): an exported ENABLE_THINKING is never overridden by the pin.
 for pin in on off; do
   out="$(env "$KEY=$pin" ENABLE_THINKING=true bash -c '
     source "$1"

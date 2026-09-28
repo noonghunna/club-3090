@@ -21,6 +21,7 @@
 #
 # scripts/tests/ is out of scope: it asserts ON grep output.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"   # #779 — this gate shells out to python3
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCAN="${ROOT}/scripts/tests/lib-scan-bare-grep.py"

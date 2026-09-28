@@ -8,6 +8,7 @@
 # service `environment:` block. Missing declarations silently force defaults
 # (e.g. L1=30, L2 off) even when the user launches with LMCACHE_L1_GB/LMCACHE_L2.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # Force Python's UTF-8 mode (PEP 540) for every python3 this script runs.
 # Repo sources are full of unicode (— × → ⚠), and without this a rig on a real

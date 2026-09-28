@@ -4,6 +4,7 @@
 # synthetic PIN_BUMP_ROOT fixture (spec + display_name + functional compose
 # edited; deprecated compose untouched).
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 S="${ROOT_DIR}/scripts/engine-pin-bump.sh"
 

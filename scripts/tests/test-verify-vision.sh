@@ -6,6 +6,7 @@
 # that MUST be exercised are the failing ones, not the happy path.
 # Drives the real script against a mock endpoint — no GPU, no model.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"; PORT="${PORT:-8791}"; MOCK_PID=""

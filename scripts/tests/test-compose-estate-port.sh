@@ -25,6 +25,7 @@
 # ⚠️ Must FAIL against the pre-fix tree (12 + 2 offenders), or it is asserting
 # the wrong thing.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 # #779: this gate shells out to python3, which decodes reads/argv with the
 # LOCALE codec unless UTF-8 mode is on — and these composes are full of unicode.
 export PYTHONUTF8="${PYTHONUTF8:-1}"

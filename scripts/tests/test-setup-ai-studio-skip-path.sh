@@ -14,6 +14,7 @@
 # bring-up via the GPU_MODE_BIN hook. No container, no GPU, no .env writes
 # (LANIP + MODEL_DIR pinned via env; C3 paths derive under the tmp dir).
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"

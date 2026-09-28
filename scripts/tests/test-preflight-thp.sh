@@ -11,6 +11,7 @@
 # Fixture-driven: scripts/lib/thp.sh reads THP_SYSFS_DIR / THP_MEMINFO, so every
 # case below is a real end-to-end run of the guard against a synthetic host.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

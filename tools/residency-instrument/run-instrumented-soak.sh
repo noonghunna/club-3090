@@ -10,12 +10,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-if [[ -f "${ROOT_DIR}/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "${ROOT_DIR}/.env"
-  set +a
-fi
+# Settings through the ONE loader (club-3090#1466): club-3090 config, then repo .env.
+# shellcheck source=../../scripts/lib/club-config.sh
+source "${ROOT_DIR}/scripts/lib/club-config.sh"
+club_config_load "${ROOT_DIR}"
 
 COMPOSE_BIN="${COMPOSE_BIN:-docker compose}"
 VARIANT="${VARIANT:-vllm/long-text}"

@@ -12,6 +12,7 @@
 # that read the registry (c3, kv-calc) then describe a config the compose does not boot.
 # The compose is what runs, so it is the source of truth here; fix the registry, not the compose.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1

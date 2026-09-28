@@ -22,6 +22,7 @@
 #                              and would adopt a production server's argv/env.
 #   PREFLIGHT_NO_AUTODETECT=1  bench.sh otherwise adopts whatever container is up.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export PYTHONUTF8="${PYTHONUTF8:-1}"   # repo rule: locale must not decide python decoding
 BENCH="$ROOT_DIR/scripts/bench.sh"

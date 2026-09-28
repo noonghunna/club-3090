@@ -20,6 +20,7 @@
 # SILENTLY is the false-clean this repo has been bitten by repeatedly. Every skip
 # is printed, and the test FAILS if it ended up checking nothing at all.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

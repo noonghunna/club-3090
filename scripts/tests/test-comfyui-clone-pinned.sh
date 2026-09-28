@@ -22,6 +22,7 @@
 #   4. no mirror has it: returns 0 with a WARN — the rest of ComfyUI still boots.
 #   5. a pre-existing non-git directory at the destination is never deleted.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENTRY="${ROOT}/services/comfyui/entrypoint.sh"

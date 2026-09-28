@@ -590,11 +590,12 @@ load_weight_recipe "${PRIMARY_WEIGHT_KEY}"
 # The prompt only fires for fresh users on a TTY who haven't set anything.
 # CI / scripted runs (no TTY) get the silent fallback, preserving prior behavior.
 
-# Step 2: source repo-root .env if present (lets a saved choice persist)
-if [[ -z "${MODEL_DIR:-}" && -f "${ROOT_DIR}/.env" ]]; then
-  # shellcheck source=/dev/null
-  set -a; source "${ROOT_DIR}/.env"; set +a
-fi
+# Step 2: load saved settings (lets a saved choice persist) through the ONE
+# loader (club-3090#1466): your club-3090 config, then the repo .env. An exported
+# value still wins.
+# shellcheck source=lib/club-config.sh
+source "${ROOT_DIR}/scripts/lib/club-config.sh"
+club_config_load "${ROOT_DIR}"
 
 # Step 3: prompt if still unset + interactive
 if [[ -z "${MODEL_DIR:-}" && -t 0 && -t 1 ]]; then

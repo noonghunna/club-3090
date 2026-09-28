@@ -4,6 +4,7 @@
 # AUDITOR (p2p_host_capability) against the same faked nvidia-smi and asserts
 # they agree — the two parse the same probes and must not drift.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # ⚠️ Pin the knob, like NVLINK_MODE. Nothing else scrubs it, so an operator with
 # DISABLE_CUSTOM_ALL_REDUCE exported in their shell — which our own boot warning

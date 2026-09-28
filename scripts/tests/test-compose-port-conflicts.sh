@@ -18,6 +18,7 @@
 # hygiene PR; the gate ALSO fails if an ALLOW entry no longer collides, so the
 # list can't silently rot (negative control).
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # Force Python UTF-8 mode (PEP 540) before the first python3 call (#779). Guarded
 # by test-locale-utf8.sh; exported so children inherit it.

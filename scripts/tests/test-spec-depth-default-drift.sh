@@ -18,6 +18,7 @@
 # for days without ever reaching a default boot, and the banner claimed the win
 # was live. Caught by hand 2026-09-08; this guard is why it cannot repeat.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # Force Python's UTF-8 mode (PEP 540) — repo sources are full of unicode and a
 # genuine non-UTF-8 locale otherwise crashes the read (#779). See

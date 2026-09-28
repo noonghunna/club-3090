@@ -11,6 +11,7 @@
 # 2026-09-28 just 1 of 26 SGLang composes did, so the documented off-switch silently
 # did nothing on the rest. Single-card composes are exempt: there is no GPU↔GPU path.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 

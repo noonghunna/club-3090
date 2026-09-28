@@ -5,6 +5,7 @@
 # from the registry, the vLLM-needs-SLUG refusal, and that SWEEP_DRY plans
 # arms WITHOUT booting or measuring.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SWEEP="$ROOT_DIR/scripts/spec-sweep.sh"
 fail() { echo "FAIL: $1" >&2; exit 1; }

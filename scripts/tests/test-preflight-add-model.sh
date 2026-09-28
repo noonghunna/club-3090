@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 #
 # Smoke test for scripts/preflight-add-model.sh (contract C5): the script
 # exists, --help works, a missing/extra argument fails cleanly, and an unknown

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 #
 # Drift guard: setup.sh's front door must agree with `weights.py catalog --json`
 # for EVERY model — usage list, labels, resolved dispatch keys, WEIGHTS= alias

@@ -12,6 +12,7 @@
 #   removed : root-owned, engine-named, old, unmapped (psm_* and vllm_offload_*.mmap)
 #   kept    : too young; not root-owned; not an engine name; held open by a live process.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 fails=0

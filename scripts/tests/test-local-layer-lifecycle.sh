@@ -14,6 +14,7 @@
 # layer is never read or written — a test that promotes into the developer's own
 # checkout would leave a slug behind on failure.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"

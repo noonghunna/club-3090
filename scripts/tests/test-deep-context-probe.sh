@@ -14,6 +14,7 @@
 # producing: `prompt_tokens_details` absent (a server flag is off) being read as
 # cached=0 while the engine was reusing 4,160 tokens. No GPU server required.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 S="${ROOT}/scripts/deep-context-probe.sh"

@@ -5,6 +5,7 @@
 # into a magic list). Also: quality-test.sh must actually expose the
 # passthrough flags these files are consumed through.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 SETS_DIR="${ROOT_DIR}/scripts/scenario-sets"
 QT="${ROOT_DIR}/scripts/quality-test.sh"

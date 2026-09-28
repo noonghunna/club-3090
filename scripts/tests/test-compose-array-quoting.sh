@@ -27,6 +27,7 @@
 # `--preferred-sampling-params "{\"temperature\": ...}"` — so a blanket ban on
 # `\"` would false-positive on real code.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 # #779: parses compose YAML through python3; without PYTHONUTF8 a non-UTF8
 # locale mangles the entrypoint text and the scan silently misreads.
 export PYTHONUTF8="${PYTHONUTF8:-1}"

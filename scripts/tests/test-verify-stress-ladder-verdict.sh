@@ -11,6 +11,7 @@
 # every other check passed. A ladder verdict that can say "crashed" when nothing
 # crashed is worse than no verdict, so each state is pinned here.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 SRC="scripts/verify-stress.sh"
 [[ -f "$SRC" ]] || { echo "FAIL: $SRC not found"; exit 1; }

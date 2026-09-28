@@ -8,6 +8,7 @@
 #   3. ModelSpec.to_dict/from_dict is lossless for the Fact set (the artifact
 #      carries provenance even though registry.yaml stores plain kwargs).
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"

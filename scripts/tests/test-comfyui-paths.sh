@@ -8,6 +8,7 @@
 # stay backward-compatible with the reference rig's /mnt layout, and respect explicit
 # overrides.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 HELPER="$(cd "$(dirname "$0")/../.." && pwd)/services/comfyui/comfyui-paths.sh"
 
 [ -f "$HELPER" ] || { echo "FAIL: helper not found: $HELPER"; exit 1; }

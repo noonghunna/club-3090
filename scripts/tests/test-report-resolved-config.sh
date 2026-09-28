@@ -43,6 +43,7 @@
 #     empty capture can never read like a clean one;
 #   - the section is bounded — it must not grow by the size of the compose.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 

@@ -4,6 +4,7 @@
 # the correct quality-test.sh command + baseline path for each mode, and that the
 # guard rails (required slug, valid mode, positive --repeat, missing-baseline) fire.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

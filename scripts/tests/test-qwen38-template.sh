@@ -16,6 +16,7 @@
 # trim_blocks + lstrip_blocks, tojson with sort_keys) and checks each one.
 # Needs python3 with jinja2; prints SKIP without it.
 set -uo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 TPL="$ROOT/models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja"

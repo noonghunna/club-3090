@@ -8,6 +8,7 @@
 # the NVIDIA line but forgets the CUDA passthrough silently regresses CDI
 # rigs — this guard reds instead.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 

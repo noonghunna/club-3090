@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
 # test-locale-utf8.sh — the non-UTF-8-locale guarantee (#779).
 #
