@@ -154,6 +154,17 @@ out="$(env -u HF_TOKEN CLUB3090_CONFIG_DIR="$EMPTY" TMPDIR="$T/tmp" python3 "$LI
 [[ $rc -eq 0 && -z "$out" && -z "$(ls -A "$T/tmp")" ]] && ok "no route needs a saved key: prints nothing, writes no file" \
   || bad "empty case rc=$rc out=[$out] tmp=[$(ls -A "$T/tmp")]"
 
+# A route whose saved key the running gateway lacks: litellm-sync can only restart it,
+# which keeps the old environment, so it must say to recreate (names only, no values).
+got="$(CLUB3090_CONFIG_DIR="$CFG" py "$R" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1]); import litellm_local as l
+print(l.keys_missing_from_gateway(sys.argv[2], {"LITELLM_MASTER_KEY", "PATH"}),
+      l.keys_missing_from_gateway(sys.argv[2], {"RIG_CLOUD_KEY"}))
+PY
+)"
+[[ "$got" == "['RIG_CLOUD_KEY'] []" ]] && ok "a route's saved key missing from the gateway's environment is reported (and not once it is there)" \
+  || bad "keys_missing_from_gateway: $got"
+
 # ── 3. what docker compose hands the container ───────────────────────────────
 echo "3. docker compose (config only, a scratch copy of the compose)"
 if docker compose version >/dev/null 2>&1; then

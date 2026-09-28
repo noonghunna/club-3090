@@ -367,6 +367,23 @@ def mounted_runtime_path() -> "str | None":
     return path if out.returncode == 0 and path else None
 
 
+def gateway_env_names(container: str = "litellm") -> "set[str] | None":
+    """The variable NAMES in the gateway container's environment. docker's own
+    template drops the values, so none leaves docker. None when there is no such
+    container or docker can't be asked."""
+    try:
+        out = subprocess.run(
+            ["docker", "inspect", container, "--format",
+             '{{range .Config.Env}}{{index (split . "=") 0}}{{"\\n"}}{{end}}'],
+            capture_output=True, text=True, encoding="utf-8", timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True)
@@ -424,6 +441,17 @@ def main() -> int:
             return 0
         log("runtime config is STALE — run: bash scripts/lib/litellm-sync.sh")
         return 1
+
+    # A route whose saved key the running gateway was created without (a new route,
+    # or a key saved since): the restart below can't add it, only a recreate can.
+    # Skipped under --no-restart (the caller is about to start the gateway itself,
+    # with its keys) and under the test seam.
+    if not a.no_restart and os.environ.get("C3_LITELLM_FAKE_LIVE") is None:
+        names = gateway_env_names()
+        missing = litellm_local.keys_missing_from_gateway(a.root, names) if names is not None else []
+        if missing:
+            print(f"[litellm-sync] WARN: the running gateway has no {', '.join(missing)}, which your routes use. "
+                  "A restart can't add it; recreate the gateway: bash scripts/gpu-mode.sh gateway", file=sys.stderr)
 
     if cur == out:
         log(f"no change ({n_routes} live route(s))")

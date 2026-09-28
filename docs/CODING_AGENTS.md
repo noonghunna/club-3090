@@ -98,8 +98,10 @@ start the gateway.
 
 - A new or changed **route**: `bash scripts/lib/litellm-sync.sh` (switch.sh runs it
   on every launch too).
-- A new or changed **key**: `bash scripts/gpu-mode.sh gateway`. A restart is not
-  enough, because a container keeps the environment it was created with.
+- A new or changed **key**, or a new route whose key the gateway hasn't been
+  given yet: `bash scripts/gpu-mode.sh gateway`. A restart is not enough, because a
+  container keeps the environment it was created with. `litellm-sync` warns when a
+  route's saved key is missing from the running gateway.
 
 **Older installs** kept these in the checkout: `services/litellm/config.local.yaml`
 and its keys in `services/litellm/local.env`. Both still work: the checkout's

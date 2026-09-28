@@ -166,6 +166,19 @@ def write_route_keys_file(root, environ=None):
     return Path(name)
 
 
+def keys_missing_from_gateway(root, have_names, environ=None) -> list:
+    """The keys a route uses that a gateway created with the variables ``have_names``
+    lacks, though they are saved (in your settings, or the older local.env): a
+    route added after the gateway started, say, or a key saved since. A restart
+    can't add them — a container keeps the environment it was created with — so
+    the caller says to recreate it. ``have_names`` are variable NAMES only."""
+    wanted = set(referenced_keys(root, environ))
+    saved = set(route_keys(root, environ))
+    if root is not None:
+        saved |= set(club_config.parse_env_file(Path(root) / LEGACY_KEYS))
+    return sorted((wanted & saved) - set(have_names))
+
+
 # ── migrate: copy the checkout's files into the config dir ───────────────────
 def _copy_new(src: Path, dst: Path) -> None:
     """Copy src to dst (0600) atomically; never replace a dst that exists."""

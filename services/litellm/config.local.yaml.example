@@ -14,7 +14,8 @@
 # club catalog. Keys go in your settings, referenced as os.environ/<NAME>:
 #   bash scripts/settings.sh set MY_CLOUD_API_KEY=<key>     # saved in secrets.env (0600)
 # Apply a route change with: bash scripts/lib/litellm-sync.sh
-# A new or changed key needs the gateway recreated: bash scripts/gpu-mode.sh gateway
+# A new or changed key, or a new route whose key the gateway hasn't been given yet,
+# needs the gateway recreated (litellm-sync warns): bash scripts/gpu-mode.sh gateway
 #
 # ⚠️ omp's `discovery: litellm` lists every route the gateway serves, so a cloud
 # route here is selectable (and can become omp's default if modelRoles is empty).
