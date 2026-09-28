@@ -14,6 +14,8 @@ Contracts wrapped (all READ-only, safe to call live):
   - ``scripts/gpu-mode.sh --list-modes --json``        → estate_state (scene catalog)
   - ``scripts/health.sh`` (text)                       → estate_state (Doctor read)
   - core ``detect_endpoint`` / ``get_gpu_info``        → estate_state / containers / reconcile
+  - ``scripts/lib/launch_settings.py`` (in-process)     → launch_settings (the form's rows)
+    + ``docker ps`` / ``docker inspect`` (knob env only) → what a running container got
 
 WRITES (serve / scene_switch / set_default / clear_default / estate_down /
 container_action) are WIRED as ``ActionPlan`` builders + an ``execute_action``
@@ -47,6 +49,7 @@ from club3090_tui_core.detect import (
 from club3090_tui_core.registry import VariantRow, parse_variant_rows
 from club3090_tui_core.runner import CoreRunState, SubprocessRunner
 
+from . import launch_settings_store as _launch
 from . import settings_store as _settings
 from .data import (
     ActionPlan,
@@ -1044,6 +1047,69 @@ class CockpitData:
         alone: it is read last, so the stored value wins over an old copy there.
         Raises ``settings_store.SettingsError`` (names the key, never the value)."""
         return _settings.save(values, secret=secret)
+
+    # ── launch settings (club-3090#1465, phase 3d) ───────────────────────────────
+    # The per-slug launch knobs through the ONE resolver (scripts/lib/
+    # launch_settings.py, via launch_settings_store) — the values, sources and
+    # refusals of `switch.sh --explain / --set / --unset`. The resolver runs in a
+    # worker thread (it reads the registry and asks engine-kind.sh); the running
+    # container is read with docker ps / docker inspect through the READ runner.
+
+    def loaded_settings(self) -> dict[str, str]:
+        """{key: file} for every setting c3 itself put into its environment —
+        the resolver's ``loaded`` (switch.sh passes CLUB3090_CONFIG_SOURCE), so
+        such a key counts as its file's and not as the shell's. Today that is
+        only the saved HF token applied at start-up / from Settings."""
+        out: dict[str, str] = {}
+        if self._hf_token_injected:
+            hit = _settings.stored("HF_TOKEN", self.repo_root)
+            if hit and os.environ.get("HF_TOKEN") == hit[1]:
+                out["HF_TOKEN"] = hit[0]
+        return out
+
+    async def launch_settings(self, slug: str) -> "_launch.LaunchView":
+        """READ — the slug's launch settings for its next launch, and what a
+        running container of the slug was started with (docker, read-only)."""
+        view = await asyncio.to_thread(
+            _launch.view, slug, self.repo_root, None, self.loaded_settings()
+        )
+        if view.available and view.knobs:
+            await self._attach_running_launch_settings(view)
+        return view
+
+    async def _attach_running_launch_settings(self, view: "_launch.LaunchView") -> None:
+        res = await self._runner.run(
+            ["docker", "ps", "--format", _launch.PS_FORMAT],
+            cwd=str(self.repo_root), timeout=10.0,
+        )
+        if not res.ok:
+            view.running_error = "docker ps failed — can't tell whether the slug is running"
+            return
+        checkable = [k.knob for k in view.knobs if k.in_container_env]
+        for name in _launch.containers_for(view.compose_path, res.stdout):
+            if not checkable:
+                view.running.append(_launch.running_state(view, name, ""))
+                continue
+            got = await self._runner.run(
+                ["docker", "inspect", name, "--format", _launch.inspect_format(checkable)],
+                cwd=str(self.repo_root), timeout=10.0,
+            )
+            if not got.ok:
+                view.running.append(_launch.RunningContainer(
+                    name=name, error="docker inspect failed — its settings can't be read"))
+                continue
+            view.running.append(_launch.running_state(view, name, got.stdout))
+
+    async def save_launch_settings(self, slug: str, values: dict[str, str]) -> "_launch.Change":
+        """WRITE — save KEY=VALUE for this slug (slugs.json), exactly as
+        ``switch.sh --set <slug> KEY=VALUE``: the resolver checks every value and
+        refuses in its own words (``Change.problems``). Raises
+        ``launch_settings_store.LaunchSettingsError`` when it can't run at all."""
+        return await asyncio.to_thread(_launch.save, slug, values, self.repo_root)
+
+    async def remove_launch_settings(self, slug: str, keys: list[str]) -> "_launch.Change":
+        """WRITE — remove this slug's own saved values (``switch.sh --unset``)."""
+        return await asyncio.to_thread(_launch.remove, slug, keys, self.repo_root)
 
     def hf_token(self) -> str:
         """The effective HF token — the shell's HF_TOKEN (or the saved one c3

@@ -1116,6 +1116,7 @@ class HelpScreen(ModalScreen):
             "[bold]Run & Operate · Catalog[/bold]",
             "  [cyan]⏎[/cyan] serve selected slug (reconcile-gated confirm; F to Force the teardown)",
             "  [cyan]e[/cyan] explain   [cyan]i[/cyan] model info (metadata popup for the selected slug)",
+            "  [cyan]E[/cyan] launch settings — what the slug's next launch uses, per-slug edits, a running container's drift",
             "  [cyan]d[/cyan] set-default   [cyan]D[/cyan] clear-default",
             "  [cyan]O[/cyan] ▸ Optimize for my card (kv-calc recs, advisory)",
             # These six are show=False bindings whose ONLY other teaching surface
@@ -6460,6 +6461,366 @@ class SettingsScreen(ModalScreen):
         self.app.pop_screen()
 
 
+class LaunchSettingsScreen(ModalScreen):
+    """[E] Launch settings for ONE slug (club-3090#1465, phase 3d).
+
+    The c3 twin of ``switch.sh --explain / --set / --unset``: every catalogued
+    launch knob the slug's compose reads, the value its NEXT launch uses and the
+    layer that value comes from, the values it allows, and what the next launch
+    would refuse. Rows come from the one resolver (scripts/lib/launch_settings.py,
+    via ``launch_settings_store``) — nothing here validates or writes a value.
+    Per the modal rule the screen only expresses intent: ⏎ hands a new value to
+    the app (``save_launch_setting``), x a removal (``remove_launch_setting``);
+    the app runs the resolver's own save / remove and pushes the fresh view back.
+    A refusal is shown in the resolver's words.
+
+    Writes are PER SLUG (slugs.json). The value for every slug stays a global
+    setting (``bash scripts/settings.sh set KEY=VALUE``), which this form shows
+    as a source but doesn't write.
+
+    A running container of the slug (found by its compose label) is compared,
+    knob by knob, with the next launch: ≠ where it was started with something
+    else. Knobs the compose only puts on the command line can't be read back
+    from the container and say so.
+    """
+
+    DEFAULT_CSS = """
+    LaunchSettingsScreen {
+        align: center middle;
+    }
+    LaunchSettingsScreen > Vertical {
+        width: 108;
+        max-width: 100%;
+        height: auto;
+        max-height: 100%;
+        border: thick $accent;
+        background: $surface;
+        padding: 0 1;
+    }
+    LaunchSettingsScreen .ls-title {
+        text-style: bold;
+        color: $accent;
+    }
+    LaunchSettingsScreen #ls-table {
+        height: auto;
+        max-height: 10;
+        margin-top: 1;
+    }
+    LaunchSettingsScreen #ls-scroll {
+        height: auto;
+        max-height: 14;
+    }
+    LaunchSettingsScreen #ls-input {
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Close", show=True),
+        Binding("x", "remove", "Remove this slug's value", show=True),
+        Binding("delete", "remove", "Remove", show=False),
+        Binding("r", "reload", "Reload", show=True),
+    ]
+
+    # The running-column glyphs: same / differs / can't be read / unknown.
+    _RUN_GLYPH = {"same": "=", "differs": "≠", "unchecked": "·", "unknown": "?"}
+
+    def __init__(self, slug: str, **kwargs):
+        super().__init__(**kwargs)
+        self._slug = slug
+        self._view = None                 # launch_settings_store.LaunchView
+        self._editing: str = ""           # the knob being edited ("" = none)
+        self._status: str = ""            # the last save / removal, in markup
+
+    # ── layout ──────────────────────────────────────────────────────────────
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(f"Launch settings · {self._slug}", classes="ls-title")
+            yield Static(
+                "[b]Changes apply on the next launch of this slug.[/b] A running "
+                "container keeps the settings it started with.",
+                id="ls-banner",
+            )
+            yield Static("Loading…", id="ls-running")
+            table: DataTable = DataTable(id="ls-table", zebra_stripes=True)
+            table.cursor_type = "row"
+            yield table
+            inp = Input(placeholder="", id="ls-input")
+            inp.display = False           # revealed only while editing a value
+            yield inp
+            # Refusals and the last save first: on a short terminal they are what
+            # must not scroll away; then the highlighted knob; then how it works.
+            with VerticalScroll(id="ls-scroll"):
+                yield Static("", id="ls-notes")
+                yield Static("", id="ls-detail")
+                yield Static("", id="ls-hints")
+            yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#ls-table", DataTable)
+        table.add_columns("setting", "next launch", "from", "running", "allowed")
+        self.app.load_launch_settings(self, self._slug)  # type: ignore[attr-defined]
+
+    # ── data in ─────────────────────────────────────────────────────────────
+
+    def set_view(self, view, status: str = "") -> None:
+        """The resolver's answer (a ``LaunchView``), plus an optional line about
+        the save / removal that produced it."""
+        self._view = view
+        if status:
+            self._status = status
+        keep = self._current_knob()
+        table = self.query_one("#ls-table", DataTable)
+        table.clear()
+        running = self._first_running()
+        for row in (view.knobs if view is not None and view.available else []):
+            name = Text(row.knob)
+            if row.errors:
+                name.append(" ✗", style="bold red")
+            table.add_row(
+                name,
+                Text(row.value),
+                Text(row.source),
+                self._running_cell(running, row.knob),
+                Text(row.allowed or "—"),
+                key=row.knob,
+            )
+        if keep and view is not None:
+            for i, row in enumerate(view.knobs):
+                if row.knob == keep:
+                    try:
+                        table.move_cursor(row=i)
+                    except Exception:
+                        pass
+        self.query_one("#ls-running", Static).update(self._running_text())
+        self._render_detail()
+        self._render_notes()
+        if not self._editing:
+            table.focus()
+
+    def show_status(self, status: str) -> None:
+        self._status = status
+        self._render_notes()
+
+    # ── pieces ──────────────────────────────────────────────────────────────
+
+    def _first_running(self):
+        v = self._view
+        if v is None or not getattr(v, "running", None):
+            return None
+        return v.running[0]
+
+    def _running_cell(self, running, knob: str) -> Text:
+        if running is None:
+            return Text("")
+        if running.error:
+            return Text("?", style="yellow")
+        r = running.knobs.get(knob)
+        if r is None:
+            return Text("")
+        glyph = self._RUN_GLYPH.get(r.status, "?")
+        if r.status == "unchecked":
+            return Text(f"{glyph} can't check", style="dim")
+        if r.status == "unknown":
+            return Text(f"{glyph} not in its env", style="yellow")
+        style = {"same": "green", "differs": "bold yellow", "unknown": "yellow"}.get(r.status, "")
+        return Text(f"{glyph} {r.shown}", style=style)
+
+    def _running_text(self) -> str:
+        from rich.markup import escape
+
+        v = self._view
+        if v is None:
+            return "Loading…"
+        if not v.available or not v.knobs:
+            return ""
+        if v.running_error:
+            return f"[yellow]{escape(v.running_error)}[/yellow]"
+        if not v.running:
+            return "[dim]Not running — nothing to compare.[/dim]"
+        lines = []
+        for rc in v.running:
+            when = f" (started {escape(rc.started_at[:19].replace('T', ' '))})" if rc.started_at else ""
+            head = f"Running: [b]{escape(rc.name)}[/b]{when}"
+            if rc.error:
+                lines.append(f"{head} — [yellow]{escape(rc.error)}[/yellow]")
+                continue
+            diff = rc.differing
+            unchecked = sorted(k for k, r in rc.knobs.items() if r.status == "unchecked")
+            unknown = sorted(k for k, r in rc.knobs.items() if r.status == "unknown")
+            if diff:
+                n = len(diff)
+                part = (f"[bold yellow]≠ {n} setting{'s' if n != 1 else ''} differ"
+                        f"{'s' if n == 1 else ''} from the next launch[/bold yellow] "
+                        f"({escape(', '.join(diff))}) — relaunch to apply")
+            else:
+                part = "[green]= started with the next launch's values[/green]"
+            if unchecked:
+                part += (f" · [dim]can't check {escape(', '.join(unchecked))} (passed on the "
+                         f"command line, not in the container's environment)[/dim]")
+            if unknown:
+                part += f" · [yellow]? {escape(', '.join(unknown))}[/yellow]"
+            lines.append(f"{head} — {part}")
+        if len(v.running) > 1:
+            lines.append("[dim]The running column shows the first container.[/dim]")
+        return "\n".join(lines)
+
+    def _current_knob(self) -> str:
+        v = self._view
+        if v is None or not v.available or not v.knobs:
+            return ""
+        try:
+            i = int(self.query_one("#ls-table", DataTable).cursor_row or 0)
+        except Exception:
+            i = 0
+        return v.knobs[max(0, min(i, len(v.knobs) - 1))].knob
+
+    def _current_row(self):
+        v = self._view
+        name = self._current_knob()
+        return v.knob(name) if (v is not None and name) else None
+
+    def _render_detail(self) -> None:
+        from rich.markup import escape
+
+        det = self.query_one("#ls-detail", Static)
+        row = self._current_row()
+        if row is None:
+            det.update("")
+            return
+        lines = [f"[b]{escape(row.knob)}[/b] — {escape(row.description)}"]
+        src = row.source + (f": {row.detail}" if row.detail else "")
+        over = "; ".join(f"{s}={val}" for s, val in row.overrides)
+        lines.append(f"  next launch  {escape(row.value)}  [dim]({escape(src)}"
+                     + (f"; overrides {escape(over)}" if over else "") + ")[/dim]")
+        lines.append(f"  allowed      {escape(row.allowed or 'not validated (no single catalogued domain)')}")
+        lines.append(f"  unset        {escape(row.unset_means)}")
+        saved = (f"{escape(row.saved)}  [dim](⏎ change · x remove)[/dim]" if row.saved is not None
+                 else "[dim]nothing — ⏎ to set a value for this slug[/dim]")
+        lines.append(f"  this slug    {saved}")
+        running = self._first_running()
+        r = running.knobs.get(row.knob) if (running is not None and not running.error) else None
+        if r is not None:
+            if r.status == "same":
+                lines.append(f"  running      [green]= started with {escape(r.shown)}[/green]")
+            elif r.status == "differs":
+                lines.append(f"  running      [bold yellow]≠ {escape(r.why)}[/bold yellow]")
+            else:
+                lines.append(f"  running      [dim]{escape(r.why)}[/dim]")
+        if row.source == "shell":
+            lines.append(f"  [yellow]⚠ your shell exports {escape(row.knob)}, which wins over saved values "
+                         "for launches from this c3 — a value saved here applies once it is unset there.[/yellow]")
+        for e in row.errors:
+            lines.append(f"  [red]✗ {escape(e)}[/red]")
+        det.update("\n".join(lines))
+
+    def _render_notes(self) -> None:
+        from rich.markup import escape
+
+        notes = self.query_one("#ls-notes", Static)
+        v = self._view
+        lines: list[str] = []
+        if self._status:
+            lines.append(self._status)
+        if v is None:
+            notes.update("\n".join(lines))
+            return
+        if not v.available:
+            lines.append(f"[red]Launch settings unavailable:[/red] {escape(v.reason)}")
+            notes.update("\n".join(lines))
+            return
+        if not v.knobs:
+            lines.append(
+                "This slug's compose reads none of the catalogued launch settings "
+                f"([dim]{escape(', '.join(v.catalogued))}[/dim]) — there is nothing to set for it."
+            )
+        refused = [e for k in v.knobs for e in k.errors]
+        other = v.general_errors
+        if refused or other:
+            lines.append("[red]✗ The next launch would be REFUSED (before the running slug is taken down):[/red]")
+            for e in list(dict.fromkeys(refused)) + other:
+                lines.append(f"  [red]- {escape(e)}[/red]")
+        if v.unread:
+            lines.append("Saved but not read by this slug (no effect here):")
+            for u in v.unread:
+                lines.append(f"  {escape(u.get('knob', ''))}={escape(u.get('value', ''))}  "
+                             f"[dim]({escape(u.get('source', ''))})[/dim]")
+        for w in v.warnings:
+            lines.append(f"[yellow]⚠ {escape(w)}[/yellow]")
+        notes.update("\n".join(lines))
+        self.query_one("#ls-hints", Static).update(
+            f"[dim]Precedence: {escape(' > '.join(v.order))}\n"
+            "⏎ saves a value for THIS slug (slugs.json). The value for every slug: "
+            "bash scripts/settings.sh set KEY=VALUE[/dim]" if v.order else "")
+
+    # ── events / actions ────────────────────────────────────────────────────
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id == "ls-table":
+            self._render_detail()
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "ls-table":
+            return
+        event.stop()
+        row = self._current_row()
+        if row is None:
+            return
+        self._editing = row.knob
+        inp = self.query_one("#ls-input", Input)
+        inp.placeholder = f"{row.knob} for {self._slug} — allowed: {row.allowed or 'any'}"
+        inp.value = row.saved or ""
+        inp.display = True
+        inp.focus()
+        self.show_status(f"[dim]New value for {row.knob} on this slug — ⏎ save · esc cancel[/dim]")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "ls-input" or not self._editing:
+            return
+        event.stop()
+        knob = self._editing
+        val = event.value
+        if val == "":
+            self.show_status(f"[yellow]Empty value — to go back to the lower layers, press x on "
+                             f"{knob} to remove this slug's value.[/yellow]")
+            return
+        self._end_edit()
+        self.app.save_launch_setting(self, self._slug, {knob: val})  # type: ignore[attr-defined]
+
+    def _end_edit(self) -> None:
+        self._editing = ""
+        inp = self.query_one("#ls-input", Input)
+        inp.value = ""
+        inp.display = False
+        self.query_one("#ls-table", DataTable).focus()
+
+    def action_remove(self) -> None:
+        if self._editing:
+            return
+        row = self._current_row()
+        if row is None:
+            return
+        if row.saved is None:
+            self.show_status(f"[dim]Nothing is saved for {row.knob} on this slug — its value comes "
+                             f"from {row.source}.[/dim]")
+            return
+        self.app.remove_launch_setting(self, self._slug, [row.knob])  # type: ignore[attr-defined]
+
+    def action_reload(self) -> None:
+        if self._editing:
+            return
+        self.app.load_launch_settings(self, self._slug)  # type: ignore[attr-defined]
+
+    def action_cancel(self) -> None:
+        # esc leaves an edit first, then closes the form.
+        if self._editing:
+            self._end_edit()
+            self.show_status("")
+            return
+        self.dismiss(None)
+
+
 class LocalLayerScreen(ModalScreen):
     """[L] Manage the LOCAL layer (#1153) — list, rename, edit, remove.
 
@@ -9585,6 +9946,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     # Run & Operate · Catalog tab.
     ("primary_action", "Serve selected / primary action", "⏎ — serve the selected slug (reconcile-gated)"),
     ("explain", "Explain selected slug", "Catalog — detail + cross-rig benchmarks"),
+    ("launch_settings", "Launch settings…", "Catalog — see and change what the selected slug's next launch uses (\\[E])"),
     ("model_info", "Model info", "Catalog — metadata popup for the selected slug (\\[i])"),
     ("filter_catalog", "Filter catalog", "Catalog — filter by slug / engine / status"),
     ("toggle_catalog_model", "Model scope (Catalog)", "Catalog — narrow to one model (\\[\\] dropdown)"),
@@ -9797,6 +10159,9 @@ class CockpitApp(App):
         Binding("vertical_line", "catalog_columns", "Columns", show=False),
         Binding("u", "copy_endpoint", "API URL", show=False),
         Binding("e", "explain", "Explain", show=False),
+        # #1465 — [E] Launch settings for the selected slug: e explains a slug,
+        # E edits what its next launch uses (the switch.sh --set twin).
+        Binding("E", "launch_settings", "Launch settings", show=False),
         # [i] model-info popup (C6) — local-data metadata modal, sibling of Explain.
         Binding("i", "model_info", "Model info", show=False),
         # 2-mode merge: [1] = merged Run & Operate, [2] = Bring & Validate lane.
@@ -10104,6 +10469,7 @@ class CockpitApp(App):
         # nothing is serving).
         "copy_endpoint":    ({0}, {"tab-catalog", "tab-orchestration", "tab-containers", "tab-doctor"}),
         "explain":          ({0}, {"tab-catalog"}),  # Catalog (guards inside action)
+        "launch_settings":  ({0}, {"tab-catalog"}),  # Catalog — [E] form (guards inside action)
         "model_info":       ({0}, {"tab-catalog"}),  # Catalog — [i] popup (guards inside action)
         "set_default":      ({0}, {"tab-catalog"}),  # Catalog
         "clear_default":    ({0}, {"tab-catalog"}),  # Catalog
@@ -13738,6 +14104,90 @@ class CockpitApp(App):
                 status=entry.status,
             )
         )
+
+    def action_launch_settings(self) -> None:
+        """[E] — the Launch settings form for the selected catalog slug (merged
+        mode 0 · Catalog tab): what its next launch uses and where each value
+        comes from, per-slug edits, and a running container's drift."""
+        if self._active_mode != 0 or self._current_subtab() != "tab-catalog":
+            return
+        try:
+            entry = self.query_one("#catalog-pane", CatalogPane).selected_entry()
+        except Exception:
+            entry = None
+        if entry is None:
+            self.notify(
+                "No slug selected.", title="Launch settings", severity="warning", timeout=3
+            )
+            return
+        self.push_screen(LaunchSettingsScreen(entry.slug))
+
+    @work(group="launch-settings")
+    async def load_launch_settings(self, screen: "LaunchSettingsScreen", slug: str,
+                                   status: str = "") -> None:
+        """Resolve the slug's launch settings (+ the running container) and hand
+        them to the form. A resolver that can't run at all shows as unavailable."""
+        from . import launch_settings_store as _ls
+
+        try:
+            view = await self._data.launch_settings(slug)
+        except Exception as exc:          # never take the app down over a read
+            view = _ls.LaunchView(slug=slug, available=False,
+                                  reason=f"{type(exc).__name__}: {exc}")
+        try:
+            screen.set_view(view, status)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _launch_change_status(ch, verb: str) -> str:
+        """One markup block for a save / removal: the resolver's own words."""
+        from rich.markup import escape
+
+        if ch.problems:
+            what = "Not saved" if verb == "saved" else "Nothing removed"
+            lines = [f"[red]✗ {what} for {escape(ch.slug)}:[/red]"]
+            lines += [f"  [red]- {escape(p)}[/red]" for p in ch.problems]
+        elif ch.changed:
+            lines = [f"[green]✓ {verb.capitalize()} {escape(', '.join(ch.changed))} for "
+                     f"{escape(ch.slug)}[/green] [dim]({escape(ch.path)})[/dim] — applies from the "
+                     "next launch; a running container keeps the settings it started with."]
+        else:
+            lines = []
+        lines += [f"[dim]{escape(n)}[/dim]" for n in ch.notes]
+        lines += [f"[yellow]⚠ {escape(w)}[/yellow]" for w in ch.warnings]
+        return "\n".join(lines)
+
+    @work(group="launch-settings-write")
+    async def save_launch_setting(self, screen: "LaunchSettingsScreen", slug: str,
+                                  values: dict) -> None:
+        """Save per-slug values through the resolver (``switch.sh --set``); a
+        refusal comes back in its words and nothing is written."""
+        from rich.markup import escape
+
+        from . import launch_settings_store as _ls
+
+        try:
+            ch = await self._data.save_launch_settings(slug, values)
+        except _ls.LaunchSettingsError as exc:
+            screen.show_status(f"[red]✗ Not saved: {escape(str(exc))}[/red]")
+            return
+        self.load_launch_settings(screen, slug, self._launch_change_status(ch, "saved"))
+
+    @work(group="launch-settings-write")
+    async def remove_launch_setting(self, screen: "LaunchSettingsScreen", slug: str,
+                                    keys: list) -> None:
+        """Remove this slug's own values (``switch.sh --unset``)."""
+        from rich.markup import escape
+
+        from . import launch_settings_store as _ls
+
+        try:
+            ch = await self._data.remove_launch_settings(slug, list(keys))
+        except _ls.LaunchSettingsError as exc:
+            screen.show_status(f"[red]✗ Nothing removed: {escape(str(exc))}[/red]")
+            return
+        self.load_launch_settings(screen, slug, self._launch_change_status(ch, "removed"))
 
     def action_model_info(self) -> None:
         """[i] — the local-data model-info popup for the selected catalog row

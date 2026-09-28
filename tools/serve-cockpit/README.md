@@ -70,6 +70,7 @@ A model dir or token that an older c3 kept in its own `c3-settings.json` is move
 | `f` | Containers — log follow: arm/pause the live log tail for the selected container (Containers tab only; inside the staged-write modal `f` = force-start, which shadows app keys) |
 | `r` | refresh the catalog (re-reads the registry) |
 | `S` | settings — set Model Dir + HF token (`Ctrl+S` saves) |
+| `E` | **launch settings** for the selected Catalog slug — each knob its compose reads (KV offload, thinking, reasoning effort, `SPEC_N`), the value its next launch uses and where it comes from, the allowed values, and what the next launch would refuse. `⏎` saves a value for that slug, `x` removes it — the same resolver and messages as `switch.sh --set/--unset/--explain`. Changes apply on the next launch; a running container of the slug is compared knob by knob (`≠` where it started with something else). |
 | `N` | new pod — Operate · Orchestration: compose a model + GPU set (fit-checked, gated) |
 | `c` | **view the compose** behind the focused row — Catalog (what the slug will run), Containers, or a lane stage. Read-only; shows the profile header, the file's actual image/port/ctx/KV, and the raw YAML. *(On Orchestration `c` is power-cap.)* |
 | `Y` | copy the focused context to the clipboard |
