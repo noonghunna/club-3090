@@ -196,7 +196,7 @@ A driver grant does **not** mean your engine uses it. Each engine has its own sw
 | **vLLM** | **auto-enabled** by our composes' entrypoint on a grant | `NVLINK_MODE=pcie_p2p` to force | `NVLINK_MODE=force_off`, or `NCCL_P2P_DISABLE=1` on a raw `docker run` |
 | ↳ vLLM **custom all-reduce kernel** (rides on the transport) | ON with the transport at ≤2 GPUs; vLLM vetoes it itself above 2 PCIe-only GPUs (#786) | — | **`DISABLE_CUSTOM_ALL_REDUCE=1`** — drops the kernel, **keeps** the transport |
 | **llama.cpp** | ⚠️ **OFF** — opt-in regardless of the grant | `GGML_CUDA_P2P=1` **and** `--split-mode row`/`tensor` | unset `GGML_CUDA_P2P` |
-| **SGLang** | **used automatically on a grant** — no interconnect detection; NCCL picks the peer path itself (measured on the reference rig, 2026-09-28) | nothing to do | `NCCL_P2P_DISABLE=1` — ⚠️ reaches the container **only on composes that forward it**: as of 2026-09-28 that is 1 of 26 SGLang composes, so on the others it silently does nothing until the variable is added to `environment:` |
+| **SGLang** | **used automatically on a grant** — no interconnect detection; NCCL picks the peer path itself (measured on the reference rig, 2026-09-28) | nothing to do | `NCCL_P2P_DISABLE=1` (in `.env` or on the command line) — every multi-GPU SGLang compose forwards it; `test-compose-sglang-nccl-p2p-knob` keeps it that way |
 
 > ⭐ **Transport and kernel are two switches.** `NVLINK_MODE=force_off` turns off *both* — it discards the NCCL prefill win along with the kernel that is usually the actual problem ([#922](https://github.com/noonghunna/club-3090/issues/922), [#1332](https://github.com/noonghunna/club-3090/issues/1332)). `DISABLE_CUSTOM_ALL_REDUCE=1` is the narrow one:
 >

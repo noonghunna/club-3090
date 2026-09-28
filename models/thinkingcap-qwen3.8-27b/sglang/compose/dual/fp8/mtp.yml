@@ -334,6 +334,10 @@ services:
     ipc: host
     shm_size: "16gb"
     environment:
+      # PCIe P2P off-switch — bare, so docker forwards it only when the host sets it. On a driver
+      # that grants P2P, NCCL uses it automatically; NCCL_P2P_DISABLE=1 stages GPU↔GPU traffic
+      # through host memory instead (docs/PCIE_P2P.md §0c).
+      - NCCL_P2P_DISABLE
       - SPEC_N
       - CONTEXT_LENGTH
       - MEM_FRACTION
