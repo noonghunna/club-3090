@@ -791,6 +791,23 @@ if [[ -f "${_proc_version}" ]] && command grep -qi microsoft "${_proc_version}" 
   fi
 fi
 
+# ---------- Gateway key — one of its own on a fresh install (club-3090#1467) ----------
+# Unless a key is stored, the LiteLLM gateway (:4000, every interface) runs on the public
+# default key every club-3090 install shares. `gateway-key.sh init` stores a random one in
+# secrets.env (0600, never printed) ONLY on a fresh install: no key set anywhere, and no
+# sign the gateway or a client of it has been used here (its container or Open WebUI's,
+# this checkout's rendered gateway config, an omp / pi / Hermes setup, …; the full rule is
+# in gateway-key.sh). On an existing install it changes nothing — clients may hold the
+# current key — and says why. Before the model download, so SKIP_MODEL=1 runs it too.
+# club_config_load exported any STORED key into this shell above; unset that copy, so
+# init sees where it is stored. A key the user exported stays and counts as chosen.
+# Never fatal: the weights are what setup.sh is for.
+(
+  [[ -n "${CLUB3090_CONFIG_SOURCE[LITELLM_MASTER_KEY]:-}" ]] && unset LITELLM_MASTER_KEY
+  CLUB3090_DIR="${ROOT_DIR}" bash "${ROOT_DIR}/scripts/gateway-key.sh" init
+) || echo "[gateway-key] WARN: could not set up a gateway key (above); setup continues. Later: bash scripts/gateway-key.sh rotate" >&2
+echo ""
+
 # ---------- Tool checks ----------
 need() {
   command -v "$1" >/dev/null 2>&1 || {

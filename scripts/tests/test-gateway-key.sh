@@ -162,8 +162,9 @@ k1="$(stored)"
 [[ $rc -eq 0 ]] && command grep -qx 'HF_TOKEN=hf_keepme' "$G/secrets.env" && ok "rotate keeps the other secrets" || bad "rotate lost HF_TOKEN from secrets.env (rc=$rc)"
 [ "$(command grep -c '^LITELLM_MASTER_KEY=' "$G/secrets.env")" = "1" ] || bad "secrets.env must hold exactly one LITELLM_MASTER_KEY line"
 [[ -n "$k1" && "$out" != *"$k1"* ]] && ok "rotate never prints the key" || bad "rotate printed the key"
-[[ "$out" == *"sudo docker compose --env-file \"\$CLUB3090_COMPOSE_ENV_FILE\" up -d"* && "$out" == *"gateway-key.sh status"* ]] \
-  && ok "rotate prints the commands that recreate the gateway, and how to check it took" || bad "rotate must print the recreate + check commands: $out"
+[[ "$out" == *" $ROOT/scripts/gpu-mode.sh gateway"* && "$out" == *"gateway-key.sh status"* && "$out" == *"rotate --apply"* ]] \
+  && ok "rotate prints the command that recreates only the gateway (gpu-mode gateway), how to check it took, and --apply" \
+  || bad "rotate must print gpu-mode gateway + the check + --apply: $out"
 
 out="$(gk status 2>&1)"
 [[ "$out" == *"your own (per install)"* && "$out" != *"$k1"* ]] && ok "status after a rotate: your own key, not printed" || bad "status after rotate: $out"

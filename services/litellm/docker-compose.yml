@@ -21,8 +21,8 @@ services:
       # hands to compose. Unset, it is this public default, the same on every install:
       # anyone on your network can then use the gateway (gpu-mode warns while it is).
       # Starting it by hand, a plain `docker compose up` here does NOT read secrets.env
-      # and comes up on the default: use gpu-mode, or the commands `gateway-key.sh rotate`
-      # prints (they pass your settings with --env-file, as gpu-mode does).
+      # and comes up on the default: use gpu-mode — `gpu-mode gateway` recreates just this
+      # container with your settings (--env-file), which `gateway-key.sh rotate --apply` runs.
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key}
       # Request logging for troubleshooting — OFF unless the starting shell sets it.
       # Bare pass-through: `- LITELLM_LOG=${LITELLM_LOG:-}` would set it to the EMPTY

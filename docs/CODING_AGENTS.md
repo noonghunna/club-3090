@@ -22,7 +22,7 @@ open. The detail is in the section named in the last column.
 | Hermes **resumes on your default model**, which may be a cloud one | `hermes chat --resume <id>` without a provider | Repeat `--provider custom:club -m qwen3.8-27b` (*Hermes Agent — setup*) |
 | Hermes tools **reach outside the machine**, or `computer_use` **drives your desktop** | Hermes's default toolsets (`web`, `browser`, `x_search`, `image_gen`, `tts`, `connections`, `computer_use`) | Name a local set with `-t` (*Hermes Agent — setup*) |
 | **Full prompts and replies in the gateway's log** | request logging is on (`scripts/litellm-log.sh on`) | Turn it off when done; `gpu-mode status` warns while it's on (*Troubleshooting a session*) |
-| **Anyone on your network can use the gateway**, including the cloud routes in your `config.local.yaml` | the gateway runs on the public default key (the same on every install) until you rotate it, or on no key at all; it listens on every interface (`4000:4000`) | `bash scripts/gateway-key.sh rotate`: a key of your own, kept in `~/.config/club-3090/secrets.env`. Never remove the key. `400 No connected db.` means the client's key is wrong: fix the key, not the gateway (*The gateway key*) |
+| **Anyone on your network can use the gateway**, including the cloud routes in your `config.local.yaml` | no key of its own is stored (`setup.sh` stores one only on a fresh install), so the gateway runs on the public default, the same on every install; or it runs on no key at all. It listens on every interface (`4000:4000`) | `bash scripts/gateway-key.sh rotate --apply`: a key of your own, kept in `~/.config/club-3090/secrets.env`. Never remove the key. `400 No connected db.` means the client's key is wrong: fix the key, not the gateway (*The gateway key*) |
 
 ## What the gateway sets
 
@@ -91,43 +91,79 @@ Every client sends the gateway's key, `LITELLM_MASTER_KEY`. The omp, pi and Herm
 setup scripts write it into the agent's config for you; Claude Code, or anything
 else you point at the gateway by hand, needs it pasted in.
 
-**Until you rotate it, the key is the public default** — `sk-litellm-master-key`,
-the fallback in `services/litellm/docker-compose.yml`, the same on every club-3090
-install. The gateway listens on every interface, so anyone on your network who knows
-club-3090 can use your GPUs and the cloud routes in your `config.local.yaml`.
-`gpu-mode` warns each time it starts the gateway on that key.
-
-Give the gateway a key of its own:
+Without a key of its own, the gateway runs on **the public default** —
+`sk-litellm-master-key`, the fallback in `services/litellm/docker-compose.yml`, the
+same on every club-3090 install. The gateway listens on every interface, so anyone
+on your network who knows club-3090 can use your GPUs and the cloud routes in your
+`config.local.yaml`. `gpu-mode` warns each time it starts the gateway on that key.
 
 ```bash
-bash scripts/gateway-key.sh status   # public default or your own? (never prints the key)
-bash scripts/gateway-key.sh rotate   # stores a new random key, then prints the steps below
+bash scripts/gateway-key.sh status          # public default or your own? (never prints the key)
+bash scripts/gateway-key.sh rotate --apply  # a new random key, then steps 1 and 2 below
+bash scripts/gateway-key.sh rotate          # the same new key, but only prints the steps
 ```
 
-`rotate` writes the key to `~/.config/club-3090/secrets.env` (mode 0600;
-`CLUB3090_CONFIG_DIR` moves the directory) and never prints it. When you need to
-paste it somewhere, it is the `LITELLM_MASTER_KEY=` line of that file. Nothing
-changes until the gateway is recreated, so clients keep working until then. The
-steps it prints:
+**A fresh install gets its own key.** `setup.sh` runs `gateway-key.sh init`, which
+stores a random key, but only when nothing shows that this machine has used the
+gateway, since a client may already hold the current key. It keeps the current key,
+and says why, if any of these holds:
 
-1. **Recreate the gateway** on the new key: only the `litellm` container, the way
-   `gpu-mode` starts it (the commands are printed; any `gpu-mode` mode that starts
-   the gateway does the same, but also switches models). A `docker restart` is not
-   enough — a container keeps the key it was created with.
+- `LITELLM_MASTER_KEY` is set in the shell, `club3090.env`, `secrets.env` or the
+  repo `.env`, even empty;
+- `services/litellm/config.runtime.yaml` exists in the checkout (gpu-mode and
+  `switch.sh` render it whenever they start or sync the gateway; `gpu-mode off`
+  removes the container, not this file);
+- Docker has a `litellm` or `open-webui` container, running or stopped, or an Open
+  WebUI data volume;
+- Docker is installed but can't be asked (not running, or your user can't reach it
+  without sudo), so none of that can be ruled out. Docker not installed counts as
+  no container;
+- something answers at the gateway's address;
+- an omp, pi or Hermes config holds the provider its setup script wrote.
+
+On an existing install nothing changes until you rotate.
+
+`rotate` and `init` write the key to `~/.config/club-3090/secrets.env` (mode 0600;
+`CLUB3090_CONFIG_DIR` moves the directory) and never print it. When you need to
+paste it somewhere, it is the `LITELLM_MASTER_KEY=` line of that file. After a
+rotate nothing changes until the gateway is recreated, so clients keep working until
+then. The steps (`rotate --apply` does 1 and 2, in that order):
+
+1. **Recreate the gateway** on the new key: `gpu-mode gateway` (needs sudo). It
+   re-renders the gateway's routes, recreates only the `litellm` container with your
+   settings, waits for it to answer and prints `gateway-key.sh status`. No model is
+   started or stopped; a stopped gateway is started. A `docker restart` is not
+   enough, because a container keeps the key it was created with. Request logging
+   (`scripts/litellm-log.sh`) comes back off, as after any start.
 2. **Re-run the agent setups** that point at this rig: `omp-setup.sh`, `pi-setup.sh`
    and `hermes-setup.sh` read the key from `secrets.env` (a `LITELLM_MASTER_KEY` set
    in the shell wins, for a gateway on another box). pi and Hermes read the
-   gateway's routes with it, so run them after step 1.
+   gateway's routes with it, so they run after step 1. A setup pointed at another
+   box's gateway is left out. If step 1 fails, `--apply` stops there: the key is
+   stored and nothing else has changed.
 3. **Update by hand** anything you pasted the old key into: Claude Code's
-   `ANTHROPIC_API_KEY` (*Claude Code*), an Open WebUI connection to `:4000`.
+   `ANTHROPIC_API_KEY` (*Claude Code*) and an existing Open WebUI connection (below).
 
 Until then those clients get `400 No connected db.`, LiteLLM's answer to a key it
 doesn't know.
 
+**Open WebUI.** Its connection to the gateway (`http://host.docker.internal:4000/v1`)
+uses the gateway's key: `services/openwebui/docker-compose.yml` sets it to
+`${LITELLM_MASTER_KEY:-sk-litellm-master-key}`, which gpu-mode passes to compose with
+your other settings. Open WebUI (v0.11.4) copies that variable into its database
+only when the database has no value yet, which in practice means a new
+`open-webui-data` volume. After that the stored value is used. So on an existing
+volume, after a rotate, set it yourself: **Admin → Settings → Connections →** the
+`:4000` connection **→** key **→ Save**. (`ENABLE_PERSISTENT_CONFIG=false` would make
+the variable win, but Open WebUI would then also forget every setting changed in its
+UI, so the compose doesn't set it.) `OWUI_OPENAI_API_KEYS` still replaces the whole
+key list. `setup-ai-studio.sh` adds a missing `:4000` connection to an older volume
+with a placeholder key; set that one the same way.
+
 ⚠️ Two ways of (re)creating the gateway don't read `secrets.env` yet, and bring it
 back on the public default: a plain `docker compose up` in `services/litellm`, and
-starting it from c3's Containers tab. Use `gpu-mode`, `scripts/litellm-log.sh`, or
-the commands `rotate` prints.
+starting it from c3's Containers tab. Use `gpu-mode gateway` (or any `gpu-mode`
+mode) or `scripts/litellm-log.sh`.
 
 ## omp (oh-my-pi) — setup
 
@@ -174,7 +210,7 @@ providers:
   # >>> club-3090 local models (generated by club-3090 scripts/omp-setup.sh; re-run to refresh) >>>
   club:
     baseUrl: http://127.0.0.1:4000/v1        # the gateway, never an engine port
-    apiKey: sk-litellm-master-key            # your gateway key; the public default until you rotate it
+    apiKey: sk-litellm-master-key            # your gateway key; shown here as the public default
     api: openai-completions
     discovery:
       type: litellm                          # live models + model_info from /model_group/info
@@ -436,7 +472,7 @@ What it writes with the vLLM dual-fast slug up:
 - `maxTokens: 32768` is the reply cap (thinking plus answer), as for omp. Sampling
   is not set, so each slug's server-side defaults apply.
 - `apiKey` is your gateway key, read from `~/.config/club-3090/secrets.env`; the
-  block shows the public default, which is what an install that never rotated it
+  block shows the public default, which is what an install without a key of its own
   gets (*The gateway key*).
 
 Checked through the gateway on the reference rig (pi 0.87.1, SGLang and vLLM
@@ -488,7 +524,7 @@ providers:
   club:
     name: club-3090 local models (scripts/hermes-setup.sh)
     api: http://127.0.0.1:4000/v1
-    api_key: sk-litellm-master-key   # your gateway key; the public default until you rotate it
+    api_key: sk-litellm-master-key   # your gateway key; shown here as the public default
     transport: chat_completions
     default_model: qwen3.8-27b
     models:
@@ -686,10 +722,10 @@ In `~/.claude/settings.json`:
 ```
 
 - `ANTHROPIC_BASE_URL` is the gateway itself (no `/v1`), never an engine port.
-  `ANTHROPIC_API_KEY` is your gateway key: the public default,
-  `sk-litellm-master-key`, until you rotate it, then the `LITELLM_MASTER_KEY=` line
-  of `~/.config/club-3090/secrets.env` (*The gateway key*). Update it here after
-  every rotate.
+  `ANTHROPIC_API_KEY` is your gateway key: the `LITELLM_MASTER_KEY=` line of
+  `~/.config/club-3090/secrets.env`, or the public default `sk-litellm-master-key`
+  when none is stored there (`gateway-key.sh status` says which; *The gateway key*).
+  Update it here after every rotate.
 - With discovery on, Claude Code lists every route the gateway serves. `model` must
   be a served id: `qwen3.8-27b` on every Qwen3.8 slug, `thinkingcap38-27b` on the
   ThinkingCap ones.

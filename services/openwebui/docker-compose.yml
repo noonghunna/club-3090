@@ -54,13 +54,23 @@ services:
       # (setup-ai-studio.sh migrates legacy volumes to this same wiring: it
       # registers :4000 + the unrouted :8090 director and drops the pre-collapse
       # per-port connections; it also honors OWUI_OPENAI_API_BASE_URLS and stays
-      # out of the way when the override is set.) Backends are no-auth on
-      # localhost, so the key is a placeholder.
+      # out of the way when the override is set.)
       - "OPENAI_API_BASE_URLS=${OWUI_OPENAI_API_BASE_URLS:-http://host.docker.internal:4000/v1;http://host.docker.internal:8090/v1}"
       # ⚠️ COUNT MUST MATCH *_URLS above — positional, ;-separated pairs. Nothing
       # validates this, so a backend added to one list and not the other silently
       # leaves that entry unpaired.
-      - "OPENAI_API_KEYS=${OWUI_OPENAI_API_KEYS:-sk-noauth;sk-noauth}"
+      # Keys: the gateway's own (club-3090#1467) — LITELLM_MASTER_KEY from your
+      # club-3090 settings (secrets.env), which gpu-mode hands to compose, else the
+      # gateway's public default; the gateway refuses any other key (400 "No connected
+      # db."). The director (:8090) has no auth, so its key is a placeholder.
+      # ⚠️ SEED ONLY: at startup Open WebUI v0.11 copies OPENAI_API_KEYS into its
+      # database (openai.api_keys) only when the database holds no value yet — a new
+      # volume. From then on the stored value is used and this variable is ignored
+      # (ENABLE_PERSISTENT_CONFIG=false would make it win, but would also forget every
+      # setting changed in the UI). So an existing volume keeps the key it has: after a
+      # key rotate, update the connection by hand — Admin → Settings → Connections →
+      # http://host.docker.internal:4000/v1 → key → Save.
+      - "OPENAI_API_KEYS=${OWUI_OPENAI_API_KEYS:-${LITELLM_MASTER_KEY:-sk-litellm-master-key};sk-noauth}"
       # Ollama removed from the stack 2026-06-22 — disable the API so OWUI doesn't
       # probe a dead :11434 on boot (chat routes through the OpenAI API above).
       - ENABLE_OLLAMA_API=false

@@ -19,6 +19,10 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 # any clone. Override with CLUB3090_DIR=... if needed.
 CLUB3090_DIR="${CLUB3090_DIR:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}"
 COMPOSE_BASE="$CLUB3090_DIR/services"
+# This script's own scripts/ dir, symlink resolved: the code gpu-mode runs (lib/,
+# gateway-key.sh) comes from here. `dirname "${BASH_SOURCE[0]}"` alone is the
+# symlink's dir when run as /usr/local/bin/gpu-mode, where no lib/ exists.
+GPU_MODE_SCRIPTS="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 # Settings for `sudo docker compose` (club-3090#1466). sudo strips the environment, so
 # each compose call gets the resolved settings (your club-3090 config, then the repo
@@ -29,7 +33,7 @@ COMPOSE_BASE="$CLUB3090_DIR/services"
 # The loader is library code, so it comes from THIS script's tree; CLUB3090_DIR is
 # only the clone whose settings (its legacy .env) are read.
 # shellcheck source=lib/club-config.sh
-. "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/lib/club-config.sh"
+. "$GPU_MODE_SCRIPTS/lib/club-config.sh"
 # Studio paths YOU exported, captured BEFORE comfyui-paths.sh (below) exports its derived
 # ones: passed through sudo on every compose call, so a one-run override reaches the
 # containers without being saved. Derived values are not passed — the saved value, else
@@ -177,12 +181,12 @@ start_service() {
     # bind source and the proxy fails to parse its config. This is also the
     # bootstrap on a fresh checkout. --no-restart: we are about to start it.
     if [[ "$1" == "litellm" ]]; then
-        bash "$(dirname "${BASH_SOURCE[0]}")/lib/litellm-sync.sh" --no-restart --quiet || true
+        bash "$GPU_MODE_SCRIPTS/lib/litellm-sync.sh" --no-restart --quiet || true
     fi
     printf "  ${GREEN}▲${NC} Starting %-12s" "$1..."
     compose_cmd "$1" "up -d" && echo "done" || { echo "failed"; c3_mark_start_failure "$1"; }
     if [[ "$1" == "litellm" && "$(_gateway_key)" == "$GATEWAY_DEFAULT_KEY" ]]; then
-        echo -e "  ${YELLOW}⚠ The gateway is on the public default key — anyone on your network can use it: bash $CLUB3090_DIR/scripts/gateway-key.sh rotate${NC}"
+        echo -e "  ${YELLOW}⚠ The gateway is on the public default key — anyone on your network can use it: bash $CLUB3090_DIR/scripts/gateway-key.sh rotate --apply${NC}"
     fi
 }
 
@@ -332,6 +336,52 @@ mode_upgrade() {
     show_service_images
 }
 
+# `gpu-mode gateway` (club-3090#1467): recreate ONLY the LiteLLM gateway, the way every
+# mode starts it — routes re-rendered first, then `compose_at`, so the settings (the
+# gateway key in secrets.env above all) reach compose through the per-call --env-file.
+# This is the restart `gateway-key.sh rotate --apply` needs: no model is started or
+# stopped. --force-recreate, because a container keeps the environment it was created
+# with and reads config.runtime.yaml only at start, so a plain `up -d` can leave the old
+# key or routes in place. Starts the gateway if it was stopped. Request logging
+# (scripts/litellm-log.sh) comes back off, as after any start. Waits for
+# /health/liveliness (GPU_MODE_GATEWAY_WAIT_S, default 120) at CLUB3090_GATEWAY_URL
+# (default http://127.0.0.1:4000), then prints gateway-key.sh status.
+mode_gateway() {
+    local url="${CLUB3090_GATEWAY_URL:-http://127.0.0.1:4000}" limit="${GPU_MODE_GATEWAY_WAIT_S:-120}" waited=0
+    url="${url%/}"; url="${url%/v1}"
+    echo -e "${CYAN}═══ Recreating the LiteLLM gateway ═══${NC}"
+    echo "Recreates ONLY the litellm container, with your current settings (the gateway key included)."
+    echo "No model is started or stopped."
+    echo ""
+    if [ ! -f "$COMPOSE_BASE/litellm/docker-compose.yml" ]; then
+        echo -e "  ${RED}✗ no $COMPOSE_BASE/litellm/docker-compose.yml${NC}" >&2
+        c3_mark_start_failure "litellm"; return 0
+    fi
+    printf "  ${GREEN}▲${NC} Rendering the gateway's routes..."
+    if bash "$GPU_MODE_SCRIPTS/lib/litellm-sync.sh" --no-restart --quiet; then
+        echo "done"
+    else
+        echo "failed — starting with the routes already on disk"
+    fi
+    printf "  ${GREEN}▲${NC} Recreating %-12s" "litellm..."
+    if ! compose_at "$COMPOSE_BASE/litellm" "up -d --force-recreate"; then
+        echo "failed"; c3_mark_start_failure "litellm"; return 0
+    fi
+    echo "done"
+    printf "  ${GREEN}◔${NC} Waiting for %s/health/liveliness..." "$url"
+    until curl -sf -m 2 -o /dev/null "$url/health/liveliness" 2>/dev/null; do
+        if [ "$waited" -ge "$limit" ]; then
+            echo "no answer after ${limit}s"
+            echo -e "  ${RED}✗ The gateway did not come up.${NC} Inspect: sudo docker logs litellm" >&2
+            c3_mark_start_failure "litellm (not answering)"; return 0
+        fi
+        sleep 2; waited=$((waited + 2))
+    done
+    echo "up"
+    echo ""
+    CLUB3090_DIR="$CLUB3090_DIR" CLUB3090_GATEWAY_URL="$url" bash "$GPU_MODE_SCRIPTS/gateway-key.sh" status || true
+}
+
 # Project-specific helpers
 start_27b_dual_mtp() {
     printf "  ${GREEN}▲${NC} Starting 27b-dual-mtp..."
@@ -402,8 +452,10 @@ stop_gemma_12b() {
 # GPU-bound — mutex with all vLLM / SGLang / llama-server LLM serving.
 start_comfyui() {
     printf "  ${GREEN}▲${NC} Starting comfyui..."
-    # Pin COMFYUI_ROOT into repo-root .env so the compose's `--env-file` mounts the SAME tree the
-    # downloads went into (not the /mnt default) on any rig whose MODEL_DIR isn't /mnt — #510/#530.
+    # Save the derived COMFYUI_ROOT (+ COMFYUI_OUTPUT_DIR) to your club-3090 settings
+    # (club3090.env, #1481) unless one is saved already, so the per-call settings file
+    # compose_at passes as --env-file mounts the SAME tree the downloads went into (not the
+    # /mnt default) on any rig whose MODEL_DIR isn't /mnt — #510/#530.
     type c3_persist_comfy_root >/dev/null 2>&1 && c3_persist_comfy_root || true
     # Pre-create the bind-mount sources USER-OWNED before sudo docker can root-own
     # them (#715 gap 1); a damaged (root-owned) tree fails loud with the chown fix.
@@ -1326,6 +1378,10 @@ mode_off() {
 # is the default; --json emits the [{name,group,description,services,ports,gpus}]
 # array the contract specifies. services/ports are comma-joined in the TSV and
 # split into JSON arrays; gpus is the human GPU-usage note.
+#
+# Not listed, like status / upgrade / service-images: `gateway` (recreate only the
+# LiteLLM gateway). It is a command, not a scene — c3 renders every row it doesn't hide
+# as a scene to switch to, and its hidden set (power-cap, prune, prune-all) lives in c3.
 list_modes_data() {
     # name<TAB>group<TAB>description<TAB>services<TAB>ports<TAB>gpus
     cat <<'TSV'
@@ -1421,6 +1477,10 @@ usage() {
     echo "                     spark-dashboard) that are behind their pinned image — run after a"
     echo "                     'git pull' that bumps one. Backs up Qdrant's volume to backups/ first"
     echo "                     (its storage migrates forward); '--no-backup' skips that."
+    echo "  gateway            Recreate ONLY the LiteLLM gateway (:4000) with your current settings —"
+    echo "                     after 'gateway-key.sh rotate' (its --apply runs this), or to reload its"
+    echo "                     routes. No model is started or stopped; starts the gateway if it was"
+    echo "                     stopped. Request logging (litellm-log.sh) comes back off."
     echo ""
     echo "  GPU power cap (both 3090s; normally capped below stock for quiet/cool operation):"
     echo "  power-cap on       Re-apply the cap nvidia-power-cap.service defines (read from the"
@@ -1449,6 +1509,7 @@ case "${1:-}" in
     off)                mode_off ;;
     status)             show_status ;;
     upgrade)            mode_upgrade "${2:-}" ;;
+    gateway)            mode_gateway ;;          # recreate only the LiteLLM gateway (#1467)
     service-images)     show_service_images ;;   # just the drift section (update.sh calls it)
     power-cap|powercap) mode_powercap "${2:-status}" ;;
     prune)              mode_prune ;;
