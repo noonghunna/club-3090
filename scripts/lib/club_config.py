@@ -250,9 +250,11 @@ def _locked(directory: Path):
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
-def _rewrite(path: Path, updates: dict[str, str], removals: set[str]) -> None:
+def _rewrite(path: Path, updates: dict[str, str], removals: set[str], lock_dir: Path | None = None) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with _locked(path.parent):
+    lock_dir = lock_dir or path.parent
+    lock_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with _locked(lock_dir):
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
             mode = path.stat().st_mode & 0o777
@@ -303,13 +305,26 @@ def set_values(values: dict[str, str], which: str = "global", environ=None) -> P
     return path
 
 
-def unset_values(keys, which: str = "global", environ=None) -> Path:
+def unset_values(keys, which: str = "global", environ=None, repo_root=None) -> list[Path]:
+    """Remove keys from the chosen store file and, when `repo_root` is given, from
+    that checkout's legacy .env as well. The repo .env is read last, so clearing a
+    setting only in the store would let an old copy there come back into effect —
+    e.g. a cleared model-default pin. Returns the files actually rewritten. The
+    legacy .env keeps its comments, order and mode, and is never created; its lock
+    lives in the config dir, so nothing is added to the checkout."""
     for k in keys:
         check_key(k)
+    touched = []
     path = target_path(which, environ)
     if path.exists():
         _rewrite(path, {}, set(keys))
-    return path
+        touched.append(path)
+    if repo_root is not None:
+        legacy = Path(repo_root) / ".env"
+        if legacy.is_file() and set(keys) & set(parse_env_file(legacy)):
+            _rewrite(legacy, {}, set(keys), lock_dir=config_dir(environ))
+            touched.append(legacy)
+    return touched
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -333,6 +348,7 @@ def main(argv=None) -> int:
     c.add_argument("--out", help="path to write (default: a new 0600 temp file)")
     u = sub.add_parser("unset", help="remove keys")
     u.add_argument("--file", choices=("global", "secrets"), default="global")
+    u.add_argument("--root", help="also remove the keys from this checkout's legacy .env")
     u.add_argument("keys", nargs="+", metavar="KEY")
     a = ap.parse_args(argv)
     try:
@@ -362,7 +378,9 @@ def main(argv=None) -> int:
                 vals[k] = v
             print(f"[config] saved {', '.join(vals)} to {set_values(vals, a.file)}", file=sys.stderr)
         elif a.cmd == "unset":
-            print(f"[config] removed {', '.join(a.keys)} from {unset_values(a.keys, a.file)}", file=sys.stderr)
+            touched = unset_values(a.keys, a.file, repo_root=a.root)
+            where = ", ".join(str(p) for p in touched) or "nowhere (not set)"
+            print(f"[config] removed {', '.join(a.keys)} from {where}", file=sys.stderr)
     except ConfigError as e:
         print(f"[config] ERROR: {e}", file=sys.stderr)
         return 2

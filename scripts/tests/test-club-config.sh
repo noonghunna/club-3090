@@ -237,6 +237,31 @@ else
   [[ $rt_ok -eq 1 ]] && ok "round trip: ${#RT[@]} written values read back unchanged by bash and Python (docker compose not available here)"
 fi
 
+# unset --root: clearing a setting also clears the checkout's legacy .env, which is
+# read last — otherwise an old copy there (a cleared model-default pin) comes back.
+U="$T/u"; UR="$T/ur"; mkdir -p "$U" "$UR"
+printf 'PIN=store\nKEEP=1\n' > "$U/club3090.env"
+printf '# my legacy settings\nMODEL_DIR=/m\nexport PIN=legacy\n\n# tail\nOTHER=x\n' > "$UR/.env"; chmod 640 "$UR/.env"
+ur() { env -i PATH="$PATH" HOME="$T/home" CLUB3090_CONFIG_DIR="$U" python3 "$PY" "$@"; }
+msg="$(ur unset --root "$UR" PIN 2>&1)"
+[[ "$(cat "$U/club3090.env")" == "KEEP=1" ]] || bad "unset --root left the store: $(cat "$U/club3090.env")"
+[[ "$(cat "$UR/.env")" == $'# my legacy settings\nMODEL_DIR=/m\n\n# tail\nOTHER=x' ]] \
+  && ok "unset --root clears the key from the store AND the legacy .env, keeping its comments and order" \
+  || { bad "legacy .env after unset --root:"; sed 's/^/      /' "$UR/.env" >&2; }
+[[ "$(stat -c %a "$UR/.env")" == 640 ]] && ok "the legacy .env keeps its mode" || bad "legacy .env mode $(stat -c %a "$UR/.env")"
+[[ -z "$(ls -A "$UR" | command grep -vx '.env')" ]] && ok "nothing added to the checkout (lock and temp files live elsewhere)" \
+  || bad "unset --root left files in the checkout: $(ls -A "$UR" | command grep -vx '.env')"
+command grep -qF "$UR/.env" <<<"$msg" && command grep -qF "$U/club3090.env" <<<"$msg" \
+  && ok "unset reports every file it changed" || bad "unset message: $msg"
+b="$(env -i PATH="$PATH" HOME="$T/home" CLUB3090_CONFIG_DIR="$U" bash -c '. "$1"; club_config_resolve "$2"' _ "$SH" "$UR" | command grep -c '^PIN	' || true)"
+[[ "$b" == 0 ]] && ok "after unset --root the key resolves nowhere" || bad "PIN still resolves after unset --root"
+NR="$T/nr"; mkdir -p "$NR"
+ur unset --root "$NR" KEEP 2>/dev/null
+[[ ! -e "$NR/.env" ]] && ok "unset --root never creates a legacy .env" || bad "unset --root created $NR/.env"
+printf 'ONLYREPO=1\n' > "$NR/.env"; before="$(stat -c %Y "$NR/.env")"; sleep 1
+ur unset --root "$NR" ABSENT 2>/dev/null
+[[ "$(stat -c %Y "$NR/.env")" == "$before" ]] && ok "a legacy .env without the key is not rewritten" || bad "legacy .env rewritten for an absent key"
+
 # Concurrent writers: the lock must not lose an update.
 C="$T/conc"
 for i in $(seq 1 20); do env -i PATH="$PATH" HOME="$T/home" CLUB3090_CONFIG_DIR="$C" python3 "$PY" set "K$i=v$i" 2>/dev/null & done; wait

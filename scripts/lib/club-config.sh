@@ -12,7 +12,9 @@
 #   club_config_get KEY [ROOT]      one setting's effective value, or exit 1
 #   club_config_compose_env_file [ROOT]   0600 temp file for docker compose --env-file
 #   club_config_set [--file global|secrets] KEY=VALUE...   the ONE writer (python)
-#   club_config_unset [--file global|secrets] KEY...
+#   club_config_unset [--file global|secrets] [--root ROOT] KEY...
+#                                   --root also clears ROOT/.env (read last, so an old
+#                                   copy there would otherwise come back into effect)
 #
 # ROOT is a repo checkout whose legacy .env is read last. Precedence, highest
 # first: the shell > club3090.env > secrets.env > ROOT/.env. A variable already
