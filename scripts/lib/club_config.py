@@ -39,6 +39,13 @@ alter (quotes, ``$``, backslashes, `` #``, surrounding whitespace, newlines) are
 refused. Comments and key order are kept; the file is replaced atomically under a
 lock, and ``secrets.env`` is created 0600.
 
+USER-FACING: ``bash scripts/settings.sh`` (show, get, set, unset, migrate, path,
+compose-env-file) is the one command for people to see and change settings; it is
+a thin wrapper around ``settings_main`` here. ``migrate`` copies the repo .env
+into the store and never changes that file. report.sh's "Settings" section is
+``settings_report_markdown`` (CLI: ``settings-report --root ROOT``), which has no
+way to print a secret.
+
 Standard library only: the launcher path must run on a bare ``python3``.
 """
 
@@ -133,8 +140,12 @@ def is_secret(key: str, source: str) -> bool:
     return source == SECRETS_FILE or bool(_SECRET_NAME_RE.search(key))
 
 
-def redact(resolved: dict[str, tuple[str, str]]) -> dict[str, tuple[str, str]]:
-    return {k: (s, ("<set, hidden>" if v else "<empty>") if is_secret(k, s) else v)
+def redact(resolved: dict[str, tuple[str, str]], secret_keys=()) -> dict[str, tuple[str, str]]:
+    """Hide every secret value. `secret_keys` hides more keys whatever their
+    winning source — settings.sh passes the keys secrets.env holds, so a value
+    kept there stays hidden even when the shell or club3090.env overrides it."""
+    extra = set(secret_keys)
+    return {k: (s, ("<set, hidden>" if v else "<empty>") if is_secret(k, s) or k in extra else v)
             for k, (s, v) in resolved.items()}
 
 
@@ -327,8 +338,455 @@ def unset_values(keys, which: str = "global", environ=None, repo_root=None) -> l
     return touched
 
 
+# ── the settings command (scripts/settings.sh) and report.sh's section ──────
+# settings.sh is a thin wrapper around settings_main(); every rule and message
+# lives here, next to the loader, so the command, the launchers and c3 can't
+# disagree about a setting. store_file_for / save_settings / unset_everywhere /
+# migrate / pending_migration / settings_rows are plain functions for c3 to reuse.
+SETTINGS_CMD = "bash scripts/settings.sh"
+
+
+def _secret_keys(environ=None) -> set[str]:
+    """The keys secrets.env holds. They are hidden whatever their name, and
+    whichever layer wins."""
+    return set(parse_env_file(target_path("secrets", environ)))
+
+
+def store_file_for(key: str, environ=None) -> str:
+    """Where `settings.sh set` saves `key`: "secrets" for a credential-looking name
+    (is_secret) or a key secrets.env already holds (it was filed with the
+    secrets; moving it to club3090.env would drop it out of the 0600 file), else
+    "global"."""
+    return "secrets" if is_secret(key, "") or key in _secret_keys(environ) else "global"
+
+
+def save_settings(values: dict[str, str], environ=None):
+    """`settings.sh set`. Every pair is checked before anything is written, so one
+    refused value saves nothing. Each key goes to store_file_for(key). A key saved
+    to secrets.env is then removed from club3090.env: that file is read first, so
+    a copy there would keep the old value in effect (and keep a credential outside
+    the 0600 file). Returns ({path: [keys saved]}, {path: [keys removed]})."""
+    for k, v in values.items():
+        check_key(k)
+        check_value(k, v)
+    groups: dict[str, dict[str, str]] = {"global": {}, "secrets": {}}
+    for k, v in values.items():
+        groups[store_file_for(k, environ)][k] = v
+    saved, removed = {}, {}
+    for which in ("global", "secrets"):
+        if groups[which]:
+            saved[set_values(groups[which], which, environ)] = list(groups[which])
+    glob = target_path("global", environ)
+    shadowed = [k for k in groups["secrets"] if k in parse_env_file(glob)]
+    if shadowed:
+        _rewrite(glob, {}, set(shadowed))
+        removed[glob] = shadowed
+    return saved, removed
+
+
+def unset_everywhere(keys, repo_root=None, environ=None) -> dict:
+    """`settings.sh unset`: remove keys from club3090.env, secrets.env and, with
+    `repo_root`, that checkout's legacy .env — a copy left in any of them would
+    still be read. Only files holding one of the keys are rewritten (the legacy
+    .env as in unset_values: comments, order and mode kept, lock in the config
+    dir, never created). Returns {path: [keys removed]}."""
+    keys = list(dict.fromkeys(keys))
+    for k in keys:
+        check_key(k)
+    files = [(target_path("global", environ), None), (target_path("secrets", environ), None)]
+    if repo_root is not None:
+        files.append((Path(repo_root) / ".env", config_dir(environ)))
+    removed = {}
+    for path, lock_dir in files:
+        present = [k for k in keys if k in parse_env_file(path)]
+        if present and path.is_file():
+            _rewrite(path, {}, set(present), lock_dir=lock_dir)
+            removed[path] = present
+    return removed
+
+
+def _reason(key: str, err: Exception) -> str:
+    msg = str(err)
+    return msg[len(key) + 2:] if msg.startswith(f"{key}: ") else msg
+
+
+def migrate(repo_root, dry_run: bool = False, environ=None) -> dict:
+    """Copy every setting in `repo_root`/.env into the store (`settings.sh migrate`).
+
+    * A credential-looking name (is_secret) goes to secrets.env, the rest to
+      club3090.env.
+    * A key either store file already holds is skipped: the store wins, as it
+      already does when both are read. `differs` lists the ones whose value
+      differs, with secret values left out (None).
+    * A value the writer refuses stays where it is (it is still read) and is
+      listed in `refused` with the writer's reason, never the value.
+    * The repo .env is never modified or deleted — only read. It stays the last
+      layer read, so no effective value changes, and running migrate again
+      copies nothing.
+    * dry_run builds the same report and writes nothing.
+
+    Returns a JSON-serialisable dict: repo_env, config_dir, found (the repo .env
+    exists), dry_run, copied {club3090.env: [keys], secrets.env: [keys]} (what a
+    dry run would copy), same [keys], differs [{key, file, secret, stored, repo}],
+    refused [{key, reason}]."""
+    legacy = Path(repo_root) / ".env"
+    d = config_dir(environ)
+    secrets = parse_env_file(d / SECRETS_FILE)
+    stored = {k: (SECRETS_FILE, v) for k, v in secrets.items()}
+    stored.update({k: (GLOBAL_FILE, v) for k, v in parse_env_file(d / GLOBAL_FILE).items()})
+    report = {"repo_env": str(legacy), "config_dir": str(d), "found": legacy.is_file(),
+              "dry_run": bool(dry_run), "copied": {GLOBAL_FILE: [], SECRETS_FILE: []},
+              "same": [], "differs": [], "refused": []}
+    plan: dict[str, dict[str, str]] = {"global": {}, "secrets": {}}
+    for key, value in parse_env_file(legacy).items():
+        if key in stored:
+            where, have = stored[key]
+            if have == value:
+                report["same"].append(key)
+            else:
+                secret = is_secret(key, where) or key in secrets
+                report["differs"].append({"key": key, "file": where, "secret": secret,
+                                          "stored": None if secret else have,
+                                          "repo": None if secret else value})
+            continue
+        try:
+            check_value(key, value)
+        except ConfigError as e:
+            report["refused"].append({"key": key, "reason": _reason(key, e)})
+            continue
+        plan["secrets" if is_secret(key, "") else "global"][key] = value
+    for which, label in (("global", GLOBAL_FILE), ("secrets", SECRETS_FILE)):
+        report["copied"][label] = list(plan[which])
+        if plan[which] and not dry_run:
+            set_values(plan[which], which, environ)
+    return report
+
+
+def pending_migration(repo_root, environ=None) -> list[str]:
+    """The keys in `repo_root`/.env that migrate would copy (not in the store yet,
+    and a value the writer accepts)."""
+    if repo_root is None:
+        return []
+    copied = migrate(repo_root, dry_run=True, environ=environ)["copied"]
+    return copied[GLOBAL_FILE] + copied[SECRETS_FILE]
+
+
+def migrate_hint(count: int, repo_root, environ=None) -> str:
+    return (f"{count} setting(s) still live in {Path(repo_root) / '.env'} — "
+            f"{SETTINGS_CMD} migrate moves them to {config_dir(environ)}/.")
+
+
+def settings_rows(repo_root=None, environ=None, show_secrets: bool = False) -> list[dict]:
+    """Every configured setting as {key, value, source, secret}, sorted by key.
+    Secret values (is_secret, or held in secrets.env) are redacted unless
+    show_secrets."""
+    env = os.environ if environ is None else environ
+    res = resolve(repo_root, env)
+    sk = _secret_keys(env)
+    shown = res if show_secrets else redact(res, sk)
+    return [{"key": k, "value": shown[k][1], "source": s, "secret": is_secret(k, s) or k in sk}
+            for k, (s, _v) in res.items()]
+
+
+def _shown(value: str) -> str:
+    return "<empty>" if value == "" else value
+
+
+def _md_code(text: str) -> str:
+    text = text.replace("|", "\\|")
+    return f"`` {text} ``" if "`" in text else f"`{text}`"
+
+
+def settings_report_markdown(repo_root, environ=None) -> str:
+    """report.sh's "Settings" section body. Secret values are ALWAYS hidden: there
+    is deliberately no way to ask this function for them. report.sh still pipes
+    it through its own redact(), which scrubs paths, host and user."""
+    env = os.environ if environ is None else environ
+    rows = settings_rows(repo_root, env, show_secrets=False)
+    d = config_dir(env)
+    out = ["_Every configured setting, its effective value and where it comes from: the shell wins, "
+           "then `club3090.env`, `secrets.env`, and the repo `.env` last. Secret values are always "
+           f"hidden, with or without `--no-redact`. The same view: `{SETTINGS_CMD} show`._", "",
+           f"- **Config dir:** `{d}`" + ("" if d.is_dir() else " (not created yet)")]
+    if rows:
+        out += ["", "| Setting | Value | Source |", "|---|---|---|"]
+        out += [f"| `{r['key']}` | {_md_code(_shown(r['value']))} | {r['source']} |" for r in rows]
+    else:
+        out.append("- _No settings configured._")
+    pending = pending_migration(repo_root, env)
+    if pending:
+        out += ["", f"- ⚠ {migrate_hint(len(pending), repo_root, env)}"]
+    return "\n".join(out) + "\n"
+
+
+def settings_help(repo_root=None, environ=None) -> str:
+    env = os.environ if environ is None else environ
+    d = config_dir(env)
+    legacy = Path(repo_root) / ".env" if repo_root else "<repo>/.env"
+    return f"""usage: {SETTINGS_CMD} <command> [options]
+
+See and change your club-3090 settings: the models path, tokens and keys, default
+pins and the rest. switch.sh, launch.sh, setup.sh, gpu-mode.sh and c3 all read them.
+
+commands:
+  show [--json] [--show-secrets]
+                     every configured setting: its effective value and where it
+                     comes from. Secret values are hidden unless --show-secrets.
+  get KEY            one setting's effective value (exit 1 if it is not set)
+  set KEY=VALUE...   save settings. Credential-looking names (…TOKEN, …_KEY,
+                     …SECRET, …PASSWORD) and keys already in secrets.env go to
+                     secrets.env; everything else to club3090.env.
+  unset KEY...       remove settings from club3090.env, secrets.env AND the repo
+                     .env, and list every file changed
+  migrate [--dry-run]
+                     copy the settings in the repo .env into your config dir.
+                     Keys you have already saved are skipped (the saved value
+                     wins); values that can't be stored stay in the repo .env.
+                     The repo .env itself is never changed or deleted.
+  path               where your settings are stored, and which files exist
+  compose-env-file [--out PATH]
+                     for running `docker compose` yourself: write every resolved
+                     setting (the shell winning, as in a launch) to a 0600 file
+                     for `docker compose --env-file`, and print its path. It holds
+                     your secrets too — remove it when you are done.
+
+Where a setting comes from — the first of these that sets it wins:
+  shell          exported in your environment (export KEY=VALUE)
+  club3090.env   {d / GLOBAL_FILE}
+  secrets.env    {d / SECRETS_FILE}   (mode 0600: tokens and keys)
+  repo .env      {legacy}   (older installs; still read, last)
+The config dir is $CLUB3090_CONFIG_DIR if set, else ${{XDG_CONFIG_HOME:-~/.config}}/club-3090.
+
+Saved settings apply the next time you launch; a model that is already running
+keeps the settings it started with.
+
+Values are stored exactly as typed, one KEY=VALUE per line: no quotes, and no
+$VAR or ~ expansion. A value that bash, docker compose and systemd would read
+differently (quotes, $, `, \\, ' #', leading or trailing spaces) is refused with
+the reason, and nothing is saved.
+
+examples:
+  {SETTINGS_CMD} set MODEL_DIR=/data/models
+  {SETTINGS_CMD} set HF_TOKEN=hf_xxx            # goes to secrets.env
+  {SETTINGS_CMD} show
+  {SETTINGS_CMD} unset MODEL_DIR
+  {SETTINGS_CMD} migrate --dry-run
+  f="$({SETTINGS_CMD} compose-env-file)"; docker compose --env-file "$f" -f <compose.yml> up -d; rm -f "$f"
+
+exit codes: 0 done · 1 get: not set · 2 refused, couldn't write, or usage error
+"""
+
+
+def _shell_notes(keys, removed: bool = False) -> None:
+    for k in keys:
+        if k in os.environ:
+            what = ("stays in effect from there until you `unset " + k + "` in that shell"
+                    if removed else "and the shell wins: `unset " + k + "` there for the saved value to apply")
+            print(f"[settings] note: {k} is also set in your shell environment, {what}.", file=sys.stderr)
+
+
+def _settings_show(a, root) -> int:
+    env = os.environ
+    rows = settings_rows(root, env, a.show_secrets)
+    pending = pending_migration(root, env)
+    if a.json:
+        print(json.dumps({
+            "config_dir": str(config_dir(env)),
+            "repo_env": str(Path(root) / ".env") if root else None,
+            "settings": {r["key"]: {"value": r["value"], "source": r["source"], "secret": r["secret"]}
+                         for r in rows},
+            "still_in_repo_env": pending,
+        }, indent=2))
+        return 0
+    notes = []
+    if not rows:
+        print(f"No settings saved yet. Save one with: {SETTINGS_CMD} set KEY=VALUE")
+    else:
+        vals = [_shown(r["value"]) for r in rows]
+        kw = max(len("SETTING"), *(len(r["key"]) for r in rows))
+        vw = min(48, max(len("VALUE"), *(len(v) for v in vals)))
+        print(f"{'SETTING':<{kw}}  {'VALUE':<{vw}}  SOURCE")
+        for r, v in zip(rows, vals):
+            print(f"{r['key']:<{kw}}  {v:<{vw}}  {r['source']}")
+        if not a.show_secrets and any(r["secret"] for r in rows):
+            notes.append("Secret values are hidden; add --show-secrets to print them.")
+    if pending:
+        notes.append(migrate_hint(len(pending), root, env))
+    if notes:
+        print("\n" + "\n".join(notes))
+    return 0
+
+
+def _settings_get(a, root) -> int:
+    v = get(a.key, root)
+    if v is None:
+        print(f"[settings] {a.key} is not set", file=sys.stderr)
+        return 1
+    print(v)
+    return 0
+
+
+def _settings_set(a, root) -> int:
+    vals = {}
+    for i, pair in enumerate(a.pairs, 1):
+        if "=" not in pair:
+            raise ConfigError(f"argument {i} is not KEY=VALUE (it has no '='; not printed, in case it is a secret)")
+        k, _, v = pair.partition("=")
+        vals[k] = v
+    saved, removed = save_settings(vals)
+    for path, keys in saved.items():
+        print(f"saved {', '.join(keys)} to {path}")
+    for path, keys in removed.items():
+        print(f"removed {', '.join(keys)} from {path} (read before {SECRETS_FILE}, it would have kept the old value)")
+    _shell_notes(vals)
+    return 0
+
+
+def _settings_unset(a, root) -> int:
+    removed = unset_everywhere(a.keys, root)
+    for path, keys in removed.items():
+        print(f"removed {', '.join(keys)} from {path}")
+    gone = {k for ks in removed.values() for k in ks}
+    missing = [k for k in dict.fromkeys(a.keys) if k not in gone]
+    if missing:
+        print(f"{', '.join(missing)}: not saved in any settings file — nothing to remove")
+    _shell_notes(a.keys, removed=True)
+    return 0
+
+
+def _settings_migrate(a, root) -> int:
+    if root is None:
+        raise ConfigError(f"migrate needs the repo root: run it as `{SETTINGS_CMD} migrate`")
+    r = migrate(root, a.dry_run)
+    src = r["repo_env"]
+    if not r["found"]:
+        print(f"There is no {src} — nothing to migrate.")
+        return 0
+    print(f"Settings in {src} → {r['config_dir']}/" + ("   (dry run: nothing is written)" if a.dry_run else ""))
+    verb = "would copy to" if a.dry_run else "copied to"
+    for label in (GLOBAL_FILE, SECRETS_FILE):
+        if r["copied"][label]:
+            print(f"  {verb} {label}: {', '.join(r['copied'][label])}")
+    if r["same"]:
+        print(f"  already saved, same value: {', '.join(r['same'])}")
+    if r["differs"]:
+        print("  already saved with a different value — the saved one stays in effect:")
+        for x in r["differs"]:
+            if x["secret"]:
+                print(f"    {x['key']}: in {x['file']} (a secret — values not shown)")
+            else:
+                print(f"    {x['key']}: {x['file']} has {x['stored']!r}, the repo .env has {x['repo']!r}")
+    if r["refused"]:
+        print("  can't be stored — left in the repo .env, which is still read:")
+        for x in r["refused"]:
+            print(f"    {x['key']}: {x['reason']}")
+    n = len(r["copied"][GLOBAL_FILE]) + len(r["copied"][SECRETS_FILE])
+    if a.dry_run:
+        print(f"Dry run: nothing was written. Run it without --dry-run to copy {n} setting(s)."
+              if n else "Dry run: nothing to copy.")
+    elif n:
+        print(f"Copied {n} setting(s). {src} was not changed; it is still read, last, "
+              "so every launch sees the same values as before.")
+    else:
+        print("Nothing to copy: every setting there is already saved" +
+              (", or can't be stored." if r["refused"] else "."))
+    return 0
+
+
+def _settings_path(a, root) -> int:
+    env = os.environ
+    d = config_dir(env)
+    how = ("from $CLUB3090_CONFIG_DIR" if env.get("CLUB3090_CONFIG_DIR")
+           else "from $XDG_CONFIG_HOME" if env.get("XDG_CONFIG_HOME") else "the default")
+    rows = [("config dir", d, ("exists" if d.is_dir() else "not created yet; the first save creates it") + f", {how}")]
+    for label in (GLOBAL_FILE, SECRETS_FILE):
+        p = d / label
+        state = "not created yet"
+        if p.is_file():
+            state = "exists"
+            if label == SECRETS_FILE:
+                mode = p.stat().st_mode & 0o777
+                state += ", mode 0600" if mode == 0o600 else f", mode {mode:04o}: tighten it with chmod 600 {p}"
+        rows.append((label, p, state))
+    if root is not None:
+        legacy = Path(root) / ".env"
+        rows.append((LEGACY_LABEL, legacy, "exists; read last, after the files above" if legacy.is_file()
+                     else "none (only older installs have one)"))
+    w = max(len(r[0]) for r in rows) + 1
+    for label, p, state in rows:
+        print(f"{label + ':':<{w}}  {p}  ({state})")
+    return 0
+
+
+def _settings_compose_env_file(a, root) -> int:
+    print(write_compose_env_file(root, a.out))
+    return 0
+
+
+def settings_main(argv) -> int:
+    """`bash scripts/settings.sh …` → `club_config.py settings --root ROOT …`."""
+    argv = list(argv)
+    root = None
+    if argv[:1] == ["--root"] and len(argv) >= 2:
+        root, argv = argv[1], argv[2:]
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        (sys.stdout if argv else sys.stderr).write(settings_help(root))
+        return 0 if argv else 2
+    ap = argparse.ArgumentParser(prog=SETTINGS_CMD, add_help=False,
+                                 usage=f"{SETTINGS_CMD} <command> [options]   (--help: every command)")
+    sub = ap.add_subparsers(dest="cmd", metavar="<command>", required=True)
+    p = sub.add_parser("show", help="every configured setting, its effective value and source",
+                       description="Every configured setting: its effective value and where it comes from "
+                                   "(shell, club3090.env, secrets.env, repo .env).")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+    p.add_argument("--show-secrets", action="store_true", help="print secret values too (hidden by default)")
+    p = sub.add_parser("get", help="one setting's effective value (exit 1 if unset)",
+                       description="Print one setting's effective value; exit 1 if it is not set.")
+    p.add_argument("key", metavar="KEY")
+    p = sub.add_parser("set", help="save settings",
+                       description="Save settings. Credential-looking names and keys already in secrets.env "
+                                   "go to secrets.env (mode 0600); everything else to club3090.env.")
+    p.add_argument("pairs", nargs="+", metavar="KEY=VALUE")
+    p = sub.add_parser("unset", help="remove settings everywhere they are saved",
+                       description="Remove settings from club3090.env, secrets.env and the repo .env.")
+    p.add_argument("keys", nargs="+", metavar="KEY")
+    p = sub.add_parser("migrate", help="copy the repo .env's settings into your config dir",
+                       description="Copy the settings in the repo .env into your config dir. Keys already saved "
+                                   "are skipped; values that can't be stored stay in the repo .env. The repo "
+                                   ".env is never changed or deleted.")
+    p.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
+    sub.add_parser("path", help="where your settings are stored",
+                   description="The config dir and the settings files, and whether each exists.")
+    p = sub.add_parser("compose-env-file", help="a 0600 settings file for docker compose --env-file",
+                       description="Write every resolved setting (the shell winning, as in a launch) to a 0600 "
+                                   "file that `docker compose --env-file` reads back exactly, and print its path. "
+                                   "It holds your secrets too: remove it when you are done.")
+    p.add_argument("--out", metavar="PATH", help="write this file instead of a new temporary one")
+    a = ap.parse_args(argv)
+    run = {"show": _settings_show, "get": _settings_get, "set": _settings_set, "unset": _settings_unset,
+           "migrate": _settings_migrate, "path": _settings_path, "compose-env-file": _settings_compose_env_file}
+    try:
+        return run[a.cmd](a, root)
+    except ConfigError as e:
+        print(f"[settings] refused: {e}. Nothing was changed.", file=sys.stderr)
+        return 2
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())   # `show | head`
+        return 1
+    except OSError as e:
+        print(f"[settings] ERROR: couldn't write {e.filename or 'a settings file'}: {e.strerror or e}", file=sys.stderr)
+        return 2
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["settings"]:                     # scripts/settings.sh
+        return settings_main(argv[1:])
+    if argv[:1] == ["settings-report"]:              # report.sh: settings-report [--root ROOT]
+        root = argv[2] if argv[1:2] == ["--root"] and len(argv) > 2 else None
+        sys.stdout.write(settings_report_markdown(root))
+        return 0
     ap = argparse.ArgumentParser(prog="club_config.py", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("dir", help="print the config directory")

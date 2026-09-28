@@ -7,7 +7,7 @@
 # issue or discussion.
 #
 # Usage:
-#   bash scripts/report.sh                   # default: hardware + stack + boot log highlights (~2 sec)
+#   bash scripts/report.sh                   # default: hardware + stack + settings + boot log highlights (~2 sec)
 #   bash scripts/report.sh --verify          # adds verify-full.sh output (~1-2 min)
 #   bash scripts/report.sh --stress          # adds verify-stress.sh 7/7 output (~5-10 min)
 #   bash scripts/report.sh --soak            # adds SOAK_MODE=continuous summary (~25 min) — catches Cliff 2b
@@ -121,6 +121,15 @@ source "$REPO_ROOT/scripts/lib/p2p-state.sh"
 # user's real models path instead of falling back to the hardcoded mount below.
 # shellcheck source=lib/club-config.sh
 source "${REPO_ROOT}/scripts/lib/club-config.sh"
+# The "Settings" section (#1466) is taken HERE, before club_config_load exports
+# every saved setting into this shell: after that, every key would read as coming
+# from "shell". It is printed further down, through redact(). The loader hides
+# every secret value itself, whatever --no-redact says.
+if SETTINGS_SECTION="$(python3 "${REPO_ROOT}/scripts/lib/club_config.py" settings-report --root "${REPO_ROOT}" 2>&1)"; then
+  :
+else
+  SETTINGS_SECTION="- _Settings could not be read: $(tail -n 1 <<<"$SETTINGS_SECTION")_"
+fi
 club_config_load "${REPO_ROOT}"
 
 HOST_SHORT="$(hostname -s 2>/dev/null || echo unknown)"
@@ -876,6 +885,17 @@ section "Stack version"
     fi
   fi
 } | redact
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+# Every configured setting, its effective value and where it comes from — the
+# same view as `bash scripts/settings.sh show` (#1466). Taken at the top, before
+# club_config_load; secret values were already hidden by the loader, and redact()
+# scrubs paths, host and user here exactly as in every other section.
+
+section "Settings"
+printf '%s\n' "$SETTINGS_SECTION" | redact
 
 # ---------------------------------------------------------------------------
 # Profile state
