@@ -236,7 +236,7 @@ def _fix_hint(slug: str, knob: str, source: str) -> str:
     if source == club_config.LEGACY_LABEL:
         return f"python3 scripts/lib/club_config.py unset --root . {knob}   (it is in this checkout's .env)"
     if source == club_config.GLOBAL_FILE:
-        return f"python3 scripts/lib/club_config.py set {knob}=<value>   (or: unset {knob})"
+        return f"bash scripts/settings.sh set {knob}=<value>   (or: unset {knob})"
     return ""
 
 

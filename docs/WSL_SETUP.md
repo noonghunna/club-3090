@@ -244,7 +244,6 @@ You still do steps **1–3** (WSL + driver/passthrough + `.wslconfig` RAM) and *
 | Hardware | Recommended | Why |
 |---|---|---|
 | 1× 24 GB (3090/4090) | `vllm/minimal` | ⚠️ `ik-llama/iq4ks-mtp` (leanest VRAM, no prefill cliffs) was RETIRED 2026-08-12 → `--force` only. `vllm/minimal` is the functional path (32K, no vision). |
-| 1× 24 GB, want vLLM | `vllm/single` + `GPU_MEMORY_UTILIZATION=0.94` per launch | Full feature stack; needs the WSL2 VRAM + TDR tuning (steps 8–9) |
 | 2× 24 GB | `vllm/dual` | TP=2; the ~1.3 GiB overhead is noise at ~17 GB/card |
 
 ## Diagnostics on WSL2

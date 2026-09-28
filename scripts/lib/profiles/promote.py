@@ -499,8 +499,8 @@ def validate_spec(spec: Any, root: Path, layer: str) -> dict:
     if os.environ.get(_CORE_GATE_ENV) != "1":
         raise Refusal(
             f"core-catalog writes are maintainer-gated: re-run with --layer core "
-            f"AND {_CORE_GATE_ENV}=1 — exported in the shell OR set in the "
-            f"repo-root .env (both are read; the environment wins). Community "
+            f"AND {_CORE_GATE_ENV}=1 — exported in the shell OR saved with "
+            f"`bash scripts/settings.sh set {_CORE_GATE_ENV}=1` (the shell wins). Community "
             f"users: use the default --layer local"
         )
     if slug.startswith(_LOCAL_SLUG_PREFIX):

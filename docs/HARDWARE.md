@@ -523,7 +523,7 @@ Reported + diagnosed by [@mgabor3141](https://github.com/noonghunna/club-3090/is
 
 WSL2's container CUDA context consumes **~1.31 GiB before vLLM's profiler runs** — the Windows display driver, CUDA runtime, and WDDM overhead reserve memory that's invisible to `nvidia-smi --query-gpu=memory.used` at idle but locked in once the container starts.
 
-This means the shipped `gpu_memory_utilization` defaults (0.92 for single, 0.95 for `long-text.yml`) crash before model load with `ValueError: gpu_memory_utilization too high`. Cross-rig validated by [@easel on 2× WSL2 5090 Laptop machines](https://github.com/noonghunna/club-3090/issues/102#issuecomment-4414111137):
+This means any shipped compose whose `gpu_memory_utilization` default is above ~0.94 (about a third of the vLLM composes default to 0.95) crashes before model load with `ValueError: gpu_memory_utilization too high`. Cross-rig validated by [@easel on 2× WSL2 5090 Laptop machines](https://github.com/noonghunna/club-3090/issues/102#issuecomment-4414111137):
 
 | `gpu_memory_utilization` | 24 GB card | Result |
 |---|---|---|
@@ -533,7 +533,7 @@ This means the shipped `gpu_memory_utilization` defaults (0.92 for single, 0.95 
 
 **Formula**: `safe_util = (vram_total_gib - 1.31) / vram_total_gib`. On 24 GB cards that's 0.945. The overhead is variable (idle reports as low as ~300 MiB) but the upper bound is consistent across rigs.
 
-**Recommendation**: on WSL2, launch a compose whose default is above 0.94 with `GPU_MEMORY_UTILIZATION=0.94 bash scripts/switch.sh <slug>`. The shipped composes' defaults (0.92 / 0.95) are calibrated for headless Linux and can crash on WSL2 at the higher value. Set it per launch rather than saving it: a saved `GPU_MEMORY_UTILIZATION` applies to every vLLM compose, including the many that default lower, and would raise them.
+**Recommendation**: on WSL2, launch a compose whose default is above 0.94 with `GPU_MEMORY_UTILIZATION=0.94 bash scripts/switch.sh <slug>`. The shipped composes' defaults (mostly 0.92 or 0.95) are calibrated for headless Linux, and the higher ones can crash on WSL2. Set it per launch rather than saving it: a saved `GPU_MEMORY_UTILIZATION` applies to every vLLM compose, including the many that default lower, and would raise them.
 
 ### TDR — kernel-timeout watchdog
 

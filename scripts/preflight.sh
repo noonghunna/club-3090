@@ -822,7 +822,7 @@ preflight_hf_token() {
     echo "[preflight]          Fix: visit https://huggingface.co/settings/tokens, create a read token," >&2
     echo "[preflight]               accept the model T&C at https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct" >&2
     echo "[preflight]               (and any other Qwen3-Next variant you'll use)," >&2
-    echo "[preflight]               then export HF_TOKEN=hf_... in your shell or .env file." >&2
+    echo "[preflight]               then save it: bash scripts/settings.sh set HF_TOKEN=hf_...   (goes to secrets.env, 0600)" >&2
     return 0
   fi
   # Sanity check token format — HF tokens start with hf_ and are 30+ chars

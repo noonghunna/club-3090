@@ -411,7 +411,7 @@ choose_model() {
       echo "[launch] ERROR: ${MODEL_NAME} is not installed under ${MODEL_DIR}." >&2
       echo "[launch]        Run: bash scripts/setup.sh ${MODEL_NAME}" >&2
       echo "[launch]        Already have weights elsewhere? Point MODEL_DIR at them, e.g.:" >&2
-      echo "[launch]          python3 scripts/lib/club_config.py set MODEL_DIR=/path/to/your/models   # saved in ~/.config/club-3090/; every launcher reads it" >&2
+      echo "[launch]          bash scripts/settings.sh set MODEL_DIR=/path/to/your/models   # saved in ~/.config/club-3090/; every launcher reads it" >&2
       exit 1
     fi
     return
@@ -420,7 +420,7 @@ choose_model() {
     echo "[launch] ERROR: no supported model weights found under ${MODEL_DIR}." >&2
     echo "[launch]        Run: bash scripts/setup.sh" >&2
     echo "[launch]        Already have weights elsewhere? Point MODEL_DIR at them, e.g.:" >&2
-    echo "[launch]          python3 scripts/lib/club_config.py set MODEL_DIR=/path/to/your/models   # saved in ~/.config/club-3090/; every launcher reads it" >&2
+    echo "[launch]          bash scripts/settings.sh set MODEL_DIR=/path/to/your/models   # saved in ~/.config/club-3090/; every launcher reads it" >&2
     exit 1
   fi
   if [[ "${#MODEL_ORDER[@]}" -eq 1 ]]; then

@@ -88,8 +88,8 @@ def check_entry(key: str, value: str) -> None:
         raise StoreError(str(exc)) from None
     if club_config.is_secret(key, ""):
         raise StoreError(f"{key} looks like a credential; per-slug settings never hold secrets — "
-                         "keep it global, in secrets.env (python3 scripts/lib/club_config.py set --file secrets "
-                         f"{key}=…)")
+                         "keep it global, in secrets.env (bash scripts/settings.sh set "
+                         f"{key}=… stores it there)")
     if not isinstance(value, str):
         raise StoreError(f"{key}: value must be a string")
     if value == "":
