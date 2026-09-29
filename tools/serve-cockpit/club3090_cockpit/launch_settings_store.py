@@ -266,19 +266,32 @@ def remove(slug: str, keys, repo_root, environ: Optional[Mapping[str, str]] = No
 # ── the running container (read-only docker) ─────────────────────────────────
 
 COMPOSE_FILES_LABEL = "com.docker.compose.project.config_files"
-# `docker ps` rows: name <TAB> the compose file(s) the container was started from.
-PS_FORMAT = "{{.Names}}\t{{.Label \"" + COMPOSE_FILES_LABEL + "\"}}"
+# The slug a launcher stamped on the container (scripts/lib/slug_label.py; estate
+# pods too): tells apart two slugs that share one compose file.
+SLUG_LABEL = "club3090.slug"
+# `docker ps` rows: name <TAB> the compose file(s) the container was started from
+# <TAB> its club3090.slug label ("" when it was started without one).
+PS_FORMAT = ("{{.Names}}\t{{.Label \"" + COMPOSE_FILES_LABEL + "\"}}"
+             "\t{{.Label \"" + SLUG_LABEL + "\"}}")
 
 
-def containers_for(compose_path: str, ps_stdout: str) -> list[str]:
-    """Running containers started from ``compose_path`` (repo-relative) — by the
-    compose label, from any checkout of the repo. Two slugs share a compose file
-    only when they are the same launch (vllm/dual and vllm/qwen-27b-dual-fast)."""
+def containers_for(compose_path: str, ps_stdout: str, slug: Optional[str] = None) -> list[str]:
+    """Running containers of this slug. A container carrying the ``club3090.slug``
+    label is this slug's only when the label says so — two slugs can share a compose
+    file (vllm/dual and vllm/qwen-27b-dual-fast), and per-slug settings make them
+    run differently. One without it (started before the label, or by hand) is
+    matched by the compose label, from any checkout of the repo."""
     want = compose_path.strip("/")
     out = []
     for line in (ps_stdout or "").splitlines():
-        name, sep, files = line.partition("\t")
+        name, sep, rest = line.partition("\t")
         if not sep or not name.strip():
+            continue
+        files, _, label = rest.partition("\t")
+        label = label.strip()
+        if label and slug:
+            if label == slug:
+                out.append(name.strip())
             continue
         for f in files.split(","):
             f = f.strip()

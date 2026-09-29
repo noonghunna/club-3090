@@ -1117,7 +1117,7 @@ class CockpitData:
             view.running_error = "docker ps failed — can't tell whether the slug is running"
             return
         checkable = [k.knob for k in view.knobs if k.in_container_env]
-        for name in _launch.containers_for(view.compose_path, res.stdout):
+        for name in _launch.containers_for(view.compose_path, res.stdout, view.slug):
             if not checkable:
                 view.running.append(_launch.running_state(view, name, ""))
                 continue

@@ -2,6 +2,9 @@
 # PR-B — <engine>/default resolver uses DEFAULTS + detected topology.
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+# a launch writes the slug-label override (data dir) and cache dirs: never into your real ones
+export CLUB3090_DATA_DIR="$T/data" CLUB3090_CACHE_DIR="$T/cache"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

@@ -191,10 +191,12 @@ out="$(sw wt1)"
   && ok "the same tag re-pulled to a new image ID gets a new dir" || bad "re-pulled tag: cache='$(envout CACHE)'"
 set_image vllm/vllm-openai:v0.30.0 "$ID_030"
 out="$(sw wt1 -u CLUB3090_DATA_DIR XDG_DATA_HOME="$T/xd-explicit" KV_OFFLOAD_DIR=/srv/kv-explicit)"
-[[ "$(envout DATA)" == "<unset>" && "$(mounted /kv-offload)" == /srv/kv-explicit && ! -e "$T/xd-explicit" \
+# (the data dir itself may exist: switch.sh keeps the slug-label override in
+# <data dir>/compose-labels — what must not appear is a KV-offload dir)
+[[ "$(envout DATA)" == "<unset>" && "$(mounted /kv-offload)" == /srv/kv-explicit && ! -e "$T/xd-explicit/club-3090/kv-offload" \
    && "$(envout CACHE)" == "$T/cache/$KEY_030" ]] \
-  && ok "an explicit KV_OFFLOAD_DIR still wins (no data dir handed over, nothing created for it)" \
-  || bad "explicit KV_OFFLOAD_DIR: data='$(envout DATA)' mount='$(mounted /kv-offload)' created=$( [[ -e "$T/xd-explicit" ]] && echo yes || echo no)"
+  && ok "an explicit KV_OFFLOAD_DIR still wins (no data dir handed over, no KV-offload dir created)" \
+  || bad "explicit KV_OFFLOAD_DIR: data='$(envout DATA)' mount='$(mounted /kv-offload)' created=$( [[ -e "$T/xd-explicit/club-3090/kv-offload" ]] && echo yes || echo no)"
 rm -rf "$T/xdg"
 out="$(sw wt1 -u CLUB3090_CACHE_DIR -u CLUB3090_DATA_DIR XDG_CACHE_HOME="$T/xdg/c" XDG_DATA_HOME="$T/xdg/d")"
 [[ "$(envout CACHE)" == "$T/xdg/c/club-3090/$KEY_030" && "$(envout DATA)" == "$T/xdg/d/club-3090" ]] \

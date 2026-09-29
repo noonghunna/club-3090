@@ -32,6 +32,8 @@ fail=0
 ok()  { echo "  ✓ $*"; }
 bad() { echo "  ✗ $*" >&2; fail=1; }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+# a launch writes the slug-label override (data dir) and cache dirs: never into your real ones
+export CLUB3090_DATA_DIR="$T/data" CLUB3090_CACHE_DIR="$T/cache"
 
 # Fixture checkout: the repo's code, its own legacy .env. No services/ — so the gateway
 # sync switch.sh runs after a teardown finds no template and touches nothing.
@@ -67,13 +69,13 @@ cat > "$T/bin/compose-capture" <<EOF
 #!/usr/bin/env bash
 # COMPOSE_BIN: at 'up', record the launch knobs in the environment and render the compose
 # with it (docker compose config — read-only); log the call like the docker shim does.
-args=("\$@"); file=""
-while [[ \$# -gt 0 ]]; do case "\$1" in -f) file="\$2"; shift 2 ;; *) shift ;; esac; done
+args=("\$@"); fargs=()
+while [[ \$# -gt 0 ]]; do case "\$1" in -f) fargs+=(-f "\$2"); shift 2 ;; *) shift ;; esac; done
 case " \${args[*]} " in
   *" up "*)
     env | command grep -E '^(KV_OFFLOAD_GB|KV_OFFLOAD_DISK|KV_OFFLOAD_DISK_GB|ENABLE_THINKING|REASONING_EFFORT|SPEC_N)=' | sort > "\$MOCK_ENV_OUT"
     if [[ "$HAVE_COMPOSE" == 1 ]]; then
-      "$REAL_DOCKER" compose -f "\$file" config --format json > "\$MOCK_RENDER" 2>/dev/null || echo RENDER_FAILED >> "\$MOCK_LOG"
+      "$REAL_DOCKER" compose "\${fargs[@]}" config --format json > "\$MOCK_RENDER" 2>/dev/null || echo RENDER_FAILED >> "\$MOCK_LOG"
     fi
     printf 'UP compose %s\n' "\${args[*]}" >> "\$MOCK_LOG" ;;
   *" down "*) printf 'TEARDOWN compose %s\n' "\${args[*]}" >> "\$MOCK_LOG" ;;
@@ -295,6 +297,11 @@ else
       || bad "rendered container environment: '$got' (want 64|xhigh|false)"
   else
     echo "  - SKIP render leg: no docker compose here"
+  fi
+  if [[ "$HAVE_COMPOSE" == 1 ]]; then
+    got="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("|".join(sorted({(s.get("labels") or {}).get("club3090.slug","<absent>") for s in d["services"].values()})))' "$MOCK_RENDER" 2>/dev/null)"
+    [[ "$got" == "$SGL" ]] && ok "… and the container is labelled club3090.slug=$SGL (the slug launched, not just its compose)" \
+      || bad "club3090.slug label at compose up: '$got' (want $SGL)"
   fi
   command grep -qF "launch setting KV_OFFLOAD_GB=64  (this slug; overrides club3090.env=32)" <<<"$out" \
     && ok "the launch log names each value's source and what it overrode" || bad "no source line in the launch log: $(command grep -m2 'launch setting' <<<"$out")"

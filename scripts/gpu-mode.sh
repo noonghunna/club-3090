@@ -43,6 +43,15 @@ if [ -f "$GPU_MODE_SCRIPTS/lib/engine-cache.sh" ]; then
 else
     club_engine_cache_env() { :; }
 fi
+# The club3090.slug label for model composes (COMPOSE_SLUG=<slug> compose_at …): the
+# same override switch.sh adds, so a mode and a switch.sh launch of one slug produce
+# the same compose config and neither recreates the other's container.
+if [ -f "$GPU_MODE_SCRIPTS/lib/slug-label.sh" ]; then
+    # shellcheck source=lib/slug-label.sh
+    . "$GPU_MODE_SCRIPTS/lib/slug-label.sh"
+else
+    club_slug_label_override() { :; }
+fi
 # Studio paths YOU exported, captured BEFORE comfyui-paths.sh (below) exports its derived
 # ones: passed through sudo on every compose call, so a one-run override reaches the
 # containers without being saved. Derived values are not passed — the saved value, else
@@ -184,7 +193,13 @@ compose_at_env() {
             --root "$CLUB3090_DIR" --compose-bin "docker compose" --docker "sudo docker" --clean-env \
             "${env_args[@]}" -- "${envs[@]}")
     fi
-    (cd "$dir" && sudo "${envs[@]}" docker compose "${env_args[@]}" -f "$file" $action) || rc=$?
+    local label_args=()
+    if [[ "$action" == up* && -n "${COMPOSE_SLUG:-}" ]]; then
+        local _lo
+        _lo="$(club_slug_label_override "$COMPOSE_SLUG" "$dir/$file" "$CLUB3090_DIR")"
+        [ -n "$_lo" ] && label_args=(-f "$_lo")
+    fi
+    (cd "$dir" && sudo "${envs[@]}" docker compose "${env_args[@]}" -f "$file" "${label_args[@]}" $action) || rc=$?
     rm -f "$CLUB3090_COMPOSE_ENV_FILE"
     return "$rc"
 }
@@ -426,7 +441,7 @@ mode_gateway() {
 # Project-specific helpers
 start_27b_dual_mtp() {
     printf "  ${GREEN}▲${NC} Starting 27b-dual-mtp..."
-    compose_at "$DUAL_27B_DIR" "up -d" fp8-mtp.yml && echo "done" || { echo "failed"; c3_mark_start_failure "27b-dual-mtp"; }
+    COMPOSE_SLUG=vllm/dual compose_at "$DUAL_27B_DIR" "up -d" fp8-mtp.yml && echo "done" || { echo "failed"; c3_mark_start_failure "27b-dual-mtp"; }
 }
 stop_27b_dual_mtp() {
     printf "  ${RED}▼${NC} Stopping 27b-dual-mtp..."
@@ -472,7 +487,7 @@ stop_all_27b() {
 # vllm/qwen-35b-a3b-dual (AutoRound INT4 + fp8 KV + 262K + vision, :8051).
 start_35b_a3b_dual() {
     printf "  ${GREEN}▲${NC} Starting 35b-a3b-dual..."
-    compose_at "$A3B_DUAL_DIR" "up -d" fp8.yml && echo "done" || { echo "failed"; c3_mark_start_failure "35b-a3b-dual"; }
+    COMPOSE_SLUG=vllm/qwen-35b-a3b-dual compose_at "$A3B_DUAL_DIR" "up -d" fp8.yml && echo "done" || { echo "failed"; c3_mark_start_failure "35b-a3b-dual"; }
 }
 stop_35b_a3b_dual() {
     printf "  ${RED}▼${NC} Stopping 35b-a3b-dual..."
@@ -482,7 +497,7 @@ stop_35b_a3b_dual() {
 # Gemma 4 12B single-card vLLM (gemma4_unified arch-preview image, AutoRound INT8 + MTP n=2).
 start_gemma_12b() {
     printf "  ${GREEN}▲${NC} Starting gemma-12b..."
-    compose_at "$GEMMA_12B_DIR" "up -d" mtp.yml && echo "done" || { echo "failed"; c3_mark_start_failure "gemma-12b"; }
+    COMPOSE_SLUG=vllm/gemma-12b-single-int8-mtp compose_at "$GEMMA_12B_DIR" "up -d" mtp.yml && echo "done" || { echo "failed"; c3_mark_start_failure "gemma-12b"; }
 }
 stop_gemma_12b() {
     printf "  ${RED}▼${NC} Stopping gemma-12b..."
@@ -627,7 +642,7 @@ start_gemma_int8() {
     # compose_at path bypassed switch.sh's status gate. Function name kept
     # (every mode's stop-list references it).
     printf "  ${GREEN}▲${NC} Starting gemma-31b..."
-    compose_at "$GEMMA_31B_DUAL_DIR" "up -d" base.yml && echo "done" || { echo "failed"; c3_mark_start_failure "gemma-31b"; }
+    COMPOSE_SLUG=vllm/gemma-31b-dual compose_at "$GEMMA_31B_DUAL_DIR" "up -d" base.yml && echo "done" || { echo "failed"; c3_mark_start_failure "gemma-31b"; }
 }
 stop_gemma_int8() {
     printf "  ${RED}▼${NC} Stopping gemma-31b..."
@@ -644,7 +659,7 @@ stop_all_gemma() {
 
 start_deckard() {
     printf "  ${GREEN}▲${NC} Starting deckard-40b..."
-    compose_at "$DECKARD_DIR" "up -d" mtp.yml && echo "done" || { echo "failed"; c3_mark_start_failure "deckard"; }
+    COMPOSE_SLUG=llamacpp/deckard40B-dual-mtp compose_at "$DECKARD_DIR" "up -d" mtp.yml && echo "done" || { echo "failed"; c3_mark_start_failure "deckard"; }
 }
 stop_deckard() {
     printf "  ${RED}▼${NC} Stopping deckard-40b..."

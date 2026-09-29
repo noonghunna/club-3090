@@ -24,6 +24,8 @@ bad() { echo "  FAIL — $*" >&2; fail=1; }
 
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
+# a launch writes the slug-label override (data dir) and cache dirs: never into your real ones
+export CLUB3090_DATA_DIR="$T/data" CLUB3090_CACHE_DIR="$T/cache"
 mkdir -p "$T/bin" "$T/empty-models" "$T/running"
 
 cat > "$T/bin/docker" <<'EOF'

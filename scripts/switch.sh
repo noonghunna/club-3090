@@ -120,6 +120,8 @@ source "${ROOT_DIR}/scripts/lib/club-config.sh"
 club_config_load "${ROOT_DIR}"
 # shellcheck source=lib/engine-cache.sh
 source "${ROOT_DIR}/scripts/lib/engine-cache.sh"
+# shellcheck source=lib/slug-label.sh
+source "${ROOT_DIR}/scripts/lib/slug-label.sh"
 # #632 — surface a user engine-image pin (ik-llama / llama.cpp images are NOT
 # profile-injected, so a .env/shell pin is the only override path; echo it so a
 # wrong-image boot is never silent).  Fires only when actually set.
@@ -1404,7 +1406,11 @@ up_variant() {
   # is about to run (so AFTER the engine pin and launch settings above). No-op for a
   # compose that mounts neither; on any problem the compose keeps its in-repo default.
   club_engine_cache_export "${full_dir}" "${file}" --root "${ROOT_DIR}" --compose-bin "${COMPOSE_BIN}"
-  (cd "${full_dir}" && ${COMPOSE_BIN} -f "${file}" up -d --remove-orphans)
+  # Label the container with the slug it runs (club3090.slug): two slugs can share one
+  # compose file, and measurement records / c3 need to know which one this is.
+  local label_override=""
+  label_override="$(club_slug_label_override "$v" "${full_dir}/${file}" "${ROOT_DIR}")"
+  (cd "${full_dir}" && ${COMPOSE_BIN} -f "${file}" ${label_override:+-f "$label_override"} up -d --remove-orphans)
 }
 
 resolve_ready_url() {

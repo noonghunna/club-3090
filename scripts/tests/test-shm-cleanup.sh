@@ -20,7 +20,8 @@ fail() { echo "✗ $*" >&2; fails=$((fails+1)); }
 
 # Static: switch.sh must call the helper before `compose up`, and never let it fail the boot.
 sw="$(command grep -nE 'lib/shm-cleanup\.sh" \|\| true' scripts/switch.sh | head -1 | cut -d: -f1)"
-up="$(command grep -nE 'COMPOSE_BIN\} -f "\$\{file\}" up -d' scripts/switch.sh | head -1 | cut -d: -f1)"
+# (the compose line may carry a second -f: switch.sh adds the club3090.slug label override)
+up="$(command grep -nE 'COMPOSE_BIN\} -f "\$\{file\}" .*up -d' scripts/switch.sh | head -1 | cut -d: -f1)"
 [[ -n "$sw" && -n "$up" && "$sw" -lt "$up" ]] || fail "switch.sh must run lib/shm-cleanup.sh (|| true) before compose up (cleanup line='${sw}', up line='${up}')"
 
 IMG=""

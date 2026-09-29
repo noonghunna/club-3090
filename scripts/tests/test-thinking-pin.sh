@@ -42,6 +42,8 @@ assert_eq "$defkey" "CLUB3090_DEFAULT_QWEN3_6_27B" "default pin key unchanged by
 
 # --- the pin through the resolver ---------------------------------------------
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+# a launch writes the slug-label override (data dir) and cache dirs: never into your real ones
+export CLUB3090_DATA_DIR="$T/data" CLUB3090_CACHE_DIR="$T/cache"
 mkdir -p "$T/cfg" "$T/root"
 for d in scripts models; do ln -s "$ROOT_DIR/$d" "$T/root/$d"; done
 : > "$T/root/.env"

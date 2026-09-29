@@ -277,6 +277,21 @@ class TestDrift:
               "estate-copy\t/a/override.yml," + SGL_COMPOSE + "\n")
         assert ls.containers_for(SGL_COMPOSE, ps) == ["sglang-qwen38-27b-mtp-dual", "estate-copy"]
 
+    def test_the_slug_label_decides_between_slugs_sharing_a_compose(self, ls):
+        """vllm/dual and vllm/qwen-27b-dual-fast share one compose file; a container the
+        launchers labelled (club3090.slug) belongs to the slug it names only. One
+        without the label (started before it) still matches by compose."""
+        compose = "models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml"
+        labelled = "vllm-qwen36-27b-dual\t/r/" + compose + ",/d/compose-labels/x.yml\tvllm/qwen-27b-dual-fast\n"
+        assert ls.containers_for(compose, labelled, "vllm/qwen-27b-dual-fast") == ["vllm-qwen36-27b-dual"]
+        assert ls.containers_for(compose, labelled, "vllm/dual") == []
+        unlabelled = "vllm-qwen36-27b-dual\t/r/" + compose + "\t\n"
+        assert ls.containers_for(compose, unlabelled, "vllm/dual") == ["vllm-qwen36-27b-dual"]
+        assert ls.containers_for(compose, unlabelled, "vllm/qwen-27b-dual-fast") == ["vllm-qwen36-27b-dual"]
+
+    def test_ps_format_carries_the_slug_label(self, ls):
+        assert ls.PS_FORMAT.count("\t") == 2 and '"club3090.slug"' in ls.PS_FORMAT
+
     def test_inspect_template_names_only_the_knobs(self, ls):
         fmt = ls.inspect_format(["SPEC_N", "KV_OFFLOAD_GB"])
         assert '{{if eq (index $p 0) "SPEC_N" "KV_OFFLOAD_GB"}}' in fmt
