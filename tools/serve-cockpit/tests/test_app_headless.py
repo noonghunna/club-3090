@@ -12956,9 +12956,25 @@ class TestProfileTemplateDerivation:
         except (OSError, _sp.TimeoutExpired):
             pass
         core_opts = [o for o in opts if o.slug not in _local]
-        assert len(core_opts) == 10, (
-            f"expected 10 curated reps, got {len(core_opts)}: "
+        # DERIVED, not hard-coded. This was `== 10`, bumped by hand as groups appeared
+        # (7 → 8 → 10); the SGLang tier (#1237: dual / multi4 / multi8) and the
+        # ExLlamaV3 dual slug took it to 14 and it sat red on master for weeks, so the
+        # tripwire had stopped being read. What it guards is "exactly one rep per
+        # curated (family, topology) group, none missing" — count the groups the
+        # registry actually has, with the same helpers profile_templates groups by.
+        from club3090_cockpit.app import _canon_engine_family, _variant_topology
+        curated_groups = {
+            (_canon_engine_family(v.engine) or v.engine, _variant_topology(v) or "—")
+            for v in variants if v.slug and v.slug not in _local
+        }
+        assert len(core_opts) == len(curated_groups), (
+            f"expected one curated rep per (family, topology) group "
+            f"({len(curated_groups)}: {sorted(curated_groups)}), got {len(core_opts)}: "
             f"{[o.slug for o in core_opts]} (local: {sorted(_local)})"
+        )
+        assert len(curated_groups) >= 10, (
+            f"only {len(curated_groups)} curated groups — the registry emit lost engines "
+            f"or topologies (there were 10 by 2026-08-29): {sorted(curated_groups)}"
         )
 
         # The 1-card rig default must be FUNCTIONAL + non-incubating — ideally the
