@@ -320,62 +320,19 @@ section "System"
 # This rig read 3200 MT/s both before and after a DIMM went missing, while real
 # STREAM Triad fell ~100 -> 59.9 GB/s (2026-08-07). The spec number is exactly
 # the one that cannot detect the problem; the measured one is the only witness.
-# Our own learnings already say "the bandwidth number must be MEASURED, not spec"
-# — this implements it.
 #
-# Cheap and honest: ~1.5 GB, a few hundred ms, skipped when RAM is tight or no
-# compiler exists, and it SAYS SO rather than omitting the line (a missing row
-# reads as "nothing to report"). Disable with REPORT_NO_BANDWIDTH=1.
+# The probe (scripts/lib/membw_probe.c, driven by scripts/lib/membw.sh) is built to
+# read the same on any rig: non-temporal stores on x86, one pinned thread per
+# physical core, a 1/4 - 1/2 - all-cores sweep, arrays >= 4x L3. The first probe here
+# read ~90 GB/s on an 8-channel EPYC that does ~160. With the DIMMs' channels and
+# speed from dmidecode ($1) it also prints the rated peak and the percentage.
+# A few seconds; skipped with a reason when no compiler or too little free memory
+# (a missing row reads as "nothing to report"). Disable with REPORT_NO_BANDWIDTH=1.
 _report_mem_bandwidth() {
   [[ "${REPORT_NO_BANDWIDTH:-0}" == "1" ]] && return 0
-  local cc=""
-  for c in cc gcc clang; do command -v "$c" >/dev/null 2>&1 && { cc="$c"; break; }; done
-  if [[ -z "$cc" ]]; then
-    echo "- **Memory bandwidth:** not measured (no C compiler) — install \`gcc\` for a STREAM Triad figure"
-    return 0
-  fi
-  local free_mb; free_mb=$(free -m 2>/dev/null | awk '/^Mem:/{print $7}')
-  if [[ -n "$free_mb" && "$free_mb" -lt 4096 ]]; then
-    echo "- **Memory bandwidth:** not measured (only ${free_mb} MiB available; probe needs ~1.5 GB)"
-    return 0
-  fi
-  local d; d="$(mktemp -d 2>/dev/null)" || return 0
-  cat > "$d/t.c" <<'CEOF'
-#include <stdio.h>
-#include <stdlib.h>
-#include <pthread.h>
-#include <time.h>
-#define N (64L*1024*1024)          /* 3 x 512 MiB */
-static double *a,*b,*c; static int NT;
-static void *w(void *p){ long id=(long)p, lo=N*id/NT, hi=N*(id+1)/NT;
-  for(long i=lo;i<hi;i++) c[i]=a[i]+3.0*b[i]; return 0; }
-int main(int argc,char**argv){
-  NT=atoi(argv[1]); if(NT<1)NT=1;
-  a=malloc(N*8); b=malloc(N*8); c=malloc(N*8);
-  if(!a||!b||!c){ printf("0\n"); return 1; }
-  for(long i=0;i<N;i++){a[i]=1.0;b[i]=2.0;c[i]=0.0;}
-  double best=0; pthread_t th[512];
-  for(int r=0;r<3;r++){
-    struct timespec s,e; clock_gettime(CLOCK_MONOTONIC,&s);
-    for(long i=0;i<NT;i++) pthread_create(&th[i],0,w,(void*)i);
-    for(long i=0;i<NT;i++) pthread_join(th[i],0);
-    clock_gettime(CLOCK_MONOTONIC,&e);
-    double dt=(e.tv_sec-s.tv_sec)+(e.tv_nsec-s.tv_nsec)/1e9;
-    double gbs=(3.0*N*8)/dt/1e9; if(gbs>best) best=gbs;
-  }
-  printf("%.1f\n",best); return 0;
-}
-CEOF
-  local gbs=""
-  if "$cc" -O2 -o "$d/t" "$d/t.c" -lpthread >/dev/null 2>&1; then
-    gbs="$("$d/t" "$(nproc 2>/dev/null || echo 4)" 2>/dev/null)"
-  fi
-  rm -rf "$d"
-  if [[ -n "$gbs" && "$gbs" != "0" ]]; then
-    echo "- **Memory bandwidth (measured):** ${gbs} GB/s STREAM Triad — *this*, not the rated MT/s above, is what sets CPU-offload decode throughput"
-  else
-    echo "- **Memory bandwidth:** probe failed to build/run — rated speed above is NOT a substitute"
-  fi
+  # shellcheck source=lib/membw.sh
+  source "${REPO_ROOT}/scripts/lib/membw.sh"
+  club_membw_lines "${1:-}"
 }
 
 # ---------------------------------------------------------------------------
@@ -479,7 +436,7 @@ section "CPU + RAM"
         if (nfull < nch)
           print "  - ⚠️ _An unpopulated channel forces a coarser interleave. Measured on this stack: losing ONE of eight channels cost ~**30% of bandwidth** (~100 → 69.8 GB/s idle; 59.9 under load) — 2.4× worse than the 12.5% a naive share implies._"
       }'
-    _report_mem_bandwidth
+    _report_mem_bandwidth "$_dmi"
   elif have dmidecode; then
     echo "- **Memory config:** not collected (needs root) — run \`sudo dmidecode -t memory\` for DIMM count / size / configured speed"
     _report_mem_bandwidth
