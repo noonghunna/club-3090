@@ -41,8 +41,22 @@ printf 'MemTotal: 268435456 kB\nMemAvailable: 201326592 kB\n' > "$T/mem-big"
 echo "1. the plan"
 S="$T/smt"; for c in 0 1 2 3 4 5 6 7; do mkcpu "$S" $c 0 $((c % 4)) 32768K 0 0-7; done
 got="$(plan "$S")"
-[[ "$got" == *"cpus=8 cores=4 "* && "$got" == *"threads=1,2,4 "* && "$got" == *"pin=0,1,2,3 "* ]] \
-  && ok "8 CPUs on 4 SMT cores: one pinned thread per physical core; tries 1, 2, 4" || bad "SMT plan: $got"
+[[ "$got" == *"cpus=8 cores=4 "* && "$got" == *"threads=1,2,4 "* && "$got" == *"pins=1:0|2:0,2|4:0,1,2,3 "* ]] \
+  && ok "8 CPUs on 4 SMT cores: one pinned thread per physical core (never a sibling); tries 1, 2, 4" || bad "SMT plan: $got"
+# two sockets x 8 cores, numbered socket by socket (cpus 0-7 on package 0, 8-15 on 1),
+# each socket two 4-core dies (L3 ids 0-3): a half run must reach both sockets, all dies
+S="$T/2s"; for c in $(seq 0 15); do mkcpu "$S" $c $((c / 8)) $((c % 8)) 32768K $((c / 4)) "$((c / 4 * 4))-$((c / 4 * 4 + 3))"; done
+got="$(plan "$S")"
+[[ "$got" == *"cores=16 "* && "$got" == *"pins=4:0,4,8,12|8:0,2,4,6,8,10,12,14|16:"* ]] \
+  && ok "2 sockets x 2 dies: 4 threads land one per die, 8 threads spread over both sockets (not packed on socket 0)" || bad "2-socket spread: $got"
+# interleaved numbering (some dual-socket Intel: even CPUs on socket 0, odd on socket 1).
+# A plain stride over CPU order would land every thread on socket 0; ordered by
+# (socket, die, core) first, 4 threads get 2 per socket.
+S="$T/2si"; for c in $(seq 0 15); do mkcpu "$S" $c $((c % 2)) $((c / 2)) 32768K $((c % 2)) "$((c % 2))-15:2"; done
+got="$(plan "$S")"
+[[ "$got" == *"pins=4:0,8,1,9|8:0,4,8,12,1,5,9,13|16:"* ]] \
+  && ok "interleaved socket numbering (even/odd): 4 threads get 2 per socket, not 4 on socket 0" || bad "interleaved: $got"
+got="$(plan "$T/smt")"
 [[ "$got" == *"l3_mib=32 array_mib=256 "* ]] && ok "a 32 MiB L3 still gets 256 MiB arrays (the floor)" || bad "SMT sizing: $got"
 S="$T/vcache"; for c in $(seq 0 63); do mkcpu "$S" $c 0 $c 98304K $((c / 8)) "$((c / 8 * 8))-$((c / 8 * 8 + 7))"; done
 got="$(plan "$S")"

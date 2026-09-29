@@ -13,7 +13,11 @@
  *     Other architectures keep plain stores; the read figure is unaffected either way.
  *   - topology (SMT, CCDs, NUMA, sockets, P/E cores): one thread per PHYSICAL core
  *     (sysfs topology), pinned, each first-touching the slice it streams, so pages
- *     land on its node.
+ *     land on its node. A run with fewer threads than cores SPREADS them evenly over
+ *     the cores, ordered by (socket, L3 domain = die, core) so the spread holds
+ *     whatever the CPU numbering (die by die, or sockets interleaved even/odd):
+ *     half the threads still reach every CCD / NUMA node / socket. Packed onto the
+ *     first cores, they would sit on half the dies of a big EPYC or Threadripper.
  *   - where bandwidth saturates (a few cores on a desktop, most of them on a server):
  *     tries 1/4, 1/2 and all physical cores, reports the best and how many got it.
  *   - large last-level caches (desktop X3D, EPYC V-Cache up to ~1 GB): arrays sized
@@ -85,7 +89,18 @@ static void find_cpus(void) {
     if (ncpus == 0) { long n = sysconf(_SC_NPROCESSORS_ONLN); for (int c = 0; c < n && c < MAXCPU; c++) cpus[ncpus++] = c; }
 }
 
-/* one CPU per (package, core): SMT siblings share a core and its path to memory */
+struct core_ent { long pkg, l3, core; int cpu; };
+static int cmp_core(const void *x, const void *y) {
+    const struct core_ent *a = x, *b = y;
+    if (a->pkg != b->pkg) return a->pkg < b->pkg ? -1 : 1;
+    if (a->l3 != b->l3) return a->l3 < b->l3 ? -1 : 1;
+    if (a->core != b->core) return a->core < b->core ? -1 : 1;
+    return a->cpu - b->cpu;
+}
+
+/* one CPU per (package, core): SMT siblings share a core and its path to memory.
+ * Sorted by (package, L3 id, core) so an even spread over the list is an even
+ * spread over sockets and dies. */
 static void find_cores(void) {
     static long seen_pkg[MAXCPU], seen_core[MAXCPU];
     int nseen = 0;
@@ -104,6 +119,26 @@ static void find_cores(void) {
         cores[ncores++] = c;
     }
     if (ncores == 0) { memcpy(cores, cpus, sizeof(int) * (size_t)ncpus); ncores = ncpus; }
+    static struct core_ent ent[MAXCPU];
+    for (int i = 0; i < ncores; i++) {
+        int c = cores[i];
+        long l3 = -1;
+        for (int idx = 0; idx < 10; idx++) {
+            char lvl[16];
+            snprintf(p, sizeof p, "%s/cpu%d/cache/index%d/level", SYS, c, idx);
+            if (read_str(p, lvl, sizeof lvl) != 0 || strcmp(lvl, "3") != 0) continue;
+            snprintf(p, sizeof p, "%s/cpu%d/cache/index%d/id", SYS, c, idx);
+            l3 = read_long(p, -1);
+            break;
+        }
+        snprintf(p, sizeof p, "%s/cpu%d/topology/physical_package_id", SYS, c);
+        ent[i].pkg = read_long(p, -1);
+        snprintf(p, sizeof p, "%s/cpu%d/topology/core_id", SYS, c);
+        ent[i].core = read_long(p, -1);
+        ent[i].l3 = l3; ent[i].cpu = c;
+    }
+    qsort(ent, (size_t)ncores, sizeof ent[0], cmp_core);
+    for (int i = 0; i < ncores; i++) cores[i] = ent[i].cpu;
 }
 
 /* total L3: each L3 instance counted once, keyed by its cache `id` (as lscpu does),
@@ -155,6 +190,9 @@ static long mem_available_bytes(void) {
     return kb < 0 ? -1 : kb * 1024L;
 }
 
+/* the physical core thread `id` of `nt` runs on: spread evenly over the core list */
+static int pin_for(long id, int nt) { return cores[(long)id * ncores / nt]; }
+
 /* ── the measurement ───────────────────────────────────────────────────────── */
 static double *A, *B, *C;
 static long N;                          /* elements per array */
@@ -169,7 +207,7 @@ static void *worker(void *arg) {
     long id = (long)arg;
     long lo = (N * id / NT) & ~7L, hi = id == NT - 1 ? N : (N * (id + 1) / NT) & ~7L;
     if (!mocked) {
-        cpu_set_t s; CPU_ZERO(&s); CPU_SET(cores[id], &s);
+        cpu_set_t s; CPU_ZERO(&s); CPU_SET(pin_for(id, NT), &s);
         pthread_setaffinity_np(pthread_self(), sizeof s, &s);
     }
     for (long i = lo; i < hi; i++) { A[i] = 1.0; B[i] = 2.0; C[i] = 0.0; }   /* first touch */
@@ -251,8 +289,11 @@ int main(void) {
     if (getenv("MEMBW_PLAN_ONLY")) {
         printf("plan cpus=%d cores=%d threads=", ncpus, ncores);
         for (int i = 0; i < nc; i++) printf("%s%d", i ? "," : "", plan[i]);
-        printf(" pin=");
-        for (int i = 0; i < ncores; i++) printf("%s%d", i ? "," : "", cores[i]);
+        printf(" pins=");                /* <threads>:<cpus>|… — which CPUs each run uses */
+        for (int i = 0; i < nc; i++) {
+            printf("%s%d:", i ? "|" : "", plan[i]);
+            for (long t = 0; t < plan[i]; t++) printf("%s%d", t ? "," : "", pin_for(t, plan[i]));
+        }
         printf(" l3_mib=%ld array_mib=%ld capped=%d nt=%d\n", l3 / MiB, per / MiB, capped, NT_STEP ? 1 : 0);
         return 0;
     }
