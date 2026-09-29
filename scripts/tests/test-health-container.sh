@@ -41,8 +41,10 @@ make_mocks() {
 
   cat > "${TMP_DIR}/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
-# Only /v1/models is probed; return a minimal vLLM-shaped payload.
-printf '%s\n' '{"data":[{"id":"mock-model","owned_by":"mock"}]}'
+# Only /v1/models is probed; return a minimal payload (owned_by from MOCK_OWNED_BY)
+# and record which URL was asked, so the autodetected port can be asserted.
+for a in "$@"; do [[ "$a" == http* ]] && echo "$a" >> "${MOCK_CURL_LOG:-/dev/null}"; done
+printf '{"data":[{"id":"mock-model","owned_by":"%s"}]}\n' "${MOCK_OWNED_BY:-mock}"
 exit 0
 MOCK
 
@@ -50,8 +52,9 @@ MOCK
 #!/usr/bin/env bash
 case "$1" in
   ps)
-    # `docker ps --format '{{.Names}}'`
-    printf '%s\n' "${MOCK_PS_NAMES:-}"
+    # `docker ps --format '{{.Names}}|{{.Ports}}'` (the endpoint autodetect) gets
+    # MOCK_PS_PORTS when set; `docker ps --format '{{.Names}}'` gets MOCK_PS_NAMES.
+    if [[ "$*" == *".Ports"* ]]; then printf '%s\n' "${MOCK_PS_PORTS:-}"; else printf '%s\n' "${MOCK_PS_NAMES:-}"; fi
     ;;
   inspect)
     # last arg is the container name; emit a fixed running state.
@@ -59,12 +62,12 @@ case "$1" in
       *"{{.Id}}"*)        echo "abcdef0123456789" ;;
       *"{{.State.Status}}"*)    echo "running" ;;
       *"{{.State.StartedAt}}"*) echo "2026-06-18T00:00:00.000000000Z" ;;
+      *"{{.Config.Image}}"*)    echo "${MOCK_IMAGE:-}" ;;
       *) echo "" ;;
     esac
     ;;
   logs)
-    # No log lines needed for the container-selection shape.
-    printf '%s' ""
+    printf '%s' "${MOCK_LOGS:-}"
     ;;
   *) echo "" ;;
 esac
@@ -117,6 +120,38 @@ assert_contains "$out" "No matching container running" \
 out="$(run_health $'vllm-qwen36-27b\nmy-custom-llm' 'my-custom-llm')"
 assert_contains     "$out" "Container my-custom-llm" "CONTAINER= targets the named container"
 assert_not_contains "$out" "Container vllm-qwen36-27b" "CONTAINER= overrides the auto-match"
+
+# --- 5. The endpoint is autodetected like verify.sh (preflight_autodetect_endpoint)
+# Before, health.sh probed qwen3.6-27b's default port whatever was serving, and
+# reported "API not reachable" next to a healthy SGLang slug on :8142.
+export MOCK_CURL_LOG="${TMP_DIR}/curl.log"
+: > "$MOCK_CURL_LOG"
+out="$(PATH="${TMP_DIR}/bin:${PATH}" MOCK_PS_NAMES="sglang-qwen38" MOCK_PS_PORTS="sglang-qwen38|0.0.0.0:8142->30000/tcp" bash "$HEALTH" 2>&1)"
+assert_contains "$out" "Endpoint: http://localhost:8142" "autodetect probes the running container's port"
+command grep -q 'localhost:8142/v1/models' "$MOCK_CURL_LOG" || note "autodetect: curl was not asked :8142 ($(tr '\n' ' ' < "$MOCK_CURL_LOG"))"
+out="$(PATH="${TMP_DIR}/bin:${PATH}" MOCK_PS_NAMES="sglang-qwen38" MOCK_PS_PORTS="sglang-qwen38|0.0.0.0:8142->30000/tcp" URL=http://localhost:9999 bash "$HEALTH" 2>&1)"
+assert_contains "$out" "Endpoint: http://localhost:9999" "URL= still wins over the autodetect"
+
+# --- 6. The engine comes from engine-kind.sh (image > container name > owned_by)
+# Before, anything whose owned_by wasn't llamacpp was labelled vLLM, and an SGLang
+# server got a vLLM runtime section that could never find its log lines.
+decode='[2026-09-29 00:00:00 TP0] Decode batch, #running-req: 2, #full token: 5632, full token usage: 0.12, mamba num: 4, mamba usage: 0.03, accept len: 3.12, accept rate: 0.56, cuda graph: True, gen throughput (token/s): 95.33, #queue-req: 1'
+out="$(PATH="${TMP_DIR}/bin:${PATH}" MOCK_PS_NAMES="my-llm" CONTAINER=my-llm MOCK_IMAGE="lmsysorg/sglang:v0.5.20" MOCK_LOGS="$decode" bash "$HEALTH" 2>&1)"
+assert_contains     "$out" "(engine: SGLang)"         "an SGLang image is named SGLang, even under a custom container name"
+assert_contains     "$out" "SGLang runtime"           "SGLang gets its own runtime section"
+assert_contains     "$out" "KV cache: 12%"            "SGLang KV usage comes from 'full token usage'"
+assert_contains     "$out" "accept len last 5 = 3.12" "SGLang spec-decode comes from 'accept len'"
+assert_contains     "$out" "Last gen throughput: 95.33 tokens/s" "SGLang throughput"
+assert_not_contains "$out" "vLLM runtime"             "no vLLM section for SGLang"
+out="$(PATH="${TMP_DIR}/bin:${PATH}" MOCK_PS_NAMES="my-llm" CONTAINER=my-llm MOCK_IMAGE="vllm/vllm-openai:v0.30.0" bash "$HEALTH" 2>&1)"
+assert_contains "$out" "(engine: vLLM)" "a vLLM image is named vLLM"
+assert_contains "$out" "vLLM runtime"   "vLLM keeps its runtime section"
+out="$(PATH="${TMP_DIR}/bin:${PATH}" MOCK_PS_NAMES="my-llm" CONTAINER=my-llm MOCK_OWNED_BY=llamacpp bash "$HEALTH" 2>&1)"
+assert_contains "$out" "(engine: llama.cpp)" "no image or recognised name: owned_by still decides"
+out="$(PATH="${TMP_DIR}/bin:${PATH}" MOCK_PS_NAMES="my-llm" CONTAINER=my-llm bash "$HEALTH" 2>&1)"
+assert_contains "$out" "(engine: unknown)" "no evidence at all: unknown, not a guessed vLLM"
+assert_contains "$out" "runtime details aren't parsed" "unknown engine: says so instead of parsing the wrong logs"
+
 
 # --- 5. CONTAINER= is an exact match, not a prefix/substring ------------------
 out="$(run_health $'vllm-qwen36-27b' 'vllm-qwen')"

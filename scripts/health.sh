@@ -16,11 +16,14 @@
 #   URL=http://localhost:8030 bash scripts/health.sh
 #
 # Env:
-#   URL          API base. Default: registry-derived for qwen3.6-27b (curated
-#                DEFAULTS walk; currently :8020)
+#   URL          API base. Default: the running inference container's port, found
+#                the way verify.sh / bench.sh find it (preflight_autodetect_endpoint:
+#                any container publishing an engine port); with nothing running, the
+#                registry-derived port of qwen3.6-27b's default slug (currently :8020).
 #   CONTAINER    Target a specific named container instead of auto-matching.
-#                Default: unset → auto-match any recognized engine-prefix
-#                container (vllm-/llama-cpp-/ik-llama-/sglang-/beellama-).
+#                Default: the container autodetect found, else auto-match any
+#                recognized engine-prefix container (vllm-/llama-cpp-/ik-llama-/
+#                sglang-/beellama-). PREFLIGHT_NO_AUTODETECT=1 skips the autodetect.
 #   LOG_LINES    How many log lines to scan for AL/errors. Default: 200
 #   WATCH_INTERVAL seconds between refreshes for --watch. Default: 5
 
@@ -36,8 +39,17 @@ set -uo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-# Default endpoint follows the registry's curated DEFAULTS walk for qwen3.6-27b
-# instead of a hand-maintained :8020/:8010 literal that drifts from the catalog.
+# The running container + its port, exactly as verify.sh finds them (URL= and
+# CONTAINER= still win). Without this, health.sh probed qwen3.6-27b's default port
+# and reported "API not reachable" while another slug was serving on its own port.
+if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
+  # shellcheck source=preflight.sh
+  source "${ROOT_DIR}/scripts/preflight.sh"
+  preflight_autodetect_endpoint
+fi
+# With nothing running, the default endpoint follows the registry's curated
+# DEFAULTS walk for qwen3.6-27b instead of a hand-maintained :8020/:8010 literal
+# that drifts from the catalog.
 # The trailing literal is only a last resort when the registry can't be consulted.
 _DEFAULT_ENDPOINT_PORT=""
 if [[ -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
@@ -64,6 +76,10 @@ WATCH_INTERVAL="${WATCH_INTERVAL:-5}"
 # converted. See scripts/lib/club-containers.sh.
 # shellcheck source=lib/club-containers.sh
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/club-containers.sh"
+# Which engine it is: the decision is engine-kind.sh's (#1282); health.sh only
+# gathers the evidence (the container's image and name, /v1/models owned_by).
+# shellcheck source=lib/engine-kind.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/engine-kind.sh"
 ENGINE_PREFIX_RE="$(club_container_re)"
 
 # Color helpers
@@ -96,17 +112,9 @@ probe() {
     return 1
   fi
 
-  # Detect served model name + engine
-  local model_name engine
-  model_name=$(echo "$models_json" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('data',[{}])[0].get('id','unknown'))" 2>/dev/null)
-  if echo "$models_json" | command grep -qi "owned_by.*llamacpp"; then
-    engine="llama.cpp"
-  else
-    engine="vLLM"
-  fi
-  ok "Serving model: ${model_name}  (engine: ${engine})"
-
-  # 2. Container — target CONTAINER= if set, else any recognized engine container
+  # The container — CONTAINER= (set by the user, or by the autodetect above) if
+  # set, else any recognized engine container. Found before the engine is named,
+  # because its image is the best evidence of which engine this is.
   local container container_id status_str started uptime
   if [[ -n "$CONTAINER" ]]; then
     # Exact-name match for the user-specified container.
@@ -114,6 +122,27 @@ probe() {
   else
     container=$(docker ps --format '{{.Names}}' 2>/dev/null | command grep -E "$ENGINE_PREFIX_RE" | head -1)
   fi
+
+  # Detect served model name + engine (image → container name → owned_by).
+  local model_name kind="unknown" engine
+  model_name=$(echo "$models_json" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('data',[{}])[0].get('id','unknown'))" 2>/dev/null)
+  if [[ -n "$container" ]]; then
+    kind=$(engine_kind_from_image "$(docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null)")
+    [[ "$kind" == unknown ]] && kind=$(engine_kind_from_container "$container")
+  fi
+  if [[ "$kind" == unknown ]]; then
+    kind=$(engine_kind_from_owned_by "$(echo "$models_json" | python3 -c "import sys,json;d=json.load(sys.stdin);print((d.get('data') or [{}])[0].get('owned_by',''))" 2>/dev/null)")
+  fi
+  case "$kind" in
+    vllm)      engine="vLLM" ;;
+    llamacpp)  engine="llama.cpp" ;;
+    sglang)    engine="SGLang" ;;
+    exllamav3) engine="ExLlamaV3" ;;
+    *)         engine="unknown" ;;
+  esac
+  ok "Serving model: ${model_name}  (engine: ${engine})"
+
+  # 2. Container
   if [[ -z "$container" ]]; then
     warn "No matching container running on this host (server may be on another machine, or running as a host process)"
     container=""
@@ -183,6 +212,35 @@ else: print(f'{s//3600}h{(s%3600)//60:02d}m')
       local tput
       tput=$(echo "$logs" | command grep -oE 'Avg generation throughput: [0-9.]+ tokens/s' | tail -1 || true)
       [[ -n "$tput" ]] && ok "Last gen throughput: ${tput#Avg generation throughput: }"
+    elif [[ "$engine" == "SGLang" ]]; then
+      # SGLang logs one line per decode / prefill batch, e.g.
+      #   Decode batch, #running-req: 1, #full token: 0, full token usage: 0.00, …,
+      #   accept len: 1.37, accept rate: 0.09, cuda graph: True,
+      #   gen throughput (token/s): 1.35, #queue-req: 0
+      echo "SGLang runtime (last ${LOG_LINES} log lines):"
+      local usage decode_lines
+      usage=$(echo "$logs" | command grep -oE '(full )?token usage: [0-9.]+' | tail -1 | command grep -oE '[0-9.]+$' || true)
+      if [[ -n "$usage" ]]; then
+        ok "KV cache: $(awk -v u="$usage" 'BEGIN { printf "%.0f", u * 100 }')%  (token usage ${usage})"
+      else
+        dim "KV cache: no recent batch line in logs"
+      fi
+      decode_lines=$(echo "$logs" | command grep -E 'Decode batch' || true)
+      local al_lines
+      al_lines=$(echo "$decode_lines" | command grep -oE 'accept len: [0-9.]+' | tail -5 || true)
+      if [[ -n "$al_lines" ]]; then
+        ok "MTP/Spec-decode: accept len last 5 = $(echo "$al_lines" | awk '{ s += $3; n++ } END { if (n) printf "%.2f", s/n }')  ($(echo "$al_lines" | awk '{print $3}' | tr '\n' ',' | sed 's/,$//'))"
+      else
+        dim "Spec-decode: no recent decode batch in logs (server idle, or no drafter)"
+      fi
+      local tput reqs
+      tput=$(echo "$decode_lines" | command grep -oE 'gen throughput \(token/s\): [0-9.]+' | tail -1 | command grep -oE '[0-9.]+$' || true)
+      [[ -n "$tput" ]] && ok "Last gen throughput: ${tput} tokens/s"
+      reqs=$(echo "$logs" | command grep -E '(Decode|Prefill) batch' | tail -1 | command grep -oE '#(running|queue)-req: [0-9]+' | tr '\n' ' ' || true)
+      [[ -n "$reqs" ]] && dim "Requests at the last batch: ${reqs% }"
+    elif [[ "$engine" == "ExLlamaV3" || "$engine" == "unknown" ]]; then
+      echo "${engine} runtime:"
+      dim "runtime details aren't parsed for this engine — see: docker logs --tail ${LOG_LINES} ${container}"
     else
       # llama.cpp
       echo "llama.cpp runtime (last ${LOG_LINES} log lines):"

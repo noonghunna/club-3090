@@ -54,7 +54,7 @@ Most agent sessions on a rig are "make it serve / find out why it doesn't", not 
 | What settings are in effect, and where does each come from? | `bash scripts/settings.sh show` (`path` lists the files) |
 | Why does this slug launch with this value? | `bash scripts/switch.sh --explain <slug>` (`--json` for scripts) |
 | What's running, on which ports; GPU / RAM / disk? | `bash scripts/gpu-mode.sh status` |
-| Is the running server healthy right now (container, KV pool, spec-decode, recent errors)? | `URL=http://localhost:<port> bash scripts/health.sh` — it defaults to the port of `qwen3.6-27b`'s default slug, not whatever is running; `gpu-mode.sh status` shows the port |
+| Is the running server healthy right now (container, KV pool, spec-decode, recent errors)? | `bash scripts/health.sh` (finds the running container like `verify.sh`; `URL=` / `CONTAINER=` override) |
 | Does it work (tools, long context, …)? | `bash scripts/verify.sh`, then `bash scripts/verify-full.sh` |
 | Does this slug fit this hardware and catalogue? | `bash scripts/diagnose-profile.sh <slug>` |
 | Is the gateway on a key of its own, and does the running one accept it? | `bash scripts/gateway-key.sh status` |
