@@ -56,6 +56,36 @@ from club3090_tui_core.runner import SubprocessRunner
 from club3090_cockpit.services import RealRunner
 
 
+# ── temp dirs never outlive their test on sys.path ────────────────────────────
+# c3 puts a CockpitData's repo root on sys.path so `scripts.lib.*` imports work
+# (services.py), and tests build apps on temporary repo roots. A temp root left
+# there shadows the real tree for every later test in the process:
+# TestScriptsImportable once left a seeded scripts/lib/profiles package on it, and
+# 11 tests failed whenever test_services.py ran on its own (the full suite hid it by
+# importing the real package first). After each test's fixtures are torn down —
+# monkeypatch included, whatever the fixture order — drop any temp dir it added.
+# The real repo root is left alone: later imports rely on it.
+_TEMP_BASES = tuple({os.path.realpath(tempfile.gettempdir()), tempfile.gettempdir()})
+_SYS_PATH_BEFORE: dict[str, list[str]] = {}
+
+
+def _is_temp(entry: str) -> bool:
+    return any(entry == b or entry.startswith(b + os.sep) for b in _TEMP_BASES)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_setup(item):
+    _SYS_PATH_BEFORE[item.nodeid] = list(sys.path)
+    yield
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    yield
+    before = set(_SYS_PATH_BEFORE.pop(item.nodeid, sys.path))
+    sys.path[:] = [p for p in sys.path if p in before or not _is_temp(p)]
+
+
 @pytest.fixture(autouse=True)
 def _no_live_subprocess(monkeypatch):
     """Hard-block every real subprocess spawn point during tests."""

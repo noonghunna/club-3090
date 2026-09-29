@@ -365,7 +365,7 @@ def full_runner(**overrides) -> FakeRunner:
 
 
 class TestScriptsImportable:
-    def test_init_puts_repo_root_on_sys_path(self, tmp_path):
+    def test_init_puts_repo_root_on_sys_path(self, tmp_path, monkeypatch):
         """route-G/C ② Serve emit does `from scripts.lib.profiles...`; c3 runs from
         tools/serve-cockpit/ so the repo root ISN'T on sys.path by default. __init__
         must add it, else serve dies "No module named 'scripts'" (2026-07-09).
@@ -377,6 +377,13 @@ class TestScriptsImportable:
         `scripts.lib.profiles.*` import (the full-suite contamination this test
         used to cause)."""
         import sys
+
+        # CockpitData inserts into sys.path in place: give it a copy that pytest puts
+        # back afterwards. Left in place, the seeded root below (a REGULAR
+        # scripts.lib.profiles package, first on the path) shadowed the real tree for
+        # every later test in the process — 11 failures whenever test_services.py ran
+        # on its own, hidden in the full suite, which imports the real package first.
+        monkeypatch.setattr(sys, "path", list(sys.path))
 
         seeded = tmp_path / "scripts" / "lib" / "profiles"
         seeded.mkdir(parents=True)
