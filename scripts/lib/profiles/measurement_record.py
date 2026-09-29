@@ -712,20 +712,66 @@ def _container_host_ports(cname: str) -> set:
     return set(re.findall(r"->\s*[0-9.]+:(\d+)", r.stdout))
 
 
-def resolve_serving_tag(serving_url: Optional[str] = None) -> Optional[str]:
-    """Resolve the compose_registry tag of a currently-serving container by EXACT
-    container-name match (never port/substring — the same rule rebench-full uses).
-    Returns the slug, or None if docker is unavailable / nothing matches. Lets
-    bench.sh / quality-test.sh emit a per-rig record without knowing the slug.
+# Estate instances (pods) run under `club3090-<name>`, not the compose's default
+# container name, so estate_cli stamps this label on them (compose override) and the
+# resolver trusts it first (#1477).
+SLUG_LABEL = "club3090.slug"
 
-    ⚠️ URL GUARD: when ``serving_url`` carries an explicit port, a name-matched
-    container ALSO has to publish that port — otherwise the run did NOT hit this
-    container (a test benching a fake server on a random port, with a real
-    container up) and attributing a record to it would poison the per-rig corpus
-    (the 2026-08-20 ~475-TPS pollution). No serving_url / no port in it → the old
-    name-only behaviour, unchanged. Ports we cannot read → fail-open (name match)."""
-    import re
+
+def _running_containers() -> Optional[list[tuple[str, str]]]:
+    """``[(name, club3090.slug label or "")]`` for every running container; None when
+    docker can't be asked."""
     import subprocess
+
+    try:
+        r = subprocess.run(
+            ["docker", "ps", "--format", '{{.Names}}|{{.Label "%s"}}' % SLUG_LABEL],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return None
+    rows = []
+    for line in r.stdout.splitlines():
+        name, _, label = line.partition("|")
+        if name.strip():
+            rows.append((name.strip(), label.strip()))
+    return rows
+
+
+def _estate_container_slugs() -> dict[str, str]:
+    """``{container name: slug}`` for the instances in the default estate file — pods
+    booted before estate_cli stamped the slug label. Empty when the file, PyYAML or
+    the estate CLI is unavailable."""
+    try:
+        try:
+            from . import estate_cli
+        except ImportError:  # direct-script invocation
+            from scripts.lib.profiles import estate_cli  # type: ignore
+        _doc, instances = estate_cli.parse_estate_yaml(estate_cli.DEFAULT_ESTATE_PATH)
+    except Exception:
+        return {}
+    return {estate_cli.container_name(i.name): i.compose_name for i in instances}
+
+
+def resolve_serving(serving_url: Optional[str] = None) -> Optional[tuple[str, str]]:
+    """``(slug, container)`` of the container serving the benched endpoint, or None.
+    Lets bench.sh / quality-test.sh / rebench-full.sh emit a per-rig record without
+    knowing the slug. Identity only — never a port or substring shape guess. In order:
+
+      1. a running container carrying the ``club3090.slug`` label (estate / pod.sh
+         instances, whose container is ``club3090-<name>``);
+      2. a running container named like an instance in the default estate file (pods
+         booted before that label existed);
+      3. EXACT container-name match against each registry slug's default
+         ``container_name`` (core + local layer, registry order).
+
+    ⚠️ URL GUARD, on every path: when ``serving_url`` carries an explicit port, the
+    matched container ALSO has to publish that port — otherwise the run did NOT hit
+    this container (a test benching a fake server on a random port, with a real
+    container up) and attributing a record to it would poison the per-rig corpus
+    (the 2026-08-20 ~475-TPS pollution; #1477 on a rig serving two models). No
+    serving_url / no port in it → name-only. Ports we cannot read → fail-open."""
+    import re
 
     try:
         from .compose_registry import get_registry
@@ -734,16 +780,32 @@ def resolve_serving_tag(serving_url: Optional[str] = None) -> Optional[str]:
 
         _sys.path.insert(0, str(_REPO_ROOT))
         from scripts.lib.profiles.compose_registry import get_registry
-    try:
-        names = subprocess.run(
-            ["docker", "ps", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=10,
-        ).stdout.split()
-    except Exception:
+    rows = _running_containers()
+    if rows is None:
         return None
-    norm_map = {n.replace("_", "-"): n for n in names}  # normalized -> real name
+    registry = get_registry()
     want_port = _url_port(serving_url)
-    for slug, entry in get_registry().items():
+
+    def port_ok(cname: str) -> bool:
+        if want_port is None:
+            return True
+        host_ports = _container_host_ports(cname)
+        # host_ports empty == unreadable -> fail-open (name match stands).
+        return not host_ports or want_port in host_ports
+
+    # 1. the slug label (pods)
+    for name, label in rows:
+        if label and label in registry and port_ok(name):
+            return label, name
+    # 2. the default estate file (pods booted before the label)
+    estate = _estate_container_slugs()
+    for name, _label in rows:
+        slug = estate.get(name)
+        if slug and slug in registry and port_ok(name):
+            return slug, name
+    # 3. each slug's default container name
+    norm_map = {n.replace("_", "-"): n for n, _ in rows}  # normalized -> real name
+    for slug, entry in registry.items():
         try:
             txt = (_REPO_ROOT / entry["compose_path"]).read_text(
                 encoding="utf-8", errors="replace"
@@ -756,21 +818,23 @@ def resolve_serving_tag(serving_url: Optional[str] = None) -> Optional[str]:
         if not m:
             continue
         key = m.group(1).replace("_", "-")
-        if key not in norm_map:
-            continue
-        if want_port is not None:
-            host_ports = _container_host_ports(norm_map[key])
-            # host_ports empty == unreadable -> fail-open (name match stands).
-            if host_ports and want_port not in host_ports:
-                continue
-        return slug
+        if key in norm_map and port_ok(norm_map[key]):
+            return slug, norm_map[key]
     return None
 
 
-def _detect_serving_fingerprint(tag: str):
+def resolve_serving_tag(serving_url: Optional[str] = None) -> Optional[str]:
+    """The slug half of :func:`resolve_serving` (kept for callers that need only it)."""
+    hit = resolve_serving(serving_url)
+    return hit[0] if hit else None
+
+
+def _detect_serving_fingerprint(tag: str, container: Optional[str] = None):
     """Best-effort (engine_pin, hardware, power_cap_w) for a serving slug, from
     docker inspect + nvidia-smi. Any field is None if undetectable — the record
-    stays valid (fingerprint fields are optional)."""
+    stays valid (fingerprint fields are optional). ``container`` is the container
+    that actually matched (resolve_serving); without it the compose's default
+    container name is inspected, which a pod (``club3090-<name>``) doesn't have."""
     import re
     import subprocess
 
@@ -780,10 +844,12 @@ def _detect_serving_fingerprint(tag: str):
     except ImportError:
         from scripts.lib.profiles.compose_registry import get_registry
     try:
-        entry = get_registry().get(tag) or {}
-        txt = (_REPO_ROOT / entry["compose_path"]).read_text(encoding="utf-8", errors="replace")
-        m = re.search(r'container_name:\s*"?(?:\$\{[^:}]*:-)?([A-Za-z0-9._-]+)\}?"?', txt)
-        cname = m.group(1) if m else None
+        cname = container
+        if not cname:
+            entry = get_registry().get(tag) or {}
+            txt = (_REPO_ROOT / entry["compose_path"]).read_text(encoding="utf-8", errors="replace")
+            m = re.search(r'container_name:\s*"?(?:\$\{[^:}]*:-)?([A-Za-z0-9._-]+)\}?"?', txt)
+            cname = m.group(1) if m else None
         if cname:
             img = subprocess.run(
                 ["docker", "inspect", cname, "--format", "{{.Config.Image}}"],
@@ -825,7 +891,8 @@ def main(argv=None) -> int:
     args = _build_arg_parser().parse_args(argv)
 
     if not args.tag and args.resolve_serving:
-        args.tag = resolve_serving_tag(args.serving_url)
+        hit = resolve_serving(args.serving_url)
+        args.tag, container = hit if hit else (None, None)
         if not args.tag:
             print(
                 "[measurement_record] no serving container matched a registry slug "
@@ -835,7 +902,7 @@ def main(argv=None) -> int:
             return 0
         # Auto-fill the fingerprint the scripts don't pass, so bench.sh /
         # quality-test.sh stay thin and records match rebench-full's shape.
-        fp_pin, fp_hw, fp_cap = _detect_serving_fingerprint(args.tag)
+        fp_pin, fp_hw, fp_cap = _detect_serving_fingerprint(args.tag, container)
         if args.engine_pin is None:
             args.engine_pin = fp_pin
         if args.hardware is None:

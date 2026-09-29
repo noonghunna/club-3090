@@ -468,6 +468,11 @@ def compose_override_doc(inst: InstanceSpec) -> dict[str, Any]:
     In that setup, CUDA may still enumerate physical GPU 0 first. Pass
     CUDA_VISIBLE_DEVICES inside the container so each estate instance uses the
     GPUs it claimed.
+
+    Also labels each service with the slug it runs (``club3090.slug``). The
+    container is ``club3090-<name>``, not the compose's default container name,
+    so without the label a bench / verify / soak against a pod could not say
+    which slug it measured, and wrote no measurement record (#1477).
     """
     joined = ",".join(str(gpu) for gpu in inst.gpu_indices)
     # UUID-pin (#610 Phase A): CDI ignores the NVIDIA index form and the
@@ -480,7 +485,8 @@ def compose_override_doc(inst: InstanceSpec) -> dict[str, Any]:
                 "environment": {
                     "CUDA_VISIBLE_DEVICES": visible,
                     "NVIDIA_VISIBLE_DEVICES": visible,
-                }
+                },
+                "labels": {"club3090.slug": inst.compose_name},
             }
             for service in compose_service_names(inst.compose_name)
         }

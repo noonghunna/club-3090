@@ -588,11 +588,16 @@ echo "  bash scripts/submit-bench.sh --tag $TAG"
 
 # --- measurement record + baseline-induction prompt (catalog-baselines slice 2) ---
 # Auto-emit the #249 measurement record into the per-rig corpus when the served
-# container EXACT-matches a registry slug (identity semantics — a port/substring
+# container is identified as a registry slug (identity semantics — a port/substring
 # match is a shape guess and must not stamp another slug's record; see the c3
 # detect layer). BYO/swap serves have no registry identity → skipped with a note.
+# The slug comes from the ONE resolver the per-step scripts use
+# (measurement_record.resolve_serving, #1477): core + local-layer slugs, pods, and a
+# guard that the container publishes the benchmarked URL's port. This used to be a
+# private core-only copy with no port guard, first match winning, so with two
+# models up a rebench could be recorded under the other one.
 if [[ -f "$OUT_DIR/bench.log" ]] && command -v python3 >/dev/null 2>&1; then
-  OUT_DIR="$OUT_DIR" TAG="$TAG" python3 - <<'PY_RECORD' || true
+  OUT_DIR="$OUT_DIR" TAG="$TAG" URL="$URL" python3 - <<'PY_RECORD' || true
 import json
 import os
 import re
@@ -603,9 +608,9 @@ from pathlib import Path
 root = Path(__file__).resolve().parent if "__file__" in dir() else Path.cwd()
 sys.path.insert(0, str(Path.cwd()))
 try:
-    from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+    from scripts.lib.profiles.compose_registry import get_registry
     from scripts.lib.profiles.measurement_record import (
-        build_record, parse_bench_output, write_record,
+        build_record, parse_bench_output, resolve_serving, write_record,
     )
 except Exception as exc:  # pragma: no cover - env without the profiles tree
     print(f"  record:      skipped (profiles unavailable: {exc})")
@@ -614,29 +619,17 @@ except Exception as exc:  # pragma: no cover - env without the profiles tree
 out_dir = Path(os.environ["OUT_DIR"])
 tag = os.environ["TAG"]
 
-# EXACT container -> slug (never port/substring).
+# The container that served the benchmarked URL -> its slug (identity, never
+# port/substring; the URL's port must be one the container publishes).
 slug = None
 try:
-    names = subprocess.run(
-        ["docker", "ps", "--format", "{{.Names}}"],
-        capture_output=True, text=True, timeout=10,
-    ).stdout.split()
-    norm = {n.replace("_", "-") for n in names}
-    for s, e in COMPOSE_REGISTRY.items():
-        # container name = the compose's container_name default
-        try:
-            txt = Path(e["compose_path"]).read_text(errors="replace")
-        except OSError:
-            continue
-        m = re.search(r'container_name:\s*"?(?:\$\{[^:}]*:-)?([A-Za-z0-9._-]+)\}?"?', txt)
-        if m and m.group(1).replace("_", "-") in norm:
-            slug = s
-            break
+    hit = resolve_serving(os.environ.get("URL"))
+    slug = hit[0] if hit else None
 except Exception:
     pass
 
 if not slug:
-    print("  record:      skipped — no running container exact-matches a registry slug")
+    print("  record:      skipped — no running container serving this URL matches a registry slug")
     raise SystemExit(0)
 
 
@@ -664,7 +657,7 @@ except Exception:
     pass
 if not engine_pin:
     try:
-        txt = Path(COMPOSE_REGISTRY[slug]["compose_path"]).read_text(errors="replace")
+        txt = Path(get_registry()[slug]["compose_path"]).read_text(errors="replace")
         m = re.search(r'^\s*image:\s*["\x27]?(?:\$\{[A-Z_0-9]+:-)?([^\s}"\x27]+)\}?', txt, re.M)
         engine_pin = m.group(1) if m else None
     except OSError:
