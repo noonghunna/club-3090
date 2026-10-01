@@ -819,7 +819,9 @@ section "Container runtime"
 
 section "Stack version"
 {
-  if [[ -d .git ]]; then
+  # -e, not -d: in a git worktree (or a submodule) .git is a FILE pointing at the real git
+  # dir, and a report run from a worktree said "not a git repo".
+  if [[ -e .git ]]; then
     # Prefer `git describe` for a human-readable version (e.g. v0.6.2-3-ge299e70,
     # "3 commits past v0.6.2 at SHA e299e70"). Falls back to raw SHA if no tags
     # are reachable (shallow clone, fresh repo).

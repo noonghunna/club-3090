@@ -60,7 +60,8 @@ run() {
 
 # --- 1. dep checks ---
 command -v git >/dev/null 2>&1 || { echo "[update] ERROR: 'git' not found in PATH." >&2; exit 1; }
-[[ -d "${ROOT_DIR}/.git" ]] || { echo "[update] ERROR: ${ROOT_DIR} is not a git repo." >&2; exit 1; }
+# -e, not -d: in a git worktree .git is a file, so -d called a worktree "not a git repo".
+[[ -e "${ROOT_DIR}/.git" ]] || { echo "[update] ERROR: ${ROOT_DIR} is not a git repo." >&2; exit 1; }
 
 # --- 2. branch check ---
 current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)

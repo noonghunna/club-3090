@@ -756,7 +756,7 @@ preflight_repo_drift() {
 
   # Fast bail-outs — silent.
   [[ "${PREFLIGHT_NO_FETCH:-0}" == "1" ]] && return 0
-  [[ -d "${repo_root}/.git" ]] || return 0
+  [[ -e "${repo_root}/.git" ]] || return 0   # -e: a worktree's .git is a file
   command -v git >/dev/null 2>&1 || return 0
 
   # Only check on master — on a feature branch, "behind master" is expected
