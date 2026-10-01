@@ -55,8 +55,9 @@ def registry_ports(variants: list[dict]) -> list[int]:
 
 
 # A live route: (port, served id, context window or None, whether Claude Code's
-# /v1/messages goes to the engine's own Anthropic endpoint — see serves_messages).
-Live = tuple[int, str, "int | None", bool]
+# /v1/messages goes to the engine's own Anthropic endpoint — see serves_messages,
+# whether the engine serves /v1/responses itself — see serves_responses).
+Live = tuple[int, str, "int | None", bool, bool]
 
 
 def probe(port: int) -> list[Live]:
@@ -71,6 +72,7 @@ def probe(port: int) -> list[Live]:
         owned_by = next((str(m["owned_by"]) for m in data if m.get("owned_by")), "")
         first_id = next((str(m["id"]) for m in data if m.get("id")), "")
         native = serves_messages(port, owned_by, first_id) if first_id else False
+        responses = serves_responses(port)
         out: list[Live] = []
         for m in data:
             if not m.get("id"):
@@ -79,7 +81,7 @@ def probe(port: int) -> list[Live]:
             ml = int(ml) if isinstance(ml, int) and ml > 0 else None
             if ml is None:
                 ml = llamacpp_ctx(port)   # llama.cpp reports its window on /props instead
-            out.append((port, m["id"], ml, native))
+            out.append((port, m["id"], ml, native, responses))
         return out
     except Exception:
         return []
@@ -142,6 +144,30 @@ def serves_messages(port: int, owned_by: str, model: str) -> bool:
     return inline is not None and merged is not None and inline > merged + 1
 
 
+def serves_responses(port: int) -> bool:
+    """Whether the engine serves the Responses API itself. omp talks Responses to
+    every gateway route, and LiteLLM turns Claude Code's /v1/messages into a
+    Responses call too; both are forwarded to the engine's /v1/responses as-is.
+    tabbyAPI has no such endpoint: it 404s, and LiteLLM then cools the whole
+    model group down for 5 s — chat completions included (#1520).
+    An empty body costs no generation: an engine with the endpoint rejects it
+    (SGLang: 400, missing `input`), one without it answers 404 for the path.
+    Only a 404 counts as absent. Anything else — including no answer — keeps
+    today's route, because bridging an engine that has the endpoint would move
+    omp off the wire whose prefix reuse docs/CODING_AGENTS.md measures."""
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/responses", data=b"{}",
+        headers={"content-type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=2):
+            return True
+    except urllib.error.HTTPError as e:
+        return e.code != 404
+    except Exception:
+        return True
+
+
 def llamacpp_ctx(port: int) -> "int | None":
     """llama.cpp's runtime context window (/props n_ctx); None anywhere else."""
     try:
@@ -161,7 +187,8 @@ def live_routes(ports: list[int]) -> list[Live]:
     # happens to be serving, which is neither deterministic nor reproducible on
     # a contributor's machine. `C3_LITELLM_FAKE_LIVE="8182=a,8091=b"` substitutes
     # the probe result wholesale; `8113=qwen@262144` adds the context window,
-    # and a trailing `+messages` marks a server that serves /v1/messages itself.
+    # a trailing `+messages` marks a server that serves /v1/messages itself, and
+    # `+noresponses` one without /v1/responses (flags combine: `+messages+noresponses`).
     # Deliberately env-only and undocumented in --help: it is for tests, not
     # operators.
     fake = os.environ.get("C3_LITELLM_FAKE_LIVE")
@@ -170,12 +197,13 @@ def live_routes(ports: list[int]) -> list[Live]:
         for item in fake.split(","):
             if "=" in item:
                 p, rest = item.split("=", 1)
-                rest, _, flag = rest.partition("+")
+                rest, *flags = rest.split("+")
+                flags = {f.strip() for f in flags}
                 mid, _, ml = rest.partition("@")
                 if p.strip().isdigit():
                     out.append((int(p.strip()), mid.strip(),
                                 int(ml) if ml.strip().isdigit() else None,
-                                flag.strip() == "messages"))
+                                "messages" in flags, "noresponses" not in flags))
         return out
     found: list[Live] = []
     with cf.ThreadPoolExecutor(max_workers=32) as ex:
@@ -225,7 +253,8 @@ def port_facts(variants: list[dict]) -> dict[int, dict]:
 # chat_template_kwargs, thinking_token_budget and top_k pass through as-is.
 # ⚠️ omp's `discovery: litellm` talks the Responses API to a route whose provider
 # is `openai` (chat completions otherwise); /v1/responses is served natively by
-# vLLM, SGLang and llama.cpp — see docs/CODING_AGENTS.md.
+# vLLM, SGLang and llama.cpp — see docs/CODING_AGENTS.md. tabbyAPI does not
+# serve it; its routes get RESPONSES_BRIDGE below.
 # Claude Code talks Anthropic /v1/messages. On an `openai` route LiteLLM translates
 # that to the engine's Responses API, and that bridge builds thinking blocks only
 # from a reasoning SUMMARY, which vLLM and SGLang never produce: Claude Code got the
@@ -238,6 +267,14 @@ def port_facts(variants: list[dict]) -> dict[int, dict]:
 # LiteLLM forwards the Anthropic request to the engine untranslated.
 MESSAGES_ENDPOINTS = '      supported_endpoints: ["/v1/chat/completions", "/v1/responses", "/v1/messages"]'
 ROUTE_PARAMS = ["      allowed_openai_params: [reasoning_effort]"]
+# An engine without /v1/responses (tabbyAPI — see serves_responses) gets LiteLLM's
+# Responses → chat-completions bridge, so omp's and Claude Code's requests reach
+# it as chat completions. Reasoning crosses it both ways: the reply's
+# reasoning_content comes back as a reasoning item / thinking block, and past
+# reasoning goes out as reasoning_content on the assistant turn. One gap, on
+# LiteLLM's side: a NON-streaming /v1/messages through the bridge comes back with
+# empty content; Claude Code streams (#1520). Mirrored by litellm-emit.sh.
+RESPONSES_BRIDGE = "      use_chat_completions_api: true"
 
 
 def model_info(ctx: "int | None", facts: dict, native_messages: bool = False) -> list[str]:
@@ -268,7 +305,7 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None) -> tu
     ]
     seen: set[str] = set()
     facts = facts or {}
-    for port, mid, ctx, native in sorted(live, key=lambda t: (t[1], t[0])):
+    for port, mid, ctx, native, responses in sorted(live, key=lambda t: (t[1], t[0])):
         if mid in seen:
             lines.append(f"  # ⚠️ '{mid}' is also served on :{port}; keeping the first route only")
             continue
@@ -280,6 +317,7 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None) -> tu
             f"      api_base: http://host.docker.internal:{port}/v1",
             "      api_key: EMPTY",
             *ROUTE_PARAMS,
+            *([] if responses else [RESPONSES_BRIDGE]),
         ]
         lines += model_info(ctx, facts.get(port, {}), native) + [""]
     if not live:

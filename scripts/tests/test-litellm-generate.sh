@@ -15,7 +15,9 @@
 #      — no route lost, correct port per route;
 #   7. non-functional statuses annotate their route `# status: <status>`
 #      (deepseek non-functional; the qwen3.8-27b dual-max experimental scene)
-#      while functional routes stay clean.
+#      while functional routes stay clean;
+#   8. an engine family without /v1/responses (exllamav3) gets
+#      `use_chat_completions_api: true`; vLLM and llama.cpp don't (#1520).
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
@@ -144,6 +146,7 @@ _STUB = {
     "serve_aliases": ["synthetic-1-alt", "synthetic-1-legacy"],  # #1073 mechanism
     "compose_path": "models/synthetic/none.yml",
     "default_port": 8123,
+    "engine": "vllm-stable",
 }
 # llama.cpp-family stub: no served_name fact — the name must come from parsing
 # the compose's `--alias` (list form, quoted); experimental → status annotation.
@@ -154,12 +157,24 @@ _STUB_LLAMA = {
     "compose_path": "models/synthetic2/compose.yml",
     "default_port": 8124,
     "status": "experimental",
+    "engine": "llama-cpp-local",
+}
+# tabbyAPI stub: no /v1/responses → the route gets the chat-completions bridge (#1520).
+_STUB_EXL3 = {
+    "model": "synthetic-3",
+    "gateway": True,
+    "served_name": "synthetic-3",
+    "compose_path": "models/synthetic/none.yml",
+    "default_port": 8125,
+    "engine": "exllamav3",
 }
 FUNCTIONAL_STATUSES = frozenset({"production", "caveats"})
 def get_registry(root=None):
-    return {"local/synthetic": dict(_STUB), "local/synthetic-llama": dict(_STUB_LLAMA)}
+    return {"local/synthetic": dict(_STUB), "local/synthetic-llama": dict(_STUB_LLAMA),
+            "local/synthetic-exl3": dict(_STUB_EXL3)}
 def curated_default_target(model, topology, detected_sm=None):
-    return {"synthetic-1": "local/synthetic", "synthetic-2": "local/synthetic-llama"}[model]
+    return {"synthetic-1": "local/synthetic", "synthetic-2": "local/synthetic-llama",
+            "synthetic-3": "local/synthetic-exl3"}[model]
 PY
 mkdir -p "$FIX/models/synthetic2"
 cat > "$FIX/models/synthetic2/compose.yml" <<'EOF'
@@ -206,9 +221,15 @@ if grep -qE '^  - model_name: -np' "$FIX/config.yaml"; then
 fi
 [ "$(grep -cF 'api_base: http://host.docker.internal:8123/v1' "$FIX/config.yaml")" -eq 3 ] \
   || fail "alias mechanism: aliases must ride the SAME upstream route (:8123)"
+# 8: only the exllamav3 route carries the bridge (#1520)
+grep -A6 -F 'model_name: synthetic-3' "$FIX/config.yaml" | grep -qF 'use_chat_completions_api: true' \
+  || fail "responses bridge: the exllamav3 route (synthetic-3) lacks use_chat_completions_api"
+[ "$(grep -cF 'use_chat_completions_api' "$FIX/config.yaml")" -eq 1 ] \
+  || fail "responses bridge: emitted on a vLLM/llama.cpp route too (want exactly the exllamav3 one)"
 LITELLM_EMIT_REGISTRY_JSON="$FIX/facts.json" LITELLM_CONFIG="$FIX/config.yaml" \
   bash "$EMIT" --check "$FIX" >/dev/null || fail "fixture --check failed after generation"
 rm -rf "$FIX"
 echo "OK: litellm-emit idempotent, --check green, hand-mutation caught, "
 echo "    hand-maintained blocks preserved, absorbed hand routes intact, status"
-echo "    annotation + #1073 serve_aliases/--alias emission verified."
+echo "    annotation + #1073 serve_aliases/--alias emission verified,"
+echo "    responses bridge on exllamav3 routes only."

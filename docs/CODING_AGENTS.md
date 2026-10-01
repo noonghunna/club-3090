@@ -36,6 +36,7 @@ does not serve it. Each live route gets:
 |---|---|---|
 | `model` | `openai/<served id>` | Forwards the messages untouched, including a past turn's `reasoning_content`, which `hosted_vllm/` drops. |
 | `allowed_openai_params` | `[reasoning_effort]` | Without it the `openai` provider answers a top-level `reasoning_effort` with HTTP 400 before the request reaches the engine. |
+| `use_chat_completions_api` | `true` on a route whose engine has no `/v1/responses` (tabbyAPI; the sync checks with an empty-body request); left out elsewhere | omp's Responses calls and Claude Code's translated `/v1/messages` reach the engine as chat completions instead of a 404 — which would also lock every client out of the model for 5 s. Reasoning crosses the bridge both ways — see *Wire format*. |
 | `model_info.max_input_tokens` | the booted server's context: vLLM/SGLang `max_model_len`, llama.cpp `n_ctx`; else the registry's configured context | Clients size compaction against the real window of *this* boot. |
 | `model_info.max_output_tokens` | 32,768, or half the context if that is smaller | The reply cap (thinking + answer); half the window at most, so a long prompt still fits. |
 | `model_info.supports_function_calling` | `true` | |
@@ -268,7 +269,12 @@ club route is, so the gateway forwards past reasoning untouched (see *Prefix
 caching*). vLLM, SGLang and llama.cpp all serve `/v1/responses` natively; on
 vLLM and SGLang it carried effort, tool calls and past reasoning correctly, and
 on SGLang it reused the cached prefix exactly as chat completions does (vLLM's
-Responses path wasn't cache-measured). Two things only exist
+Responses path wasn't cache-measured). tabbyAPI (exllamav3) doesn't serve it, so
+its routes carry `use_chat_completions_api: true`: LiteLLM converts the call to
+chat completions, the reply's `reasoning_content` comes back as a reasoning item,
+and past reasoning goes out as `reasoning_content` on the assistant turn. One
+known gap, in LiteLLM: a *non-streaming* Claude Code request through this bridge
+comes back empty; Claude Code's streamed turns are fine. Two things only exist
 on the chat-completions wire and so don't reach the engine through the gateway:
 
 - **`off`** — omp sends no reasoning setting, so the slug's server default applies
