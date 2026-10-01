@@ -11693,6 +11693,12 @@ class CockpitApp(App):
             dl_metas = self._data.download_set_metas(entry, _index)
         except Exception:
             dl_metas = [meta] if meta is not None else []
+        # Artifacts already on disk at the start stay out of the %, so a present core
+        # can't pin the bar at 98-99 % while its companions land (#1508).
+        try:
+            done_at_start = self._data.download_complete_at_start(dl_metas)
+        except Exception:
+            done_at_start = frozenset()
         # Progress loop: refresh ⏳NN% every ~2s until the run signals done.  Read
         # the CURRENT entry from the tracker each tick — a catalog refresh rebuilds
         # entries and _reapply_active_downloads re-points info['entry'] at the
@@ -11702,7 +11708,8 @@ class CockpitApp(App):
             if info is None:
                 return  # cancelled — cancel_download already reset + re-stat'd
             if dl_metas:
-                pct = self._data.weights_download_progress_set(dl_metas)
+                pct = self._data.weights_download_progress_set(
+                    dl_metas, complete_at_start=done_at_start)
                 if pct is not None:
                     info["pct"] = pct                        # slug-keyed → survives refresh
                     cur = info.get("entry", entry)

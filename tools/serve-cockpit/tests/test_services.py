@@ -1055,6 +1055,65 @@ class TestLoadCatalog:
             fh.truncate(1 * 10**9)                          # half the companion → (8+1)/10 = 90%
         assert cd.weights_download_progress_set([core, comp], model_dir=str(tmp_path)) == 90
 
+    def test_download_progress_shared_bucket_counts_each_file_once(self, tmp_path):
+        """#1508: the GLM layout. The core's subdir is the BUCKET (glm-5.3-flash-gguf,
+        verify_glob UD-IQ4_XS/*.gguf) and holds the dflash2/ and mmproj/ companions, a
+        sibling quant and hf's staging tree. An rglob of the bucket counted the
+        companions twice (once in the core, once each) plus everything else there, and
+        the present 157 GB core pinned the bar at 98-99 % for the whole tail."""
+        from club3090_cockpit.data import WeightsMeta
+        cd = CockpitData(ROOT, runner=full_runner())
+        core = WeightsMeta(model="glm", variant="iq4xs", subdir="glm-gguf", size_gb=157.0,
+                           verify_glob="UD-IQ4_XS/*.gguf")
+        draft = WeightsMeta(model="glm", variant="dflash2", subdir="glm-gguf/dflash2", size_gb=0.7,
+                            verify_glob="GLM-DFlash2-Q4_K_M.gguf")
+        mmproj = WeightsMeta(model="glm", variant="mmproj", subdir="glm-gguf/mmproj", size_gb=1.13,
+                             verify_glob="mmproj-F16.gguf")
+        bucket = tmp_path / "glm-gguf"
+
+        def put(rel, nbytes):
+            p = bucket / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "wb") as fh:
+                fh.truncate(nbytes)
+
+        put("UD-IQ4_XS/GLM-00001-of-00002.gguf", 78 * 10**9)       # the core, on disk
+        put("UD-IQ4_XS/GLM-00002-of-00002.gguf", 79 * 10**9)
+        put("UD-IQ3_XXS/GLM-00001-of-00001.gguf", 120 * 10**9)     # another quant in the bucket
+        put(".cache/huggingface/download/UD-IQ4_XS/GLM-00001-of-00002.gguf.metadata", 200)
+        put("dflash2/GLM-DFlash2-Q8_0.gguf", 1_250_000_000)         # an undeclared neighbour
+        # The core counts only its own files: not the companions, the other quant or staging.
+        assert cd.weights_bytes_on_disk(core, model_dir=str(tmp_path)) == 157 * 10**9
+        metas = [core, draft, mmproj]
+        done = cd.download_complete_at_start(metas, model_dir=str(tmp_path))
+        assert done == frozenset({("glm", "iq4xs")})
+        # Companions absent: the % is over the 1.83 GB still to fetch, not 158.83 GB.
+        assert cd.weights_download_progress_set(metas, model_dir=str(tmp_path),
+                                                complete_at_start=done) == 0
+        # The draft arrives (0.7 GB of 1.83) and mmproj is half-staged under .cache.
+        put("dflash2/GLM-DFlash2-Q4_K_M.gguf", 700_000_000)
+        put("mmproj/.cache/huggingface/download/mmproj-F16.gguf.3f9a2c.incomplete", 565_000_000)
+        assert cd.weights_download_progress_set(metas, model_dir=str(tmp_path),
+                                                complete_at_start=done) == 69    # 1.265 / 1.83
+        # Without the start baseline the same disk reads 99 % — the frozen bar of the report.
+        assert cd.weights_download_progress_set(metas, model_dir=str(tmp_path)) == 99
+        # A present core that is being re-fetched (it shows up in staging) rejoins the %.
+        put(".cache/huggingface/download/UD-IQ4_XS/GLM-00002-of-00002.gguf.77aa.incomplete", 10**9)
+        assert cd.weights_download_progress_set(metas, model_dir=str(tmp_path),
+                                                complete_at_start=done) == 99
+
+    def test_download_progress_counts_staging_once_nested_companion(self, tmp_path):
+        """A companion nested under the core's subdir is counted once in the set, not
+        once by each (#1508): the set sums DISTINCT files."""
+        from club3090_cockpit.data import WeightsMeta
+        cd = CockpitData(ROOT, runner=full_runner())
+        core = WeightsMeta(model="m", variant="core", subdir="b", size_gb=8.0, verify_glob="*.gguf")
+        comp = WeightsMeta(model="m", variant="comp", subdir="b", size_gb=2.0, verify_glob="*.gguf")
+        (tmp_path / "b").mkdir()
+        with open(tmp_path / "b" / "x.gguf", "wb") as fh:
+            fh.truncate(5 * 10**9)
+        assert cd.weights_download_progress_set([core, comp], model_dir=str(tmp_path)) == 50
+
     @pytest.mark.asyncio
     async def test_download_set_metas_includes_companions(self):
         """download_set_metas resolves the core variant + each companion via the

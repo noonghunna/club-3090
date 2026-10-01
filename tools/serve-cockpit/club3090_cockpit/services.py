@@ -1205,31 +1205,60 @@ class CockpitData:
     # hf's in-progress ``*.incomplete`` staging files are deliberately NOT excluded
     # (they ARE the live download — counting them is what makes the % move).
     _BACKUP_SUFFIXES = (".bak", ".old", ".orig", ".disabled", ".save")
+    # `hf download --local-dir <subdir>` (what setup.sh runs) stages each file as
+    # <subdir>/.cache/huggingface/download/<path>.<etag>.incomplete and moves it into
+    # place when done; older layouts leave <path>.incomplete beside the final file.
+    _HF_STAGING = Path(".cache") / "huggingface" / "download"
 
-    def weights_bytes_on_disk(self, meta: WeightsMeta, *, model_dir: Optional[str] = None) -> int:
-        """Total bytes currently under ``<model_dir>/huggingface/<subdir>`` — the
-        download-progress signal.  0 when the dir is absent.  Backup/cruft files
-        (``*.bak`` / ``*.old`` / ``*.orig`` / ``foo~`` …) are skipped so a leftover
-        old-quant copy can't inflate the count; hf's ``*.incomplete`` staging IS
-        counted so live progress tracks the transfer."""
+    def _weights_globs(self, meta: WeightsMeta, base: Path) -> list[tuple[Path, str]]:
+        g = meta.verify_glob
+        stage = base / self._HF_STAGING
+        return [(base, g), (base, g + ".incomplete"), (base, g + ".*.incomplete"),
+                (stage, g + ".incomplete"), (stage, g + ".*.incomplete")]
+
+    def weights_files_on_disk(
+        self, meta: WeightsMeta, *, model_dir: Optional[str] = None, staging_only: bool = False
+    ) -> set[Path]:
+        """The files that belong to ``meta``: its ``verify_glob`` matches under its subdir
+        plus their in-flight ``*.incomplete`` staging, never the whole subdir (#1508).
+        Variants can share a parent bucket — subdir=glm-5.3-flash-gguf with
+        verify_glob=UD-IQ4_XS/*.gguf, beside the dflash2/ and mmproj/ companions and
+        other quants — and an rglob of the bucket counted all of them, companions twice
+        once the set was summed. Backup/cruft (``*.bak`` / ``*.old`` / ``foo~`` …) is
+        skipped so a leftover old-quant copy can't inflate the count."""
         base = Path(model_dir or self.weights_model_dir()) / meta.subdir
-        if not base.is_dir():
-            return 0
-        total = 0
-        try:
-            for f in base.rglob("*"):
-                try:
-                    if not f.is_file():
-                        continue
+        if not base.is_dir() or not meta.verify_glob:
+            return set()
+        out: set[Path] = set()
+        for root, pattern in self._weights_globs(meta, base):
+            if staging_only and not pattern.endswith(".incomplete"):
+                continue
+            try:
+                for f in root.glob(pattern):
                     name = f.name.lower()
                     if name.endswith(self._BACKUP_SUFFIXES) or name.endswith("~"):
                         continue
-                    total += f.stat().st_size
-                except OSError:
-                    continue
-        except OSError:
-            return 0
+                    if f.is_file():
+                        out.add(f.resolve())
+            except (OSError, ValueError):
+                continue
+        return out
+
+    @staticmethod
+    def _bytes_of(files) -> int:
+        total = 0
+        for f in files:
+            try:
+                total += f.stat().st_size
+            except OSError:
+                continue
         return total
+
+    def weights_bytes_on_disk(self, meta: WeightsMeta, *, model_dir: Optional[str] = None) -> int:
+        """Bytes of ``meta``'s own files on disk (``weights_files_on_disk``) — the
+        download-progress signal.  0 when the dir is absent.  hf's ``*.incomplete``
+        staging IS counted so live progress tracks the transfer."""
+        return self._bytes_of(self.weights_files_on_disk(meta, model_dir=model_dir))
 
     def weights_download_progress(
         self, meta: WeightsMeta, *, model_dir: Optional[str] = None
@@ -1263,17 +1292,50 @@ class CockpitData:
                 metas.append(cm)
         return metas
 
-    def weights_download_progress_set(
+    # An artifact counts as already on disk when its files reach this share of its
+    # size_gb: slack for size_gb rounding (and the GB/GiB mix-ups the registry has had).
+    _COMPLETE_SHARE = 0.97
+
+    def download_complete_at_start(
         self, metas: list[WeightsMeta], *, model_dir: Optional[str] = None
+    ) -> frozenset[tuple[str, str]]:
+        """The (model, variant) of each artifact in the set that is ALREADY on disk when
+        a download starts. ``weights_download_progress_set`` leaves them out of the %,
+        so a slug whose 157 GB core is present shows its 1.8 GB of companions moving
+        0 → 99 instead of a bar frozen at 98-99 % of 158.8 GB (#1508)."""
+        done = set()
+        for m in metas:
+            if m.size_gb and m.size_gb > 0 and self.weights_bytes_on_disk(m, model_dir=model_dir) \
+                    >= self._COMPLETE_SHARE * float(m.size_gb) * 1e9:
+                done.add((m.model, m.variant))
+        return frozenset(done)
+
+    def weights_download_progress_set(
+        self,
+        metas: list[WeightsMeta],
+        *,
+        model_dir: Optional[str] = None,
+        complete_at_start: frozenset = frozenset(),
     ) -> Optional[int]:
-        """Aggregate download progress across a set (core + companions): total
-        bytes-on-disk / total ``size_gb``, capped at 99.  ``None`` when no size is
-        known.  This is the value the cockpit shows for an in-flight download so
-        the % MOVES as each artifact lands (vs the core-only static-99 trap)."""
-        total_size = sum(float(m.size_gb) for m in metas if m.size_gb)
+        """Aggregate download progress across a set (core + companions): bytes of the
+        set's DISTINCT files / total ``size_gb``, capped at 99.  ``None`` when no size
+        is known.  This is the value the cockpit shows for an in-flight download so
+        the % MOVES as each artifact lands (vs the core-only static-99 trap).
+        ``complete_at_start`` (from ``download_complete_at_start``) drops artifacts that
+        were already on disk, unless a re-fetch of one shows up in staging; when that
+        leaves nothing, the whole set counts."""
+        active = [m for m in metas
+                  if (m.model, m.variant) not in complete_at_start
+                  or self.weights_files_on_disk(m, model_dir=model_dir, staging_only=True)]
+        if not active:
+            active = list(metas)
+        total_size = sum(float(m.size_gb) for m in active if m.size_gb)
         if total_size <= 0:
             return None
-        got = sum(self.weights_bytes_on_disk(m, model_dir=model_dir) for m in metas)
+        files: set[Path] = set()
+        for m in active:
+            files |= self.weights_files_on_disk(m, model_dir=model_dir)
+        got = self._bytes_of(files)
         return max(0, min(99, int(got / (total_size * 1e9) * 100)))
 
     def weights_fits_disk(
