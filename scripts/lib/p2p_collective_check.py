@@ -152,7 +152,7 @@ def verdict(a, b):
 
 
 
-def peer_bandwidth(gpu_a=0, gpu_b=1, mib=256, reps=5):
+def peer_bandwidth(gpu_a=0, gpu_b=1, mib=256, reps=5, warm_s=0.5):
     """Peer vs host-staged D2D bandwidth — a SIZING aid, never a health signal.
 
     ⚠️ This deliberately sits BELOW the verdict and cannot change it. A rig can hit
@@ -164,6 +164,12 @@ def peer_bandwidth(gpu_a=0, gpu_b=1, mib=256, reps=5):
     What it IS good for: deciding whether enabling P2P is worth the DKMS burden on
     YOUR hardware, and checking our "~30% of NVLink's prefill premium" claim locally
     instead of taking it on faith.
+
+    Both GPUs are woken with `warm_s` of host traffic before anything is timed (#1507). A
+    peer copy only raises the SOURCE GPU's P-state: the destination stays in P8 with its
+    link at Gen1 and caps the copy at ~2-3 GB/s however long it runs (2x 3090 x8/x8 Gen4:
+    3.2 GB/s cold vs 13.1 GB/s once both are awake). Real TP inference keeps both GPUs
+    busy, so the woken number is the one that matters.
     """
     try:
         import torch
@@ -175,15 +181,25 @@ def peer_bandwidth(gpu_a=0, gpu_b=1, mib=256, reps=5):
         host = torch.empty(n, dtype=torch.float32, device="cpu", pin_memory=True)
         nbytes = src.numel() * src.element_size()
 
+        def sync():                                               # a copy spans both devices;
+            for dev in (gpu_a, gpu_b):                            # bare synchronize() waits on one
+                torch.cuda.synchronize(dev)
+
+        def wake():                                               # see docstring: lift BOTH GPUs
+            t_end = time.perf_counter() + warm_s                  # out of P8 / Gen1 first
+            while time.perf_counter() < t_end:
+                src.copy_(host); dst.copy_(host); sync()
+
         def timed(fn_):
-            fn_(); torch.cuda.synchronize()                       # warm, excluded
+            fn_(); sync()                                         # warm, excluded
             best = 0.0
             for _ in range(reps):
-                t0 = time.perf_counter(); fn_(); torch.cuda.synchronize()
+                t0 = time.perf_counter(); fn_(); sync()
                 gbs = nbytes / (time.perf_counter() - t0) / 1e9
                 best = max(best, gbs)                             # best-of, not mean:
             return best                                           # noise here is one-sided
 
+        wake()
         direct = timed(lambda: dst.copy_(src))
         staged = timed(lambda: (host.copy_(src), dst.copy_(host)))
         return direct, staged
@@ -241,7 +257,7 @@ def main():
         direct, staged = bw
         ratio = direct / staged if staged > 0 else 0
         print()
-        print(f"  bandwidth (256 MiB D2D, best of 5) : peer {direct:.2f} GB/s   "
+        print(f"  bandwidth (256 MiB D2D, GPUs woken, best of 5) : peer {direct:.2f} GB/s   "
               f"host-staged {staged:.2f} GB/s   ({ratio:.2f}x)")
         if ratio >= 1.5:
             print("    → the peer path is materially faster here; P2P is worth having")

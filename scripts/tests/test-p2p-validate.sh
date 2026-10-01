@@ -93,5 +93,39 @@ command grep -q 'killpg' "$PAYLOAD" \
   && pass "timeout kills the process group (mp.spawn children outlive proc.kill)" \
   || bad "timeout does not kill the process group — children would survive"
 
+# --- #1507: the sizing line must time the peer copy with BOTH GPUs awake ---
+# A peer copy only raises the SOURCE GPU's P-state; an idle destination stays at P8 / Gen1 and caps
+# the copy at ~2-3 GB/s, so a healthy x8/x8 Gen4 rig read 0.49x ("no peer advantage") instead of
+# 1.98x. A fake torch records every copy and sync: host traffic must reach BOTH GPUs before the
+# first timed peer copy, and every sync must name both devices (a bare synchronize() waits on one).
+out="$(python3 - "$PAYLOAD" <<'PY' 2>&1
+import importlib.util, sys, time, types
+log = []
+class T:
+    def __init__(self, device): self.device = device
+    def numel(self): return 1024
+    def element_size(self): return 4
+    def copy_(self, other):
+        log.append(("copy", other.device, self.device)); time.sleep(0.0005); return self
+cuda = types.SimpleNamespace(is_available=lambda: True, device_count=lambda: 2,
+                             synchronize=lambda dev=None: log.append(("sync", dev)))
+torch = types.SimpleNamespace(cuda=cuda, float32="f32",
+                              empty=lambda n, dtype=None, device="cpu", pin_memory=False: T(str(device)))
+sys.modules["torch"] = torch
+spec = importlib.util.spec_from_file_location("p2p", sys.argv[1]); m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+r = m.peer_bandwidth(warm_s=0.02, reps=1)
+assert r is not None, "peer_bandwidth returned None under the fake torch"
+first_peer = next(i for i, e in enumerate(log) if e == ("copy", "cuda:0", "cuda:1"))
+woken = {e[2] for e in log[:first_peer] if e[0] == "copy" and e[1] == "cpu"}
+assert woken >= {"cuda:0", "cuda:1"}, f"GPUs given host traffic before the first timed peer copy: {sorted(woken)}"
+syncs = [e[1] for e in log if e[0] == "sync"]
+assert syncs and None not in syncs and set(syncs) == {0, 1}, f"sync calls: {syncs[:6]}"
+print("ok")
+PY
+)"
+[[ "$out" == "ok" ]] && pass "peer bandwidth wakes both GPUs first and syncs both devices (#1507)" \
+  || bad "peer bandwidth is timed with an idle destination GPU or a one-device sync (#1507): $out"
+
 [[ $fail -eq 0 ]] && echo "== PASS ==" || echo "== FAIL =="
 exit $fail
