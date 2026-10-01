@@ -654,7 +654,7 @@ model — a backend that reports no cached tokens would otherwise read as a fals
 | Slug | Concurrent sequences | KV pool | Agent notes |
 |---|--:|--:|---|
 | **`vllm/qwen38-27b-dual-fast`** ⭐ | 8 | ~590K tokens | Recommended (🧪 experimental — launch with `--force`). Room for a long main session plus subagents; MTP. |
-| `vllm/qwen38-27b-dual-max` | 2 | ~271K | Pool holds about one full-length session — add `KV_OFFLOAD_GB=64` so evicted sessions come back from host RAM. |
+| `vllm/qwen38-27b-dual-max` | 2 | ~271K | Pool holds about one full-length session — add `KV_OFFLOAD_GB=64` so evicted sessions come back from host RAM (it must fit in `/dev/shm`, below). |
 | `sgl/qwen38-27b-dual-fast` | 2 | ~548K | Fine for one agent + 1 subagent. Honours the requested effort from #1439. |
 | `sgl/qwen38-27b-dual-max` | 1 | ~183K (160K ctx) | Set `task.maxConcurrency: 1`. |
 | DFlash2 tiers (`superfast`, `ultrafast`, `supermax`, `ultramax`) | 1 | — | Set `task.maxConcurrency: 1`; KV offload is write-only on DFlash. |
@@ -666,6 +666,10 @@ a subagent then waits for the whole main turn.
 pushed off the GPU come back from RAM instead of re-prefilling. Measured with three
 interleaved 58K-token agent sessions pushed off the GPU: revisits took **7.7 s
 (SGLang) / 8.6 s (vLLM)** against **~42 s** cold (#1419).
+
+On vLLM the RAM tier lives in the host's `/dev/shm`, which is half of RAM by default, so on a
+128 GB host 64 does not fit: keep it under the size `df -h /dev/shm` shows (48 there), or enlarge
+`/dev/shm`. `switch.sh` refuses a tier larger than `/dev/shm` before it stops the running slug (#1503).
 
 ## Prefix caching — what breaks it
 

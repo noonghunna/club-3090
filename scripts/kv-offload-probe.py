@@ -18,7 +18,8 @@ is ...") so a hit that returns the wrong state also shows up.
   python3 scripts/kv-offload-probe.py --url http://localhost:8142 --disk --container sglang-qwen38-27b-mtp-dual
 
 Needs the slug booted with KV_OFFLOAD_GB (>= 64 recommended, so the tier holds everything the probe writes;
-too small a tier evicts A from RAM too and reads as a false FAIL). RAM mode takes ~10 min on a 2x 3090
+too small a tier evicts A from RAM too and reads as a false FAIL). On vLLM the tier must also fit in the
+host /dev/shm (by default half of RAM): on a 128 GB host use 48, which passes the probe too (#1503). RAM mode takes ~10 min on a 2x 3090
 dual-fast slug, because the fillers must exceed its ~550K-token GPU pool. Stdlib only.
 """
 import argparse, json, random, re, subprocess, sys, time, urllib.error, urllib.request

@@ -30,6 +30,26 @@ mapfile -t FILES < <(ls models/qwen3.8-27b/vllm/compose/dual/*/mtp.yml models/th
 MOUNT='- ${KV_OFFLOAD_DIR:-${CLUB3090_DATA_DIR:-../../../../../..}/kv-offload}:/kv-offload'
 [[ -f kv-offload/.gitignore ]] || fail "kv-offload/.gitignore missing — the raw-compose fallback for the disk tier must exist and be gitignored"
 
+# #1503: the RAM tier lives in the HOST /dev/shm (ipc: host). shm_check runs each compose's real check line
+# with os.statvfs("/dev/shm") faked through a sitecustomize shim: FAKE_SHM="<size GiB>:<free GiB>".
+SHIM="$(mktemp -d)"; trap 'rm -rf "$SHIM"' EXIT
+cat > "$SHIM/sitecustomize.py" <<'SHIMPY'
+import os
+_spec = os.environ.get("FAKE_SHM")
+if _spec:
+    _size, _free = (float(x) for x in _spec.split(":"))
+    class _St:
+        f_frsize = 4096
+        f_blocks = int(_size * (1 << 30) / 4096)
+        f_bavail = int(_free * (1 << 30) / 4096)
+    _real = os.statvfs
+    os.statvfs = lambda p: _St() if p == "/dev/shm" else _real(p)
+SHIMPY
+shm_line() { command grep -F 'needs %g GiB in /dev/shm' "$1" | sed 's/\$\$/$/g'; }
+shm_check() {  # shm_check <file> <KV_OFFLOAD_GB> <size:free> -> its stderr, then "rc=<n>"
+  env -i PATH="$PATH" PYTHONPATH="$SHIM" FAKE_SHM="$3" KV_OFFLOAD_GB="$2" bash -c "( $(shm_line "$1") ); echo \"rc=\$?\"" 2>&1
+}
+
 # The real block: from `OFFLOAD_ARGS=()` to the `fi` after the summary echo, compose `$$` unescaped.
 block_of() {
   awk '/^        OFFLOAD_ARGS=\(\)$/{f=1} f{print} f&&e&&/^        fi$/{exit} f&&/echo "\[kv-offload\] \$\$KV_OFFLOAD_GB GiB/{e=1}' "$1" | sed 's/\$\$/$/g'
@@ -76,6 +96,18 @@ assert c["engine_id"].startswith("club3090-")' 2>/dev/null \
     out="$(resolve "$f" $bad)"
     [[ "$out" != *"rc=0"* ]] || fail "$f: [$bad] booted instead of failing (got: ${out//$'\n'/ })"
   done
+  # #1503: refuse a tier larger than the FREE host /dev/shm, with the numbers; pass one that fits. The check
+  # sits after the offload block, guarded by KV_OFFLOAD_GB, so an unset knob never reaches it.
+  [[ "$(command grep -cF 'needs %g GiB in /dev/shm' "$f")" == 1 ]] || fail "$f: the #1503 /dev/shm check is missing (or doubled)"
+  command grep -B1 -F 'needs %g GiB in /dev/shm' "$f" | head -1 | command grep -qF 'if [ -n "$${KV_OFFLOAD_GB:-}" ]; then' \
+    || fail "$f: the /dev/shm check is not guarded by KV_OFFLOAD_GB"
+  out="$(shm_check "$f" 64 63:62.8)"
+  [[ "$out" == *"rc=1"* && "$out" == *"KV_OFFLOAD_GB=64 needs 64 GiB in /dev/shm"* && "$out" == *"62.8 of 63.0 GiB free"* ]] \
+    || fail "$f: KV_OFFLOAD_GB=64 with 62.8 GiB free in /dev/shm was not refused with the numbers (got: ${out//$'\n'/ })"
+  out="$(shm_check "$f" 48 63:62.8)"
+  [[ "$out" == "rc=0" ]] || fail "$f: KV_OFFLOAD_GB=48 with 62.8 GiB free in /dev/shm was refused (got: ${out//$'\n'/ })"
+  out="$(shm_check "$f" 64 113:20)"
+  [[ "$out" == *"rc=1"* ]] || fail "$f: a big /dev/shm with too little FREE must still refuse (got: ${out//$'\n'/ })"
   if docker compose version >/dev/null 2>&1; then
     kvsrc() { env -u KV_OFFLOAD_DIR -u CLUB3090_DATA_DIR MODEL_DIR=/nonexistent "$@" docker compose --env-file /dev/null -f "$f" config 2>/dev/null \
                 | command grep -B1 -E 'target: /kv-offload$' | command grep -oE 'source: .*' | sed 's/source: //'; }

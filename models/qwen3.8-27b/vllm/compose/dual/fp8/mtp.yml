@@ -597,6 +597,8 @@ services:
         #                       Pinned at boot (reserved even when idle). Size it ABOVE the GPU KV pool
         #                       (~36 KiB/token here): a smaller tier only mirrors what the GPU holds.
         #                       vLLM's native OffloadingConnector: pinned RAM, async DMA.
+        #                       It lives in /dev/shm, and ipc: host makes that the HOST's (by default
+        #                       half of RAM; shm_size does not apply): the tier must fit there (#1503).
         #   KV_OFFLOAD_DISK=1   add a disk tier below RAM at /kv-offload (vLLM's fs secondary tier).
         #                       Host dir = KV_OFFLOAD_DIR, else <data dir>/kv-offload from the launchers
         #                       (~/.local/share/club-3090: your HOME filesystem), else the repo's kv-offload/.
@@ -644,6 +646,13 @@ services:
             OFFLOAD_ARGS=(--kv-offloading-size "$$KV_OFFLOAD_GB" --kv-offloading-backend native)
           fi
           echo "[kv-offload] $$KV_OFFLOAD_GB GiB host RAM (OffloadingConnector), disk tier $${_disk:-off}" >&2
+        fi
+        # The RAM tier is a file in /dev/shm in both modes above, and ipc: host makes that the HOST's
+        # /dev/shm (shm_size does not apply). Fail with the numbers here instead of every worker failing
+        # "Insufficient space in /dev/shm" (#1503). switch.sh refuses a tier larger than /dev/shm before it
+        # stops the running slug; this also covers what is FREE at boot and a raw `docker compose up`.
+        if [ -n "$${KV_OFFLOAD_GB:-}" ]; then
+          python3 -c 'import os, sys; t = float(sys.argv[1]); s = os.statvfs("/dev/shm"); g = 1 << 30; free = s.f_bavail * s.f_frsize / g; size = s.f_blocks * s.f_frsize / g; t <= free or sys.exit("[kv-offload] KV_OFFLOAD_GB=%s needs %g GiB in /dev/shm, the host one (ipc: host): %.1f of %.1f GiB free. Lower KV_OFFLOAD_GB, or enlarge the host /dev/shm (by default half of RAM): sudo mount -o remount,size=<N>G /dev/shm, plus an fstab entry to keep it." % (sys.argv[1], t, free, size))' "$$KV_OFFLOAD_GB" || exit 1
         fi
         if [ "$${_CUSTOM_AR_ENABLED:-$${_NVLINK_ENABLED:-0}}" = "1" ]; then
           exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}" "$${ASYNC_ARGS[@]}" "$${MAMBA_ARGS[@]}" "$${OFFLOAD_ARGS[@]}" "$${SAMPLER_ARGS[@]}"

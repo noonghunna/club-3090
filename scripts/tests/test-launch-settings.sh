@@ -148,8 +148,10 @@ def files(club="", secrets="", legacy="", slugs=None, raw_slugs=None):
         p.unlink(missing_ok=True)
     else:
         p.write_text(json.dumps({"version": 1, "slugs": slugs}))
-def res(slug, shell=None, loaded=None, force=False, mem=mem64):
-    env = {"CLUB3090_CONFIG_DIR": str(cfg), "CLUB3090_MEMINFO_FILE": mem, **(shell or {})}
+def res(slug, shell=None, loaded=None, force=False, mem=mem64, shm="1024:1024"):
+    # shm: the host /dev/shm as "<size GiB>:<free GiB>" (#1503), so no result depends on this machine's.
+    env = {"CLUB3090_CONFIG_DIR": str(cfg), "CLUB3090_MEMINFO_FILE": mem, "CLUB3090_SHM_STATVFS": shm,
+           **(shell or {})}
     return ls.resolve(slug, root=fix, environ=env, loaded=loaded, force=force)
 def eff(slug, knob, **kw):
     s = res(slug, **kw).settings[knob]
@@ -243,6 +245,34 @@ files(slugs={VLL: {"KV_OFFLOAD_GB": "37"}})
 check(any("at most 36 GiB" in x for x in res(VLL, force=True).errors), "the RAM rule applies even with --force, and says what fits")
 r = res(VLL, mem=str(T / "no-such-meminfo"))
 check(not r.errors and any("cannot read MemTotal" in w for w in r.warnings), "an unreadable meminfo: warned, not refused", str(r.errors))
+
+# /dev/shm (#1503): vLLM keeps the RAM tier in /dev/shm, and the composes use the HOST's (ipc: host), so a
+# tier the RAM rule allows can still not fit. 64 GiB of RAM here, so these tiers all pass the RAM rule.
+for slug, gb, shm, refused, warned, what in (
+        (VLL, "33", "32:32", True, False, "bigger than /dev/shm: refused"),
+        (VLL, "32", "32:32", False, False, "exactly the size of /dev/shm: allowed"),
+        (VLL, "30", "32:20", False, True, "fits /dev/shm but more than is free now: warned, not refused"),
+        (SGL, "31", "16:16", False, False, "SGLang (HiCache is ordinary pinned memory): the rule does not apply")):
+    files(slugs={slug: {"KV_OFFLOAD_GB": gb}})
+    r = res(slug, shm=shm)
+    e, w = " ".join(r.errors), " ".join(r.warnings)
+    check(("/dev/shm" in e) == refused and ("/dev/shm" in w) == warned, f"/dev/shm rule: {slug.split('/')[0]} "
+          f"KV_OFFLOAD_GB={gb} with /dev/shm {shm.replace(':', ' GiB, free ')} GiB — {what}", e or w)
+files(slugs={VLL: {"KV_OFFLOAD_GB": "33"}})
+e = " ".join(res(VLL, shm="32:32", force=True).errors)
+check("at most 32 GiB fits" in e and "remount,size=" in e, "the /dev/shm rule applies even with --force, says what fits and how to enlarge it", e)
+r = res(VLL, shm="garbage")
+check(not r.errors and any("/dev/shm check for KV_OFFLOAD_GB skipped" in w for w in r.warnings),
+      "an unreadable /dev/shm: warned, not refused", str(r.errors))
+files(secrets="KV_OFFLOAD_GB=33\n")
+e = " ".join(res(VLL, shm="32:32").errors)
+check("more /dev/shm than this host has" in e and "33" not in e.replace("KV_OFFLOAD_GB", ""),
+      "a secrets.env value refused by the /dev/shm rule is never echoed", e)
+files()
+ch = ls.save_values(VLL, {"KV_OFFLOAD_GB": "33"}, root=fix,
+                    environ={"CLUB3090_CONFIG_DIR": str(cfg), "CLUB3090_MEMINFO_FILE": mem64, "CLUB3090_SHM_STATVFS": "32:32"})
+check(any("/dev/shm" in p for p in ch.problems) and not ch.changed and not (cfg / "slugs.json").exists(),
+      "switch.sh --set refuses a tier bigger than /dev/shm too, and writes nothing", str(ch.problems))
 
 # --force: only domains nothing enforces become warnings.
 files(slugs={GLM: {R: "medium"}})

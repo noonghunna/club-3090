@@ -34,7 +34,8 @@ default:
     KV_OFFLOAD_DISK_GB needs KV_OFFLOAD_DISK=1), unless the compose defaults alone
     break the rule;
   * host RAM: KV_OFFLOAD_GB × host_factor + 28 GiB must fit in MemTotal (see
-    ``ram_error``). Runs even with ``--force``. There is no disk-tier check: the
+    ``ram_error``), and on vLLM the tier must fit in the host's /dev/shm, which holds it
+    (``shm_error``, #1503). Both run even with ``--force``. There is no disk-tier check: the
     disk tier is uncapped by default (discussion #1419), so nothing here invents a cap;
   * a corrupt, unreadable or newer-version slugs.json refuses too: the saved
     per-slug values can't be known, and launching without them would boot a config
@@ -100,6 +101,19 @@ PIN_VALUES = {"on": "true", "off": "false"}
 RAM_RESERVE_GIB = 28
 HOST_FACTOR = {"vllm": 1.0, "sglang": 74 / 64}
 MEMINFO_ENV = "CLUB3090_MEMINFO_FILE"      # test seam: a meminfo-format file instead of /proc/meminfo
+
+# ── /dev/shm rule for vLLM's RAM tier (#1503) ─────────────────────────────────
+# vLLM's OffloadingConnector keeps the RAM tier in a file under /dev/shm, in both modes the composes
+# use (RAM only, and RAM + disk). Every compose that reads KV_OFFLOAD_GB on vLLM runs with
+# `ipc: host`, so the limit is the HOST's /dev/shm (by default half of RAM) and the compose's
+# shm_size does not apply. A 64 GiB tier on a 125 GiB host (63 GiB /dev/shm) passes the RAM rule
+# above and then fails every worker with "Insufficient space in /dev/shm".
+#  * Refuse a tier larger than /dev/shm's SIZE: stopping the running slug cannot free that.
+#  * Warn when it is larger than what is FREE right now: the running slug's own tier is released
+#    when it stops (after this check runs); anything else holding /dev/shm is not.
+# SGLang's HiCache keeps its host pool in ordinary pinned memory, so the rule is vLLM-only.
+SHM_PATH = "/dev/shm"
+SHM_ENV = "CLUB3090_SHM_STATVFS"           # test seam: "<size GiB>:<free GiB>" instead of statvfs(/dev/shm)
 
 ENFORCED_TEXT = {
     "boot": "the compose refuses it at boot",
@@ -236,6 +250,46 @@ def ram_error(value: str, engine_kind: str, env) -> tuple[str | None, str | None
     return (f"a {tier:g} GiB RAM tier needs ~{need:.0f} GiB of host RAM ({tier:g} GiB{over} + "
             f"{RAM_RESERVE_GIB} GiB for the serving process and the OS), but this host has "
             f"{total:.0f} GiB in total — at most {int(cap)} GiB fits here"), None
+
+
+def read_shm_gib(env) -> tuple[float, float] | None:
+    """(size, free) of /dev/shm in GiB, or None when it can't be read."""
+    seam = env.get(SHM_ENV)
+    if seam:
+        try:
+            size, free = (float(x) for x in seam.split(":"))
+            return size, free
+        except ValueError:
+            return None
+    try:
+        st = os.statvfs(SHM_PATH)
+    except OSError:
+        return None
+    return st.f_blocks * st.f_frsize / (1 << 30), st.f_bavail * st.f_frsize / (1 << 30)
+
+
+def shm_error(value: str, engine_kind: str, env) -> tuple[str | None, str | None]:
+    """(refusal, warning) for a vLLM KV_OFFLOAD_GB value against the host's /dev/shm (#1503)."""
+    if engine_kind != "vllm":
+        return None, None
+    try:
+        tier = float(value)
+    except ValueError:
+        return None, None                      # the domain check reports it
+    got = read_shm_gib(env)
+    if got is None:
+        return None, f"cannot read {SHM_PATH}; /dev/shm check for KV_OFFLOAD_GB skipped"
+    size, free = got
+    enlarge = "sudo mount -o remount,size=<N>G /dev/shm (plus an fstab entry to keep it)"
+    if tier > size:
+        return (f"vLLM keeps the RAM tier in /dev/shm, and these composes use the host's (ipc: host), "
+                f"which is {size:.1f} GiB here — at most {int(size)} GiB fits. Lower it, or enlarge "
+                f"/dev/shm: {enlarge}"), None
+    if tier > free:
+        return None, (f"the KV_OFFLOAD_GB RAM tier is larger than the {free:.1f} of {size:.1f} GiB free in /dev/shm right now. "
+                      f"The running slug's own tier is released when it stops; anything else in "
+                      f"/dev/shm is not, and vLLM won't boot without the room")
+    return None, None
 
 
 def _fix_hint(slug: str, knob: str, source: str) -> str:
@@ -396,18 +450,22 @@ def resolve(slug: str, root=ROOT, environ=None, loaded=None, force=False, catalo
             continue                                   # never refuse a compose default
         _refuse(res, f"{lk.requirement_text(name, rule, eff_shown)} ({said(name)}; {said(other)}).", name, other)
 
-    # Host RAM for the RAM tier.
+    # Host RAM for the RAM tier, then (vLLM) the host /dev/shm that holds it.
     s = res.settings.get("KV_OFFLOAD_GB")
     if s is not None and s.source != DEFAULT and not s.is_unset and "KV_OFFLOAD_GB" not in bad_value:
-        refusal, warning = ram_error(s.value, kind, env)
-        if refusal and shown(s) != s.value:
-            refusal = "more host RAM than this host has"          # a secrets.env value: never echo it
-        if refusal:
-            hint = _fix_hint(slug, "KV_OFFLOAD_GB", s.source)
-            _refuse(res, f"KV_OFFLOAD_GB={shown(s)} (from {describe_source(s)}): {refusal}."
-                    + (f" Fix: {hint}" if hint else ""), "KV_OFFLOAD_GB")
-        if warning:
-            res.warnings.append(warning)
+        for check_fn, hidden in ((ram_error, "more host RAM than this host has"),
+                                 (shm_error, "more /dev/shm than this host has")):
+            refusal, warning = check_fn(s.value, kind, env)
+            if refusal and shown(s) != s.value:
+                refusal = hidden                                  # a secrets.env value: never echo it
+            if refusal:
+                hint = _fix_hint(slug, "KV_OFFLOAD_GB", s.source)
+                _refuse(res, f"KV_OFFLOAD_GB={shown(s)} (from {describe_source(s)}): {refusal}."
+                        + (f" Fix: {hint}" if hint else ""), "KV_OFFLOAD_GB")
+            if warning:
+                res.warnings.append(warning)
+            if refusal:
+                break
     return res
 
 
@@ -560,11 +618,14 @@ def save_values(slug: str, vals: dict[str, str], root=ROOT, environ=None) -> Cha
             ch.warnings.append(f"the catalogue has no single value domain for {k} on {slug} "
                                f"({kind}, {entry['model']}) — saved unchecked")
         if k == "KV_OFFLOAD_GB":
-            refusal, warning = ram_error(v, kind, env)
-            if refusal:
-                ch.problems.append(f"KV_OFFLOAD_GB={v}: {refusal}")
-            if warning:
-                ch.warnings.append(warning)
+            for check_fn in (ram_error, shm_error):
+                refusal, warning = check_fn(v, kind, env)
+                if refusal:
+                    ch.problems.append(f"KV_OFFLOAD_GB={v}: {refusal}")
+                if warning:
+                    ch.warnings.append(warning)
+                if refusal:
+                    break
     if not ch.problems:
         ch.path = slug_settings.set_values(slug, vals, env)
         ch.changed = list(vals)
