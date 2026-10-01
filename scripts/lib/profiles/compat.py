@@ -130,6 +130,9 @@ class HardwareProfile:
     cudagraph: str
     driver_pin_recommended: dict[str, Any]
     nvlink_capable: bool
+    # Device memory shared with the host CPU/OS (DGX Spark's LPDDR5X). Only such
+    # a card makes the launcher lower the compose's memory fraction (#1516).
+    unified_memory: bool = False
     power_cap_w_optimal: Optional[int] = None
     power_cap_w_prefill: Optional[int] = None
     power_cap_w_max: Optional[int] = None
@@ -555,6 +558,7 @@ def _hardware(data: dict[str, Any], path: Path) -> HardwareProfile:
         cudagraph=data.get("cudagraph", "full"),
         driver_pin_recommended=_dict(data.get("driver_pin_recommended")),
         nvlink_capable=bool(data.get("nvlink_capable", False)),
+        unified_memory=bool(data.get("unified_memory", False)),
         power_cap_w_optimal=data.get("power_cap_w_optimal"),
         power_cap_w_prefill=data.get("power_cap_w_prefill"),
         power_cap_w_max=data.get("power_cap_w_max"),

@@ -221,6 +221,34 @@ assert_contains "$out" "GPU_MEMORY_UTILIZATION=0.85"
 # explicit user pin wins
 out="$(GPU_MEMORY_UTILIZATION=0.7 python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "$GPU_SPARK")"
 assert_not_contains "$out" "GPU_MEMORY_UTILIZATION=0.85"
+# #1516: only a UNIFIED-MEMORY card sets the floor. The RTX 3060's discrete 0.88
+# used to pull every 0.92 slug on a 3090+3060 rig down to 0.88, slugs that never
+# touch the 3060 included. Positive control first: the spec must map to the 3060
+# profile with a ceiling below the slug's default, or "nothing injected" below
+# would pass just as well for an unmapped card (which also injects nothing).
+GPU_3060='0|NVIDIA GeForce RTX 3060|12288|8.6'
+GPU_3090X2_3060="0|NVIDIA GeForce RTX 3090|24576|8.6;1|NVIDIA GeForce RTX 3090|24576|8.6;2|NVIDIA GeForce RTX 3060|12288|8.6"
+ctl="$(cd "$ROOT_DIR" && python3 - "$GPU_3090X2_3060" <<'PY'
+import sys
+sys.path.insert(0, ".")
+from scripts.lib.profiles.compat import load_profiles
+from scripts.lib.profiles.compose_registry import get_registry
+from scripts.lib.profiles.launch_compat import _parse_gpu_specs
+hw = _parse_gpu_specs(sys.argv[1], load_profiles())
+small = [h for h in hw if h.id == "rtx-3060-12gb"]
+default = get_registry()["vllm/dual"]["mem_util"]
+ok = len(hw) == 3 and len(small) == 1 and small[0].mem_util_safe < default and not small[0].unified_memory
+print("OK" if ok else f"FAIL: ids={[h.id for h in hw]} default={default}")
+PY
+)"
+[[ "$ctl" == "OK" ]] || { echo "  FAIL: #1516 control: $ctl"; exit 1; }
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "$GPU_3090X2_3060")"
+assert_not_contains "$out" "GPU_MEMORY_UTILIZATION"
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/minimal --format shell --gpu-spec "$GPU_3060")"
+assert_not_contains "$out" "GPU_MEMORY_UTILIZATION"
+# ...and a unified-memory card still forces a mixed rig down (Spark + 3090)
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "${GPU_SPARK};1|NVIDIA GeForce RTX 3090|24576|8.6")"
+assert_contains "$out" "GPU_MEMORY_UTILIZATION=0.85"
 # #1365: the floor is now reachable on SGLang too, and it must arrive under
 # SGLang's OWN key. `--mem-fraction-static` is NOT `--gpu-memory-utilization`
 # (static weights+KV share vs total-VRAM budget, cudagraph capture comes from
@@ -239,7 +267,7 @@ assert_not_contains "$out" "MEM_FRACTION"
 out="$(python3 "$HELPER" resolve-variant-pin --variant llamacpp-club3090/glm53-flash-dual-iq4xs-moecache --format shell --gpu-spec "$GPU_SPARK")"
 assert_not_contains "$out" "MEM_FRACTION"
 assert_not_contains "$out" "GPU_MEMORY_UTILIZATION"
-echo "  ok: #246 mem-fraction floor (Spark down · discrete no-raise · het-min · user-pin · sgl-own-key · llama.cpp-none — 7 cases)"
+echo "  ok: #246 mem-fraction floor (Spark down · discrete no-raise · het-min · user-pin · #1516 discrete-never-floors ×2 + Spark-mixed · sgl-own-key · llama.cpp-none — 10 cases)"
 
 # --- fp8/NVFP4-weights DeepGEMM disable on consumer cards (disc #571/#613) ---
 # DeepGEMM has no recipe on consumer Blackwell (sm_120/121, hard-fails) and is

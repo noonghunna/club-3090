@@ -8,6 +8,10 @@ arch: blackwell-gb10
 # below the 128 GB spec — mem_util_safe is deliberately conservative (OS + CPU
 # reservation) rather than the 0.96 the discrete Blackwell SKUs carry.
 mem_util_safe: 0.85
+# The launcher lowers a compose's memory fraction to mem_util_safe ONLY for a
+# card with unified_memory: true (#1516). On a discrete card mem_util_safe only
+# feeds the fit estimate; the compose's own tuned value is what boots.
+unified_memory: true
 # NOTE: nvfp4 KV is DELIBERATELY NOT listed — like consumer Blackwell (sm_120),
 # GB10 (sm_121) has no trtllm-gen FP4 FMHA build (that kernel is datacenter
 # Blackwell sm_100/103 only). FP4 weights work; stock nvfp4 KV crashes.

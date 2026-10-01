@@ -1213,7 +1213,7 @@ export_variant_engine_pin() {
           echo "[switch] GPU_MEMORY_UTILIZATION: keeping your value ${GPU_MEMORY_UTILIZATION} (hardware profile suggested ${value})" >&2
         else
           export GPU_MEMORY_UTILIZATION="$value"
-          echo "[switch] memory-fraction floor: GPU_MEMORY_UTILIZATION=${value} (unified-memory card can't safely give the default — #246 Phase 2)"
+          echo "[switch] memory-fraction floor: GPU_MEMORY_UTILIZATION=${value} (a unified-memory card in the GPU set shares its memory with the OS — #246 Phase 2; set GPU_MEMORY_UTILIZATION to override)"
         fi ;;
       MEM_FRACTION)
         # SGLang's spelling of the memory-fraction floor (#1365). Same one-way

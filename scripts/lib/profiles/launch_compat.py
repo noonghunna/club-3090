@@ -322,13 +322,20 @@ def _envelope_env(profiles, variant: str, gpu_spec: str,
 def _mem_util_env(profiles, variant: str, gpu_spec: str,
                   entry: dict | None = None) -> dict[str, str]:
     """Phase 2 memory-fraction safety floor. Injects GPU_MEMORY_UTILIZATION
-    DOWNWARD only — when a detected card cannot safely give the compose's default
-    fraction. Today that means unified-memory cards (DGX Spark: its LPDDR5X is
-    shared with the Grace CPU/OS, so mem_util_safe=0.85 < the 0.92 default — boot
-    at 0.92 would starve the OS). It NEVER raises above the tested compose
-    default: a bigger discrete card *could* give more, but that touches Cliff-2b
-    margin + boot-OOM, so the upward move stays a validated opt-in, not an
-    automatic bump. Empty dict = no injection (compose default stands)."""
+    DOWNWARD only — when a detected UNIFIED-MEMORY card cannot safely give the
+    compose's default fraction (DGX Spark: its LPDDR5X is shared with the Grace
+    CPU/OS, so mem_util_safe=0.85 < the 0.92 default — boot at 0.92 would starve
+    the OS). It NEVER raises above the tested compose default: a bigger discrete
+    card *could* give more, but that touches Cliff-2b margin + boot-OOM, so the
+    upward move stays a validated opt-in, not an automatic bump. Empty dict = no
+    injection (compose default stands).
+
+    Discrete cards never set the floor (#1516). The RTX 3060's 0.88 predates
+    this injector and was never measured as a boot limit, yet it fired here and
+    pulled every 0.92 slug on a 3090+3060 rig down to 0.88 — including slugs
+    that never touch the 3060, because the spec is every card in the rig, not
+    the slug's ranks. Our composes carry their own tuned fraction; a discrete
+    card's mem_util_safe stays a fit-estimate input (compat.fits)."""
     if not gpu_spec:
         return {}
     env_key = _ENGINE_TYPE_MEM_UTIL_ENV.get(_engine_type(profiles, entry))
@@ -346,9 +353,11 @@ def _mem_util_env(profiles, variant: str, gpu_spec: str,
         hardware = _parse_gpu_specs(gpu_spec, profiles)
     except LaunchCompatError:
         return {}  # unmapped card -> compose default
-    # One GMU applies across every rank, so the safe fraction is the LOWEST card's
-    # ceiling — a unified-memory card in a mixed rig forces the whole rig down.
-    ceilings = [hw.mem_util_safe for hw in hardware if hw.mem_util_safe is not None]
+    # One GMU applies across every rank, so the safe fraction is the LOWEST
+    # unified-memory card's ceiling — such a card in a mixed rig forces the whole
+    # rig down.
+    ceilings = [hw.mem_util_safe for hw in hardware
+                if hw.unified_memory and hw.mem_util_safe is not None]
     if not ceilings:
         return {}
     safe = min(ceilings)
