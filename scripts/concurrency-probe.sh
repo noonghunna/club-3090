@@ -224,16 +224,10 @@ _detect_slots() {
   echo ""
 }
 
+# The GPUs the probed container sees, not every GPU on the host (#1502): a container pinned to the one
+# RTX 3060 of a 3090 + 3060 rig was labelled "4× RTX 3090". Falls back to every GPU when unresolvable.
 _gpu_fp() {
-  local names n first
-  names="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null \
-    | sed 's/^NVIDIA //' || true)"
-  [[ -z "$names" ]] && { echo "? GPU"; return; }
-  n="$(printf '%s\n' "$names" | wc -l | tr -d ' ')"
-  first="$(printf '%s\n' "$names" | head -1)"
-  if [[ "$n" == "1" ]]; then echo "1× ${first}"
-  else echo "${n}× ${first}"
-  fi
+  CONTAINER="$CONTAINER" python3 "$PROBE_PY" --gpu-label 2>/dev/null || echo "? GPU"
 }
 
 _spec_fp() {
@@ -459,11 +453,13 @@ if [[ "$MATRIX" == "1" ]]; then
   cells_jsonl="$(mktemp /tmp/cprobe-cells.XXXXXX)"
   trap 'rm -f "$cells_jsonl"' EXIT
 
+  # emit_row <json>: append one skipped cell. The row is an ARGUMENT: `python3 -` reads its program
+  # from stdin, so a row piped in was swallowed by the heredoc, json.loads("") raised, and set -e
+  # killed the sweep at its first skipped cell, before the card and results were written (#1502).
   emit_row() {
-    python3 - "$cells_jsonl" <<'PY'
+    python3 - "$cells_jsonl" "$1" <<'PY'
 import json, sys
-path = sys.argv[1]
-row = json.loads(sys.stdin.read())
+path, row = sys.argv[1], json.loads(sys.argv[2])
 with open(path, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 PY
@@ -473,17 +469,17 @@ PY
     [[ -z "${action:-}" ]] && continue
     if [[ "$budget_hit" == "1" ]]; then
       echo "[sweep] ${ctx} tok  N=${n}: skip (budget)"
-      printf '%s\n' "{\"ctx\":$ctx,\"n\":$n,\"skip\":\"budget\"}" | emit_row
+      emit_row "{\"ctx\":$ctx,\"n\":$n,\"skip\":\"budget\"}"
       continue
     fi
     if [[ "$action" == "skip" ]]; then
       echo "[sweep] ${ctx} tok  N=${n}: skip (${reason})"
-      printf '%s\n' "$(python3 -c 'import json,sys; print(json.dumps({"ctx":int(sys.argv[1]),"n":int(sys.argv[2]),"skip":sys.argv[3]}))' "$ctx" "$n" "${reason:-clipped}")" | emit_row
+      emit_row "$(python3 -c 'import json,sys; print(json.dumps({"ctx":int(sys.argv[1]),"n":int(sys.argv[2]),"skip":sys.argv[3]}))' "$ctx" "$n" "${reason:-clipped}")"
       continue
     fi
     if [[ "$EARLY_STOP" == "1" && -n "${ROW_DEAD[$ctx]:-}" ]]; then
       echo "[sweep] ${ctx} tok  N=${n}: skip (early-stop — N=${ROW_DEAD[$ctx]} failed)"
-      printf '%s\n' "$(python3 -c 'import json,sys; print(json.dumps({"ctx":int(sys.argv[1]),"n":int(sys.argv[2]),"skip":"early-stop"}))' "$ctx" "$n")" | emit_row
+      emit_row "$(python3 -c 'import json,sys; print(json.dumps({"ctx":int(sys.argv[1]),"n":int(sys.argv[2]),"skip":"early-stop"}))' "$ctx" "$n")"
       continue
     fi
     echo

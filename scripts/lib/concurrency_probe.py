@@ -343,21 +343,80 @@ def engine_stats(container):
     return (run, wait, run_max, wait_max, hit)
 
 
-def vram_used_mb():
+# ── which GPUs the numbers cover (#1502) ──────────────────────────────────────
+# VRAM and the GPU label belong to the container under test, not to the machine. Summed rig-wide, a
+# neighbouring service's memory decided the leak gate (vram_ok) and a 12 GB card reported a 54 GB
+# peak under "4x RTX 3090". The container's GPUs come from `docker inspect`, read by
+# run_context.visible_gpu_selectors (DeviceRequests, then NVIDIA_VISIBLE_DEVICES, then
+# CUDA_VISIBLE_DEVICES) — the same reading quality-test.sh's run metadata uses.
+def container_gpus(container):
+    """(selectors, scope). selectors: the host GPU indices/UUIDs the container sees, or None for
+    every GPU on the host. scope: which GPUs the probe's numbers cover, in words."""
+    if not container:
+        return None, "every GPU on the host (rig-wide: no container to scope to)"
     try:
-        out = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=memory.used",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        ).stdout
-        return sum(int(x) for x in out.split())
+        out = subprocess.run(["docker", "inspect", container], capture_output=True, text=True,
+                             encoding="utf-8", timeout=10)
+        inspect = json.loads(out.stdout)[0]
     except Exception:
-        return -1
+        return None, f"every GPU on the host (rig-wide: could not inspect container {container})"
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from run_context import visible_gpu_selectors
+        selectors = visible_gpu_selectors(inspect)
+    except Exception:
+        return None, "every GPU on the host (rig-wide: run_context.py unavailable)"
+    if selectors is None:
+        return None, f"every GPU on the host (container {container} sees them all)"
+    return selectors, f"GPU {', '.join(selectors)} (container {container})"
+
+
+def _smi_rows():
+    out = subprocess.run(
+        ["nvidia-smi", "--query-gpu=index,uuid,name,memory.used", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, encoding="utf-8", timeout=10,
+    ).stdout
+    rows = []
+    for line in out.strip().splitlines():
+        c = [x.strip() for x in line.split(",")]
+        if len(c) >= 4 and c[3].isdigit():
+            rows.append({"index": c[0], "uuid": c[1], "name": c[2], "mb": int(c[3])})
+    return rows
+
+
+def _scoped(rows, selectors):
+    if selectors is None:
+        return rows
+    by_key = {**{r["index"]: r for r in rows}, **{r["uuid"]: r for r in rows}}
+    return [by_key[s] for s in selectors if s in by_key]
+
+
+def vram_by_gpu(selectors=None):
+    """{GPU index: MB used} on the GPUs in scope; {} when nvidia-smi fails or none match."""
+    try:
+        return {r["index"]: r["mb"] for r in _scoped(_smi_rows(), selectors)}
+    except Exception:
+        return {}
+
+
+def vram_used_mb(selectors=None):
+    by = vram_by_gpu(selectors)
+    return sum(by.values()) if by else -1
+
+
+def gpu_label(selectors=None):
+    """'1× GeForce RTX 3060', '2× GeForce RTX 3090 + 1× GeForce RTX 3060', or '? GPU'."""
+    try:
+        rows = _scoped(_smi_rows(), selectors)
+    except Exception:
+        rows = []
+    if not rows:
+        return "? GPU"
+    names = {}
+    for r in rows:
+        name = re.sub(r"^NVIDIA ", "", r["name"])
+        names[name] = names.get(name, 0) + 1
+    return " + ".join(f"{n}× {name}" for name, n in names.items())
 
 
 def parse_result_line(line):
@@ -607,7 +666,10 @@ def run_probe():
         f"{'agg_t/s':>8} {'per-strm':>9} {'ttft_ms':>8} {'pf_t/s':>7}"
         f" {'ttft_p95':>9} {'tps_p05':>8} {'run/wait':>10} {'pfxhit':>6}"
     )
-    vram0 = vram_used_mb()
+    gpu_sel, gpu_scope = container_gpus(CONTAINER)
+    print(f"[probe] VRAM measured on: {gpu_scope}")
+    vram0 = vram_used_mb(gpu_sel)
+    peak_by_gpu = {}
     vram_by_round = []
     mtps_by_round = []
     agg_by_round = []
@@ -632,7 +694,10 @@ def run_probe():
         done = sum(1 for r in res if r["ok"])
         silent = sum(1 for r in res if r["silent"])
         errs = sum(1 for r in res if r["err"])
-        v = vram_used_mb()
+        by_gpu = vram_by_gpu(gpu_sel)
+        v = sum(by_gpu.values()) if by_gpu else -1
+        for gpu, mb in by_gpu.items():
+            peak_by_gpu[gpu] = max(peak_by_gpu.get(gpu, 0), mb)
         vram_by_round.append(v)
         agg = sum(r["toks"] for r in res) / wall if wall else 0
         tps_ok = [r["tps"] for r in res if r["ok"] and r["tps"] > 0]
@@ -723,6 +788,9 @@ def run_probe():
         f"-> final {vram_by_round[-1]} MB (post-warm growth {leak} MB / {GROWTH})  "
         f"peak {vram_peak} MB"
     )
+    if peak_by_gpu:
+        print("  VRAM peak per GPU: " + " · ".join(f"GPU {g} {mb} MB" for g, mb in peak_by_gpu.items())
+              + f"  ({gpu_scope})")
     print(
         f"  per-stream decode: {report_tps:.1f} tok/s (steady) · aggregate "
         f"{report_agg:.1f} tok/s "
@@ -796,6 +864,9 @@ def run_probe():
         "retention": f"{retention:.3f}",
         "leak": leak,
         "vram_peak": vram_peak,
+        # #1502: which GPUs vram_peak covers ("all" = every GPU on the host) and each one's peak
+        "vram_gpus": ",".join(gpu_sel) if gpu_sel is not None else "all",
+        "vram_peak_gpus": ",".join(f"{g}:{mb}" for g, mb in peak_by_gpu.items()) or "-",
         "floor_ok": int(floor_ok),
         "ttft_ms": f"{steady_ttft * 1000:.0f}",
         "pf_tps": _fmt_num(steady_pf, 1),
@@ -1127,8 +1198,13 @@ def main(argv=None):
     p.add_argument("--plan-tsv", action="store_true")
     p.add_argument("--card", action="store_true")
     p.add_argument("--detect-kv", action="store_true")
+    p.add_argument("--gpu-label", action="store_true",
+                   help="'N× <GPU name>' for the GPUs $CONTAINER sees (every GPU when it can't be resolved)")
     args = p.parse_args(argv)
 
+    if args.gpu_label:
+        print(gpu_label(container_gpus(_env("CONTAINER"))[0]))
+        return 0
     if args.detect_kv:
         tok = detect_kv_tokens(_env("CONTAINER"))
         if tok:

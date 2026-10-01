@@ -196,4 +196,71 @@ command grep -q "not ready" <<<"$out" || fail "gate should report the not-ready 
 command grep -q "FATAL: --sweep cannot detect" <<<"$out" && fail "gate must abort BEFORE slot detection"
 echo "  ✓ --sweep WARMUP gate: opt-in, dry-skips, default-silent, fails closed"
 
+
+# #1502 (1): a skipped cell killed the sweep. emit_row ran `python3 - <<'PY'`, so the row piped into it
+# was replaced by the heredoc on stdin, json.loads("") raised and set -e ended the run before the card.
+# Run the REAL emit_row on a row, and guard every call site against piping into it again.
+EMIT_DIR="$(mktemp -d)"
+emit_fn="$(awk '/^  emit_row\(\) \{$/{f=1} f{print} f&&/^  \}$/{exit}' "$PROBE")"
+[[ -n "$emit_fn" ]] || fail "emit_row() not found in concurrency-probe.sh"
+set +e
+out="$(cells_jsonl="$EMIT_DIR/cells.jsonl" bash -euo pipefail -c "$emit_fn"$'\n''emit_row "{\"ctx\":32768,\"n\":8,\"skip\":\"KV pool\"}"; echo "rc=$?"' 2>&1)"
+set -e
+[[ "$out" == *"rc=0"* ]] || fail "emit_row failed on a skipped-cell row (the #1502 crash): $out"
+python3 -c 'import json,sys; r=json.loads(open(sys.argv[1]).read()); assert r=={"ctx":32768,"n":8,"skip":"KV pool"}, r' \
+  "$EMIT_DIR/cells.jsonl" 2>/dev/null || fail "emit_row wrote the wrong row: $(cat "$EMIT_DIR/cells.jsonl" 2>/dev/null)"
+command grep -nE '\|[[:space:]]*emit_row' "$PROBE" && fail "a call site pipes into emit_row — its stdin is the heredoc (#1502)"
+[[ "$(command grep -cE '^[[:space:]]+emit_row "' "$PROBE")" == 3 ]] \
+  || fail "expected the 3 skip paths (budget, clipped, early-stop) to pass their row as an argument"
+rm -rf "$EMIT_DIR"
+echo "  ✓ emit_row records a skipped cell (row as an argument; no call site pipes into it)"
+
+# #1502 (2): VRAM and the GPU label belong to the probed container's GPUs, not the host's. The
+# reporter's rig: 3× RTX 3090 (an unrelated service on them) + 1× RTX 3060 for the container.
+# Stub nvidia-smi and `docker inspect` (ahead of the estate-safe docker shim) and ask the library.
+GPU_STUB="$(mktemp -d)"
+cat > "$GPU_STUB/nvidia-smi" <<'SMI'
+#!/usr/bin/env bash
+cat <<'ROWS'
+0, GPU-aaaa0000-0000-0000-0000-000000000000, NVIDIA GeForce RTX 3090, 15000
+1, GPU-aaaa1111-0000-0000-0000-000000000000, NVIDIA GeForce RTX 3090, 14938
+2, GPU-aaaa2222-0000-0000-0000-000000000000, NVIDIA GeForce RTX 3090, 15000
+3, GPU-bbbb3333-0000-0000-0000-000000000000, NVIDIA GeForce RTX 3060, 10381
+ROWS
+SMI
+cat > "$GPU_STUB/docker" <<'DOCK'
+#!/usr/bin/env bash
+[ "$1" = inspect ] || exit 0
+case "$2" in
+  pinned-ids)  echo '[{"HostConfig":{"DeviceRequests":[{"Count":0,"DeviceIDs":["3"]}]},"Config":{"Env":[]}}]' ;;
+  pinned-uuid) echo '[{"HostConfig":{"DeviceRequests":[{"Count":0,"DeviceIDs":["GPU-bbbb3333-0000-0000-0000-000000000000"]}]},"Config":{"Env":[]}}]' ;;
+  pinned-env)  echo '[{"HostConfig":{"DeviceRequests":[{"Count":-1,"DeviceIDs":null}]},"Config":{"Env":["NVIDIA_VISIBLE_DEVICES=3"]}}]' ;;
+  sees-all)    echo '[{"HostConfig":{"DeviceRequests":[{"Count":-1,"DeviceIDs":null}]},"Config":{"Env":["NVIDIA_VISIBLE_DEVICES=all"]}}]' ;;
+  *) echo "Error: No such object: $2" >&2; exit 1 ;;
+esac
+DOCK
+chmod +x "$GPU_STUB/nvidia-smi" "$GPU_STUB/docker"
+scope() {  # scope <container> -> "<label>|<vram MB>|<selectors>"
+  PATH="$GPU_STUB:$PATH" python3 - "$ROOT_DIR/scripts/lib" "$1" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import concurrency_probe as c
+sel, _ = c.container_gpus(sys.argv[2])
+print(f"{c.gpu_label(sel)}|{c.vram_used_mb(sel)}|{sel}")
+PY
+}
+for ctr in pinned-ids pinned-uuid pinned-env; do
+  got="$(scope "$ctr")"
+  [[ "$got" == "1× GeForce RTX 3060|10381|"* ]] || fail "container $ctr (the RTX 3060 only): got '$got', want 1× GeForce RTX 3060 and 10381 MB"
+done
+got="$(scope sees-all)"
+[[ "$got" == "3× GeForce RTX 3090 + 1× GeForce RTX 3060|55319|None" ]] \
+  || fail "a container that sees every GPU should cover all four, labelled by name: got '$got'"
+got="$(scope no-such-container)"
+[[ "$got" == *"|55319|None" ]] || fail "an unresolvable container falls back to rig-wide: got '$got'"
+got="$(PATH="$GPU_STUB:$PATH" CONTAINER=pinned-ids python3 "$LIB" --gpu-label)"
+[[ "$got" == "1× GeForce RTX 3060" ]] || fail "--gpu-label (the card's GPU field) for the 3060 container: got '$got'"
+rm -rf "$GPU_STUB"
+echo "  ✓ VRAM + GPU label scoped to the container's GPUs (ids, UUIDs, NVIDIA_VISIBLE_DEVICES; rig-wide fallback)"
+
 echo "test-concurrency-probe: ok"
