@@ -400,7 +400,9 @@ def load() -> dict[str, Any]:
     name = str(config_blob.get("Name") or "").lstrip("/")
     served = flag(cmd, "--served-model-name")
     tp = flag(cmd, "--tensor-parallel-size")
-    compose = rel(labels.get("com.docker.compose.project.config_files") or "")
+    # config_files is comma-joined when compose got several -f (the slug's compose first,
+    # then the #1498 label override): the row wants the slug's compose (#1515).
+    compose = rel((labels.get("com.docker.compose.project.config_files") or "").split(",")[0])
     if not compose:
         compose = infer_compose_path(name, served, tp)
     rig = parse_rig(read_text(require_file("rig.txt")))

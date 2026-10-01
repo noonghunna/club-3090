@@ -1026,8 +1026,24 @@ down_running() {
     local lbl_dir lbl_file
     lbl_dir=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir"}}' "$c" 2>/dev/null || true)
     lbl_file=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.config_files"}}' "$c" 2>/dev/null || true)
-    if [[ -n "$lbl_dir" && -n "$lbl_file" ]]; then
-      (cd "$lbl_dir" && ${COMPOSE_BIN} -f "$lbl_file" down --remove-orphans) || docker stop "$c" >/dev/null
+    # config_files is COMMA-JOINED when the container came up with more than one -f, which
+    # is every launch since #1498 (the club3090.slug label override). Passed whole as one
+    # -f it is a path that doesn't exist, so every teardown fell back to `docker stop` and
+    # left stopped containers, networks and orphans behind (#1515). One -f per file, and a
+    # file that is gone by now is dropped: the label override only adds labels, and a data
+    # dir that moved must not cost the down.
+    local -a cfg_args=() cfg_files=()
+    local cfg
+    IFS=',' read -ra cfg_files <<< "$lbl_file"
+    for cfg in "${cfg_files[@]}"; do
+      [[ -n "$cfg" ]] || continue
+      if [[ "$cfg" == /* ]]; then [[ -e "$cfg" ]] || continue
+      else [[ -e "${lbl_dir}/${cfg}" ]] || continue
+      fi
+      cfg_args+=(-f "$cfg")
+    done
+    if [[ -n "$lbl_dir" && ${#cfg_args[@]} -gt 0 ]]; then
+      (cd "$lbl_dir" && ${COMPOSE_BIN} "${cfg_args[@]}" down --remove-orphans) || docker stop "$c" >/dev/null
     else
       docker stop "$c" >/dev/null
     fi
