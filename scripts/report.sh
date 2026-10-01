@@ -135,11 +135,23 @@ club_config_load "${REPO_ROOT}"
 HOST_SHORT="$(hostname -s 2>/dev/null || echo unknown)"
 USER_NAME="${USER:-$(whoami 2>/dev/null || echo unknown)}"
 
+# strip_ansi — drop terminal escape sequences (colour, cursor, charset, OSC titles).
+# The report is Markdown for a file or an issue, but the tools it embeds (verify-*,
+# soak, bench, `nvidia-smi topo`, coloured container logs) colour their output even
+# when piped, so pasted reports carried 37-39 raw sequences each and read as
+# "[32m✓[0m" (#1427). redact() runs it on every embedded block, redacted or not.
+# ⚠️ LC_ALL=C: under a UTF-8 locale GNU sed reads [@-~] in collation order and it no
+# longer contains "m", so not one colour code matched. Bytewise is safe here: every
+# pattern is ASCII, and multibyte characters (✓ — ×) pass through untouched.
+strip_ansi() {
+  LC_ALL=C sed -E -e 's|\x1b\[[0-9;?]*[ -/]*[@-~]||g' -e 's|\x1b\][^\x07]*\x07||g' -e 's|\x1b[()][A-Za-z0-9]||g'
+}
+
 redact() {
   if [[ $REDACT -eq 1 ]]; then
     # Mask the literal MODEL_DIR value first (if exported) so an arbitrary models
     # path — /data/..., /srv/... — is caught before the prefix rules below.
-    { if [[ -n "${MODEL_DIR:-}" ]]; then sed -e "s|${MODEL_DIR}|<MODEL_DIR>|g"; else cat; fi; } | sed \
+    { if [[ -n "${MODEL_DIR:-}" ]]; then sed -e "s|${MODEL_DIR}|<MODEL_DIR>|g"; else cat; fi; } | strip_ansi | sed \
       -e "s|/home/${USER_NAME}|~|g" \
       -e "s|/root|~|g" \
       -e "s|${HOST_SHORT}|<HOST>|g" \
@@ -152,7 +164,7 @@ redact() {
       -e 's|/mnt/[a-z]/Users/[^ /]*|/mnt/<DRIVE>/Users/<REDACTED>|g' \
       -e 's|/mnt/models|<MODELS>|g'
   else
-    cat
+    strip_ansi
   fi
 }
 
@@ -1741,8 +1753,8 @@ if [[ $DO_STUDIO -eq 1 ]]; then
       _studio_found=1
       _tail=200; [[ "$c" == comfyui ]] && _tail=400
       _running=$(docker ps --filter "name=^${c}$" --format '{{.Status}}' 2>/dev/null | head -1)
-      # strip ANSI colour codes (ComfyUI logs are coloured) so the pasted block reads cleanly
-      docker logs --tail "$_tail" "$c" 2>&1 | sed -E 's/\x1b\[[0-9;]*[mK]//g' | redact \
+      # ComfyUI logs are coloured; redact() strips the codes (strip_ansi)
+      docker logs --tail "$_tail" "$c" 2>&1 | redact \
         | details "$c — ${_running:-not running} (last $_tail lines)"
     fi
   done
