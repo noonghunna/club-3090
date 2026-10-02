@@ -53,6 +53,13 @@ def _hardware_id_from_gpu(name: str, mem_mib: int, sm: float) -> str:
     normalized = _normalize_name(name)
     vram_gb = round(mem_mib / 1024)
 
+    # CMP 170HX: a GA100 (sm_8.0) mining board. Only the ~64 GB "unlocked" boards
+    # have a profile. A stock 8 GB board falls through and gets none, rather than an
+    # inflated one; and a 64 GB board must be caught HERE, before the sm_8.0
+    # fallback below would read it as an NVLink A100.
+    if "170hx" in normalized and vram_gb >= 60:
+        return "cmp-170hx-64gb"
+
     aliases = (
         # RTX PRO 6000 Blackwell reports as "RTX PRO 6000 Blackwell" -> normalizes
         # to "rtx pro 6000 blackwell" (PRO before 6000), so match "pro 6000".

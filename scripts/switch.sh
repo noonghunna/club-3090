@@ -723,6 +723,16 @@ explain_detect_card() {
   if command -v nvidia-smi >/dev/null 2>&1; then
     name="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)"
   fi
+  # CMP 170HX: only the ~64 GB boards have a profile (launch_compat.py does the same);
+  # a stock 8 GB board takes the default below like any other unmapped card.
+  if [[ "$name" == *"CMP 170HX"* ]]; then
+    local mem_mib=""
+    mem_mib="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9' || true)"
+    if [[ -n "$mem_mib" ]] && (( mem_mib >= 61440 )); then
+      printf 'cmp-170hx-64gb'
+      return 0
+    fi
+  fi
   case "$name" in
     *"RTX 3090 Ti"*) printf 'rtx-3090-ti' ;;
     *"RTX 3090"*)    printf 'rtx-3090' ;;

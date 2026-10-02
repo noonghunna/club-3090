@@ -1,0 +1,54 @@
+# NVIDIA CMP 170HX with 64 GB — COMMUNITY-VALIDATED, never booted on the reference rig.
+#
+# The CMP 170HX is a crypto-mining board built on GA100, the A100's chip (sm_8.0), so
+# it takes the A100 code path: vLLM's and SGLang's sm_80 kernels and FlashAttention-2.
+#
+# Measured by a community user (xtj7, 2026-10-02, nvidia-smi on a 2x 3090 + CMP rig):
+#   - name "NVIDIA CMP 170HX", memory.total 65536 MiB, compute_cap 8.0.
+#   - PCIe link: Gen 2 x4 (~2 GB/s). The board reports Gen 1 as its own max and a
+#     x16 max width, but trains at Gen 2 x4.
+# Measured by the same user (club-3090#1537, 2026-10-02): SGLang v0.5.20 boots and
+#   serves at TP=1 on the CMP alone, with their own config (Vishva007 W4A16 GPTQ +
+#   DFlash2 drafter, fp8_e4m3 KV, 262K ctx, mem-fraction 0.85): 510,075-token KV pool,
+#   decode 58-106 tok/s at ~142K tokens of context, board power-capped to 175 W of 250.
+# Still UNMEASURED: vLLM on it, and club-3090's own recipes.
+#
+# What follows from the measurements:
+#   - Use it as a single card. On a Gen 2 x4 link, splitting a model across cards
+#     (TP) or offloading experts to the CPU is link-bound, and a TP group with 24 GB
+#     cards caps every card at 24 GB, wasting the 64.
+#   - Model loads are slow over that link; decode then runs from VRAM.
+#   - VRAM differs between boards: the detector maps a CMP 170HX here only at >= 60 GB,
+#     and a smaller one gets no profile rather than an inflated one.
+#   - No NVLink. The board reports a 250 W default and max power limit (#1537); no
+#     optimal cap has been measured, so the power_cap fields are left unset.
+# Promote the rest from "assumed" to "measured" from a report: `bash scripts/report.sh`.
+schema_version: 1
+id: cmp-170hx-64gb
+display_name: NVIDIA CMP 170HX (64 GB)
+sm: 8.0
+vram_gb: 64
+arch: ampere-datacenter
+mem_util_safe: 0.90
+supported_kv_formats:
+  - bf16
+  - fp16
+  - fp8_e5m2
+  - turboquant_3bit_nc
+  - int8_per_token_head
+  - q4_0
+  - q5_0
+  - q8_0
+  - k8v4
+kv_format_default:
+  long_context: turboquant_3bit_nc
+  multi_stream: int8_per_token_head
+  balanced: fp8_e5m2
+cudagraph: full
+driver_pin_recommended:
+  min: "580.0"
+  notes: "CUDA 13 vLLM images require a 580.x-class NVIDIA driver; CMP support in that driver line is unverified."
+nvlink_capable: false
+power_cap_w_optimal: null
+power_cap_w_max: null
+notes: "COMMUNITY-VALIDATED: GA100 (sm_8.0) mining board, 64 GB, PCIe Gen 2 x4 (nvidia-smi from xtj7, 2026-10-02); not booted on the reference rig. Use it as a single card. SGLang boots and serves on it at TP=1 (xtj7's own config, club-3090#1537); vLLM and club-3090's recipes are unmeasured — send a report.sh run to promote."

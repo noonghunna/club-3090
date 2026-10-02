@@ -198,13 +198,34 @@ cases = [
     # Deliberate under-promise: no exact profile, so fall to the largest SMALLER
     # same-family profile. Safe direction; the reverse would not be.
     ("NVIDIA A100-SXM4-80GB",         81920,  8.0, "a100-40gb"),
+    # CMP 170HX (GA100 mining board): the ~64 GB boards get their own profile and
+    # must NOT fall to the sm_8.0 A100 fallback (which assumes NVLink).
+    ("NVIDIA CMP 170HX",              65536,  8.0, "cmp-170hx-64gb"),
+    ("NVIDIA CMP 170HX",              64000,  8.0, "cmp-170hx-64gb"),
 ]
 bad = [f"{n}->{m(n,v,s)} want {e}" for n, v, s, e in cases if m(n, v, s) != e]
+# A stock 8 GB CMP 170HX has no profile: it must stay unmapped, never be read as
+# a larger card.
+from launch_compat import LaunchCompatError
+try:
+    got = m("NVIDIA CMP 170HX", 8192, 8.0)
+    bad.append(f"stock 8 GB CMP 170HX->{got} want no profile")
+except LaunchCompatError:
+    pass
+# A real mixed rig (xtj7, 2026-10-02): two 3090s around a 64 GB CMP 170HX. Each
+# card keeps its own profile.
+from launch_compat import _parse_gpu_specs
+sys.path.insert(0, ".")
+from scripts.lib.profiles.compat import load_profiles
+spec = "0|NVIDIA GeForce RTX 3090|24576|8.6;1|NVIDIA CMP 170HX|65536|8.0;2|NVIDIA GeForce RTX 3090|24576|8.6"
+ids = [getattr(h, "id", h) for h in _parse_gpu_specs(spec, load_profiles())]
+if ids != ["rtx-3090", "cmp-170hx-64gb", "rtx-3090"]:
+    bad.append(f"mixed 3090+CMP rig -> {ids}")
 print("FAIL: " + " | ".join(bad) if bad else "OK")
 PY
 )"
 [[ "$det" == "OK" ]] || { echo "  FAIL: detector: $det"; exit 1; }
-echo "  ok: hardware detector split (PRO 6000 / GB10 / 5090 / Ada / A6000 / A5000 / 3090 / A100-80)"
+echo "  ok: hardware detector split (PRO 6000 / GB10 / 5090 / Ada / A6000 / A5000 / 3090 / A100-80 / CMP 170HX 64 GB vs stock / mixed 3090+CMP rig)"
 
 # --- #246 Phase 2 mem-fraction floor (DOWNWARD only) --------------------------
 # A unified-memory card (Spark, mem_util_safe 0.85) can't safely give the 0.92
