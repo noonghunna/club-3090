@@ -717,9 +717,16 @@ services:
         # With it rank 0 blocks in zmq poll until a request arrives (the other ranks
         # wait on its broadcast): 42 % at idle, TTFT after idle 84 vs 80 ms and decode
         # 63.4 vs 66.3 tok/s — within run noise. Upstream default is off.
+        # TP: 2 by default. TP=1 runs this recipe on ONE card, which must hold all ~18 GiB of
+        # weights plus KV: meant for a big single card (a 64 GB CMP 170HX; unmeasured there).
+        # On a 24 GB 3090 it boots only lean — CONTEXT_LENGTH=4096 MEM_FRACTION=0.88
+        # SPEC_N=0 gave a 36,588-token pool and passed verify-full (2026-10-02); 0.93 OOMs
+        # in CUDA-graph capture. This compose picks its GPUs ONLY through device_ids, so
+        # pin the card with ESTATE_GPUS (host index); `launch.sh --gpus` does not reach it.
+        #   ESTATE_GPUS=1 TP=1 FORCE=1 bash scripts/switch.sh sgl/qwen38-27b-dual-fast
         exec python3 -m sglang.launch_server \
           --model-path "$$M" \
-          --tp-size 2 \
+          --tp-size "${TP:-2}" \
           --disable-custom-all-reduce \
           --quantization auto-round \
           --kv-cache-dtype "${KV_CACHE_DTYPE:-fp8_e4m3}" \
