@@ -106,7 +106,13 @@ PY
     # its registry note says "on a 3090 expect an OOM at KV init, which is the
     # config being honest rather than broken"; target class is 32 GB+ (5090 /
     # RTX 6000 Pro / H100), where the A4 groups also actually execute.
-    vllm/qwen38-27b-single-nvfp4)
+    #
+    # vllm/qwen38-27b-single-fast: kv-calc models the FULL tier (W4A8 + MTP, 0.90) on this
+    # 24 GB card and verdicts FAIL (~102% of budget). The compose AUTO-SIZES at boot: on a card
+    # under 30 GiB it runs its lean tier (W4A8, no MTP, no vision tower, 81920 context), which
+    # served a 79,813-token prompt and passed verify-full + verify-stress on one 3090 (2026-10-02).
+    # kv-calc cannot model a boot-time tier choice. Full-tier target: 32 GB+ (a 64 GB CMP 170HX).
+    vllm/qwen38-27b-single-nvfp4|vllm/qwen38-27b-single-fast)
       if [[ "$rc" -eq 0 ]]; then
         echo "ASSERTION FAILED: $compose triaged GREEN on 1x-rtx-3090 — it is" >&2
         echo "  registered as expected-YELLOW (does not fit 24 GB). If the slug or" >&2

@@ -14,7 +14,10 @@
 # each compose's REAL entrypoint block to prove the default and the override resolve as documented:
 #   every Qwen3.8-family vLLM compose (14 MTP + 24 DFlash): default bfloat16, `auto` reverts
 #   to the model's float32, and every `exec vllm serve` line actually passes MAMBA_ARGS.
-#   the CUDA-graph memory estimate is off by default on the two dual-fast composes ONLY.
+#   the CUDA-graph memory estimate is off by default on the two dual-fast composes and on
+#   vllm/qwen38-27b-single-fast ONLY (its lean tier was sized and validated with it off: 81,920
+#   context, a 79,813-token prompt and verify-stress on one 3090, 2026-10-02 — turning it on
+#   takes ~0.5 GiB from the KV pool and that context would no longer fit).
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -25,6 +28,7 @@ fail() { echo "✗ $*" >&2; fails=$((fails+1)); }
 DUAL_FAST=(
   models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml
   models/thinkingcap-qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml
+  models/qwen3.8-27b/vllm/compose/single/autoround-int4/mtp.yml   # lean tier measured with it off
 )
 # Every Qwen3.8-family vLLM compose — MTP (14) and DFlash (24). Coverage is asserted, not assumed:
 # a new tier that forgets the knob would otherwise simply fall outside this guard's file set.

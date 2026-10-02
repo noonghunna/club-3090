@@ -1,0 +1,547 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
+#              Frozenlock AutoRound INT4 g128 — the checkpoint and recipe of
+#              sgl/qwen38-27b-dual-fast, on ONE card. Served W4A8 by default (vendored
+#              AutoRound W4A8 patch, mounted below; W4A8=0 for W4A16).
+#   Engine:    SGLang v0.5.21 (`lmsysorg/sglang:v0.5.21`) — engine profile `sglang-stable`
+#   Topology:  Single card (TP=1), AUTO-SIZED at boot from the card's VRAM (see AUTO-SIZE)
+#   Drafter:   native MTP head, in-checkpoint — n=4 on the full tier; OFF on the lean tier
+#              (24 GB: SGLang's MTP draft does not fit next to the weights)
+#   KV:        fp8_e4m3
+#   Vision:    tower present; measured only on the dual sibling — re-probe here
+#   Max ctx:   262144 on the full tier; 32768 on the lean tier (24 GB). SGLang has no
+#              auto-fit, so the lean tier sets a context its ~35K-token pool can hold.
+#   KV offload: none — the HiCache host tier is probed only on the dual MTP composes
+#   Genesis:   N/A — Genesis is a vLLM construct.
+#   Status:    🧪 Experimental
+#   Best for:  the SGLang dual-fast recipe on one big card (32 GB and up; built for a 64 GB
+#              CMP 170HX, club-3090#1537); boots lean on a 24 GB card
+# ---------------------------------------------------------------------------
+# Requires-min-vram-gb: 24
+# Requires-min-gpu-count: 1
+# Tensor-parallel: 1
+# ---------------------------------------------------------------------------
+# AUTO-SIZE — one compose for 24 GB, 32 GB, 64 GB and bigger cards.
+#   The entrypoint reads the total VRAM of the one card device_ids gives it and picks a tier:
+#     tier  card       W4A8  MTP   mem-fraction-static  context-length  max-running-requests
+#     full  >= 30 GiB  on    n=4   0.95 (0.90 if off)   262144          2
+#     lean  <  30 GiB  on    OFF   0.88                 32768           1
+#   Anything you set wins: W4A8, SPEC_N, MEM_FRACTION, CONTEXT_LENGTH, MAX_RUNNING_REQUESTS.
+#   SIZE_TIER=full|lean forces a tier. The boot log prints what it chose:  [size] tier …
+#
+# MEASURED — one RTX 3090 (24 GB), TP=1, SGLang v0.5.21, 2026-10-02 (the dual-fast compose at
+# TP=1, MAX_RUNNING_REQUESTS=1):
+#     W4A8, no MTP, mem 0.93, ctx 4096     ❌ 74,687-token pool, then OOM in CUDA-graph capture
+#     W4A8, no MTP, mem 0.88, ctx 4096     ✅ 36,588-token pool, ready 108 s; verify-full passed
+#     W4A8, no MTP, mem 0.88, ctx 262144   ✅ boots with a 35,308-token pool: SGLang accepts a context
+#                                            larger than its pool, so the lean tier sets 32768 instead
+#     W4A8 + MTP n=4, mem 0.88             ❌ "Loaded weights leave no GPU memory for the KV cache …
+#                                            minimum viable 0.98" — the draft weights are counted
+#     W4A16 + MTP n=4, mem 0.95            ❌ the same error and the same 0.98: the drafter, not W4A8,
+#                                            is what does not fit
+#     --language-model-only (vision off)   ❌ "does not support ['Qwen3_5ForConditionalGeneration']" —
+#                                            so unlike the vLLM single slug, the lean tier keeps the
+#                                            vision tower and its smaller pool
+#   THIS compose, lean tier as shipped (auto-picked on the 3090: W4A8, no MTP, 0.88, 32768, 1 req):
+#     boot                 ✅ 36,588-token pool, context 32768, ready in 104 s
+#     29,839-token prompt  ✅ 14.0 s (~2,128 tok/s prefill)
+#     verify-full          ✅ all checks passed
+#   The FULL tier is UNMEASURED on any card: it needs more than 24 GB, and the reference rig has
+#   only 3090s. A community 64 GB CMP 170HX serves SGLang v0.5.20 at TP=1 with a different
+#   checkpoint and drafter (club-3090#1537: 510,075-token pool at mem 0.85, 262144 context) —
+#   evidence the card class works, not a number for this recipe.
+#
+# PINNING THE CARD — this slug is 🧪, so it boots with --force, and FORCE=1 also skips the
+#   preflight that would otherwise pick the largest card. device_ids takes ESTATE_GPUS, else
+#   CUDA_VISIBLE_DEVICES, else GPU 0, so either of these pins it:
+#     FORCE=1 bash scripts/launch.sh --variant sgl/qwen38-27b-single-fast --gpus <index>
+#     ESTATE_GPUS=<index> bash scripts/switch.sh --force sgl/qwen38-27b-single-fast
+#
+# WHY THE RECIPE IS WHAT IT IS — native MTP n=4, W4A8 by default, bf16 SSM, the radix-cache
+#   strategy, --sleep-on-idle, the reasoning-effort default: all measured at TP=2 on 2x 3090 and
+#   written up in the dual sibling (models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml,
+#   header and entrypoint comments). Those numbers are NOT this compose's. What carries over:
+#   ⚠️ Quality on the W4A8 path is unvalidated (no 8-pack); W4A8=0 reverts.
+#   ⚠️ Long prompts on ONE card are less tested than on two — run verify-stress before
+#      trusting a long context here.
+# ===========================================================================
+services:
+  sglang-qwen38-27b-mtp-single:
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.21}
+    container_name: ${ESTATE_CONTAINER:-sglang-qwen38-27b-mtp-single}
+    # Root inside the container with your group, as the vLLM composes run (validated so).
+    user: "0:${DOCKER_GID:-1000}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    init: true
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8144}}:30000"
+    volumes:
+      - ../../../../../../scripts/lib/cuda-ordinals.sh:/etc/club3090/cuda-ordinals.sh:ro
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+      # Patched template (default_reasoning_effort + high -> xhigh), mounted over the
+      # checkpoint's own; SGLang loads it from the model dir. See the SAMPLER note
+      # below and patches.yml qwen38-reasoning-effort-template.
+      - ../../../../vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja:/models/qwen3.8-27b-autoround-int4/chat_template.jinja:ro
+      - "${W4A8_PATCH_DIR:-../../../patches/sglang-autoround-w4a8-v0.5.19}:/etc/club3090/w4a8:ro"
+    ipc: host
+    shm_size: "16gb"
+    environment:
+      # PCIe P2P off-switch — bare, so docker forwards it only when the host sets it. On a driver
+      # that grants P2P, NCCL uses it automatically; NCCL_P2P_DISABLE=1 stages GPU↔GPU traffic
+      # through host memory instead (docs/PCIE_P2P.md §0c).
+      - NCCL_P2P_DISABLE
+      - SIZE_TIER
+      - SPEC_N
+      - CONTEXT_LENGTH
+      - MEM_FRACTION
+      - KV_CACHE_DTYPE
+      - ATTENTION_BACKEND
+      - MAX_RUNNING_REQUESTS
+      # ── Prefix-cache policy (opt-in, OFF by default) — club-3090#1319 ──
+      # ⚠️ BARE pass-throughs. `- VAR=${X:-}` sets the EMPTY STRING, and
+      # SGLANG_ENABLE_UNIFIED_RADIX_TREE is an EnvBool where empty != unset.
+      # Bare means docker forwards them ONLY when the host sets them.
+      - SESSION_RADIX_CACHE
+      - RADIX_EVICTION_POLICY
+      - MAX_MAMBA_CACHE_SIZE
+      - MAMBA_SSM_DTYPE
+      - W4A8
+      - ENABLE_THINKING
+      - TEMP
+      - TOP_P
+      - TOP_K
+      - MIN_P
+      - PRESENCE_PENALTY
+      - REPEAT_PENALTY
+      - REASONING_EFFORT
+      - CHUNKED_PREFILL_SIZE
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              # One card: ESTATE_GPUS (estates), else CUDA_VISIBLE_DEVICES — the index the preflight
+              # picks, or the UUID `launch.sh --gpus` exports — else GPU 0.
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [gpu]
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        # GPU UUIDs (estate pinning) -> this container's ordinals, so SGLang's custom all-reduce can
+        # parse CUDA_VISIBLE_DEVICES (club-3090#1462). No-op when unset or already numeric.
+        if [ -f /etc/club3090/cuda-ordinals.sh ]; then . /etc/club3090/cuda-ordinals.sh; club3090_cuda_ordinals;
+        else echo "[gpus] cuda-ordinals.sh not mounted; CUDA_VISIBLE_DEVICES not remapped (club-3090#1462)" >&2; fi
+        M=/models/qwen3.8-27b-autoround-int4
+        # -- AUTO-SIZE: fit the recipe to the card this container got ---------------------------
+        #   SIZE_TIER=auto (default) reads the card's total VRAM; SIZE_TIER=full|lean forces a tier.
+        #   Each value below is only a DEFAULT — a W4A8 / SPEC_N / MEM_FRACTION / CONTEXT_LENGTH /
+        #   MAX_RUNNING_REQUESTS you set wins, in either tier.
+        #     full  (>= 30 GiB): the dual-fast recipe at TP=1 — W4A8 on, MTP n=4, 262144 context,
+        #                        2 running requests, mem fraction 0.95 (0.90 with SPEC_N=0, below)
+        #     lean  (<  30 GiB): W4A8 on, MTP OFF (SGLang's MTP draft needs mem fraction >= 0.98 on
+        #                        24 GB), mem fraction 0.88, 32768 context, 1 running request. The
+        #                        vision tower stays: v0.5.21's --language-model-only refuses
+        #                        Qwen3_5ForConditionalGeneration (measured 2026-10-02).
+        #   device_ids gives this container exactly one card, so plain nvidia-smi reads the right one.
+        _vram_mib="$$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9')"
+        _tier="$${SIZE_TIER:-auto}"
+        case "$$_tier" in
+          auto)
+            if [ -z "$$_vram_mib" ]; then
+              _tier=full
+              echo "[size] could not read the card's VRAM (nvidia-smi); using the full tier. On a 24 GB card set SIZE_TIER=lean." >&2
+            elif [ "$$_vram_mib" -lt 30720 ]; then _tier=lean; else _tier=full; fi ;;
+          full|lean) ;;
+          *) echo "[size] SIZE_TIER='$$_tier' must be auto, full or lean" >&2; exit 1 ;;
+        esac
+        if [ "$$_tier" = "lean" ]; then
+          : "$${W4A8:=1}" "$${SPEC_N:=0}" "$${MEM_FRACTION:=0.88}" "$${CONTEXT_LENGTH:=32768}" "$${MAX_RUNNING_REQUESTS:=1}"
+          export MEM_FRACTION
+        else
+          : "$${W4A8:=1}" "$${SPEC_N:=4}" "$${CONTEXT_LENGTH:=262144}" "$${MAX_RUNNING_REQUESTS:=2}"
+        fi
+        echo "[size] tier $$_tier ($${_vram_mib:-?} MiB): W4A8=$$W4A8 SPEC_N=$$SPEC_N context=$$CONTEXT_LENGTH running=$$MAX_RUNNING_REQUESTS mem-fraction=$${MEM_FRACTION:-default}" >&2
+        # ⚠️ SPEC_N=0 removes the speculative flags entirely rather than passing
+        # n=0 — the same rule the GLM composes use, so a typo can never
+        # masquerade as "drafter off".
+        _n="$${SPEC_N}"
+        case "$$_n" in ""|*[!0-9]*) echo "[spec] SPEC_N='$$_n' is not a non-negative integer" >&2; exit 1 ;; esac
+        SPEC=()
+        if [ "$$_n" -gt 0 ]; then
+          # Native MTP: the draft path is the SAME checkpoint. sglang rewrites
+          # Qwen3_5ForConditionalGeneration -> Qwen3_5ForCausalLMMTP when
+          # is_draft_model (model_config.py:751), which loads the in-checkpoint
+          # mtp.* tensors. There is no separate drafter file to download.
+          SPEC=(--speculative-algorithm EAGLE
+                --speculative-draft-model-path "$$M"
+                --speculative-num-steps "$$_n"
+                --speculative-eagle-topk 1
+                --speculative-num-draft-tokens $$(( _n + 1 )))
+          echo "[spec] native MTP ON (n=$$_n)" >&2
+        else
+          echo "[spec] drafter OFF (SPEC_N=0)" >&2
+          # ⚠️ Drafter off -> the MEM_FRACTION default drops 0.95 -> 0.90 (your own
+          # MEM_FRACTION still wins). Without the drafter's weights and draft KV the
+          # pool takes their share (784,799 tokens at 0.95 vs ~547K spec-on), leaving
+          # 0.74 GB when the prefill CUDA graphs need 1.30 GB: CUDA OOM at capture,
+          # so SPEC_N=0 did not boot at all at 0.95. Measured 2026-09-28: 0.92-0.94
+          # OOM at capture; 0.91 captures but the first request finds 0.03 GiB free
+          # (lazy Triton loads) and NCCL fails; 0.90 is the highest that boots and
+          # serves (bench incl. 90K prefill + verify-full). It is also the default
+          # before 2026-09-15, which is when spec-off last worked (08-23).
+          # ⚠️ The margin is thin: right after a 90K prefill, a lazily loaded Triton
+          # kernel found 0.05-0.21 GiB free on GPU0 (it varies boot to boot). If a
+          # spec-off boot ever hits CUDA OOM on a Triton load, MEM_FRACTION=0.89
+          # buys ~0.24 GB per card for ~2% of the KV pool.
+          if [ -z "$${MEM_FRACTION:-}" ]; then
+            export MEM_FRACTION=0.90
+            echo "[mem] SPEC_N=0: mem-fraction-static 0.90 (0.95 leaves too little to capture CUDA graphs without the drafter; set MEM_FRACTION to override)" >&2
+          fi
+        fi
+        # --- Prefix-cache policy opt-ins (club-3090#1319) -------------------
+        # ⚠️ SESSION_RADIX_CACHE is a 0/1 GATE, not the flag: the feature needs
+        # BOTH the env var and the CLI flag (upstream: "implemented only by
+        # UnifiedRadixCache"). Setting one alone is the footgun, so one switch
+        # sets both — same reasoning as the W4A8 boolean.
+        CACHE=()
+        _src="${SESSION_RADIX_CACHE:-0}"
+        case "$$_src" in 0|1) : ;; *) echo "[cache] SESSION_RADIX_CACHE='$$_src' must be 0 or 1" >&2; exit 1 ;; esac
+        if [ "$$_src" = "1" ]; then
+          export SGLANG_ENABLE_UNIFIED_RADIX_TREE=1
+          CACHE+=(--enable-session-radix-cache)
+          echo "[cache] session-aware radix cache ON — eviction consumes UNREFERENCED" >&2
+          echo "[cache] entries before referenced ones. ⚠️ INERT unless clients send a" >&2
+          echo "[cache] session_id; close finished sessions via POST /close_session." >&2
+        fi
+        if [ -n "${RADIX_EVICTION_POLICY:-}" ]; then
+          CACHE+=(--radix-eviction-policy "$${RADIX_EVICTION_POLICY}")
+          echo "[cache] radix eviction policy: $${RADIX_EVICTION_POLICY} (default lru)" >&2
+        fi
+        # ⛔ NO --radix-eviction-policy-config KNOB. Upstream docs describe it (it
+        # tunes slru's protected_threshold) but it does NOT exist in the pinned
+        # v0.5.19 — passing it hard-fails the boot with "unrecognized arguments".
+        # Verified by booting, not by reading docs. Add it when the pin moves.
+        #
+        # --- SSM slot cap: MAX_MAMBA_CACHE_SIZE (default 20; "auto" = SGLang auto-fit) ------
+        # ⭐ DEFAULT K=20 since 2026-09-25 (was auto-fit K=63). Each mamba slot given up is ~2,253
+        # KV tokens, so the 43 slots K=63 kept idle become pool: 451,633 -> 548,520 tokens, enough
+        # for TWO full 262,144-token sessions. MEASURED (sgl/qwen38-27b-dual-fast, 2026-09-25): two
+        # concurrent ~261.9K prompts both completed with their needles recalled, 0 errors; MTP accept
+        # len 3.12 (3.17-3.25 at K=63); decode and prefill flat; 1.48 GB post-boot headroom (K only
+        # re-splits the budget, it does not spend headroom). Warm-prefix slots = K - 3 x
+        # MAX_RUNNING_REQUESTS = 14 at c2; a conversation past that re-prefills (this single-card
+        # slug has no host-RAM tier). ⚠️ Not below ~15: K=10 starved the drafter (accept len 2.27).
+        # ⚠️ 32 GB+ cards: context stops binding there and concurrency starts, so use
+        # MAX_MAMBA_CACHE_SIZE=auto. Same seam as sgl/qwen38-27b-dual-max (which pins K=10).
+        _k="$${MAX_MAMBA_CACHE_SIZE:-20}"
+        KCAP=()
+        case "$$_k" in
+          auto) echo "[mamba] SSM slots auto-fit (MAX_MAMBA_CACHE_SIZE=auto)" >&2 ;;
+          ""|*[!0-9]*|0) echo "[mamba] MAX_MAMBA_CACHE_SIZE='$$_k' must be a positive integer or auto" >&2; exit 1 ;;
+          *) KCAP=(--max-mamba-cache-size "$$_k"); echo "[mamba] SSM slots capped at K=$$_k (MAX_MAMBA_CACHE_SIZE=auto restores auto-fit)" >&2 ;;
+        esac
+        # --- W4A8 (club-3090#1226 patch, vendored + mounted; DEFAULT ON, W4A8=0 reverts) ---
+        # ⭐ DEFAULT-ON since 2026-09-19 (was 0). MEASURED on this rig,
+        # sgl/qwen38-27b-dual-fast, sglang v0.5.20, TWO fresh boots per arm,
+        # INTERLEAVED, bench.sh 3 warm + 5 measured:
+        #                    W4A16 (old default)  W4A8 (now default)   delta
+        #   prefill @10K     1128.1               1682.5               +49.1%  ⭐
+        #   prefill @90K      898.7               1234.7               +37.4%  ⭐
+        #   decode narrative   83.91                76.88               -8.4%
+        #   decode code       110.70               104.63               -5.5%
+        # All four clear the boot-to-boot floor (1.9-4.7%). This is the first
+        # W4A8 measurement on this stack that is BOTH single-variable (one pin)
+        # AND repeat-boot; every earlier one was one boot across two pins.
+        # ⚠️ SUPERSEDES an earlier table here that read -4.7% / -2.4% decode from
+        # SINGLE boots. The real decode cost is roughly DOUBLE that; the prefill
+        # win is slightly larger (+49% vs +47%). Prefill remains the documented
+        # pain point for these slugs, so the trade still favours W4A8 — but it is
+        # a bigger trade than first published.
+        # ⚠️ Measured on v0.5.20. The v0.5.19 -> v0.5.20 pin bump is a MEASURED
+        # NULL (narrative -2.4%, code +0.4%, prefill -0.3%, all inside noise over
+        # 2 boots/arm), so these numbers transfer to either pin.
+        # ⛔ RETIRED: the former "v0.5.20 REGRESSES this path ~10% decode" warning.
+        # That came from differencing two BOOT EXTREMES on a metric whose
+        # narrative leg swings ~9% between IDENTICAL boots. Repeat boots killed it.
+        # ⚠️⚠️ QUALITY ON THE W4A8 PATH IS UNVALIDATED — no 8-pack, no
+        # verify-stress. int8 activations are a real numerical change, not just a
+        # kernel swap. Maintainer decision 2026-09-19, taken on the throughput
+        # trade with that stated. Revert with W4A8=0.
+        _w4a8="$${W4A8}"
+        case "$$_w4a8" in 0|1) : ;; *) echo "[w4a8] W4A8='$$_w4a8' must be 0 or 1" >&2; exit 1 ;; esac
+        if [ "$$_w4a8" = "1" ]; then
+          _p=/etc/club3090/w4a8
+          if [ ! -f "$$_p/install.sh" ]; then
+            echo "[w4a8] W4A8=1 but no installer at $$_p." >&2
+            echo "[w4a8] The patch IS vendored (models/qwen3.8-27b/sglang/patches/" >&2
+            echo "[w4a8] sglang-autoround-w4a8-v0.5.19) and mounted there by default, so this" >&2
+            echo "[w4a8] means the mount did not resolve - a W4A8_PATCH_DIR override pointing" >&2
+            echo "[w4a8] somewhere else, or docker created an empty dir because the path was" >&2
+            echo "[w4a8] missing. Refusing to serve W4A16 silently." >&2
+            exit 1
+          fi
+          bash "$$_p/install.sh" || { echo "[w4a8] install FAILED" >&2; exit 1; }
+          bash "$$_p/install.sh" --verify || { echo "[w4a8] post-install verify FAILED" >&2; exit 1; }
+          echo "[w4a8] ON - int8 activations (patch by @A1RM4X, club-3090#1226; re-cut of @jb-seo's)" >&2
+        else
+          echo "[w4a8] off (W4A8=1 to enable; ~+44% prefill, ~-11% code decode)" >&2
+        fi
+        # ⚠️ CLIENT COMPATIBILITY — three OpenAI-extension fields that work on our vLLM
+        # slugs are REFUSED by SGLang when stream=true (serving_chat.py, an explicit
+        # guard, not a bug):
+        #     return_token_ids · return_prompt_token_ids · return_meta_info
+        # e.g. "return_token_ids is not supported with streaming on /v1/chat/completions.
+        # Please set stream=false when using return_token_ids=true."
+        # vLLM streams return_token_ids fine and llama.cpp has no such restriction, so an
+        # client that works against vllm/qwen38-27b-* can fail here at REQUEST time — after
+        # you have already committed to the slug. No workaround short of stream=false.
+        # Reported by @Naelith (Discord), surfaced behind an API-switching proxy — the worst
+        # shape of this: the proxy makes the backends look interchangeable right up until a
+        # field one of them refuses.
+        # ✅ MEASURED 2026-09-11 — the clients we ship and run are all CLEAN. Each was pointed
+        # at a request-recording mock endpoint and its actual payload inspected:
+        #     pi      streams; sends max_completion_tokens, messages, model, store, stream,
+        #             stream_options, tools — none of the three
+        #     hermes  streams; sends messages, model, reasoning_effort, stream,
+        #             stream_options, thinking, tools — none of the three
+        #     8-pack  benchlocal-cli + the HermesAgent sandbox set none of them and do not
+        #             stream, so quality runs against sgl/ slugs are fine
+        # ⇒ If you hit this, suspect the PROXY or a bespoke benchmarking client, not the
+        #   agent — a translation layer is the thing likely to add return_token_ids for
+        #   token accounting.
+        # ⓘ hermes also sends `thinking`, which SGLang does not declare. It is TOLERATED
+        #   (the request model ignores extras) but therefore silently DROPPED, not honoured
+        #   — thinking must go via chat_template_kwargs / ENABLE_THINKING here.
+        # ⓘ return_meta_info being non-streaming-only is also the ONLY clean way to read
+        # per-request spec_accept_length out of this engine — see the accept-len A/B in
+        # learnings/sglang-engine.md, which had to run non-streaming for exactly this reason.
+        # --- sampler row + thinking default, mirroring the vLLM tiers (#1014) ---
+        # The model card publishes TWO sampler rows; ENABLE_THINKING selects one.
+        # Values verified against Qwen/Qwen3.8-27B's card 2026-09-11, and re-checked
+        # on every provider we serve: the official FP8 and unsloth GGUF cards restate
+        # both rows verbatim; Frozenlock / RadixArk / syvai / z-lab add no sampling
+        # guidance of their own, so the base card governs for those checkpoints too.
+        #
+        # ⚠️⚠️ ONLY THE THINKING ROW ACTUALLY LANDS HERE — AND NOT BECAUSE OF THE
+        # --preferred-sampling-params FLAG BELOW. Three mechanisms, two of which bite:
+        #   1. --default-chat-template-kwargs IS enforced (applied to every request
+        #      unless the request overrides it) -> the thinking MODE is real, and so
+        #      is the default effort — carried as `default_reasoning_effort`, see the
+        #      reasoning-effort note below for why not `reasoning_effort`.
+        #   2. --sampling-defaults model (pinned below) makes the engine read the
+        #      checkpoint's generation_config.json, which ships temperature 1.0 /
+        #      top_k 20 / top_p 0.95 — EXACTLY the card's thinking row. THAT is what
+        #      serves the thinking row: Qwen's file, not our flag. The file is
+        #      byte-identical across our int4 and fp8 checkpoints, and there is no
+        #      instruct row anywhere in any of them.
+        #   3. --preferred-sampling-params is INERT on /v1/chat/completions. It IS
+        #      merged (tokenizer_manager.py:1353, `{**preferred, **request}`), but the
+        #      chat adapter's to_sampling_params resolves EVERY key eagerly through
+        #      get_param() — user -> generation_config.json -> OpenAI default — so the
+        #      request dict is always fully populated and always wins the merge. The
+        #      merged result is byte-identical to the unmerged one. It bites only on
+        #      the native /generate endpoint. (SGLang's own Responses-API path,
+        #      protocol.py:1793, omits unset keys SPECIFICALLY so they fall through to
+        #      this flag; the chat path does not — sglang#39096.)
+        # ⇒ ENABLE_THINKING=false genuinely turns thinking OFF, but the SAMPLER STAYS
+        #   ON THE THINKING ROW. A client wanting the instruct row must send
+        #   temperature/top_p/presence_penalty itself — which is exactly what the
+        #   model card's own non-thinking example does, and what bench.sh does.
+        # ⇒ presence_penalty cannot be pinned server-side on EITHER engine: vLLM's
+        #   get_diff_sampling_param() and SGLang's get_default_sampling_params() share
+        #   the same allowlist (repetition_penalty, temperature, top_k, top_p, min_p),
+        #   and both chat adapters declare presence_penalty with a hard 0.0 default, so
+        #   it is always present in the request and always wins. The card anticipates
+        #   this: "support for sampling parameters varies according to inference
+        #   frameworks." It is a client-side parameter, full stop.
+        # We keep the flag because /get_model_info then advertises the correct row to
+        # clients that introspect it — the one thing it genuinely does.
+        _think="${ENABLE_THINKING:-true}"
+        _temp="${TEMP:-}"
+        if [ "$$_think" = "true" ]; then
+          : "$${_temp:=1.0}" "$${TOP_P:=0.95}" "$${PRESENCE_PENALTY:=0.0}"
+          echo "[sampler] thinking row (ENABLE_THINKING=true): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+          echo "[sampler]   temp/top_p/top_k served via generation_config.json (--sampling-defaults model)" >&2
+        else
+          : "$${_temp:=0.7}" "$${TOP_P:=0.80}" "$${PRESENCE_PENALTY:=1.5}"
+          echo "[sampler] instruct row (ENABLE_THINKING=false): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+          echo "[sampler]   ⚠️ thinking is OFF but the SAMPLER IS NOT: the engine still serves the" >&2
+          echo "[sampler]   ⚠️ thinking row from generation_config.json. Send temperature/top_p/" >&2
+          echo "[sampler]   ⚠️ presence_penalty per-request to get the instruct row." >&2
+        fi
+        echo "[sampler] ⚠️ presence_penalty is CLIENT-SIDE on both engines (engine allowlists drop it)" >&2
+        # ⚠️⚠️ The server default MUST be set, and as `default_reasoning_effort`.
+        # The checkpoint's template does `reasoning_effort|default('xhigh')` — the
+        # SLOWEST, longest rung — so leaving it unset serves xhigh on EVERY request,
+        # while the vLLM tiers for this model default to `low` (2026-08-16).
+        # ⚠️⚠️ But NOT as `reasoning_effort`: SGLang <= 0.5.20 lets a
+        # --default-chat-template-kwargs `reasoning_effort` OVERRIDE the request's
+        # own (sglang#38104 — it pops the request value before merging defaults),
+        # so every client effort, top-level or in chat_template_kwargs, rendered as
+        # this default. Measured 2026-09-27: low / medium / xhigh / high requests all
+        # rendered the same 41-token prompt. The patched template (mounted in
+        # volumes:) reads `default_reasoning_effort` only when the request names no
+        # effort.
+        # ⚠️ Ladder is low / medium / xhigh — there is NO `high` rung; the patched
+        # template maps high -> xhigh, as on the vLLM tiers.
+        _reff="${REASONING_EFFORT:-low}"
+        case "$$_reff" in low|medium|xhigh) : ;; *) echo "[sampler] REASONING_EFFORT='$$_reff' must be low|medium|xhigh" >&2; exit 1 ;; esac
+        echo "[sampler] default reasoning_effort=$$_reff (a request's own effort wins; template default would be xhigh)" >&2
+        SAMPLER=(--default-chat-template-kwargs "{\"enable_thinking\": $$_think, \"default_reasoning_effort\": \"$$_reff\"}"
+                 --sampling-defaults model
+                 --preferred-sampling-params "{\"temperature\": $$_temp, \"top_p\": $${TOP_P}, \"top_k\": $${TOP_K:-20}, \"min_p\": $${MIN_P:-0.0}, \"presence_penalty\": $${PRESENCE_PENALTY}, \"repetition_penalty\": $${REPEAT_PENALTY:-1.0}}")
+        # ⭐ MAMBA STATE SLOTS vs CONCURRENCY — measured 2026-09-13 (club-3090#1264).
+        # `--max-running-requests` is not just a concurrency cap here: each running
+        # request LOCKS 3 GDN state slots (1 active + 2 radix checkpoints — SGLang
+        # calls this a FLOOR, not headroom), plus 1 global sink slot. So:
+        #
+        #     usable warm-prefix slots = max_mamba_cache_size - 1 - 3 x max_running_requests
+        #
+        # ⭐ MEASURED on the reference 2x3090 TP=2, 2026-09-14:
+        #     max_mamba_cache_size = 55
+        # ⚠️ READ YOUR OWN BOOT LINE — this differs per weight tier, drafter tier
+        # and topology. The five dual composes measured 55 / 34 / 33 / 21 / 8;
+        # a single pasted constant was wrong on four of them (club-3090#1319).
+        #     Mamba Cache is allocated. max_mamba_cache_size: N
+        #
+        #     usable working slots = K - k x max_running_requests
+        #
+        # where k is set by --mamba-radix-cache-strategy (common.py:26-29):
+        #     extra_buffer=3 (default) · extra_buffer_lazy=2 · no_buffer=1
+        # ⚠️ There is NO -1 for a sink slot: MambaSlotAllocator's free list is
+        # arange(1, K+1) with slot 0 reserved separately, so K is already net.
+        # On this compose (K=55, k=3):
+        #     max-running-requests=1   ->  52 usable     (at the OLD K=55 / 0.90 default)
+        #     max-running-requests=2   ->  49 usable
+        #     max-running-requests=4   ->  43 usable
+        #     max-running-requests=8   ->  31 usable
+        #   DEFAULT 2026-09-15 -> 2026-09-25 was 0.95 / max-running-requests=2, where
+        #   auto-fit yields K=63, so usable = 63 - 3x2 = 57 and the clamp allows C=12.
+        #   MEASURED at that default: 451,633 tokens = 2 x 225,817 (86% of the 262,144
+        #   ceiling), accept len 3.25 / rate 0.56, 1.47 GB post-boot headroom, 0 OOM.
+        #   ⚠️ Forcing K DOWN buys context and COSTS draft acceptance: K=35 -> 3.02,
+        #   K=10 -> 2.27. Reaching a full 2 x 262,144 needs K <= ~30 and ~20% of accept
+        #   length. 86% of the ceiling is a soft limit (a longer session evicts, it does
+        #   not fail), so the throughput is worth more than the last 14% of context.
+        #   ⭐ SUPERSEDED 2026-09-25 — default is now K=20 (SSM slot cap block above):
+        #   548,520 tokens holds 2 x 262,144 (measured: two concurrent ~261.9K prompts,
+        #   both needles recalled), accept len 3.12, decode and prefill flat. The "~20% of
+        #   accept length" cost above was extrapolated from K=10 (2.27: at c2 each request
+        #   reserves 5 slots, so K=10 left the drafter zero slack); K=15 measured 3.11 and
+        #   K=20 3.12. The K=35 -> 3.02 point was a single boot at the old 0.90 default.
+        #   ⚠️ On 32 GB cards the scarcity INVERTS - context stops binding, concurrency
+        #   starts - so raise --max-running-requests there rather than lowering K.
+        #
+        # ⭐ THE CONCURRENCY CLAMP USES A DIFFERENT RATIO. _calculate_mamba_ratio()
+        # gives r=5 (extra_buffer+overlap) / 4 (lazy) / 3 (no_buffer), and
+        # resolve_max_num_reqs() caps at K // r. Here that is 55 // 5 = 11,
+        # so a request for 8 resolves to 8.
+        # ⚠️ `server_args=` echoes the REQUEST; the later
+        # `max_total_num_tokens=... max_running_requests=N ...` line is EFFECTIVE.
+        #
+        # ⚠️ extra_buffer_lazy is NOT a free saving: the auto-fit solve
+        # K = floor((B - p(1+D)) / (p(1+D/r))) uses r, so 5->4 raises the
+        # denominator and can SHRINK K. Measure K and capacity together.
+        #
+        # ⚠️ A slot caches ONE DISTINCT PREFIX. Depth is nearly free — measured:
+        # a 14-turn / ~33K-token conversation never evicted at 14 slots. BREADTH is
+        # what costs: at 14 slots, opening 20 distinct conversations evicted the
+        # first (re-query 1.558s == its cold 1.540s) while the newest stayed warm
+        # (0.086s). At 29 slots the same 20 conversations did NOT evict it (0.362s).
+        #
+        # So raising concurrency spends the prefix cache twice over — 3 slots per
+        # stream, and more distinct conversations competing for what is left.
+        # If you raise --max-running-requests, check the arithmetic above before
+        # assuming prefix reuse still works.
+        #
+        # --mamba-full-memory-ratio trades state slots against KV tokens within a
+        # FIXED budget (VRAM was identical in both arms, within 10 MiB):
+        #     ratio 0.9 (default) -> 33 slots, 279,595 KV tokens
+        #     ratio 0.3           -> 14 slots, 314,251 KV tokens  (+12.4% KV)
+        # Lower it only for SINGLE-STREAM work, where few distinct prefixes are kept
+        # warm and KV is the real constraint. For a multi-conversation estate the
+        # cookbook's warning applies and 0.9 is right. Not changed by default.
+        # ⭐ --enable-cache-report (club-3090#1297). Without it SGLang sets
+        # usage.prompt_tokens_details to NULL on every response, streaming and
+        # non-streaming alike — entrypoints/openai/usage_processor.py gates the
+        # whole block on this flag (`enable_cache_report: bool = False`). So a
+        # client cannot see how much of its prompt the prefix cache served, and
+        # `null` is indistinguishable from "nothing was reused". Measured here:
+        # 4,160 of a 4,212-token prompt served from cache (TTFT 3.150s -> 0.100s
+        # on the repeat) while the API reported nothing at all.
+        # Pure response shaping — the counters already exist, so it costs nothing
+        # in the inference path. SGLang counterpart of vLLM's
+        # --enable-prompt-tokens-details (#1246).
+        # ⚠️⚠️ ABSENT IS NOT ZERO ON SGLANG. Even with the flag ON, SGLang OMITS
+        # cached_tokens when the value is genuinely 0; vLLM instead sends
+        # `cached_tokens: 0` explicitly. A consumer that reads a missing field as
+        # "nothing was reused" cannot tell no-reuse from reporting-off — the same
+        # misreading, one layer up. Read absent as UNKNOWN, not 0.
+        # --mamba-radix-cache-strategy: env seam, default auto (no-op — resolves
+        # to extra_buffer on both rigs). Sets k (slots/request) + r (clamp
+        # divisor); see the k/r note in this header + docs/engines/SGLANG.md.
+        # Validate the seam value before use: no_buffer would crash-loop on this
+        # pin (v0.5.20 mamba_hook asserts --disable-overlap-schedule for it, which
+        # these composes do not expose), so it hard-fails with a readable line
+        # instead of a bare assertion.
+        case "${MAMBA_RADIX_CACHE_STRATEGY:-auto}" in
+          auto|extra_buffer|extra_buffer_lazy) : ;;
+          no_buffer) echo "[mrcs] MAMBA_RADIX_CACHE_STRATEGY=no_buffer needs --disable-overlap-schedule, which these composes do not expose; use auto, extra_buffer, or extra_buffer_lazy" >&2; exit 1 ;;
+          *) echo "[mrcs] MAMBA_RADIX_CACHE_STRATEGY='${MAMBA_RADIX_CACHE_STRATEGY:-auto}' must be auto, extra_buffer, or extra_buffer_lazy" >&2; exit 1 ;;
+        esac
+        # --sleep-on-idle: without it every scheduler rank busy-polls its event loop
+        # while no request is in flight — measured on dual-fast (TP=2, v0.5.20):
+        # 192 % of a CPU core at idle (vLLM: 3 %), i.e. ~1 core per GPU, all day.
+        # With it rank 0 blocks in zmq poll until a request arrives (the other ranks
+        # wait on its broadcast): 42 % at idle, TTFT after idle 84 vs 80 ms and decode
+        # 63.4 vs 66.3 tok/s — within run noise. Upstream default is off.
+        exec python3 -m sglang.launch_server \
+          --model-path "$$M" \
+          --tp-size "${TP:-1}" \
+          --disable-custom-all-reduce \
+          --quantization auto-round \
+          --kv-cache-dtype "${KV_CACHE_DTYPE:-fp8_e4m3}" \
+          --mamba-ssm-dtype "${MAMBA_SSM_DTYPE:-bfloat16}" \
+          --mamba-radix-cache-strategy "${MAMBA_RADIX_CACHE_STRATEGY:-auto}" \
+          --chunked-prefill-size "${CHUNKED_PREFILL_SIZE:-2048}" \
+          --attention-backend "${ATTENTION_BACKEND:-flashinfer}" \
+          --context-length "$${CONTEXT_LENGTH}" \
+          --mem-fraction-static "$${MEM_FRACTION:-0.95}" \
+          --max-running-requests "$${MAX_RUNNING_REQUESTS}" \
+          "$${CACHE[@]}" \
+          "$${KCAP[@]}" \
+          --trust-remote-code \
+          --enable-metrics \
+          --sleep-on-idle \
+          --enable-cache-report \
+          "$${SAMPLER[@]}" \
+          --reasoning-parser "${REASONING_PARSER:-qwen3}" \
+          --tool-call-parser "${TOOL_CALL_PARSER:-qwen3_coder}" \
+          --host 0.0.0.0 --port 30000 \
+          --served-model-name qwen3.8-27b \
+          "$${SPEC[@]}"
+    healthcheck:
+      # ⚠️ club-3090#1295 — probe the container's ROUTABLE address, NEVER
+      # loopback. The old probe was `curl -sf http://localhost:30000/health`,
+      # which runs INSIDE the container against 127.0.0.1 — the one path that
+      # stays up when the bind address is wrong. When #1292 silently dropped
+      # `--host 0.0.0.0` this compose bound 127.0.0.1 and `docker ps` reported
+      # "healthy" for 27 minutes while every external client got an instant
+      # connection reset. It would have passed identically with the port mapping
+      # deleted outright: it tested that the process was alive and READ as "the
+      # service is reachable".
+      # $${HOSTNAME} resolves (via the /etc/hosts entry docker writes) to the
+      # address docker's port forward actually targets, so this check fails when
+      # the server is bound somewhere a client cannot reach.
+      # ⚠️ There is deliberately NO loopback fallback: degrading to the old probe
+      # would restore the silent pass. Nothing in this repo gates on container
+      # health (no depends_on: service_healthy, and switch.sh's ready probe curls
+      # the endpoint from the HOST), so an unhealthy mark is a visible signal
+      # rather than a boot blocker.
+      test: ["CMD-SHELL", "curl -sf \"http://$${HOSTNAME:-$$(hostname)}:30000/health\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 60
+      start_period: 900s

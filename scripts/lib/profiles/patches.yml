@@ -363,8 +363,10 @@ patches:
           - vllm/qwen38-27b-multi4-ultrafast
           - vllm/qwen38-27b-multi8-ultrafast
           - vllm/qwen38-27b-single-nvfp4
+          - vllm/qwen38-27b-single-fast
           - vllm/qwen38-27b-dual-nvfp4
           - sgl/qwen38-27b-dual-fast
+          - sgl/qwen38-27b-single-fast
           - sgl/qwen38-27b-dual-max
           - sgl/qwen38-27b-dual-superfast
           - sgl/qwen38-27b-multi4-fast
