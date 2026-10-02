@@ -1377,7 +1377,14 @@ fi
 # diagnostic data for boot-failure scenarios — without this, contributors hit
 # "no container running" and have to manually paste docker logs ad-hoc.
 # Engine-agnostic: matches both vllm-* and llama-cpp-* container patterns.
-
+#
+# Exit code 0 is NOT a failed boot, and used to be reported as one (#1525):
+# one-shot setup steps exit 0 by design once their job is done (the FA2 fp8-KV
+# kernel check is a `restart: "no"` service the engine waits on), and an engine
+# that was stopped exits 0 too. Those go in a short "exited cleanly" list,
+# without logs; every non-zero exit is reported exactly as before. A function
+# so scripts/tests/test-report-recent-exits.sh can run it against stub docker.
+report_recent_exits() {
 section "Recent failed boot attempts"
 if ! have docker; then
   echo "_docker not available — skipping._"
@@ -1394,7 +1401,8 @@ else
   if [[ -z "$exited_lines" ]]; then
     echo "_No recently-exited vLLM or llama.cpp containers found._"
   else
-    found_recent=0
+    found_recent=0 found_failed=0
+    local -a clean_exits=()
     while IFS=$'\t' read -r ex_name ex_image ex_status ex_id; do
       [[ -z "$ex_name" ]] && continue
       # Cutoff: last 24h. docker inspect gives ISO-8601 FinishedAt.
@@ -1419,6 +1427,19 @@ else
         relative_label="${hrs_ago}h ${rem_mins}min ago"
       fi
 
+      if [[ "$exit_code" == "0" ]]; then
+        local policy what
+        policy=$(docker inspect "$ex_id" --format '{{.HostConfig.RestartPolicy.Name}}' 2>/dev/null || echo "")
+        if [[ "$policy" == "no" ]]; then
+          what="one-shot setup step (\`restart: no\`), finished"
+        else
+          what="stopped${policy:+ (restart policy \`$policy\`)}"
+        fi
+        clean_exits+=("- \`$ex_name\` — exited $relative_label, code 0: $what")
+        continue
+      fi
+
+      found_failed=1
       subsection "\`$ex_name\` — exited $relative_label (code $exit_code)"
       {
         echo "- **Name:** \`$ex_name\`"
@@ -1433,9 +1454,17 @@ else
 
     if [[ "$found_recent" == "0" ]]; then
       echo "_Exited vLLM/llama.cpp containers exist but all >24h old — likely not relevant to current investigation._"
+    elif [[ "$found_failed" == "0" ]]; then
+      echo "_No failed boots in the last 24h._"
+    fi
+    if [[ ${#clean_exits[@]} -gt 0 ]]; then
+      subsection "Exited cleanly (code 0) — not boot failures"
+      printf '%s\n' "${clean_exits[@]}" | redact
     fi
   fi
 fi
+}
+report_recent_exits
 
 # ---------------------------------------------------------------------------
 # Stage gating + engine liveness (#830)
