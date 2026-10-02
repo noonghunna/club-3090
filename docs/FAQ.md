@@ -307,6 +307,11 @@ default: a coding agent, a planning loop and a summarizer each want different sa
 calling harness knows which is running. The compose default is a coding-biased fallback for clients
 that send nothing.
 
+**Qwen3.8-27B and ThinkingCap** are different: the card has one row for thinking on and one for
+thinking off, the composes serve the thinking row, and the thinking-off row's `presence_penalty: 1.5`
+can only come from the client. The values, and what omp, pi, Hermes Agent and Claude Code actually
+send, are in [CODING_AGENTS.md → Sampling](CODING_AGENTS.md#sampling).
+
 ### My TPS dropped after switching to 198K context. Why?
 
 It shouldn't, much — we measured 50.93 TPS narr at 192K vs 50.53 at 32K (within variance) on `long-vision.yml` pre-fix; the new 198K + 0.98 config is in the same range. If it dropped a lot, you're probably actually decoding *into* a long ctx (not just having KV pool reserved). Loaded-context decode is 2-4× cold short-prompt decode on any LLM. The TPS chart number is short-prompt cold; loaded numbers are in [BENCHMARKS.md](https://github.com/noonghunna/club-3090/blob/master/CHANGELOG.md).

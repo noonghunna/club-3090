@@ -244,6 +244,7 @@ providers:
     compat:
       supportsDeveloperRole: false
       thinkingFormat: qwen-chat-template     # thinking on/off + effort in chat_template_kwargs
+      reasoningDisableMode: none-effort      # `off` over /v1/responses (see Wire format)
     modelOverrides:
       qwen3.8-27b:                           # same block for qwen3.8-27b-fp8,
         maxTokens: 32768                     # thinkingcap38-27b, thinkingcap38-27b-fp8
@@ -274,15 +275,20 @@ its routes carry `use_chat_completions_api: true`: LiteLLM converts the call to
 chat completions, the reply's `reasoning_content` comes back as a reasoning item,
 and past reasoning goes out as `reasoning_content` on the assistant turn. One
 known gap, in LiteLLM: a *non-streaming* Claude Code request through this bridge
-comes back empty; Claude Code's streamed turns are fine. Two things only exist
-on the chat-completions wire and so don't reach the engine through the gateway:
+comes back empty; Claude Code's streamed turns are fine.
 
-- **`off`** — omp sends no reasoning setting, so the slug's server default applies
-  (thinking on, `low`). Use `low` rather than `off` for the cheapest turns.
-- **The thinking budget** (`thinking_token_budget: 8192` in the provider) — it
-  only reaches a vLLM engine on the chat-completions wire (e.g. an omp provider
-  of your own pointed straight at a vLLM port). The effort level is the lever
-  over the gateway.
+- **`off`** goes out as `reasoning: {effort: "none"}`, which vLLM and SGLang serve
+  with no reasoning at all. That comes from the provider's `reasoningDisableMode:
+  none-effort`, which `omp-setup.sh` writes from 2026-10-02 on. Without it omp sends
+  no reasoning setting for `off`, and the slug's default (thinking on) applies, so
+  **re-run `omp-setup.sh`** if your block predates it. Checked with omp 18.4.10
+  through the gateway on SGLang dual-fast (no reasoning for `off`, `effort: "low"`
+  for `low`), and with the same request sent straight to vLLM dual-fast. llama.cpp
+  wasn't checked.
+- **The thinking budget** (`thinking_token_budget: 8192` in the provider) exists
+  only on the chat-completions wire, so it doesn't reach the engine through the
+  gateway; it reaches a vLLM engine only from an omp provider of your own pointed
+  straight at a vLLM port. Over the gateway, the effort level is the lever.
 
 (On the chat-completions wire the provider sends thinking and effort inside
 `chat_template_kwargs` — `thinkingFormat: qwen-chat-template` — which all three
@@ -501,8 +507,8 @@ What it writes with the vLLM dual-fast slug up:
 - `supportsDeveloperRole: false`: the template has no developer role. pi also folds
   any later system message into the first one by default, so it does not hit the
   vLLM 400 that Claude Code does.
-- `maxTokens: 32768` is the reply cap (thinking plus answer), as for omp. Sampling
-  is not set, so each slug's server-side defaults apply.
+- `maxTokens: 32768` is the reply cap (thinking plus answer), as for omp. pi sends
+  no sampling values, so each slug's server-side values apply (*Sampling*).
 - `apiKey` is your gateway key, read from `~/.config/club-3090/secrets.env`; the
   block shows the public default, which is what an install without a key of its own
   gets (*The gateway key*).
@@ -518,6 +524,15 @@ dual-fast):
 | Past reasoning | sent back as `reasoning_content` on every assistant turn |
 | Message roles | only `system`, `user`, `assistant`, `tool` — no 400 on vLLM |
 
+⚠️ **pi 1.0.0 ignores the thinking level it starts with.** `--thinking`, a `:level`
+suffix on `--model` and the saved default level all leave it sending
+`enable_thinking: true, reasoning_effort: "medium"`, so `--thinking off` still
+thinks. Setting the level inside the session works: checked through pi's RPC mode,
+which sets it the way `/thinking` does, `low` arrived as `reasoning_effort: "low"`
+and `off` as `enable_thinking: false`. pi 0.87.1 and 0.99.2 apply the starting
+level, so this is a 1.0.0 change; checked through the gateway on SGLang dual-fast,
+2026-10-02. Until it's fixed, set the level with `/thinking` after pi starts.
+
 Changing the thinking level in the middle of a session costs a full re-prefill —
 see *Prefix caching — what breaks it*.
 
@@ -527,7 +542,8 @@ A pi package that routes turns by role (a role router such as
 `--no-extensions` and load the extensions you want with `-e`
 (`-e ~/.pi/agent/extensions/tps-meter.ts` for the meter).
 
-Scripted runs:
+Scripted runs (on pi 1.0.0 the `--thinking` flag has no effect and the run uses
+`medium`, see above):
 
 ```bash
 pi -p --model club/qwen3.8-27b --thinking low "…" </dev/null
@@ -676,6 +692,70 @@ interleaved 58K-token agent sessions pushed off the GPU: revisits took **7.7 s
 On vLLM the RAM tier lives in the host's `/dev/shm`, which is half of RAM by default, so on a
 128 GB host 64 does not fit: keep it under the size `df -h /dev/shm` shows (48 there), or enlarge
 `/dev/shm`. `switch.sh` refuses a tier larger than `/dev/shm` before it stops the running slug (#1503).
+
+## Sampling
+
+The gateway sets no sampling. Whatever an agent sends reaches the engine as sent,
+and anything it leaves out falls back to the engine's values. The setup scripts
+(`omp-setup.sh`, `pi-setup.sh`, `hermes-setup.sh`) don't write sampling settings
+either.
+
+For Qwen3.8-27B and ThinkingCap, every compose starts with thinking on, and the
+engine already serves the model card's thinking values without the client sending
+anything:
+
+| Mode | temperature | top_p | top_k | min_p | presence_penalty |
+|---|--:|--:|--:|--:|--:|
+| Thinking on (every compose's default) | 1.0 | 0.95 | 20 | 0.0 | 0.0 |
+| Thinking off | 0.7 | 0.8 | 20 | 0.0 | **1.5** |
+
+- **Thinking on:** nothing to send. vLLM applies the values from
+  `--override-generation-config`, and SGLang reads them from the checkpoint's
+  `generation_config.json`. `presence_penalty` 0.0 is the engines' own default, so
+  it comes out right as well.
+- **Thinking off** (omp `off`, pi `/thinking off`, Hermes Agent `/reasoning none`):
+  the card's values are `temperature: 0.7`, `top_p: 0.8` and
+  `presence_penalty: 1.5`, and **only the client can send them**. The server can't
+  switch to them for you, for two reasons:
+  - **The server's values are chosen at boot.** The compose picks them once, from
+    its `ENABLE_THINKING` setting (on by default). A request that turns thinking
+    off changes the chat template, not the sampling, so the engine keeps using the
+    thinking values.
+  - **`presence_penalty` can't be set on the server at all, on either engine.** The
+    server-side defaults vLLM and SGLang accept are limited to temperature, top_p,
+    top_k, min_p and repetition_penalty. Their chat endpoints also fill in
+    `presence_penalty: 0.0` on every request that doesn't send one. The
+    `PRESENCE_PENALTY` variable in the composes records the intended value and
+    changes nothing at runtime.
+
+**What each agent sends**, read from the gateway's request log
+(`scripts/litellm-log.sh on`) on SGLang dual-fast, 2026-10-02:
+
+| Agent | Sampling values | Thinking off reaches the engine as |
+|---|---|---|
+| omp 18.4.10 | none | `reasoning: {effort: "none"}`, once `omp-setup.sh` has been re-run (*Wire format*, under *omp*) |
+| pi 1.0.0 | none | `enable_thinking: false`, but only when set with `/thinking` in the session; pi 1.0.0 ignores `--thinking off` (*pi — setup*) |
+| Hermes Agent 0.21.5 | none on chat turns, from its source (not captured on the wire): a temperature goes out only when the provider's profile fixes one. Some side tasks, such as session titles, ask for 0.3 | `/reasoning none` (*Hermes Agent — setup*) |
+| Claude Code 2.1.x (`claude -p`) | none | Claude Code sends no thinking setting to this model (*Claude Code*) |
+
+So with any of these agents a thinking-off turn runs on the thinking values above,
+with `presence_penalty` 0.0. We found no setting for sampling values in omp's or
+pi's model config. omp's `extraBody` reaches the engine only on the
+chat-completions wire, and would apply at every thinking level alike.
+
+**Changing the server's values.** On **vLLM**, `TEMP`, `TOP_P`, `TOP_K` and `MIN_P`
+change what a request that sends nothing gets. Set them for one launch with
+`TEMP=0.7 TOP_P=0.8 bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast`, or
+for every launch with `bash scripts/settings.sh set TEMP=0.7`, which applies to
+every slug that reads `TEMP`. `switch.sh --set <slug>` doesn't take them: it only
+saves the launch settings it catalogues. On **SGLang**
+they have **no effect on chat requests**. Its `--preferred-sampling-params` flag
+only applies on the native `/generate` endpoint (sglang#39096, see
+[UPSTREAM.md](UPSTREAM.md)), and its chat requests take temperature, top_p and
+top_k from `generation_config.json`. On SGLang, send the values per request.
+
+`bench.sh` sends all four sampler values explicitly for this reason (see *Bench
+protocol* in `AGENTS.md`).
 
 ## Prefix caching — what breaks it
 

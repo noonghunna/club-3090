@@ -112,6 +112,12 @@ block = f"""{BEGIN}
       # SGLang and llama.cpp all read. (`qwen` would send a top-level enable_thinking
       # that vLLM and SGLang ignore, so omp's "off" level would silently keep thinking on.)
       thinkingFormat: qwen-chat-template
+      # ...on chat completions. Through the gateway omp talks the Responses API
+      # (`discovery: litellm`), where "off" used to send no `reasoning` field at all,
+      # so the template's default (thinking on) still ran. This makes it send
+      # `reasoning: {{effort: "none"}}`, which vLLM and SGLang both serve with no
+      # reasoning. Upstream's answer to oh-my-pi#11184; checked through the gateway.
+      reasoningDisableMode: none-effort
     modelOverrides:
 {"".join(qwen38_override(m) for m in QWEN38_IDS)}{END}
 """
