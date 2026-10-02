@@ -1548,6 +1548,29 @@ warn_if_custom_ar_setup_failed() {
   echo "[switch]    Serving is unaffected; a custom-AR benchmark from this boot measures NCCL. See club-3090#1462." >&2
 }
 
+schedule_post_ready_sync() {
+  # #1522 — the gateway and OWUI syncs below the launch only run after a WAITED
+  # ready. With --no-wait, or a boot slower than READY_TIMEOUT, they never ran:
+  # the teardown sync had already rendered the old route away, so the gateway
+  # served no local route for a model that came up fine minutes later. Hand the
+  # same two steps to a detached waiter that runs them once the port answers.
+  local container="$1" port log_dir log
+  port="${READY_URL#*://}"; port="${port#*:}"; port="${port%%/*}"
+  if [[ -z "$container" ]]; then
+    echo "[switch] once :${port} answers, sync the gateway with:  bash scripts/lib/litellm-sync.sh"
+    return 0
+  fi
+  log_dir="$(club_config_data_dir)/logs"
+  mkdir -p "$log_dir" 2>/dev/null || log_dir="${TMPDIR:-/tmp}"
+  log="${log_dir}/post-ready-sync-${container}.log"
+  local -a args=(--url "$READY_URL" --container "$container" --port "$port")
+  [[ "$OWUI_REGISTER" -eq 1 ]] && args+=(--owui)
+  nohup bash "${ROOT_DIR}/scripts/lib/post-ready-sync.sh" "${args[@]}" </dev/null >>"$log" 2>&1 &
+  disown 2>/dev/null || true
+  echo "[switch] the gateway$([[ "$OWUI_REGISTER" -eq 1 ]] && echo ' and Open WebUI') will be synced in the background once :${port} answers"
+  echo "[switch]   (no generation check on that path; log: ${log})"
+}
+
 wait_ready() {
   # Find the container we just brought up so we can detect crashes mid-boot
   # AND surface stage progress markers from its logs while we wait.
@@ -1625,6 +1648,11 @@ wait_ready() {
     if [[ $elapsed -ge $READY_TIMEOUT ]]; then
       echo "[switch] timeout — server not ready after ${READY_TIMEOUT}s" >&2
       echo "[switch] tail logs:  docker logs --tail 100 ${container}" >&2
+      # The crash checks above passed this round, so the container is still
+      # booting, not broken: a slow boot must not leave the gateway empty
+      # (#1522). Still exit 1, because nothing has answered yet.
+      echo "[switch] the container is still booting (raise READY_TIMEOUT to wait longer)." >&2
+      schedule_post_ready_sync "$container" >&2
       exit 1
     fi
   done
@@ -1784,6 +1812,8 @@ down_running
 up_variant "${VARIANT}"
 [[ $WAIT -eq 1 ]] && wait_ready
 [[ $WAIT -eq 1 ]] && warn_if_custom_ar_setup_failed
+# --no-wait: the syncs below are skipped, so a detached waiter runs them (#1522).
+[[ $WAIT -eq 0 ]] && schedule_post_ready_sync "${VARIANT_CONTAINER[$VARIANT]:-}"
 # OWUI sync (default on; --no-owui to skip): surface the just-launched endpoint in
 # Open WebUI's model picker AND prune club-owned connections that are no longer
 # serving, so the picker matches reality. No-op if OWUI isn't running. Only
