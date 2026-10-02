@@ -55,7 +55,7 @@
 # PINNING THE CARD — this slug is 🧪, so it boots with --force, and FORCE=1 also skips the
 #   preflight that would otherwise pick the largest card. device_ids takes ESTATE_GPUS, else
 #   CUDA_VISIBLE_DEVICES, else GPU 0, so either of these pins it:
-#     FORCE=1 bash scripts/launch.sh --variant sgl/qwen38-27b-single-fast --gpus <index>
+#     CLUB3090_GPU=<index> bash scripts/switch.sh --force sgl/qwen38-27b-single-fast
 #     ESTATE_GPUS=<index> bash scripts/switch.sh --force sgl/qwen38-27b-single-fast
 #
 # WHY THE RECIPE IS WHAT IT IS — native MTP n=4, W4A8 by default, bf16 SSM, the radix-cache

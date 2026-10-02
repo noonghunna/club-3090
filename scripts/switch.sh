@@ -78,7 +78,9 @@
 #
 # Env overrides (rarely needed):
 #   COMPOSE_BIN     Default: "docker compose" (set to e.g. "podman compose" if needed)
-#   CLUB3090_GPU    Single-card GPU index override, e.g. "1" on a hetero rig
+#   CLUB3090_GPU    Single-card GPU index override, e.g. "1" on a hetero rig. Pins the card
+#                   (by UUID) on every single-card slug, --force included; ignored on
+#                   dual/multi slugs (use launch.sh --gpus there)
 #   FORCE           Set to 1 to skip hardware/free-VRAM preflight
 #   READY_URL       Default: http://localhost:8020/v1/models
 #   READY_TIMEOUT   Default: 600 (seconds — longer for cold cudagraph capture)
@@ -184,6 +186,35 @@ switch_gpu_profile_spec() {
 
 
 PRIMARY_MODEL="${PRIMARY_MODEL:-qwen3.6-27b}"
+
+# apply_club3090_gpu_pin <slug> — CLUB3090_GPU pins a SINGLE-card slug to one host GPU.
+# It used to be read only inside preflight_compose_hardware, which runs for vLLM slugs only,
+# returns early on a compose without Requires-* metadata, and is skipped under --force. So the
+# advertised override did nothing on every 🧪 slug (they need --force) and every non-vLLM
+# single-card slug, which then landed on GPU 0. Applied here, once, before anything reads the
+# GPU selection: the index is resolved to a UUID and exported as CUDA_/NVIDIA_VISIBLE_DEVICES,
+# the same thing launch.sh --gpus does (#610). Multi-card slugs pick cards with launch.sh --gpus.
+apply_club3090_gpu_pin() {
+  local v="$1" eng dir file topo
+  [[ -n "${CLUB3090_GPU:-}" ]] || return 0
+  [[ -n "${VARIANTS[$v]:-}" ]] || return 0   # unknown slug: check_variant reports it
+  IFS='|' read -r eng dir file <<< "${VARIANTS[$v]}"
+  topo="${file%%/*}"
+  case "$topo" in
+    dual|multi*)
+      echo "[switch] CLUB3090_GPU=${CLUB3090_GPU} ignored: ${v} is a ${topo}-card slug, and CLUB3090_GPU pins single-card slugs. Pick cards with: bash scripts/launch.sh --variant ${v} --gpus <a,b>" >&2
+      return 0 ;;
+  esac
+  case "$CLUB3090_GPU" in
+    ""|*[!0-9]*)
+      echo "[switch] ERROR: CLUB3090_GPU='${CLUB3090_GPU}' must be one GPU index as nvidia-smi numbers them, e.g. 1" >&2
+      exit 1 ;;
+  esac
+  # shellcheck source=lib/gpu-select.sh
+  source "${ROOT_DIR}/scripts/lib/gpu-select.sh"
+  gpu_select_export "$CLUB3090_GPU" "switch"
+  echo "[switch] CLUB3090_GPU=${CLUB3090_GPU}: ${v} pinned to ${CUDA_VISIBLE_DEVICES}" >&2
+}
 
 switch_topology_from_gpus() {
   local selector="${NVIDIA_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}" count=0
@@ -1808,6 +1839,8 @@ fi
 
 [[ -n "$VARIANT" ]] || usage
 VARIANT="$(resolve_default_variant "$VARIANT")"
+# Before anything reads the GPU selection (the arch warning, the engine pin, the preflights).
+apply_club3090_gpu_pin "$VARIANT"
 # Explicit selection / pin of an off-arch default (e.g. beellama/dflash on a
 # 4090) still launches — but warn loudly (#693). The curated default already
 # steered away; this catches the deliberate-or-pinned case.

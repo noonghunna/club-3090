@@ -67,9 +67,9 @@
 #
 # PINNING THE CARD — this slug is 🧪, so it boots with --force, and FORCE=1 also skips the
 #   preflight that would otherwise pick the largest card. On a rig with several cards, pin one:
-#     FORCE=1 bash scripts/launch.sh --variant vllm/qwen38-27b-single-fast --gpus <index>
-#   (launch.sh exports the card's UUID as CUDA_/NVIDIA_VISIBLE_DEVICES; the size check reads
-#   that same card.)
+#     CLUB3090_GPU=<index> bash scripts/switch.sh --force vllm/qwen38-27b-single-fast
+#   (switch.sh resolves the index to the card's UUID and exports it as CUDA_/NVIDIA_VISIBLE_DEVICES;
+#   the size check reads that same card.)
 #
 # WHY THE FULL RECIPE IS WHAT IT IS — MTP n=4, W4A8 on, the concurrency limits, the bf16 SSM
 #   cache, the 0.90 memory ceiling: all measured at TP=2 on 2x 3090 and written up in the dual
