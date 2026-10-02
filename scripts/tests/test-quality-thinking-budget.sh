@@ -245,13 +245,20 @@ count_arg() {
 LCPP="CONTAINER=llama-cpp-mock DOCKER_MOCK_INSPECT="
 VLLM="CONTAINER=vllm-mock DOCKER_MOCK_INSPECT="
 
-echo "--- A: opt-in — without the flag the argv is untouched ---"
+echo "--- A: opt-in — without the flag no budget is derived (the wrapper's 16384 default cap only) ---"
 run_wrapper CONTAINER=llama-cpp-mock "DOCKER_MOCK_INSPECT=${tmp_work}/lcpp-8192.json" -- --quick
 assert_rc A 0 "$RUN_RC"
 assert_not_contains A "$ARGS" "--extra-body"
-assert_not_contains A "$ARGS" "--thinking-max-tokens"
+assert_contains A "$OUT" "thinking max tokens: 16384"
 assert_not_contains A "$ARGS" "thinking_token_budget"
 assert_not_contains A "$OUT" "thinking budget:"
+
+echo "--- A2: --pack-budgets — the argv carries no budget at all ---"
+run_wrapper CONTAINER=llama-cpp-mock "DOCKER_MOCK_INSPECT=${tmp_work}/lcpp-8192.json" -- --quick --pack-budgets
+assert_rc A2 0 "$RUN_RC"
+assert_not_contains A2 "$ARGS" "--thinking-max-tokens"
+assert_not_contains A2 "$ARGS" "--max-tokens"
+assert_not_contains A2 "$ARGS" "--extra-body"
 
 echo "--- B: llama.cpp compose shape, REASONING_BUDGET=8192 -> verified, cap derived ---"
 run_wrapper CONTAINER=llama-cpp-mock "DOCKER_MOCK_INSPECT=${tmp_work}/lcpp-8192.json" -- --quick --thinking-budget 8192

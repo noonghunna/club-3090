@@ -141,18 +141,21 @@ silently a second thinking leg — both arms score alike and the A/B reads as a 
 flags it: per-pack `thinking_validity` in the saved JSON, or `--strict-thinking` for a CI exit code.
 
 ```bash
-# ---- leg A: instruct (the shipped default — no env vars) ----
+# ---- leg A: thinking (the shipped default since 2026-09-01) ----
 bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast
-bash scripts/quality-test.sh --full --no-thinking --sampling-from-server \
-  --max-tokens 4096 --thinking-max-tokens 16384 --timeout-per-case 600
+REASONING_EFFORT=low bash scripts/quality-test.sh --full --enable-thinking --sampling-from-server
 
-# ---- leg B: thinking (one var — the compose derives the card's thinking
-#      sampler from it) ----
-ENABLE_THINKING=true bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast
-REASONING_EFFORT=low BENCHLOCAL_MODEL_TURN_TIMEOUT=900 \
-bash scripts/quality-test.sh --full --enable-thinking --sampling-from-server \
-  --max-tokens 4096 --thinking-max-tokens 16384 --timeout-per-case 600
+# ---- leg B: instruct (one var — the compose derives the card's instruct
+#      sampler from it, except presence_penalty; see docs/RUN_EVALS.md) ----
+ENABLE_THINKING=false bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast
+bash scripts/quality-test.sh --full --no-thinking --sampling-from-server
 ```
+
+The completion budgets and sandbox clocks are the wrapper's defaults (4,096 / 16,384 tokens, 900 s
+per sandbox model call, 600 s per hermes episode): see *Budgets: set for you* in
+[`RUN_EVALS.md`](RUN_EVALS.md). `--pack-budgets` runs benchlocal's own per-pack budgets instead.
+On SGLang the instruct leg needs its sampler sent per request: [`RUN_EVALS.md`](RUN_EVALS.md) has the
+command.
 
 **`ENABLE_THINKING` now flips BOTH the chat template and the sampler on models with per-mode card
 rows (qwen3.8-27b)**: the compose entrypoint picks the matching model-card row (`:=` defaults, so an
@@ -166,9 +169,6 @@ the three sampler vars by hand remains the only way to change them.
 | Flag | Why |
 |---|---|
 | `--sampling-from-server` | Uses the compose's card-correct sampler instead of the pack's `temperature=0`. Without it you measure **greedy decoding, not the shipped config**. |
-| `--max-tokens 4096` | The ~1024 default silently truncates long answers into `token_limit` failures that look like wrong answers. |
-| `--thinking-max-tokens 16384` | The thinking arm needs the headroom. |
-| `--timeout-per-case 600` | 16,384 tokens takes real wall-clock. Too tight a cap produces `timeout` rows that read as content misses. |
 | `REASONING_EFFORT=` | Env only — forwarded as the per-request OpenAI `reasoning_effort`. The qwen3.8 composes default to `low` server-side since #1029; pin it anyway so the run records what it measured. ⚠️ Effort is **not** comparable across runs. ⚠️ Qwen3.8's own rungs are `xhigh`/`medium`/`low` — there is no `high`. On the vLLM and SGLang slugs the vendored template (`qwen38-reasoning-effort-template`) maps `high` → `xhigh`; anything else still raises. Elsewhere `high` **raises**. ⚠️ On SGLang before 2026-09-27 the per-request effort was **ignored** — the server default (the compose's `REASONING_EFFORT`, `low` unless set at launch) rendered instead ([sglang#38104](https://github.com/sgl-project/sglang/issues/38104)); an SGLang run that set `REASONING_EFFORT` only for the runner measured the boot default. |
 | `--repeat 3` | Add it for anything you'll quote. With `--sampling-from-server` both legs are sampled, so single draws aren't quotable. |
 
@@ -471,7 +471,7 @@ caused it, and refuses to leave the bare TOTAL standing:
 `quality-test.sh` forwards to `benchlocal-cli`, which sizes each scenario's timeout automatically — you rarely need to set one. Precedence (highest wins):
 
 1. **Manual** — `--timeout-per-case N` (or `TIMEOUT_PER_CASE=N`): used verbatim.
-2. **Auto-scaling (default)** — the budget scales by the endpoint's measured decode speed and, for thinking-on runs, by the thinking-token budget. A one-shot startup probe measures the rig's decode TPS (and fails fast if the endpoint is unreachable, rather than hanging). The scaling deliberately **over-budgets** — a timeout is a safety ceiling, not a target — which is what keeps thinking-on packs from spuriously timing out. Exact formula + tuning flags (`--measured-tps` / `--reference-tps` / `--retry-on-timeout` — reach them through the [`--` pass-through](#pass-through---and-promoted-flags)): [benchlocal-cli README → Per-case timeouts](https://github.com/noonghunna/benchlocal-cli#per-case-timeouts).
+2. **Auto-scaling (default)** — the budget scales by the endpoint's measured decode speed and by the completion-token budget on both arms (`--max-tokens`, 4,096 by default; `--thinking-max-tokens`, 16,384, on thinking packs). This is why the wrapper defaults the token budgets but not `--timeout-per-case`: a fixed per-case value switches the scaling off. A one-shot startup probe measures the rig's decode TPS (and fails fast if the endpoint is unreachable, rather than hanging). The scaling deliberately **over-budgets** — a timeout is a safety ceiling, not a target — which is what keeps thinking-on packs from spuriously timing out. Exact formula + tuning flags (`--measured-tps` / `--reference-tps` / `--retry-on-timeout` — reach them through the [`--` pass-through](#pass-through---and-promoted-flags)): [benchlocal-cli README → Per-case timeouts](https://github.com/noonghunna/benchlocal-cli#per-case-timeouts).
 3. **Static default** — the pack's built-in `default_max_seconds`.
 
 **Don't hand-set `--timeout-per-case` to "fix" a slow run** unless you've confirmed the auto-probe measured wrong — the over-budget is intentional.

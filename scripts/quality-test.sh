@@ -134,16 +134,19 @@ OPTIONS (extra)
                    structural-zero guard drops it out of the reported TOTAL
                    whatever the cause (#1270).
   --thinking-max-tokens N
-                   Forward to benchlocal-cli --thinking-max-tokens N. The
-                   budget applies only to packs whose thinking gate resolves on
-                   (pack default or --enable-thinking). Also settable via
-                   THINKING_MAX_TOKENS env.
-  --max-tokens N   Forward to benchlocal-cli --max-tokens N — overrides the
-                   per-pack completion budget (~1024 default) for BOTH arms.
-                   Use when a verbose model truncates the deterministic packs
-                   (finish_reason=length) before emitting its final answer; the
-                   thinking arm still uses --thinking-max-tokens if that is set.
-                   Also settable via MAX_TOKENS env.
+                   Completion budget for packs whose thinking gate resolves on
+                   (pack default or --enable-thinking). Default 16384, sent
+                   explicitly: benchlocal-cli would otherwise give thinking packs
+                   the --max-tokens value. Also settable via THINKING_MAX_TOKENS.
+  --max-tokens N   Completion budget for BOTH arms. Default 4096 — benchlocal's
+                   per-pack ~1024 cuts long answers off into token_limit
+                   failures that read as wrong answers (docs/RUN_EVALS.md).
+                   Per-scenario timeouts scale with it on their own. Also
+                   settable via MAX_TOKENS env.
+  --pack-budgets   Use benchlocal-cli's own per-pack budgets (~1024 tokens,
+                   300s model turns, 300s hermes episode) instead of the
+                   wrapper's defaults — to compare with results taken that way.
+                   Also settable via PACK_BUDGETS=1.
   --thinking-budget N
                    OPT-IN (never a default — every published BENCHMARKS row
                    was measured unbounded). Bound the model's REASONING to N
@@ -225,12 +228,20 @@ ENV VARS
                   --enable-thinking) in one invocation. --both-modes is
                   equivalent.
   THINKING_MAX_TOKENS
-                   Optional thinking budget passed through to benchlocal-cli.
-                   Applies only to packs whose thinking gate resolves on.
-  MAX_TOKENS       Optional completion budget passed through to benchlocal-cli
-                   (--max-tokens) for BOTH arms — overrides the per-pack ~1024
-                   default. Raise for verbose models that self-truncate the
-                   deterministic packs. --max-tokens is equivalent.
+                   Completion budget for thinking-enabled packs (default 16384).
+                   --thinking-max-tokens is equivalent.
+  MAX_TOKENS       Completion budget for BOTH arms (default 4096).
+                   --max-tokens is equivalent.
+  PACK_BUDGETS     Set to 1 for benchlocal-cli's own per-pack budgets instead
+                   of the defaults above. --pack-budgets is equivalent.
+  BENCHLOCAL_MODEL_TURN_TIMEOUT
+                   Cap on one runner-owned sandbox model call (cli-40,
+                   bugfind-15). Default 900s here (benchlocal's 300s cannot fit
+                   a 16384-token answer below ~55 tok/s).
+  BENCHLOCAL_HERMES_SUBPROCESS_TIMEOUT_S
+                   The hermes agent's per-scenario episode cap. Default 600s
+                   here (benchlocal's 300s). Unlike the other packs' timeouts it
+                   does not scale with the token budget.
   THINKING_BUDGET  Equivalent to --thinking-budget N (opt-in reasoning budget,
                    verified per engine and per pack class).
   THINKING_BUDGET_HEADROOM
@@ -348,6 +359,7 @@ NO_THINKING="${NO_THINKING:-0}"
 REASONING_EFFORT="${REASONING_EFFORT:-}"
 THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}"
 MAX_TOKENS="${MAX_TOKENS:-}"
+PACK_BUDGETS="${PACK_BUDGETS:-0}"
 # #1383: opt-in reasoning budget, resolved per engine and VERIFIED before the
 # run. Empty = no budget = the unbounded baseline every published row used.
 THINKING_BUDGET="${THINKING_BUDGET:-}"
@@ -491,6 +503,10 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       shift 2
+      ;;
+    --pack-budgets)
+      PACK_BUDGETS=1
+      shift
       ;;
     --thinking-budget)
       THINKING_BUDGET="${2:-}"
@@ -1126,6 +1142,42 @@ if [[ "${BENCHLOCAL_HERMES_RESOLVE_LOCALHOST:-}" == "1" && "$NO_SANDBOX" != "1" 
   fi
 fi
 
+# ---- budget defaults (docs/RUN_EVALS.md) -------------------------------------
+# benchlocal-cli's per-pack budgets (~1024 completion tokens, 300s per sandbox
+# model turn, 300s per hermes episode) cut long answers off into token_limit and
+# timeout rows that read as wrong answers. Every published recipe passed the
+# values below by hand, and a run that forgot them measured the budget rather
+# than the model, so they are the defaults here. Each fills only what nothing
+# set: a flag or env var wins, --pack-budgets keeps benchlocal's own, and
+# --resume keeps the saved run's.
+# --timeout-per-case is deliberately NOT defaulted (see TIMEOUT_PER_CASE_SET
+# above): left unset, benchlocal scales each scenario's clock with the token
+# budget and the rig's measured speed (benchlocal-cli #103), so 4096 tokens get
+# a longer clock on their own. A fixed value switches that scaling off, cuts the
+# thinking arm's clock, and lowers aider-polyglot-30's 1800s.
+BUDGETS_NOTE=""
+if [[ -z "$RESUME" ]]; then
+  if [[ "$PACK_BUDGETS" == "1" ]]; then
+    BUDGETS_NOTE="benchlocal per-pack (--pack-budgets)"
+  else
+    _bd_default=()
+    if [[ -z "$MAX_TOKENS" ]]; then MAX_TOKENS=4096; _bd_default+=(max-tokens); fi
+    # Explicit even though 16384 is benchlocal's own thinking default: once
+    # --max-tokens is set, benchlocal gives thinking packs THAT value instead.
+    if [[ -z "$THINKING_MAX_TOKENS" ]]; then THINKING_MAX_TOKENS=16384; _bd_default+=(thinking-max-tokens); fi
+    if [[ -z "${BENCHLOCAL_MODEL_TURN_TIMEOUT:-}" ]]; then
+      export BENCHLOCAL_MODEL_TURN_TIMEOUT=900; _bd_default+=(model-turn)
+    fi
+    if [[ -z "${BENCHLOCAL_HERMES_SUBPROCESS_TIMEOUT_S:-}" ]]; then
+      export BENCHLOCAL_HERMES_SUBPROCESS_TIMEOUT_S=600; _bd_default+=(hermes-episode)
+    fi
+    BUDGETS_NOTE="max ${MAX_TOKENS} · thinking ${THINKING_MAX_TOKENS} · model turn ${BENCHLOCAL_MODEL_TURN_TIMEOUT}s · hermes episode ${BENCHLOCAL_HERMES_SUBPROCESS_TIMEOUT_S}s"
+    if [[ ${#_bd_default[@]} -gt 0 ]]; then
+      BUDGETS_NOTE+=" (wrapper default: ${_bd_default[*]})"
+    fi
+  fi
+fi
+
 # ---- run benchlocal-cli ------------------------------------------------------
 
 RESULTS_DIR="${ROOT_DIR}/results/quality"
@@ -1315,6 +1367,15 @@ fi
 if [[ -n "$MAX_TOKENS" ]]; then
   CLI_ARGS+=(--max-tokens "$MAX_TOKENS")
   echo "[quality-test] max tokens: $MAX_TOKENS (overrides the per-pack completion budget for both arms)"
+fi
+if [[ -n "$BUDGETS_NOTE" ]]; then
+  echo "[quality-test] budgets: ${BUDGETS_NOTE}"
+  # Recorded with the results: the JSON keeps no budget of its own, so a
+  # ~1024-token run and a 4096-token run would otherwise read the same later.
+  # A user's own `-- --run-meta budgets=…` comes later and wins.
+  if benchlocal-cli run --help 2>/dev/null | command grep -q -- "--run-meta"; then
+    CLI_ARGS+=(--run-meta "budgets=${BUDGETS_NOTE}")
+  fi
 fi
 if [[ -n "$API_KEY" ]]; then
   CLI_ARGS+=(--api-key "$API_KEY")

@@ -88,13 +88,14 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/club-containers.
 #                       --no-thinking, =on forces --enable-thinking — not by
 #                       this env var. #338.)
 #   THINKING_MAX_TOKENS
-#                       Optional thinking budget forwarded to the 8-pack
-#                       reasoning-ON pass (--with-8pack-thinking=on|both).
-#   MAX_TOKENS          Optional completion budget forwarded to BOTH 8-pack
-#                       passes (off + on) as quality-test.sh --max-tokens —
-#                       overrides the per-pack ~1024 default. Raise for verbose
-#                       models that self-truncate the deterministic packs
-#                       (finish_reason=length before the final answer).
+#                       Thinking budget forwarded to the 8-pack reasoning-ON
+#                       pass (--with-8pack-thinking=on|both). Unset, quality-
+#                       test.sh's default applies (16384).
+#   MAX_TOKENS          Completion budget forwarded to BOTH 8-pack passes (off
+#                       + on) as quality-test.sh --max-tokens. Unset, quality-
+#                       test.sh's default applies (4096, not benchlocal's
+#                       per-pack ~1024 — see docs/RUN_EVALS.md "Budgets: set
+#                       for you"); PACK_BUDGETS=1 restores the per-pack ones.
 #
 
 # Force Python's UTF-8 mode (PEP 540) for every python3 this script runs.
@@ -162,7 +163,7 @@ OPTIONS
 
 ENV OVERRIDES (rarely needed — preflight autodetects our composes)
   URL MODEL TAG OUT_DIR · SOAK_SESSIONS (10) · SOAK_TURNS (5)
-  MAX_TOKENS (both 8-pack passes) · THINKING_MAX_TOKENS (reasoning-ON pass)
+  MAX_TOKENS (both 8-pack passes, default 4096) · THINKING_MAX_TOKENS (reasoning-ON pass, 16384)
   SAMPLING_FROM_SERVER (inherit serving sampling; tags runs non-canonical)
   AGENTIC_SESSIONS (1) · AGENTIC_TURNS (12)
   CONCURRENCY_RUNGS ("1 2 4", auto-capped at the served slot count) ·

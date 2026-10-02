@@ -74,9 +74,7 @@ or `FORCE=1 bash scripts/launch.sh --variant <slug>`. (`launch.sh … --force` f
 
 ```bash
 bash scripts/switch.sh --force <slug>
-REASONING_EFFORT=low BENCHLOCAL_MODEL_TURN_TIMEOUT=900 \
-bash scripts/quality-test.sh --full --enable-thinking --sampling-from-server \
-  --max-tokens 4096 --thinking-max-tokens 16384 --timeout-per-case 600
+REASONING_EFFORT=low bash scripts/quality-test.sh --full --enable-thinking --sampling-from-server
 ```
 
 ### Instruct leg
@@ -85,8 +83,7 @@ vLLM and llama.cpp, where the server serves the instruct row:
 
 ```bash
 ENABLE_THINKING=false bash scripts/switch.sh --force <slug>   # llama.cpp: INSTRUCT=1 instead
-bash scripts/quality-test.sh --full --no-thinking --sampling-from-server \
-  --max-tokens 4096 --thinking-max-tokens 16384 --timeout-per-case 600
+bash scripts/quality-test.sh --full --no-thinking --sampling-from-server
 ```
 
 SGLang, where it doesn't: send the row yourself, as benchlocal flags after `--`. Don't combine this
@@ -96,7 +93,6 @@ slug, which pins `--sampling-from-server` on both legs.
 ```bash
 ENABLE_THINKING=false bash scripts/switch.sh --force <sgl-slug>
 bash scripts/quality-test.sh --full --no-thinking \
-  --max-tokens 4096 --thinking-max-tokens 16384 --timeout-per-case 600 \
   -- --temperature 0.7 --top-p 0.80 --top-k 20 --min-p 0.0
 ```
 
@@ -112,13 +108,31 @@ Each of these exists because leaving it out produced a wrong number for us.
 | Flag | Why |
 |---|---|
 | `--sampling-from-server` | Scores the compose's shipped sampler instead of the pack's `temperature=0`. Without it you measure greedy decoding. (Not on an SGLang instruct leg, above.) |
-| `--max-tokens 4096` | The ~1024 default truncates long answers into `token_limit` failures that look like wrong answers. |
-| `--thinking-max-tokens 16384` | The thinking leg needs the headroom. |
-| `--timeout-per-case 600` | 16,384 tokens takes real time; too tight a cap turns slow answers into `timeout` failures. It also sets the floor for the hermes agent's per-scenario clock (default 300 s). |
-| `BENCHLOCAL_MODEL_TURN_TIMEOUT=900` | Caps one runner-owned sandbox model call (cli-40, bugfind-15). Its 300 s default doesn't scale with speed: a 16,384-token answer below ~55 tok/s can't finish in it. |
 | `REASONING_EFFORT=low` | Qwen3.8 only; forwarded per request. Pin it so the run records what it measured. Effort changes both cost and score, so results at different efforts aren't comparable. Other models ignore it. |
 | `--repeat 3` | For anything you'll quote: with `--sampling-from-server` every answer is sampled, so one draw isn't enough. |
 | `URL=http://localhost:<port>` | Optional. The endpoint is auto-detected, but naming it avoids picking up something else you have running. |
+
+### Budgets: set for you
+
+`quality-test.sh` (and `rebench-full.sh`, which calls it) fills these in when you leave them out,
+because benchlocal's own per-pack budgets cut long answers off into failures that look like wrong
+answers. The run prints them (`[quality-test] budgets: …`) and records them with the results.
+
+| Default | Why | Change it with |
+|---|---|---|
+| 4,096 completion tokens | benchlocal's ~1,024 truncates long answers into `token_limit` failures. | `--max-tokens N` / `MAX_TOKENS=N` |
+| 16,384 tokens on thinking packs | The thinking leg needs the headroom. Set explicitly because benchlocal otherwise gives thinking packs the `--max-tokens` value. | `--thinking-max-tokens N` / `THINKING_MAX_TOKENS=N` |
+| 900 s per sandbox model call | Caps one runner-owned model call (cli-40, bugfind-15). benchlocal's 300 s doesn't scale with speed: a 16,384-token answer below ~55 tok/s can't finish in it. | `BENCHLOCAL_MODEL_TURN_TIMEOUT=N` |
+| 600 s per hermes episode | The hermes agent's clock is the one that doesn't scale with the token budget (benchlocal: 300 s). | `BENCHLOCAL_HERMES_SUBPROCESS_TIMEOUT_S=N` |
+
+`--pack-budgets` runs benchlocal's own per-pack budgets instead, to compare with results taken that
+way. Results from before 2026-10-02 used whichever budgets their command named, so check the command
+before diffing scores across that date.
+
+**Per-scenario timeouts are left to benchlocal**, which scales each scenario's clock with the token
+budget and the rig's measured speed. Earlier versions of this page passed `--timeout-per-case 600`:
+that switches the scaling off and shortens the thinking leg's clock, so leave it out unless you've
+confirmed the scaled clock is wrong for your rig.
 
 ## 4. Read the results before the score
 
