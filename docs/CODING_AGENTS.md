@@ -1,4 +1,4 @@
-# Coding agents on club-3090 (omp, pi, Hermes Agent, Claude Code)
+# Coding agents on club-3090 (omp, pi, Hermes Agent, dsh, Claude Code)
 
 Point a coding agent at the **LiteLLM gateway** (`:4000`), not at a model's own
 port. The gateway's route set is re-rendered from whatever is actually serving on
@@ -6,7 +6,7 @@ every `switch.sh` launch and teardown (`scripts/lib/litellm-sync.sh`), so the ag
 always sees the live model — no config edit when you switch slugs.
 
 ```
-omp / pi / hermes / claude ──► LiteLLM :4000 ──► whichever slug switch.sh booted (:8113, :8142, …)
+omp / pi / hermes / dsh / claude ──► LiteLLM :4000 ──► whichever slug switch.sh booted (:8113, :8142, …)
 ```
 
 ## Cautions — read before you start
@@ -21,6 +21,7 @@ open. The detail is in the section named in the last column.
 | **Prompts and code leave the machine** | omp's OpenRouter fallback fires — only with `OPENROUTER_API_KEY` set | Leave the `retry` block out, or set `retry.modelFallback: false` (*Cloud fallback to OpenRouter's free models*) |
 | Hermes **resumes on your default model**, which may be a cloud one | `hermes chat --resume <id>` without a provider | Repeat `--provider custom:club -m qwen3.8-27b` (*Hermes Agent — setup*) |
 | Hermes tools **reach outside the machine**, or `computer_use` **drives your desktop** | Hermes's default toolsets (`web`, `browser`, `x_search`, `image_gen`, `tts`, `connections`, `computer_use`) | Name a local set with `-t` (*Hermes Agent — setup*) |
+| dsh sends its first request to **DeepSeek's paid API** | a dsh profile runs before it names a default model, and `DEEPSEEK_API_KEY` is set in your shell: dsh's built-in default is DeepSeek's own cloud model, and an old `~/.dsh/settings.yaml` is only read in after that first run has started | Create the profile with `--dump-config` and set `agent-default-model` before its first run (*dsh — setup*) |
 | **Full prompts and replies in the gateway's log** | request logging is on (`scripts/litellm-log.sh on`) | Turn it off when done; `gpu-mode status` warns while it's on (*Troubleshooting a session*) |
 | **Anyone on your network can use the gateway**, including the cloud routes in your `config.local.yaml` | no key of its own is stored (`setup.sh` stores one only on a fresh install), so the gateway runs on the public default, the same on every install; or it runs on no key at all. It listens on every interface (`4000:4000`) | `bash scripts/gateway-key.sh rotate --apply`: a key of your own, kept in `~/.config/club-3090/secrets.env`. Never remove the key. `400 No connected db.` means the client's key is wrong: fix the key, not the gateway (*The gateway key*) |
 
@@ -637,6 +638,102 @@ Checked through the gateway on the reference rig (Hermes Agent 0.21.5):
 
 Hermes's system prompt with its default 33 tools is about 14.5K tokens.
 
+## dsh (DeepSeek Harness) — setup
+
+```bash
+bash scripts/dsh-setup.sh                 # adds a `club` block to the headless + web profiles in ~/.dsh
+bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast   # experimental slug: --force
+dsh headless "…"                          # or: dsh web — pick club/qwen3.8-27b and its effort in the model menu
+```
+
+dsh (`@deepseek-ai/dsh`) is DeepSeek's agent harness: `dsh web` serves a browser UI,
+`dsh headless "task"` answers one task and exits. It reaches models through pi's model library,
+so the settings mirror pi's. Its settings live in **profiles** under `~/.dsh/profiles/<name>/`,
+each with a `cordis.patch.yml`. `dsh-setup.sh` writes one marked block into each profile you name
+(`--profile`, default `headless` and `web`); re-run it to refresh. The rest of the file is never
+touched, and the old file is backed up.
+
+- **The first run.** dsh's built-in default model is DeepSeek's own cloud API, so a new profile's
+  first run goes there unless the profile names a model first. The script creates a missing
+  profile with `dsh --profile <name> --dump-config`, which runs no model, and writes
+  `club/qwen3.8-27b` (effort `low`) as its default before dsh ever runs it. A profile that already
+  names a default model of its own keeps it; the script adds only the provider. Your
+  `DEEPSEEK_API_KEY` is left alone, so DeepSeek's models stay in the model menu.
+- **An older `~/.dsh/settings.yaml`** that names a default model gets moved by dsh into the first
+  profile it boots, replacing the club default there. The script warns about it and leaves it
+  alone; rename it to keep the club default.
+- **The key.** The provider only names its key (`apiKeyEnv`). The script stores the key in
+  `~/.dsh/.env` as `CLUB3090_GATEWAY_KEY` (`0600`; the file's other lines are kept), which dsh
+  reads for that name. A `CLUB3090_GATEWAY_KEY` exported in your shell wins over the file. Re-run
+  the script after `gateway-key.sh rotate`.
+- **The window.** dsh can't read a context window from the gateway, so the model list is a
+  snapshot of what the gateway serves, as for pi and Hermes, plus `qwen3.8-27b` (262,144 when
+  nothing is up). **Re-run it after switching to a slug with a different window or model.**
+- **Refused:** a profile whose file already configures `llm-pi-ai` itself (a provider added by
+  hand or in the web UI). Add the `club` provider below to that entry yourself.
+- The web UI's model settings can still change the default model and add providers, since the
+  block sits in each profile's own file. The same block in `~/.dsh/cordis.patch.yml` would apply to
+  every profile but override them: per dsh's docs, the UI then can't change those entries.
+
+What it writes into `cordis.patch.yml` (`bash scripts/dsh-setup.sh --print` shows it without
+writing; this is the gateway-down snapshot):
+
+```yaml
+# >>> club-3090 local models (generated by club-3090 scripts/dsh-setup.sh; re-run to refresh) >>>
+- id: llm-pi-ai
+  config:
+    providers:
+      club:
+        displayName: club-3090 local models
+        apiKeyEnv: CLUB3090_GATEWAY_KEY   # the key itself is in $DSH_HOME/.env
+        api: openai-completions
+        baseURL: "http://127.0.0.1:4000/v1"
+        compat:
+          supportsDeveloperRole: false
+        models:
+          - id: "qwen3.8-27b"
+            contextWindow: 262144
+            maxTokens: 32768
+            reasoningEfforts:
+              "off":
+              low: low
+              medium: medium
+              xhigh: xhigh
+            compat:
+              thinkingFormat: chat-template
+              chatTemplateKwargs:
+                enable_thinking: { $var: thinking.enabled }
+                reasoning_effort: { $var: thinking.effort }
+- id: agent-default-model
+  config:
+    provider: club
+    model: qwen3.8-27b
+    reasoningEffort: low
+# <<< club-3090 local models <<<
+```
+
+- `thinkingFormat: chat-template` sends thinking on/off and the effort as template kwargs, the
+  field both engines read. `off` is left empty on purpose: with `chat-template` it sends
+  `enable_thinking: false`. The Qwen3.8 rungs are `low`, `medium` and `xhigh`; the model menu
+  offers only the levels listed.
+- `maxTokens` is the reply cap; dsh sends it as `max_completion_tokens`.
+- To try a setup with no chance of a cloud call, prefix that one command with
+  `env -u DEEPSEEK_API_KEY`: it drops the key for that command only, not from your shell. A
+  scratch `DSH_HOME=` keeps the test away from your real profiles.
+
+Checked through the gateway on the reference rig (dsh 0.2.0-rc.2, vLLM dual-fast), with a scratch
+`DSH_HOME` and `DEEPSEEK_API_KEY` unset:
+
+| Check | Result |
+|---|---|
+| Set up by `dsh-setup.sh` | a fresh profile created without running a model; the key read from `~/.dsh/.env`; `low` and the quoted `"off"` level reached the engine as below |
+| Effort `off` | `chat_template_kwargs: {enable_thinking: false}`; no thinking in the run |
+| Effort `low` | `{enable_thinking: true, reasoning_effort: "low"}`; the model thought, then answered |
+| Session titles | dsh's 64-token title request goes out with thinking off at every effort, so it can't be eaten by reasoning |
+| Tools | `glob` then `bash` on a three-file workspace; correct count |
+| Continued session (`--session-id`) | correct follow-up answers; the system prompt and the 24 tools were identical on every turn, and one follow-up took 13,440 of its 13,692 prompt tokens (98 %) from the prefix cache |
+| Sampling | none sent; the slug's server-side values apply (*Sampling*) |
+
 ## Statusline meter (omp and pi)
 
 An extension that shows the model's decode speed and how much of each prompt the
@@ -735,6 +832,7 @@ anything:
 | omp 18.4.10 | none | `reasoning: {effort: "none"}`, once `omp-setup.sh` has been re-run (*Wire format*, under *omp*) |
 | pi 1.0.0 | none | `enable_thinking: false` (`--thinking off` or `/thinking off`), unless a role-router package overrides the level (*pi — setup*) |
 | Hermes Agent 0.21.5 | none on chat turns, from its source (not captured on the wire): a temperature goes out only when the provider's profile fixes one. Some side tasks, such as session titles, ask for 0.3 | `/reasoning none` (*Hermes Agent — setup*) |
+| dsh 0.2.0-rc.2 (vLLM dual-fast) | none | `enable_thinking: false` at effort `off` (*dsh — setup*) |
 | Claude Code 2.1.x (`claude -p`) | none | Claude Code sends no thinking setting to this model (*Claude Code*) |
 
 So with any of these agents a thinking-off turn runs on the thinking values above,
