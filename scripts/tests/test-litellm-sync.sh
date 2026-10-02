@@ -240,6 +240,75 @@ for owned_by, behaviour, want in cases:
 sys.exit(bad)
 PY2
 
+# --- 17: an engine without /v1/responses gets the chat-completions bridge (#1520)
+# omp talks Responses to every route and LiteLLM turns Claude Code's /v1/messages
+# into a Responses call; both are forwarded to the engine's /v1/responses as-is.
+# tabbyAPI 404s it, and the 404 cools the whole model group down for 5 s.
+# `use_chat_completions_api` sends those requests as chat completions instead —
+# only on routes the probe marked (+noresponses), never on an engine that has it.
+render "8113=qwen3.8-27b@262144,8142=sgl-live@163840+messages,8181=exl3-live+noresponses,8020=gguf-live+messages+noresponses"
+cc() { route_field "$1" litellm_params.use_chat_completions_api; }
+if [[ "$(cc exl3-live)" == "True" && "$(cc gguf-live)" == "True" && -z "$(cc qwen3.8-27b)" && -z "$(cc sgl-live)" ]]; then
+  ok "only a route whose engine lacks /v1/responses gets the chat-completions bridge"
+else
+  bad "use_chat_completions_api: exl3-live='$(cc exl3-live)' gguf-live='$(cc gguf-live)' qwen3.8-27b='$(cc qwen3.8-27b)' sgl-live='$(cc sgl-live)'"
+fi
+# flags combine: `+messages+noresponses` keeps the /v1/messages passthrough too
+[[ "$(eps gguf-live)" == *"/v1/messages"* && -z "$(eps exl3-live)" ]] \
+  && ok "the bridge and the /v1/messages passthrough are independent flags" \
+  || bad "flag parsing: gguf-live eps='$(eps gguf-live)' exl3-live eps='$(eps exl3-live)'"
+[[ "$(route_field exl3-live litellm_params.allowed_openai_params)" == "['reasoning_effort']" ]] \
+  && ok "a bridged route keeps the common route shape" \
+  || bad "bridged route lost allowed_openai_params: $(route_field exl3-live litellm_params.allowed_openai_params)"
+
+# --- 18: the REAL Responses probe, against stub servers (not the seam) ----------
+# An empty-body POST: an engine with the endpoint rejects the body (SGLang 400,
+# FastAPI 422), one without it 404s the path (tabbyAPI). Only a 404 means absent;
+# any other answer — or none — keeps today's route, so a flaky probe can never
+# move a native engine onto the bridge.
+python3 - "$ROOT/scripts/lib" <<'PY2' && ok "Responses probe: 404 → bridge; 400/405/422/500/no answer → native" || bad "Responses probe decision wrong (see above)"
+import http.server, json, socket, sys, threading
+sys.path.insert(0, sys.argv[1])
+import litellm_sync
+
+def stub(owned_by, responses_status):
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def _send(self, code, body):
+            data = json.dumps(body).encode()
+            self.send_response(code); self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(data))); self.end_headers(); self.wfile.write(data)
+        def do_GET(self):
+            if self.path == "/v1/models":
+                return self._send(200, {"data": [{"id": "m", "owned_by": owned_by}]})
+            self._send(404, {"detail": "Not Found"})
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length") or 0))
+            if self.path == "/v1/responses":
+                return self._send(responses_status, {"detail": "stub"})
+            self._send(404, {"detail": "Not Found"})
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+bad = 0
+for owned_by, status, want in [("tabbyAPI", 404, False), ("sglang", 400, True), ("vllm", 422, True),
+                               ("llamacpp", 405, True), ("unknown", 500, True)]:
+    srv = stub(owned_by, status)
+    got = litellm_sync.probe(srv.server_address[1])
+    srv.shutdown()
+    flag = got[0][4] if got else None
+    if flag is not want:
+        print(f"    owned_by={owned_by} /v1/responses→{status}: serves_responses={flag}, want {want}", file=sys.stderr)
+        bad = 1
+with socket.socket() as s:          # a port nothing listens on
+    s.bind(("127.0.0.1", 0)); dead = s.getsockname()[1]
+if litellm_sync.serves_responses(dead) is not True:
+    print("    no answer: serves_responses must stay True (today's route)", file=sys.stderr)
+    bad = 1
+sys.exit(bad)
+PY2
+
 # --- 12: gateway settings survive every render, including a prune -----------
 python3 - "$RUNTIME" <<'PY2' && ok "litellm_settings (request_timeout, num_retries: 0) carried into the runtime view" || bad "litellm_settings missing from the runtime view"
 import io, sys, yaml

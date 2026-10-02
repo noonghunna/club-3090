@@ -69,6 +69,9 @@ for arg in "$@"; do
   esac
 done
 ROOT_DIR="${ROOT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
+# This script's own lib dir, not ROOT's: the test fixtures point ROOT at a stub
+# tree. Resolved before the cd below, which would break a relative BASH_SOURCE.
+export LITELLM_EMIT_ENGINE_KIND_LIB="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/engine-kind.sh"
 cd "$ROOT_DIR"
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 export LITELLM_EMIT_CHECK="$CHECK"
@@ -196,7 +199,26 @@ def _unquote(tok):
     if m:
         return m.group(1) or m.group(2) or ""
     return tok
-routes = []  # (model, port, name, status) — sorted + deduped before emission
+def engine_kind(engine_id):
+    """The engine family, decided by scripts/lib/engine-kind.sh (#1282) — never here."""
+    lib = os.environ["LITELLM_EMIT_ENGINE_KIND_LIB"]
+    if not os.path.isfile(lib):
+        sys.exit(f"litellm-emit: engine-kind.sh not found at {lib}")
+    out = subprocess.run(
+        ["bash", "-c", 'source "$1" && engine_kind_from_engine_id "$2"', "_",
+         lib, engine_id or ""],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    return out.stdout.strip() or "unknown"
+
+
+# Engine families without /v1/responses: their routes get LiteLLM's Responses →
+# chat-completions bridge. The runtime view asks the live server instead
+# (litellm_sync.py serves_responses / RESPONSES_BRIDGE, which carries the why);
+# the catalog has no server to ask, so it goes by family.
+NO_RESPONSES_KINDS = {"exllamav3"}
+
+routes = []  # (model, port, name, status, bridge) — sorted + deduped before emission
 for model in sorted(gw_by_model):
     entries = gw_by_model[model]
     slug = canonical_slug(model, entries)
@@ -224,8 +246,9 @@ for model in sorted(gw_by_model):
             f"derivable (no _entry served_name override, no --served-model-name "
             f"or --alias in {entry['compose_path']}) — a gateway route needs a name"
         )
+    bridge = engine_kind(entry.get("engine")) in NO_RESPONSES_KINDS
     for n in names:
-        routes.append((model, port, n, entry.get("status", "production")))
+        routes.append((model, port, n, entry.get("status", "production"), bridge))
 seen = set()
 deduped = []
 for r in sorted(routes, key=lambda t: (t[0], t[1], t[2])):
@@ -235,7 +258,7 @@ for r in sorted(routes, key=lambda t: (t[0], t[1], t[2])):
     deduped.append(r)
 
 chunks = []
-for _model, port, name, status in deduped:
+for _model, port, name, status, bridge in deduped:
     head = f"  - model_name: {name}"
     # Non-functional scene (experimental/incubating/…: --force to launch)?
     # Still emit — gateway clients hit whatever is serving — but annotate the
@@ -253,6 +276,7 @@ for _model, port, name, status in deduped:
         f"      api_base: http://host.docker.internal:{port}/v1",
         "      api_key: EMPTY",
         "      allowed_openai_params: [reasoning_effort]",
+        *(["      use_chat_completions_api: true"] if bridge else []),
     ]))
 generated = "\n\n".join([BEGIN_LINE, *chunks, END_LINE])
 
