@@ -65,11 +65,17 @@ def probe(port: int) -> list[Live]:
     registry's `served_name`: 72 of 138 variants do not declare one, so a
     registry-derived name would have nothing to emit for half the catalog.
     vLLM and SGLang also report the booted `max_model_len` there — the real
-    context window of THIS boot."""
+    context window of THIS boot.
+    tabbyAPI is the exception: with auth disabled every caller is admin, and an
+    admin /v1/models lists every directory under --model-dir (other engines'
+    weights, .cache) — a request naming one silently runs the loaded model.
+    Its names come from /v1/model, the loaded model only."""
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2) as r:
             data = json.load(r).get("data") or []
         owned_by = next((str(m["owned_by"]) for m in data if m.get("owned_by")), "")
+        if engine_kind_from_owned_by(owned_by) == "exllamav3":
+            data = loaded_model(port) or data
         first_id = next((str(m["id"]) for m in data if m.get("id")), "")
         native = serves_messages(port, owned_by, first_id) if first_id else False
         responses = serves_responses(port)
@@ -85,6 +91,18 @@ def probe(port: int) -> list[Live]:
         return out
     except Exception:
         return []
+
+
+def loaded_model(port: int) -> list[dict]:
+    """tabbyAPI's /v1/model (singular): the loaded model, as a one-entry list.
+    Empty when the endpoint is missing or answers without an id, so the caller
+    keeps the /v1/models listing."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/model", timeout=2) as r:
+            m = json.load(r)
+    except Exception:
+        return []
+    return [m] if isinstance(m, dict) and m.get("id") else []
 
 
 def engine_kind_from_owned_by(owned_by: str) -> str:

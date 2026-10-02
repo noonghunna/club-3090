@@ -309,6 +309,57 @@ if litellm_sync.serves_responses(dead) is not True:
 sys.exit(bad)
 PY2
 
+# --- 19: tabbyAPI route names come from /v1/model, not the directory listing ----
+# With auth disabled every caller is admin, and an admin GET /v1/models lists every
+# directory in --model-dir (other engines' weights, .cache). Each became a route, and
+# a request naming a wrong one silently ran the loaded model. /v1/model (singular)
+# names only the loaded model. A tabbyAPI without it falls back to /v1/models, and
+# other engines never ask for it.
+python3 - "$ROOT/scripts/lib" <<'PY2' && ok "tabbyAPI: one route from /v1/model; /v1/model missing → /v1/models; other engines untouched" || bad "tabbyAPI route naming wrong (see above)"
+import http.server, json, sys, threading
+sys.path.insert(0, sys.argv[1])
+import litellm_sync
+
+LISTING = ["loaded", ".cache", "modules"]
+
+def stub(owned_by, singular, hits):
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def _send(self, code, body):
+            data = json.dumps(body).encode()
+            self.send_response(code); self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(data))); self.end_headers(); self.wfile.write(data)
+        def do_GET(self):
+            hits.append(self.path)
+            if self.path == "/v1/models":
+                return self._send(200, {"data": [{"id": i, "owned_by": owned_by} for i in LISTING]})
+            if self.path == "/v1/model" and singular is not None:
+                return self._send(200, {"id": singular, "owned_by": owned_by})
+            self._send(404, {"detail": "Not Found"})
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length") or 0))
+            self._send(404, {"detail": "Not Found"})
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+bad = 0
+for label, owned_by, singular, want, want_singular_asked in [
+    ("tabbyAPI with /v1/model", "tabbyAPI", "loaded", ["loaded"], True),
+    ("tabbyAPI without /v1/model", "tabbyAPI", None, LISTING, True),
+    ("vllm", "vllm", "loaded", LISTING, False),
+    ("llamacpp", "llamacpp", "loaded", LISTING, False),
+]:
+    hits = []
+    srv = stub(owned_by, singular, hits)
+    got = [r[1] for r in litellm_sync.probe(srv.server_address[1])]
+    srv.shutdown()
+    if got != want or ("/v1/model" in hits) is not want_singular_asked:
+        print(f"    {label}: routes={got} (want {want}); asked /v1/model={'/v1/model' in hits} (want {want_singular_asked})", file=sys.stderr)
+        bad = 1
+sys.exit(bad)
+PY2
+
 # --- 12: gateway settings survive every render, including a prune -----------
 python3 - "$RUNTIME" <<'PY2' && ok "litellm_settings (request_timeout, num_retries: 0) carried into the runtime view" || bad "litellm_settings missing from the runtime view"
 import io, sys, yaml
