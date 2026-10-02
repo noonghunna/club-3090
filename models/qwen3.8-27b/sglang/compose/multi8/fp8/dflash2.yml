@@ -2,7 +2,7 @@
 # Profile (at-a-glance):
 #   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
 #              OFFICIAL Qwen/Qwen3.8-27B-FP8 — block-quantised e4m3, ~29 GB.
-#   Engine:    SGLang STOCK v0.5.20 (`lmsysorg/sglang:v0.5.20`) — NO PATCHES.
+#   Engine:    SGLang STOCK v0.5.21 (`lmsysorg/sglang:v0.5.21`) — NO PATCHES.
 #   Topology:  8x GPU (TP=8) — NOT the reference rig
 #   Drafter:   DFlash2 EXTERNAL block-drafter, 5 layers, `DFlash2DraftModel`
 #              — NOT the in-checkpoint MTP head. DEFAULT is the z-lab BF16
@@ -285,7 +285,7 @@
 # ===========================================================================
 services:
   sglang-qwen38-27b-supermax-multi8:
-    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.20}
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.21}
     container_name: ${ESTATE_CONTAINER:-sglang-qwen38-27b-supermax-multi8}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     init: true

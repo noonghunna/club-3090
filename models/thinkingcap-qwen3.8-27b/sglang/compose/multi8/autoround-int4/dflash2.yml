@@ -9,7 +9,7 @@
 #              name (thinkingcap38-27b), service/container name and port. Everything
 #              else in this header is the SIBLING's text — its numbers are for BASE
 #              Qwen3.8 (Frozenlock INT4 / official FP8), NOT for ThinkingCap.
-#   Engine:    SGLang STOCK v0.5.20 (`lmsysorg/sglang:v0.5.20`) — NO PATCHES.
+#   Engine:    SGLang STOCK v0.5.21 (`lmsysorg/sglang:v0.5.21`) — NO PATCHES.
 #   Topology:  8x GPU (TP=8) — NOT the reference rig
 #   Drafter:   DFlash2 EXTERNAL block-drafter, 5 layers, `DFlash2DraftModel`
 #              — NOT the in-checkpoint MTP head. DEFAULT is the z-lab BF16
@@ -264,7 +264,7 @@
 # ===========================================================================
 services:
   sglang-thinkingcap38-27b-dflash2-multi8:
-    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.20}
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.21}
     container_name: ${ESTATE_CONTAINER:-sglang-thinkingcap38-27b-dflash2-multi8}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     init: true

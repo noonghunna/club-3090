@@ -2,7 +2,7 @@
 # Profile (at-a-glance):
 #   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
 #              Frozenlock AutoRound INT4 W4A16 g128 — the collapse-free checkpoint.
-#   Engine:    SGLang STOCK v0.5.20 (`lmsysorg/sglang:v0.5.20`) — NO PATCHES.
+#   Engine:    SGLang STOCK v0.5.21 (`lmsysorg/sglang:v0.5.21`) — NO PATCHES.
 #   Topology:  4x GPU (TP=4) — NOT the reference rig
 #   Drafter:   DFlash2 EXTERNAL block-drafter, 5 layers, `DFlash2DraftModel`
 #              — NOT the in-checkpoint MTP head. DEFAULT is the z-lab BF16
@@ -250,7 +250,7 @@
 # ===========================================================================
 services:
   sglang-qwen38-27b-dflash2-multi4:
-    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.20}
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.21}
     container_name: ${ESTATE_CONTAINER:-sglang-qwen38-27b-dflash2-multi4}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     init: true

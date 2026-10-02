@@ -2,7 +2,7 @@
 # Profile (at-a-glance):
 #   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
 #              OFFICIAL Qwen/Qwen3.8-27B-FP8 — block-quantised e4m3, ~29 GB.
-#   Engine:    SGLang STOCK v0.5.20 (`lmsysorg/sglang:v0.5.20`) — NO PATCHES.
+#   Engine:    SGLang STOCK v0.5.21 (`lmsysorg/sglang:v0.5.21`) — NO PATCHES.
 #   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
 #   Drafter:   DFlash2 EXTERNAL block-drafter, 5 layers, `DFlash2DraftModel`
 #              — NOT the in-checkpoint MTP head. DEFAULT is the z-lab BF16

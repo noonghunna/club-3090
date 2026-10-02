@@ -9,7 +9,7 @@
 #              name (thinkingcap38-27b), service/container name and port. Everything
 #              else in this header is the SIBLING's text — its numbers are for BASE
 #              Qwen3.8 (Frozenlock INT4 / official FP8), NOT for ThinkingCap.
-#   Engine:    SGLang STOCK v0.5.20 (`lmsysorg/sglang:v0.5.20`) — engine profile
+#   Engine:    SGLang STOCK v0.5.21 (`lmsysorg/sglang:v0.5.21`) — engine profile
 #              `sglang-stable`. ⚠️ NO PATCHES. That is the POINT of this compose.
 #   Topology:  8x GPU (TP=8) — NOT the reference rig
 #   Drafter:   native MTP head, in-checkpoint (29 `mtp.*` tensors,
@@ -300,7 +300,7 @@
 # ===========================================================================
 services:
   sglang-thinkingcap38-27b-mtp-multi8:
-    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.20}
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.21}
     container_name: ${ESTATE_CONTAINER:-sglang-thinkingcap38-27b-mtp-multi8}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     init: true

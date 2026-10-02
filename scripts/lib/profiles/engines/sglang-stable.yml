@@ -1,6 +1,6 @@
 schema_version: 1
 id: sglang-stable
-display_name: SGLang stable v0.5.20
+display_name: SGLang stable v0.5.21
 type: sglang
 # #1365: the compose env var this engine's image is injected as.
 image_env: SGLANG_IMAGE
@@ -49,7 +49,7 @@ install:
   # ⚠️ An earlier single-boot A/B reported '-10% decode'. That was TWO BOOT
   # EXTREMES differenced, not an effect; the repeat-boot run retired it.
   # W4A8 overlay re-verified on this image: applies, boots, serves.
-  spec: lmsysorg/sglang:v0.5.20
+  spec: lmsysorg/sglang:v0.5.21
 min_sm: 8.0
 supported_drafters:            # ⚠️ keys on spec_method, NOT drafter id.
   - mtp                       # ⭐ native in-checkpoint MTP head — RIG-VALIDATED

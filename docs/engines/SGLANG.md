@@ -9,7 +9,7 @@
 
 **Current state (2026-09-14): SGLang IS shipped** — 13 composes for Qwen3.8-27B across
 dual/multi4/multi8, 11 registered `sgl/` slugs, all `🧪 experimental`. Stock
-`lmsysorg/sglang:v0.5.20`, no engine patches (the W4A8 overlay is opt-in and off by default).
+`lmsysorg/sglang:v0.5.21`, no engine patches apart from the W4A8 overlay, which is ON by default since 2026-09-19 (`W4A8=0` reverts to W4A16).
 
 ⚠️ This page was previously titled *"EAGLE-3 path PARKED; no shipped variant on this stack"* and
 described the 2026-05 Qwen3.6-27B investigation. That is now [archived below](#archive--the-2026-05-qwen3627b-eagle-3-investigation-superseded).
