@@ -54,6 +54,8 @@
 #   CONTAINER    docker container to scrape with `docker logs` (or "none")
 #   SERVER_PID   pin the serving process; "none" disables /proc inspection
 #   URL          endpoint base, for /props
+#   BENCH_GPUS   limit every nvidia-smi read to these cards (comma-separated
+#                indices or GPU UUIDs, the `nvidia-smi -i` syntax). Unset = all.
 
 [[ -n "${_CAPTURE_SH_LOADED:-}" ]] && return 0
 _CAPTURE_SH_LOADED=1
@@ -83,6 +85,35 @@ cap_note_unavailable() {
 cap_have() { command -v "$1" >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------------------
+# GPU selection — BENCH_GPUS
+# ---------------------------------------------------------------------------
+# Every VRAM figure below is a SUM over the cards nvidia-smi reports, so on a rig
+# that serves something else on other cards the neighbours are measured too: a
+# one-card run on GPU 2 beside a TP=2 server on GPU 0/1 reported peak=68382 MiB
+# while the card under test peaked at 23232. BENCH_GPUS restricts every read in
+# this lib (VRAM, dmon, PCIe link, GPU count) to the listed cards. Labels keep the
+# real nvidia-smi index, so BENCH_GPUS=2 reports GPU2, not GPU0.
+_CAP_GPU_ID='([0-9]+|GPU-[0-9A-Za-z-]+)'
+_CAP_GPUS_RE="^${_CAP_GPU_ID}(,${_CAP_GPU_ID})*\$"
+
+# cap_gpus_valid — 0 when BENCH_GPUS is unset or well-formed.
+cap_gpus_valid() {
+  [[ -z "${BENCH_GPUS:-}" ]] && return 0
+  [[ "$BENCH_GPUS" =~ $_CAP_GPUS_RE ]]
+}
+
+# cap_smi <query args...> — nvidia-smi limited to BENCH_GPUS. A malformed selection
+# runs nothing and fails, so a typo reads as "unavailable", never as the all-GPU
+# number it was meant to replace. (cap_dmon_start builds its own `-i`: stdbuf
+# cannot exec a shell function.)
+cap_smi() {
+  cap_gpus_valid || return 1
+  local -a sel=()
+  [[ -n "${BENCH_GPUS:-}" ]] && sel=(-i "$BENCH_GPUS")
+  nvidia-smi "${sel[@]}" "$@"
+}
+
+# ---------------------------------------------------------------------------
 # resolution: serving process, log source, GPU count
 # ---------------------------------------------------------------------------
 CAP_PID=""          # serving process pid, or "" when unknown
@@ -93,7 +124,10 @@ CAP_TMPDIR=""
 
 cap_gpu_count() {
   if cap_have nvidia-smi; then
-    nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | command grep -c . || echo 0
+    local n
+    n="$(cap_smi --query-gpu=index --format=csv,noheader,nounits 2>/dev/null \
+         | command grep -cE '^[0-9]+$' || true)"
+    echo "${n:-0}"
   else
     echo 0
   fi
@@ -800,18 +834,20 @@ PY
 # VRAM triplet + leak delta (item 11b) — a free soak-lite leak check per run
 # ---------------------------------------------------------------------------
 
-# cap_vram_used — total MiB across all GPUs (one integer).
+# cap_vram_used — total MiB across the selected GPUs (BENCH_GPUS; all by default).
+# Only numeric rows count: `nvidia-smi -i <absent card>` prints "No devices were
+# found" on stdout, which a plain sum would turn into a fabricated 0.
 cap_vram_used() {
   cap_have nvidia-smi || return 1
-  nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null \
-    | awk 'NF{s+=$1} END{if(NR) print s+0; else exit 1}'
+  cap_smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null \
+    | awk '$1 ~ /^[0-9]+$/ {s+=$1; n++} END{if(n) print s+0; else exit 1}'
 }
 
-# cap_vram_per_device — "GPU<i> <MiB>" per line.
+# cap_vram_per_device — "GPU<i> <MiB>" per line, <i> the real nvidia-smi index.
 cap_vram_per_device() {
   cap_have nvidia-smi || return 1
-  nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null \
-    | awk 'NF{printf "GPU%d %d\n", NR-1, $1}'
+  cap_smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
+    | awk -F', *' '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {printf "GPU%d %d\n", $1, $2}'
 }
 
 # cap_vram_peak_start <outfile> — background sampler; echoes its pid.
@@ -821,8 +857,8 @@ cap_vram_peak_start() {
   : > "$out"
   ( local peak=0 v
     while :; do
-      v="$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null \
-           | awk 'NF{s+=$1} END{print s+0}')"
+      v="$(cap_smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null \
+           | awk '$1 ~ /^[0-9]+$/ {s+=$1; n++} END{if(n) print s+0}')"
       if [[ -n "$v" ]] && (( v > peak )); then peak="$v"; echo "$peak" > "$out"; fi
       sleep 2
     done ) >/dev/null 2>&1 &
@@ -850,10 +886,13 @@ cap_dmon_start() {
   # Echoes a PID on stdout — the caller emits the notice (see cap_kv_type).
   cap_have nvidia-smi || return 1
   : > "$out"
+  cap_gpus_valid || return 1
+  local -a sel=()
+  [[ -n "${BENCH_GPUS:-}" ]] && sel=(-i "$BENCH_GPUS")
   local sb=""
   cap_have stdbuf && sb="stdbuf -oL"
   # shellcheck disable=SC2086
-  $sb nvidia-smi dmon -s ut -d 1 2>/dev/null \
+  $sb nvidia-smi dmon "${sel[@]}" -s ut -d 1 2>/dev/null \
     | while IFS= read -r line; do printf '%s %s\n' "$(date +%s)" "$line"; done > "$out" &
   echo $!
 }
@@ -905,12 +944,12 @@ cap_dmon_phase() {
 }
 
 # cap_pcie_link — queried AVAILABLE link state, per device.
-# Prints: "GPU<i> gen=<cur>/<max> width=<cur>/<max>".
+# Prints: "GPU<i> gen=<cur>/<max> width=<cur>/<max>", <i> the real nvidia-smi index.
 cap_pcie_link() {
   cap_have nvidia-smi || return 1
-  nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current,pcie.link.width.max \
-             --format=csv,noheader,nounits 2>/dev/null \
-    | awk -F', *' 'NF>=4 && $1 ~ /[0-9]/ {printf "GPU%d gen=%s/%s width=%s/%s\n", NR-1, $1, $2, $3, $4}'
+  cap_smi --query-gpu=index,pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current,pcie.link.width.max \
+          --format=csv,noheader,nounits 2>/dev/null \
+    | awk -F', *' 'NF>=5 && $1 ~ /^[0-9]+$/ && $2 ~ /[0-9]/ {printf "GPU%d gen=%s/%s width=%s/%s\n", $1, $2, $3, $4, $5}'
 }
 
 # cap_pcie_link_sampler_start <outfile> — link state sampled UNDER LOAD.

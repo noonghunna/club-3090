@@ -29,9 +29,9 @@ BENCH="$ROOT_DIR/scripts/bench.sh"
 LIB="$ROOT_DIR/scripts/lib/capture.sh"
 FIX="$ROOT_DIR/scripts/tests/fixtures/offload-matrix"
 # ⚠️⚠️ FIXTURE PORTS LIVE ABOVE THE PRODUCT'S PORT SPACE, ON PURPOSE.
-# This test binds fake servers across PORT_BASE..PORT_BASE+20. The registry
+# This test binds fake servers across PORT_BASE..PORT_BASE+22. The registry
 # allocates real slug `default_port`s across 8010-8199, so a base inside that
-# span silently collides: any slug parked on one of these 21 ports makes this
+# span silently collides: any slug parked on one of these 23 ports makes this
 # guard fail WHENEVER THAT MODEL IS SERVING, and the failure reads as a broken
 # test rather than a port clash. Measured 2026-09-18: the old 8147 base overlapped
 # ELEVEN registry slugs (eight sgl/qwen38-27b-multi* on 8147-8154 plus three
@@ -549,6 +549,38 @@ pp_case plausible 3950.40 0.0   9876   "PP fallback shape"
 [[ "$(CAP_PP_MAX_CV=1000 cap_pp_plausible 1127.30 171.9 90000; echo rc=$?)" == "rc=0" ]] \
   || fail "the CV condition is not what suppresses the windowed-in-prefill sample"
 echo "  ✓ PP gate: every figure pasted as data in #769/#822 is suppressed, with a reason"
+
+# --- BENCH_GPUS: every nvidia-smi read is limited to the selected cards --------
+# The VRAM triplet is a SUM. Beside a TP=2 server on GPU 0/1, a one-card run on
+# GPU 2 reported peak=68382 MiB while that card peaked at 23232 — the neighbours
+# were measured too. Three fake cards, the third nearly empty, so any leak of a
+# neighbour into the sum is a 20+ GiB error, not a rounding one.
+gq() {   # $1=BENCH_GPUS  $2=command — runs one capture call against 3 fake cards
+  PATH="$TMP/bin:$PATH" FAKE_NGPU=3 FAKE_VRAM_MIB=22000,22000,1000 BENCH_GPUS="$1" \
+    bash -c "source '$LIB'; $2" 2>/dev/null
+}
+[[ "$(gq '' cap_vram_used)" == "45000" ]] || fail "BENCH_GPUS unset must still sum every card"
+[[ "$(gq 2 cap_vram_used)" == "1000" ]] || fail "BENCH_GPUS=2 must sum GPU 2 only, got: $(gq 2 cap_vram_used)"
+[[ "$(gq 0,2 cap_vram_used)" == "23000" ]] || fail "BENCH_GPUS=0,2 must sum those two cards"
+[[ "$(gq GPU-fake00000002 cap_vram_used)" == "1000" ]] || fail "a GPU UUID must select like an index"
+[[ "$(gq 2 cap_gpu_count)" == "1" ]] || fail "cap_gpu_count must count the selected cards"
+# Labels keep the REAL index: BENCH_GPUS=2 is GPU2, not a renumbered GPU0.
+[[ "$(gq 2 cap_vram_per_device)" == "GPU2 1000" ]] \
+  || fail "per-device VRAM must carry the real index, got: $(gq 2 cap_vram_per_device)"
+[[ "$(gq '' cap_vram_per_device | paste -sd' ' -)" == "GPU0 22000 GPU1 22000 GPU2 1000" ]] \
+  || fail "per-device VRAM, unfiltered, must list every card by index"
+gq 2 cap_pcie_link | command grep -qx 'GPU2 gen=0/0 width=0/0' \
+  || fail "PCIe link state must carry the real index under BENCH_GPUS"
+_dm="$(gq 2 'f=$(mktemp); p=$(cap_dmon_start "$f"); sleep 1.5; kill $p; cat "$f"; rm -f "$f"')"
+awk '$2 !~ /^#/ && NF >= 10' <<<"$_dm" | awk '{print $2}' | sort -u | paste -sd, - \
+  | command grep -qx 2 || fail "dmon must stream the selected card only, got: $_dm"
+# A card that is not there, or a malformed list, must read as UNAVAILABLE. The
+# real nvidia-smi prints "No devices were found" on stdout, which a plain sum
+# turns into a fabricated 0.
+gq 9 cap_vram_used >/dev/null && fail "BENCH_GPUS naming an absent card must fail, not print 0"
+gq '2;x' cap_vram_used >/dev/null && fail "a malformed BENCH_GPUS must fail, not fall back to every card"
+gq '2;x' cap_gpus_valid && fail "cap_gpus_valid must reject '2;x'"
+echo "  ✓ BENCH_GPUS: sums, labels, dmon and link state follow the selection; absent/malformed = unavailable"
 
 # ===========================================================================
 # TIER 1b — end-to-end bench.sh against the fake server
@@ -1076,5 +1108,20 @@ run_bench healthy "$((PORT_BASE+20))" "$TMP/icap0.out" CAPTURE=0
 command grep -q '=== Interconnect (three layers) ===' "$TMP/icap0.out" \
   || fail "CAPTURE=0 must keep the interconnect block (it is a footer fact, not a capture)"
 echo "  ✓ interconnect: three layers reported, layer 3 degrades to n/a in host mode, BENCH_MOCK untouched"
+
+# --- BENCH_GPUS end to end: the report names the selection and reads one card ---
+run_bench healthy "$((PORT_BASE+21))" "$TMP/gsel.out" BENCH_GPUS=1 FAKE_VRAM_MIB=20000,500
+G="$TMP/gsel.out"
+command grep -q 'GPUs measured  : 1 (1 card(s); BENCH_GPUS)' "$G" \
+  || fail "the fingerprint must name the BENCH_GPUS selection"
+command grep -q 'idle=500 MiB  peak=500 MiB  post=500 MiB' "$G" \
+  || fail "the VRAM triplet must read GPU 1 only: $(command grep -m1 'idle=' "$G")"
+command grep -q 'GPU1 500 MiB (post-run)' "$G" || fail "per-device VRAM must list GPU1"
+command grep -q 'GPU0 20000 MiB (post-run)' "$G" && fail "GPU0 must not be measured under BENCH_GPUS=1"
+run_bench healthy "$((PORT_BASE+22))" "$TMP/gbad.out" BENCH_GPUS=7
+command grep -q "BENCH_GPUS='7' selects no GPU" "$TMP/gbad.out.err" \
+  || fail "BENCH_GPUS naming an absent card must stop the run with a Fix: hint"
+command grep -q 'NARRATIVE' "$TMP/gbad.out" && fail "a bad BENCH_GPUS must stop before measuring"
+echo "  ✓ BENCH_GPUS end to end: fingerprint names it, VRAM reads the selected card, a bad one stops the run"
 
 echo "test-bench-capture: ok"

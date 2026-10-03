@@ -13,10 +13,14 @@ Implements exactly the invocations our suites make, and nothing else:
          through to the multi-GPU branch by accident. Fixing that bug (#1279)
          exposed the missing arm.
 
-  nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits
-      -> one integer MiB per GPU, one per line
+  nvidia-smi [-i LIST] --query-gpu=<f1>[,<f2>...] --format=csv,noheader,nounits
+      -> one row per GPU, fields joined by ", " (index, memory.used,
+         utilization.gpu; any other field reads 0). `-i` keeps only the listed
+         indices / GPU-fake UUIDs, and a list naming no fake GPU prints
+         "No devices were found" on stdout and exits 6, as the real tool does
+         (capture.sh's BENCH_GPUS).
 
-  nvidia-smi dmon -s ut -d 1 [-c N]
+  nvidia-smi dmon [-i LIST] -s ut -d 1 [-c N]
       -> the 9-column utilisation/PCIe stream. The sweep averages it with
          awk '!/^#/ && NF>=9 {s+=$2;m+=$3;r+=$8;t+=$9}', i.e.
          $2=sm%  $3=memctl%  $8=rxpci MB/s  $9=txpci MB/s
@@ -39,22 +43,47 @@ def vram_list():
 
 argv = sys.argv[1:]
 
+def selected():
+    """GPU indices `-i` selects (all without it)."""
+    if "-i" not in argv:
+        return list(range(NGPU))
+    want = argv[argv.index("-i") + 1].split(",")
+    uuids = {"GPU-fake%08d" % i: i for i in range(NGPU)}
+    out = []
+    for w in want:
+        if w.isdigit() and int(w) < NGPU:
+            out.append(int(w))
+        elif w in uuids:
+            out.append(uuids[w])
+    return sorted(set(out))
+
+SEL = selected()
+if "-i" in argv and not SEL:
+    print("No devices were found")
+    sys.exit(6)
+
 # --- device list form (`nvidia-smi -L`) ---
 if argv and argv[0] == "-L":
-    for i in range(NGPU):
+    for i in SEL:
         print("GPU %d: NVIDIA GeForce RTX 3090 (UUID: GPU-fake%08d)" % (i, i))
     raise SystemExit(0)
 
 # --- query-gpu form ---
 if any(a.startswith("--query-gpu") for a in argv):
-    field = next(a for a in argv if a.startswith("--query-gpu")).split("=", 1)[1]
-    for v in vram_list():
-        if "memory.used" in field:
-            print(v)
-        elif "utilization.gpu" in field:
-            print(os.environ.get("FAKE_SM", "40"))
-        else:
-            print("0")
+    fields = next(a for a in argv if a.startswith("--query-gpu")).split("=", 1)[1].split(",")
+    vram = vram_list()
+    for i in SEL:
+        row = []
+        for f in fields:
+            if f == "index":
+                row.append(str(i))
+            elif f == "memory.used":
+                row.append(vram[i])
+            elif f == "utilization.gpu":
+                row.append(os.environ.get("FAKE_SM", "40"))
+            else:
+                row.append("0")
+        print(", ".join(row))
     sys.exit(0)
 
 # --- dmon form ---
@@ -78,7 +107,7 @@ if "dmon" in argv:
     n = 0
     try:
         while count is None or n < count:
-            for g in range(NGPU):
+            for g in SEL:
                 # 9 fields exactly — the sweep requires NF>=9
                 print(f"{g:5d} {sm:>5} {mem:>5} {0:5d} {0:5d} {0:5d} {0:5d} {rx:>6} {tx:>6}", flush=True)
             n += 1

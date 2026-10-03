@@ -136,6 +136,13 @@
 #                      and belongs in a separate opt-in arm.
 #   CAPTURE            0 = skip the whole capture layer (the pre-capture output
 #                      shape, for a harness that parses it). Default: 1.
+#   BENCH_GPUS         Cards to measure: comma-separated nvidia-smi indices or GPU
+#                      UUIDs (`BENCH_GPUS=2`, `BENCH_GPUS=0,1`). VRAM idle/peak/post,
+#                      PCIe dmon and link state, and the closing GPU-state table then
+#                      read only those cards. Set it whenever the box serves anything
+#                      else: the VRAM figures are SUMS, so unset they include every
+#                      neighbour. Default: all GPUs. A malformed or absent selection
+#                      stops the run rather than measure the wrong cards.
 #   SHORT_EOS_FRAC     A run whose completion is below this fraction of max_tokens
 #                      counts as a short-EOS run and is excluded from "n-usable".
 #                      Chat-tuned models EOS early and silently degenerate a 5-run
@@ -630,6 +637,18 @@ if [[ "$CAPTURE" == "1" && -f "${ROOT_DIR}/scripts/lib/capture.sh" ]]; then
   CAP_WORK="$(mktemp -d)"
   trap '[[ -n "${CAP_WORK:-}" ]] && rm -rf "$CAP_WORK"' EXIT
   cap_init "$CAP_WORK" || true
+  if [[ -n "${BENCH_GPUS:-}" ]]; then
+    if ! cap_gpus_valid; then
+      echo "ERROR: BENCH_GPUS='${BENCH_GPUS}' is not a comma-separated list of GPU indices or UUIDs." >&2
+      echo "Fix: BENCH_GPUS=2 (one card) or BENCH_GPUS=0,1 — the indices nvidia-smi lists." >&2
+      exit 2
+    fi
+    if cap_have nvidia-smi && [[ "${CAP_NGPU:-0}" -eq 0 ]]; then
+      echo "ERROR: BENCH_GPUS='${BENCH_GPUS}' selects no GPU on this host." >&2
+      echo "Fix: pick from: $(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | paste -sd, -)" >&2
+      exit 2
+    fi
+  fi
 
   CAP_ARGV="$(cap_proc_argv || true)"
 
@@ -643,6 +662,7 @@ if [[ "$CAPTURE" == "1" && -f "${ROOT_DIR}/scripts/lib/capture.sh" ]]; then
     echo "  serving pid    : unknown (set SERVER_PID=<pid> for argv/RSS/swap capture)"
   fi
   echo "  log source     : ${CAP_LOG_SOURCE:-none}${SERVER_LOG:+ (${SERVER_LOG})}"
+  echo "  GPUs measured  : ${BENCH_GPUS:-all} (${CAP_NGPU} card(s); BENCH_GPUS)"
   _v="$(cap_props_get "default_generation_settings.n_ctx" || true)"
   _s="$(cap_props_get "total_slots" || true)"
   [[ -n "$_v" ]] && echo "  served ctx     : ${_v}${_s:+  (slots=${_s})}"
@@ -2101,8 +2121,9 @@ fi
 if command -v nvidia-smi >/dev/null 2>&1; then
   echo ""
   echo "=== GPU state ==="
-  nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu \
-             --format=csv,noheader
+  nvidia-smi ${BENCH_GPUS:+-i "$BENCH_GPUS"} \
+             --query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu \
+             --format=csv,noheader || true
 fi
 
 # ===========================================================================
