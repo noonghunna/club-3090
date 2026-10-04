@@ -191,6 +191,9 @@ build_inspect() {
 import json, os, re, subprocess, sys
 compose = os.environ["RC_COMPOSE"]; name = os.environ["RC_NAME"]
 clean = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp")}
+# RC_RENDER_ENV (KEY=VALUE lines): what the LAUNCHER exported before `compose up`, e.g.
+# switch.sh's THREADS — interpolated into the entrypoint script, exactly as on a rig.
+clean.update(dict(l.split("=", 1) for l in os.environ.get("RC_RENDER_ENV", "").splitlines() if "=" in l))
 p = subprocess.run(["docker", "compose", "--env-file", "/dev/null", "-f", compose,
                     "config", "--format", "json"],
                    capture_output=True, encoding="utf-8", env=clean)
@@ -325,6 +328,34 @@ dump "env-only-override" "$SEC"
 hasnt "env-only override is NOT reported as stock" "$SEC" "✅ **Stock recipe**"
 has   "env-only override names the knob"           "$SEC" "\`SPEC\`"
 has   "env-only override says argv could not see it" "$SEC" "do not appear in the flags above"
+
+# --- 2c'. the launcher's OWN host sizing is not a user change (#1547) ---------
+# switch.sh exports THREADS=nproc/2 for every CPU-offload compose (resolve_offload_threads);
+# compose interpolates it into the entrypoint script. A recipe rendered with bare defaults
+# then "differs" on the entrypoint and on THREADS, and a stock launch read as modified.
+# The fake host has 64 threads (#1547's EPYC 7532), so the launcher sets THREADS=32.
+printf '#!/usr/bin/env bash\necho 64\n' > "${REPORT_FAKE_BIN}/nproc"; chmod +x "${REPORT_FAKE_BIN}/nproc"
+ln -sf "${ROOT_DIR}/scripts/preflight.sh" "${REPORT_FAKE_ROOT}/scripts/preflight.sh"
+OFFLOAD_COMPOSE="${ROOT_DIR}/models/qwen3.8-flash-next/llamacpp-club3090/compose/multi4/unsloth-ud-q4kxl/moecache.yml"
+RC_CONTAINER="llama-cpp-qwen38-flash-next-q4kxl-moecache-multi4"
+RC_INSPECT="${TMP}/offload-stock.json"
+RC_RENDER_ENV="THREADS=32" build_inspect "$OFFLOAD_COMPOSE" "$RC_CONTAINER" "$RC_INSPECT" "" "THREADS=32"
+run_report --container "$RC_CONTAINER"
+SEC="$(section_of "$REPORT_OUT")"
+dump "offload-launcher-threads" "$SEC"
+has   "launcher-sized THREADS: still a stock recipe"       "$SEC" "✅ **Stock recipe**"
+has   "launcher-sized THREADS: says what it compared with" "$SEC" "Compared as the launcher starts it on this host with no user settings:** \`THREADS=32\`"
+hasnt "launcher-sized THREADS: no phantom entrypoint diff" "$SEC" "Entrypoint differs"
+hasnt "launcher-sized THREADS: no phantom env row"         "$SEC" "| \`THREADS\` |"
+# ...and a THREADS the USER chose still shows, with both values.
+RC_INSPECT="${TMP}/offload-user.json"
+RC_RENDER_ENV="THREADS=7" build_inspect "$OFFLOAD_COMPOSE" "$RC_CONTAINER" "$RC_INSPECT" "" "THREADS=7"
+run_report --container "$RC_CONTAINER"
+SEC="$(section_of "$REPORT_OUT")"
+dump "offload-user-threads" "$SEC"
+hasnt "user THREADS: not reported as stock"     "$SEC" "✅ **Stock recipe**"
+has   "user THREADS: the running value"         "$SEC" "\`7\`"
+has   "user THREADS: the launcher's value"      "$SEC" "\`32\`"
 
 # --- 2d. hand-rolled compose: says so, and still prints the flags -----------
 RC_CONTAINER="sgl-myrig"

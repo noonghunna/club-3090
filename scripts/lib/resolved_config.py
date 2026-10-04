@@ -488,17 +488,47 @@ def resolve_slug(root, container, info):
     return None, None, None, "container carries no docker-compose project labels (started by `docker run`, or by hand)"
 
 
-def render_recipe(root, compose_path, container):
+# Knobs switch.sh SIZES FOR THIS HOST before every launch, and that depend on the host
+# alone. The recipe is compared as the launcher would start it here, not as a bare
+# `docker compose up` would — otherwise a stock CPU-offload launch reads as modified:
+# #1547 was flagged "Entrypoint differs" + "THREADS 32 vs (unset)" for nothing but
+# switch.sh's own `nproc/2`. Only host-deterministic resolvers belong here. The
+# residency and CPU-MoE split resolvers size from FREE VRAM at boot, which the running
+# model has since consumed, so they cannot be reproduced and are deliberately left out.
+_HOST_SIZED = (("resolve_offload_threads", "THREADS"),)
+
+
+def launcher_host_env(root, compose_path):
+    """{VAR: value} the launcher's host-deterministic resolvers set for this compose."""
+    full = Path(root) / compose_path
+    libs = [Path(root) / "scripts" / "lib" / "compose-meta.sh", Path(root) / "scripts" / "preflight.sh"]
+    if not full.is_file() or not all(l.is_file() for l in libs):
+        return {}
+    clean = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp")}
+    out = {}
+    for fn, var in _HOST_SIZED:
+        script = ('source "$1" >/dev/null 2>&1; source "$2" >/dev/null 2>&1; '
+                  'declare -F %s >/dev/null || exit 0; unset %s; %s "$3" >/dev/null 2>&1; '
+                  'printf "%%s" "${%s:-}"' % (fn, var, fn, var))
+        rc, val, _ = _run(["bash", "-c", script, "_", str(libs[0]), str(libs[1]), str(full)], env=clean)
+        if rc == 0 and val.strip():
+            out[var] = val.strip()
+    return out
+
+
+def render_recipe(root, compose_path, container, host_env=None):
     """The shipped recipe re-rendered in a CLEAN environment.
 
     `env -i` + `--env-file /dev/null` is the whole point: every `${VAR:-default}`
     falls to its DEFAULT, so what comes back is the recipe as shipped, not the
-    recipe as this rig happens to be configured.
+    recipe as this rig happens to be configured. `host_env` (launcher_host_env) adds
+    only what switch.sh itself sizes for this host, never a user setting.
     """
     full = Path(root) / compose_path
     if not full.is_file():
         return None, "recipe not found on disk: %s" % compose_path
     clean = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp")}
+    clean.update(host_env or {})
     rc, out, err = _run(
         ["docker", "compose", "--env-file", "/dev/null", "-f", str(full), "config", "--format", "json"],
         env=clean,
@@ -796,7 +826,14 @@ def render(root, container, kind, full_engine_args):
         if rcgit == 0 and gout.strip():
             add("- ⚠️ **The local copy of this recipe has uncommitted modifications** — "
                 "the diff below is against the WORKING-TREE recipe, not the shipped one.")
-        chosen, rerr = render_recipe(root, compose_path, container)
+        host_env = launcher_host_env(root, compose_path)
+        chosen, rerr = render_recipe(root, compose_path, container, host_env)
+        if host_env:
+            add("- **Compared as the launcher starts it on this host with no user settings:** "
+                "%s — switch.sh sizes %s for this host before every launch, so a matching "
+                "value is not a user change; a different one is listed below."
+                % (", ".join("`%s=%s`" % kv for kv in sorted(host_env.items())),
+                   "it" if len(host_env) == 1 else "them"))
         if chosen is None:
             add("- ⚠️ **Recipe diff unavailable:** %s" % rerr)
             add("- Nothing to diff against, so the flags are reported raw instead:")
