@@ -721,12 +721,39 @@ elif mode == "pooldev":
             if "pool[" in ln and DEV.search(ln)}
     nobudget = sum(1 for ln in lines if "no cache budget" in ln)
     enabled = 1 if any("[moe-cache] enabled:" in ln for ln in lines) else 0
+    # The engine's own log verbosity ('common_params_print_info: verbosity = 3'). Every
+    # [moe-cache] line, pool lines included, is dropped below 4, so at the default 3 a
+    # healthy cache logs NO pool line and the counts above read 0 — absence, not data.
+    vb = None
+    for ln in lines:
+        m = re.search(r"\bverbosity = (\d+)", ln)
+        if m:
+            vb = m.group(1)
     print(f"devices={len(devs)} pool_lines={sum(1 for ln in lines if 'pool[' in ln)} "
-          f"enabled={enabled} nobudget={nobudget} devlist={','.join(sorted(devs)) or '-'}")
+          f"enabled={enabled} nobudget={nobudget} devlist={','.join(sorted(devs)) or '-'} "
+          f"verbosity={vb or '-'}")
 
 else:
     sys.exit(2)
 PY
+}
+
+# cap_pool_lines_hidden <pooldev-line> [env-verbosity]
+# 0 when this run's log CANNOT show pool lines, so "0 devices hold a pool" is an
+# absence, not a finding: no pool line at all AND the engine logged below verbosity 4.
+# [moe-cache] lines (pool lines included) print only at LLAMA_ARG_LOG_VERBOSITY>=4, and
+# the default is 3, so every stock moe-cache boot used to read as HALF-CACHED /
+# CACHE_DISABLED (our own 2026-10-02 bench; community #1543/#1547). Verbosity comes from
+# the engine's own `verbosity = N` line, else the env value, else llama.cpp's default 3.
+# Any pool line proves the lines were visible, so a PARTIAL allocation is never hidden.
+cap_pool_lines_hidden() {
+  local pd="$1" envv="${2:-}" pl v
+  pl="$(command grep -oE 'pool_lines=[0-9]+' <<<"$pd" | cut -d= -f2)"
+  [[ "${pl:-0}" == "0" ]] || return 1
+  v="$(command grep -oE 'verbosity=[0-9]+' <<<"$pd" | cut -d= -f2)"
+  [[ -z "$v" && "$envv" =~ ^[0-9]+$ ]] && v="$envv"
+  [[ -z "$v" ]] && v=3
+  (( v < 4 ))
 }
 
 # cap_marginal_rates <snap-start> <snap-end>

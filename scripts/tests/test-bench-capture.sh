@@ -229,6 +229,46 @@ command grep -q 'enabled=1' <<<"$pd2" \
   || fail "the 'enabled:' banner must still be reported — that it prints in this state IS the #824 hole"
 echo "  ✓ #824: half-cached run reports devices=1 while pool_lines=2 and enabled=1"
 
+# --- pool lines are INVISIBLE below verbosity 4: absence is not "0 pools" ------
+# A stock moe-cache boot logs at verbosity 3, where every [moe-cache] line (pool lines
+# included) is dropped. The allocation check read that as "0 of N devices hold a pool"
+# and the run as HALF-CACHED / CACHE_DISABLED — on our own 2026-10-02 bench and on
+# community #1543/#1547, whose cards sat at full-minus-reserve, i.e. the pool HAD filled.
+cat > "$TMP/v3.log" <<'EOF'
+0.01.067.965 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.01.654.334 I cmn  common_init_: MoE cache: mode=auto budget=free-minus-reserve; use -lv 4 for resolved backend state, actual pools, and statistics
+EOF
+cat > "$TMP/v4none.log" <<'EOF'
+0.01.067.965 I cmn  common_param: common_params_print_info: verbosity = 4 (adjust with the `-lv N` CLI arg)
+[moe-cache] enabled: reserve=1536 MiB admit=1/64
+[moe-cache] CUDA0 has no cache budget after 1536 MiB reserve
+[moe-cache] CUDA1 has no cache budget after 1536 MiB reserve
+EOF
+pdv3=$(cap_moe_parse pooldev "$TMP/v3.log") || fail "pooldev failed on a verbosity-3 log"
+command grep -q 'verbosity=3' <<<"$pdv3" || fail "pooldev must report the engine's verbosity, got: $pdv3"
+cap_pool_lines_hidden "$pdv3" "" || fail "verbosity 3 with no pool line must read as NOT VISIBLE, not as 0 pools"
+pdv4=$(cap_moe_parse pooldev "$TMP/v4none.log") || fail "pooldev failed on a verbosity-4 log"
+cap_pool_lines_hidden "$pdv4" "" && fail "verbosity 4 with no pool line is a REAL miss (no budget) — must not be hidden"
+cap_pool_lines_hidden "$pd2" "" && fail "a partial allocation (pool lines present) must never be hidden — that is the #824 state"
+# No verbosity line in the log: the env value decides, else llama.cpp's default 3.
+cap_pool_lines_hidden "devices=0 pool_lines=0 verbosity=-" "4" && fail "env verbosity 4 with no pool line must not be hidden"
+cap_pool_lines_hidden "devices=0 pool_lines=0 verbosity=-" "" || fail "no verbosity anywhere = default 3 = pool lines not visible"
+# bench.sh: the hidden branch must not flip CAP_CACHE_OK (that renders CACHE_DISABLED),
+# and the real-miss branch after it still must. Asserts the CODE, not the comments.
+python3 - "$ROOT_DIR/scripts/bench.sh" <<'PYEOF' || fail "bench.sh: the not-visible branch must leave CAP_CACHE_OK alone, and the real-miss branch must still clear it"
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+i = src.index("NOT VISIBLE at this log verbosity")
+start = src.rindex("cap_pool_lines_hidden", 0, i)
+elif_at = src.index("elif (( CAP_CACHE_WANTED ))", i)
+hidden_body = src[start:elif_at]
+live = lambda body: [l for l in body.splitlines() if "CAP_CACHE_OK=0" in l and not l.lstrip().startswith("#")]
+assert not live(hidden_body), live(hidden_body)
+miss_body = src[elif_at:src.index("HALF-CACHED path", elif_at)]
+assert live(miss_body), "the real-miss branch lost CAP_CACHE_OK=0"
+PYEOF
+echo "  ✓ pool lines below verbosity 4: NOT VISIBLE (status untouched); a real miss or a partial pool still warns"
+
 # --- marginal vs cumulative MUST disagree ------------------------------------
 cap_moe_parse counters "$TMP/start.log" > "$TMP/c0" || fail "counters scrape (start) failed"
 cap_moe_parse counters "$TMP/end.log"   > "$TMP/c1" || fail "counters scrape (end) failed"

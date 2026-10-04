@@ -1731,7 +1731,17 @@ print(f"{sum(xs)/len(xs):.2f}" if xs else "")
       _enb="$(printf '%s' "$_pd" | command grep -oE 'enabled=[0-9]+' | cut -d= -f2)"
       _nob="$(printf '%s' "$_pd" | command grep -oE 'nobudget=[0-9]+' | cut -d= -f2)"
       echo "  allocation: ${_pd}  (GPUs on this host: ${CAP_NGPU})"
-      if (( CAP_CACHE_WANTED )) && [[ "${_devs:-0}" -lt "${CAP_NGPU:-0}" ]]; then
+      _vbe="$(cap_proc_env LLAMA_ARG_LOG_VERBOSITY 2>/dev/null || true)"
+      if (( CAP_CACHE_WANTED )) && [[ "${_devs:-0}" -lt "${CAP_NGPU:-0}" ]] \
+         && cap_pool_lines_hidden "$_pd" "$_vbe"; then
+        # ⚠️ ABSENCE IS NOT DATA (same rule as the hit-rate branch below): below verbosity 4
+        # the engine prints NO pool line, so a working cache and a missing one look the
+        # same here. Say so, and leave CAP_CACHE_OK alone — flipping it renders as
+        # CACHE_DISABLED, asserting the cache is OFF on every stock moe-cache boot.
+        echo "  allocation: NOT VISIBLE at this log verbosity — the [moe-cache] pool lines print only"
+        echo "              at LLAMA_ARG_LOG_VERBOSITY=4. This is not a sign the cache is off; this run"
+        echo "              cannot see it. To check: re-boot with LLAMA_ARG_LOG_VERBOSITY=4."
+      elif (( CAP_CACHE_WANTED )) && [[ "${_devs:-0}" -lt "${CAP_NGPU:-0}" ]]; then
         CAP_CACHE_OK=0
         echo "  ⚠ WARN: a cache was REQUESTED but only ${_devs:-0} of ${CAP_NGPU} devices hold a pool."
         if [[ "${_nob:-0}" != "0" ]]; then
