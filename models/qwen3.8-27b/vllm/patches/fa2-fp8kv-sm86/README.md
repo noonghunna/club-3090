@@ -23,7 +23,17 @@ repository contains an upstream FlashAttention submodule, a file map and a
 patch that reproduces the exact diff against upstream FA2. See the FA2 row in
 [`docs/UPSTREAM.md`](../../../../../docs/UPSTREAM.md) for the dependency pin.
 
-SM86 has GPU validation. SM89 and SM120 binaries are included, but those
+The mixed-prefill update passes all nine CUDA regressions and the full
+upstream GPU suite on each RTX 3090 with vLLM 0.29. The adapter checks also
+pass on vLLM 0.30, and the actual FP8 compose passes verify-full with
+SPEC_N=0, 98304 context and 4 GB KV/card. The update processes long full-causal
+mixed batches as per-request paged chunks of at most 2048 query tokens,
+using exact GPU context lengths. `envelope.sh` remains enabled for conservative
+rollout and users overriding the artifact with an older version. The model
+smoke does not revalidate the shipped 262144-context DFlash2 configuration.
+See REVIEW_VALIDATION.md and the FA2 row in the upstream tracker above.
+
+SM89 and SM120 binaries are included, but those
 targets have compilation coverage only. SM90 and SM100 retain stock native
 FlashAttention without installing the plugin; no new GPU measurements cover
 that route. Other SMs and mixed architectures are refused before weights load.

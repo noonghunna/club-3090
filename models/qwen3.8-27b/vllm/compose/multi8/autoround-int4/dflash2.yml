@@ -138,7 +138,7 @@ services:
       - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton:/root/.triton/cache
     environment:
       - MAMBA_SSM_CACHE_DTYPE=${MAMBA_SSM_CACHE_DTYPE:-}
-      - FA2_ARTIFACT_ID=${FA2_ARTIFACT_ID:-731d1942112a7cf35be4f0add0919072c06cac47e3bad4f674ff0157edad0e3f}
+      - FA2_ARTIFACT_ID=${FA2_ARTIFACT_ID:-b0ce0370c7ca5c0d0e688e744f3665f3a099407fc2a38a4102d81eaaf5707a2d}
       - TP=${TP:-8}
       # Drafter toggle — docker only forwards what is declared here. The DEFAULT
       # lives in the entrypoint, not in these lines, so it cannot drift.
@@ -396,7 +396,7 @@ services:
       - "8000"
 
   vllm-qwen38-27b-multi8-ultrafast-kernels:
-    image: ${FA2_KERNEL_IMAGE:-ghcr.io/antonprokopyev/fa2-fp8kv-sm86@sha256:da040941fa048fd5fdfce520503341c0beda4ce41436a1c1fecaf3f8a99777c7}
+    image: ${FA2_KERNEL_IMAGE:-ghcr.io/antonprokopyev/fa2-fp8kv-sm86@sha256:ec26059d1c7a7eb4b4d916ddac495a0b937eae8e4594297f7ed625368c30cd7e}
     restart: "no"
     volumes:
       - fa2-kernels:/export
