@@ -32,6 +32,20 @@ cards with the new artifact and vLLM 0.30.0. The test used `SPEC_N=0`,
 invocation completed with exit 0, but its final stdout table was not retained
 in the capture; no TPS numbers are claimed from that run.
 
+A separate mixed-request run used the same compose and artifact with TP=2,
+SPEC_N=0, eager execution, context 32768, 3 GB KV/card, two sequences, an
+8192-token batch budget and a 4096-token long-prefill threshold. A local
+validation override bypassed `fa2_envelope`; the shipped guard was unchanged.
+Three trials started a 1500-token streaming decode, then submitted a fresh
+5000-token prompt after the first decode chunk. All six responses were HTTP
+200, every decode produced 1500 tokens, and every long prompt reported 5000
+uncached input tokens. Prefill requests completed in 4.444, 4.494 and 4.499 s;
+the concurrent decode requests completed in 126.795, 126.560 and 126.765 s.
+The server log confirmed two running requests, with no envelope errors or
+HTTP 500s, and RestartCount stayed zero. Peak serving VRAM was 18970 MiB on
+each card at 500 ms sampling; brief peaks can be missed. These are functional
+overlap checks, not a canonical throughput benchmark.
+
 The host's loaded NVIDIA
 module was 595.71.05 while its userspace libraries were 595.91.07; isolated
 test containers used SHA256-verified official NVIDIA 595.71.05 libraries
