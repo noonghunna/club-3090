@@ -235,6 +235,7 @@ case "$2" in
   pinned-ids)  echo '[{"HostConfig":{"DeviceRequests":[{"Count":0,"DeviceIDs":["3"]}]},"Config":{"Env":[]}}]' ;;
   pinned-uuid) echo '[{"HostConfig":{"DeviceRequests":[{"Count":0,"DeviceIDs":["GPU-bbbb3333-0000-0000-0000-000000000000"]}]},"Config":{"Env":[]}}]' ;;
   pinned-env)  echo '[{"HostConfig":{"DeviceRequests":[{"Count":-1,"DeviceIDs":null}]},"Config":{"Env":["NVIDIA_VISIBLE_DEVICES=3"]}}]' ;;
+  pinned-joined) echo '[{"HostConfig":{"DeviceRequests":[{"Count":0,"DeviceIDs":["2,3"]}]},"Config":{"Env":[]}}]' ;;
   sees-all)    echo '[{"HostConfig":{"DeviceRequests":[{"Count":-1,"DeviceIDs":null}]},"Config":{"Env":["NVIDIA_VISIBLE_DEVICES=all"]}}]' ;;
   *) echo "Error: No such object: $2" >&2; exit 1 ;;
 esac
@@ -253,6 +254,10 @@ for ctr in pinned-ids pinned-uuid pinned-env; do
   got="$(scope "$ctr")"
   [[ "$got" == "1× GeForce RTX 3060|10381|"* ]] || fail "container $ctr (the RTX 3060 only): got '$got', want 1× GeForce RTX 3060 and 10381 MB"
 done
+# device_ids: ["${ESTATE_GPUS}"] with ESTATE_GPUS=2,3 reaches docker as ONE entry "2,3" (#1537).
+got="$(scope pinned-joined)"
+[[ "$got" == "1× GeForce RTX 3090 + 1× GeForce RTX 3060|25381|"* ]] \
+  || fail "a comma-joined DeviceIDs entry (\"2,3\") must scope to GPUs 2 and 3: got '$got'"
 got="$(scope sees-all)"
 [[ "$got" == "3× GeForce RTX 3090 + 1× GeForce RTX 3060|55319|None" ]] \
   || fail "a container that sees every GPU should cover all four, labelled by name: got '$got'"
@@ -262,5 +267,73 @@ got="$(PATH="$GPU_STUB:$PATH" CONTAINER=pinned-ids python3 "$LIB" --gpu-label)"
 [[ "$got" == "1× GeForce RTX 3060" ]] || fail "--gpu-label (the card's GPU field) for the 3060 container: got '$got'"
 rm -rf "$GPU_STUB"
 echo "  ✓ VRAM + GPU label scoped to the container's GPUs (ids, UUIDs, NVIDIA_VISIBLE_DEVICES; rig-wide fallback)"
+
+# #1537: the card's container and spec label. An SGLang container was never found (name
+# heuristic `vllm-(qwen|gemma)`), so its card listed every host GPU and "spec ?"; a vLLM compose that
+# builds --speculative-config in its entrypoint from SPEC_N read "spec off" with MTP n=4 running.
+SPEC_STUB="$(mktemp -d)"
+cat > "$SPEC_STUB/docker" <<'DOCK'
+#!/usr/bin/env bash
+case "$1" in
+  ps)
+    echo "sglang-qwen38-27b-mtp-single|0.0.0.0:8144->30000/tcp, [::]:8144->30000/tcp"
+    echo "other|0.0.0.0:18144->8000/tcp"
+    echo "vllm-qwen38-27b-single-fast|0.0.0.0:8117->8000/tcp" ;;
+  logs)
+    case "$2" in
+      vllm-mtp)
+        # The engine-config line sits at the HEAD of the log, then 3000 lines of traffic: a
+        # --tail 2500 read (what --detect-kv does) would never see it.
+        echo "INFO [core.py:123] Initializing a V1 LLM engine (v0.30.0) with config: model='/m', speculative_config=SpeculativeConfig(method='mtp', model='/m', num_spec_tokens=4), tokenizer=/m"
+        for i in $(seq 1 3000); do echo "INFO [loggers.py] Engine 000: Avg generation throughput: 80.0 tokens/s, Running: 1 reqs, Waiting: 0 reqs"; done ;;
+      vllm-off) echo "INFO Initializing a V1 LLM engine (v0.30.0) with config: model='/m', speculative_config=None, tokenizer=/m" ;;
+      *) exit 1 ;;
+    esac ;;
+  *) exit 0 ;;
+esac
+DOCK
+chmod +x "$SPEC_STUB/docker"
+got="$(PATH="$SPEC_STUB:$PATH" URL=http://localhost:8144 python3 "$LIB" --container-for-url)"
+[[ "$got" == "sglang-qwen38-27b-mtp-single" ]] || fail "--container-for-url :8144 should find the SGLang container: got '$got'"
+got="$(PATH="$SPEC_STUB:$PATH" URL=http://localhost:9999 python3 "$LIB" --container-for-url)"
+[[ -z "$got" ]] || fail "--container-for-url on a port nobody publishes must be empty: got '$got'"
+got="$(PATH="$SPEC_STUB:$PATH" CONTAINER=vllm-mtp URL=http://127.0.0.1:9 python3 "$LIB" --spec-label)"
+[[ "$got" == "MTP n=4" ]] || fail "--spec-label from vLLM's engine-config line at the log head: got '$got', want 'MTP n=4'"
+got="$(PATH="$SPEC_STUB:$PATH" CONTAINER=vllm-off URL=http://127.0.0.1:9 python3 "$LIB" --spec-label)"
+[[ "$got" == "spec off" ]] || fail "--spec-label for speculative_config=None: got '$got', want 'spec off'"
+got="$(PATH="$SPEC_STUB:$PATH" CONTAINER=no-such URL=http://127.0.0.1:9 python3 "$LIB" --spec-label)"
+[[ -z "$got" ]] || fail "--spec-label with nothing readable must be empty (the script then falls back to flags): got '$got'"
+
+# SGLang: the label comes from /get_server_info. A local stand-in serves the shape our MTP composes
+# report (EAGLE over the target's own checkpoint).
+SGL_PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
+python3 -c '
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+INFO = {"model_path": "/models/q", "speculative_algorithm": "EAGLE",
+        "speculative_draft_model_path": "/models/q", "speculative_num_steps": 4}
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        ok = self.path == "/get_server_info"
+        self.send_response(200 if ok else 404)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(INFO if ok else {}).encode())
+    def log_message(self, *a):
+        pass
+HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+' "$SGL_PORT" &
+SGL_PID=$!
+for _ in $(seq 1 50); do curl -s -m 1 "http://127.0.0.1:$SGL_PORT/get_server_info" >/dev/null 2>&1 && break; sleep 0.1; done
+got="$(PATH="$SPEC_STUB:$PATH" CONTAINER= URL="http://127.0.0.1:$SGL_PORT" python3 "$LIB" --spec-label)"
+kill "$SGL_PID" 2>/dev/null || true
+wait "$SGL_PID" 2>/dev/null || true
+[[ "$got" == "MTP n=4" ]] || fail "--spec-label from SGLang's server info: got '$got', want 'MTP n=4'"
+
+# The script must USE the two helpers (the library being right is no help if the card never asks it).
+command grep -qF -- '--container-for-url' "$PROBE" || fail "concurrency-probe.sh no longer resolves CONTAINER from URL's port"
+command grep -qF -- '--spec-label' "$PROBE" || fail "concurrency-probe.sh's _spec_fp no longer asks the engine"
+rm -rf "$SPEC_STUB"
+echo "  ✓ container found by URL port (any engine); spec label from the engine (vLLM log head, SGLang server info)"
 
 echo "test-concurrency-probe: ok"

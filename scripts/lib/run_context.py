@@ -177,7 +177,9 @@ def visible_gpu_selectors(inspect: dict) -> list[str] | None:
     base: list[str] | None = None
     for req in (inspect.get("HostConfig") or {}).get("DeviceRequests") or []:
         if req.get("DeviceIDs"):
-            base = [str(x) for x in req["DeviceIDs"]]
+            # Compose `device_ids: ["${ESTATE_GPUS}"]` with ESTATE_GPUS=0,1 reaches docker as ONE
+            # entry, "0,1" (#1537: the SGLang dual composes); split it, or nothing matches.
+            base = [v.strip() for x in req["DeviceIDs"] for v in str(x).split(",") if v.strip()]
     env = {}
     for entry in (inspect.get("Config") or {}).get("Env") or []:
         key, sep, value = entry.partition("=")

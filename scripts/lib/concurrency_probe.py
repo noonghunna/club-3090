@@ -343,6 +343,117 @@ def engine_stats(container):
     return (run, wait, run_max, wait_max, hit)
 
 
+# ── which container, and is a drafter on (#1537) ──────────────────────────────
+# The card's container and spec label used to come from a name heuristic (`vllm-(qwen|gemma)`) and
+# a grep of the container's Cmd. Both lied on #1537: an SGLang container was never found (card
+# listed every GPU on the host, spec "?"), and a vLLM compose that builds --speculative-config in
+# its entrypoint script from SPEC_N read "spec off" with MTP n=4 running. These read the truth:
+# the container publishing the probed URL's port, and the drafter the ENGINE says it loaded.
+def container_for_url(url, ps_lines=None):
+    """Name of the running container publishing ``url``'s host port, else ""."""
+    m = re.match(r"^[a-z]+://[^/:]+:(\d+)", url or "")
+    if not m:
+        return ""
+    port = m.group(1)
+    if ps_lines is None:
+        try:
+            out = subprocess.run(["docker", "ps", "--format", "{{.Names}}|{{.Ports}}"],
+                                 capture_output=True, text=True, encoding="utf-8", timeout=10)
+            ps_lines = out.stdout.splitlines()
+        except Exception:
+            return ""
+    pat = re.compile(r":" + port + r"->")
+    for line in ps_lines:
+        name, _, ports = line.partition("|")
+        if name and pat.search(ports):
+            return name.strip()
+    return ""
+
+
+def _docker_logs_head(container, max_lines=6000):
+    """The first ``max_lines`` lines of the container's log. The boot config lives there, and on
+    a container that has served for a while a --tail window has long scrolled past it."""
+    try:
+        proc = subprocess.Popen(["docker", "logs", container], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                                errors="replace")
+    except Exception:
+        return ""
+    lines = []
+    try:
+        for line in proc.stdout:
+            lines.append(line)
+            if len(lines) >= max_lines:
+                break
+    finally:
+        proc.kill()
+        proc.wait()
+    return "".join(lines)
+
+
+_SPEC_NAMES = {"mtp": "MTP", "dflash": "DFlash", "ngram": "ngram", "ngram_gpu": "ngram",
+               "eagle": "EAGLE", "eagle3": "EAGLE3", "draft_model": "draft model",
+               "nextn": "MTP", "standalone": "draft model"}
+
+
+def spec_label_from_vllm_log(txt):
+    """'MTP n=4' / 'spec off' from vLLM's engine-config line, or None when the log doesn't say.
+    The LAST boot in the log wins (a restarted container keeps its earlier boots' lines)."""
+    found = list(re.finditer(
+        r"speculative_config=(None|SpeculativeConfig\(method='([A-Za-z0-9_]+)'"
+        r"(?:[^)]*?num_spec_tokens=(\d+))?[^)]*\))", txt or ""))
+    if not found:
+        return None
+    m = found[-1]
+    if m.group(1) == "None":
+        return "spec off"
+    name = _SPEC_NAMES.get(m.group(2).lower(), m.group(2))
+    return f"{name} n={m.group(3)}" if m.group(3) else name
+
+
+def spec_label_from_sglang_info(info):
+    """Same, from SGLang's /get_server_info JSON, or None when it carries no spec fields."""
+    if not isinstance(info, dict) or "speculative_algorithm" not in info:
+        return None
+    algo = info.get("speculative_algorithm")
+    if not algo:
+        return "spec off"
+    a = str(algo).lower()
+    draft = info.get("speculative_draft_model_path")
+    if a == "eagle" and (not draft or draft == info.get("model_path")):
+        a = "mtp"   # EAGLE over the target's own checkpoint = its in-checkpoint MTP head
+    name = _SPEC_NAMES.get(a, str(algo))
+    steps = info.get("speculative_num_steps")
+    return f"{name} n={steps}" if isinstance(steps, int) and steps > 0 and name != "DFlash" else name
+
+
+def _sglang_info(url):
+    for path in ("/get_server_info", "/server_info"):
+        try:
+            with urllib.request.urlopen(url.rstrip("/") + path, timeout=5) as r:
+                info = json.loads(r.read().decode("utf-8", "replace"))
+            if isinstance(info, dict):
+                return info
+        except Exception:
+            continue
+    return None
+
+
+def spec_label(container, url):
+    """What the engine says it is running, or "" when it can't be read (the caller then falls
+    back to the container's flags)."""
+    if url:
+        info = _sglang_info(url)
+        lab = spec_label_from_sglang_info(info) if info else None
+        if lab:
+            return lab
+    if container:
+        lab = spec_label_from_vllm_log(_docker_logs_head(container))
+        if lab:
+            return lab
+    return ""
+
+
 # ── which GPUs the numbers cover (#1502) ──────────────────────────────────────
 # VRAM and the GPU label belong to the container under test, not to the machine. Summed rig-wide, a
 # neighbouring service's memory decided the leak gate (vram_ok) and a 12 GB card reported a 54 GB
@@ -1200,7 +1311,22 @@ def main(argv=None):
     p.add_argument("--detect-kv", action="store_true")
     p.add_argument("--gpu-label", action="store_true",
                    help="'N× <GPU name>' for the GPUs $CONTAINER sees (every GPU when it can't be resolved)")
+    p.add_argument("--container-for-url", action="store_true",
+                   help="name of the running container publishing $URL's port (empty when none)")
+    p.add_argument("--spec-label", action="store_true",
+                   help="drafter the engine at $URL / in $CONTAINER says it runs (empty when unreadable)")
     args = p.parse_args(argv)
+
+    if args.container_for_url:
+        name = container_for_url(_env("URL"))
+        if name:
+            print(name)
+        return 0
+    if args.spec_label:
+        lab = spec_label(_env("CONTAINER"), _env("URL"))
+        if lab:
+            print(lab)
+        return 0
 
     if args.gpu_label:
         print(gpu_label(container_gpus(_env("CONTAINER"))[0]))

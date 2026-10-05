@@ -195,7 +195,10 @@ fi
 MODEL_PINNED="${MODEL:+1}"
 MODEL="${MODEL:-$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || echo qwen3.6-27b)}"
-# best-effort container for VRAM + cmd introspection (name heuristic)
+# Container for VRAM, GPU label and flag introspection: the one publishing URL's port, any
+# engine (#1537: the old `vllm-(qwen|gemma)` name heuristic never found an SGLang container, so
+# its card listed every GPU on the host). The heuristic stays as the last resort.
+CONTAINER="${CONTAINER:-$(URL="$URL" python3 "$PROBE_PY" --container-for-url 2>/dev/null || true)}"
 CONTAINER="${CONTAINER:-$(docker ps --format '{{.Names}}' 2>/dev/null | command grep -m1 -E 'vllm-(qwen|gemma)' || true)}"
 
 _container_cmd() { docker inspect "$CONTAINER" --format '{{join .Config.Cmd " "}}' 2>/dev/null || true; }
@@ -230,13 +233,22 @@ _gpu_fp() {
   CONTAINER="$CONTAINER" python3 "$PROBE_PY" --gpu-label 2>/dev/null || echo "? GPU"
 }
 
+# The drafter the ENGINE reports (vLLM's engine-config log line / SGLang's server info) wins. The
+# container's flags are only the fallback: composes that build --speculative-config in their
+# entrypoint script from SPEC_N have no spec flag in Cmd, so a Cmd grep read "spec off" with MTP
+# n=4 running (#1537). When the entrypoint itself mentions spec flags, "no flag in Cmd" proves
+# nothing, so it says "spec ?" rather than guess "spec off".
 _spec_fp() {
-  local cmd
+  local s cmd ep
+  s="$(CONTAINER="$CONTAINER" URL="$URL" python3 "$PROBE_PY" --spec-label 2>/dev/null || true)"
+  if [[ -n "$s" ]]; then echo "$s"; return; fi
   cmd="$(_container_cmd)"
   if [[ -z "$cmd" ]]; then echo "spec ?"; return; fi
   if printf '%s' "$cmd" | command grep -qiE 'dflash|spec-dflash'; then echo "DFlash"; return; fi
   if printf '%s' "$cmd" | command grep -qiE 'num-speculative|speculative-config|--speculative'; then echo "MTP"; return; fi
   if printf '%s' "$cmd" | command grep -qiE 'ngram'; then echo "ngram"; return; fi
+  ep="$(docker inspect "$CONTAINER" --format '{{join .Config.Entrypoint " "}}' 2>/dev/null || true)"
+  if printf '%s' "$ep" | command grep -qiE 'speculative|dflash|ngram|model-draft'; then echo "spec ?"; return; fi
   echo "spec off"
 }
 
