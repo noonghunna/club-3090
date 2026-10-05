@@ -209,6 +209,7 @@ later is exactly when the awkward facts get dropped.
 | **Env** — non-default vars | `moe-cache cfg` line: the `--moe-cache` cap plus `GGML_CUDA_MOE_CACHE_{RESERVE_MB,ADMIT_AFTER,THROTTLE,MAX_BATCH,STATS}`. The **resulting pool size does not identify the arm** — the census self-limits below the cap — so record the config, not just the census. |
 | **GPU** — VRAM / util | `CAPTURE: VRAM` (idle / peak / post, per device) and `CAPTURE: PCIe` (sm%, memctl%, host cpu%). |
 | **Cache** — hits start → end | `CAPTURE: EXPERT CACHE`, per device, with **marginal** and cumulative rates. |
+| **exl3 arena** — page size under the CPU experts | `CAPTURE: EXL3 EXPERT ARENA` (exl3 CPU-MoE only): huge vs resident GiB in the arena workers, and `verdict=2MiB/4KiB`. A `4KiB` run reads up to ~19% low on decode (#1542), so it is not comparable to a `2MiB` one. |
 | **resource-cost row** (A/B) | pool slots + total MiB per device, straight from the census. |
 | **Interconnect** — the BENCHMARKS Rig cell's field 4 | `=== Interconnect (three layers) ===` footer: **layer 1** driver P2P grant (`topo -p2p` + kernel-module flavor), **layer 2** NCCL use (resolved `NCCL_P2P*`/`NVLINK_MODE`), **layer 3** engine custom-AR. Read it off the artifact instead of transcribing it from a different run's `report.sh` — that is how the cell went stale. |
 

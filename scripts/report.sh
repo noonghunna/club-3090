@@ -1080,6 +1080,19 @@ else
     image_source=$(docker inspect "$CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' 2>/dev/null)
     echo "- **Name:** \`$CONTAINER\`"
     echo "- **Engine:** \`${ENGINE_KIND}\`"
+    # #1542: on exl3 CPU-MoE, whether the experts sit on 2 MiB pages is ~19% of decode, and the
+    # THP lines under "CPU + RAM" can't tell (system AnonHugePages is the parent's heap; the
+    # default arena is anonymous, not Shmem). Read the arena's own workers instead.
+    if [[ "$ENGINE_KIND" == "exllamav3" ]]; then
+      # shellcheck source=lib/exl3-arena.sh
+      . "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/lib/exl3-arena.sh" 2>/dev/null || true
+      if declare -F exl3_arena_state >/dev/null 2>&1; then
+        _arena="$(exl3_arena_state "$CONTAINER" || true)"
+        if [[ -n "$_arena" && "$_arena" != *verdict=none* ]]; then
+          echo "- **exl3 expert arena:** \`${_arena}\` — $(exl3_arena_explain "$_arena")"
+        fi
+      fi
+    fi
     echo "- **Status:** ${status:-unknown}"
     echo "- **Ports:** ${ports:-unknown}"
     echo "- **Image:** \`${image:-unknown}\`"

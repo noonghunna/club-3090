@@ -30,6 +30,15 @@
 #              VALUE, not the prose — two comments in this file have now
 #              lagged a default that moved.
 #   Genesis:   N/A — not a vLLM engine
+#   Arena:     page size under the CPU experts is ~19% of decode (club-3090#1542). Hosts
+#              with THP enabled=always get 2 MiB pages at load (reference rig: 12.5 of
+#              14.0 GiB, nothing to do). Ubuntu's `madvise` default relies on a one-shot
+#              collapse that can fail silently. Opt-in fix: EXL3_MOE_PINNED_ARENA=1
+#              EXL3_MOE_ARENA_HUGE=2m, after `sudo sysctl vm.nr_hugepages=<pages>`.
+#              Pages = arena GiB × 512; arena ≈ MOE_SPLIT × 49 × 1857 KiB, rounded up to
+#              whole GiB. MEASURED here: split 144 → 13 GiB → 6656 pages. On the
+#              reference rig the default arena is already on 2 MiB, so the opt-in has
+#              nothing to fix there.
 #   Status:    🐣 Incubating
 # CPU-MoE-Experts-Per-Layer: 512
 # CPU-MoE-Layers: 48
@@ -139,6 +148,13 @@ services:
     # scales with cpu_moe_split_experts, so the 4.05 sibling (225 vs 128) needs
     # more than this tier does. Do not trim it to 128m "because 68 fits".
     shm_size: "2gb"
+    # The pinned expert arena (EXL3_MOE_PINNED_ARENA=1, see the entrypoint) is page-locked with
+    # cudaHostRegister, which Docker's default memlock limit refuses. Unlimited is harmless when
+    # the arena is not pinned (the default), so it is set unconditionally.
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     ports:
       # TabbyAPI listens on 5000 inside the container (upstream EXPOSE).
       # ⚠️⚠️ PORT MUST STAY OUTSIDE 8147-8167. scripts/tests/test-bench-capture.sh
@@ -170,6 +186,11 @@ services:
       - SPEC_N
       - SPEC
       - DYNAMIC_DRAFT
+      # Expert-arena page size (club-3090#1542), read by exllamav3 itself, so it is forwarded
+      # here and not used by the entrypoint below (which only reports it). Opt-in; see [arena].
+      - EXL3_MOE_PINNED_ARENA
+      - EXL3_MOE_ARENA_HUGE
+      - EXL3_MOE_ARENA_DEBUG
     deploy:
       resources:
         reservations:
@@ -228,6 +249,33 @@ services:
           echo "[spec] built-in MTP ON (ceiling=$$_spec_n dynamic=$${DYNAMIC_DRAFT:-true})" >&2
         else
           echo "[spec] MTP OFF (SPEC_N=0 / SPEC=off) - flags removed" >&2
+        fi
+
+        # -- Expert arena page size (club-3090#1542) ---------------------------
+        # Whether the CPU-resident experts sit on 2 MiB pages is the largest lever
+        # after threads: a 2x 5090 run measured 62.5 / 83.2 tok/s on 4 KiB pages vs
+        # 74.6 / 88.4 once the SAME container's arena reached 2 MiB pages. exl3's
+        # DEFAULT arena only gets there through a one-shot MADV_COLLAPSE in a
+        # background thread after load: silent when it fails, sometimes 10+ min
+        # late, and never seen to land on 1.5.3. Deterministic, opt-in path:
+        #   sudo sysctl vm.nr_hugepages=<pages>   (host; see the header for the size)
+        #   EXL3_MOE_PINNED_ARENA=1 EXL3_MOE_ARENA_HUGE=2m bash scripts/switch.sh <slug>
+        # Too few free pages and exl3 refuses to load, with a message that names
+        # vm.nr_hugepages. EXL3_MOE_ARENA_DEBUG=1 logs the default path's collapse.
+        if [ "$${EXL3_MOE_PINNED_ARENA:-0}" != "0" ]; then
+          case "$${EXL3_MOE_ARENA_HUGE:-}" in
+            2m|1g)
+              _hp=/sys/kernel/mm/hugepages/hugepages-2048kB
+              [ "$${EXL3_MOE_ARENA_HUGE}" = 1g ] && _hp=/sys/kernel/mm/hugepages/hugepages-1048576kB
+              echo "[arena] pinned, hugetlbfs $${EXL3_MOE_ARENA_HUGE}: host has $$(cat $$_hp/free_hugepages 2>/dev/null || echo ?) of $$(cat $$_hp/nr_hugepages 2>/dev/null || echo ?) pages free" >&2 ;;
+            "")
+              echo "[arena] pinned memfd, no hugetlbfs: 2 MiB pages only if the host's shmem_enabled allows ($$(cat /sys/kernel/mm/transparent_hugepage/shmem_enabled 2>/dev/null || echo ?)); add EXL3_MOE_ARENA_HUGE=2m for certainty" >&2 ;;
+            *)
+              echo "[arena] EXL3_MOE_ARENA_HUGE='$${EXL3_MOE_ARENA_HUGE}' must be 2m or 1g" >&2
+              exit 64 ;;
+          esac
+        else
+          echo "[arena] default (unpinned): 2 MiB pages depend on a one-shot collapse after load; EXL3_MOE_PINNED_ARENA=1 EXL3_MOE_ARENA_HUGE=2m makes it deterministic" >&2
         fi
 
         exec python3 main.py \

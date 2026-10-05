@@ -110,6 +110,17 @@ counter is how we nearly recorded a false "hugepages don't help".
 for agentic/short-turn workloads and is irrelevant to a tok/s ranking. It is worth setting before a
 sweep mainly so your numbers are comparable to someone else's.
 
+⚠️ **ExLlamaV3 is the exception: there the page size IS throughput** ([#1542](https://github.com/noonghunna/club-3090/issues/1542)).
+exl3 keeps CPU experts in its own arena of **anonymous** memory, not CUDA-pinned Shmem, so the coverage
+check above doesn't see it. A community 2× 5090 run measured 62.5 / 83.2 tok/s decode on 4 KiB pages vs
+74.6 / 88.4 once the same container's arena reached 2 MiB pages. With `enabled=always` the arena gets
+2 MiB pages at load (reference rig: 12.5 of 14.0 GiB, nothing to do). On Ubuntu's `madvise` default it
+depends on a one-shot background collapse after load that can fail silently. `report.sh` prints the
+arena's own state (`exl3 expert arena`), and `bench.sh` prints it as `CAPTURE: EXL3 EXPERT ARENA`. To
+make it deterministic, use the opt-in pinned arena on hugetlbfs described in the exl3 compose headers
+(`EXL3_MOE_PINNED_ARENA=1 EXL3_MOE_ARENA_HUGE=2m` plus `vm.nr_hugepages`). Don't chase it with
+aggressive khugepaged scanning instead: #1542 measured −16% decode while serving that way.
+
 ### 3c. Repeat before you rank
 
 On the reference rig, **within a boot** the per-request decode rate is essentially noise-free (0.9% spread across four requests). **Between boots at identical config it is low single digits** — three consecutive boots of the same arm landed within 0.5% of each other (37.24 / 37.09 / 37.26 tok/s).

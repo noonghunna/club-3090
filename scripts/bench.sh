@@ -1707,6 +1707,26 @@ print(f"{sum(xs)/len(xs):.2f}" if xs else "")
     fi
   fi
 
+  # ---- exl3 expert arena page size (#1542) ----------------------------------
+  # On exl3 CPU-MoE, 2 MiB vs 4 KiB pages under the CPU-resident experts is ~19% of decode,
+  # and the default arena reaches 2 MiB only through a one-shot collapse that can fail
+  # silently, so a run on 4 KiB pages reads like an engine regression. Say which this was.
+  if [[ "$CAP_ARGV" == *--cpu-moe-split-experts* ]]; then
+    echo ""
+    echo "========== CAPTURE: EXL3 EXPERT ARENA =========="
+    # shellcheck source=lib/exl3-arena.sh
+    . "${ROOT_DIR}/scripts/lib/exl3-arena.sh" 2>/dev/null || true
+    _arena=""
+    declare -F exl3_arena_state >/dev/null 2>&1 && _arena="$(exl3_arena_state "$CONTAINER" || true)"
+    if [[ -n "$_arena" ]]; then
+      echo "  ${_arena}"
+      echo "  $(exl3_arena_explain "$_arena")"
+      [[ "$_arena" == *verdict=4KiB* ]] && echo "  ⚠ WARN: this run's decode numbers are not comparable to a 2 MiB run."
+    else
+      echo "  unavailable: could not read the arena workers in container '${CONTAINER}'"
+    fi
+  fi
+
   # ---- moe-cache: GATED on CPU-offload detection (item 3) ------------------
   echo ""
   echo "========== CAPTURE: EXPERT CACHE (moe-cache) =========="
