@@ -96,18 +96,28 @@ def fmt_ttft(seconds):
 
 
 def parse_kv_tokens_text(txt):
-    """vLLM boot: 'GPU KV cache size: 210,000 tokens' (optional leading ~)."""
+    """KV pool size from a boot log: vLLM 'GPU KV cache size: 210,000 tokens' (optional
+    leading ~) or SGLang 'max_total_num_tokens=547147'. The last boot in the log wins."""
     if not txt:
         return None
-    matches = list(
-        re.finditer(r"GPU KV cache size:\s*~?([\d,]+)\s*tokens", txt, re.I)
-    )
+    matches = list(re.finditer(
+        r"GPU KV cache size:\s*~?([\d,]+)\s*tokens|max_total_num_tokens=(\d+)", txt, re.I))
     if not matches:
         return None
-    return int(matches[-1].group(1).replace(",", ""))
+    m = matches[-1]
+    return int((m.group(1) or m.group(2)).replace(",", ""))
 
 
-def detect_kv_tokens(container):
+def detect_kv_tokens(container, url=""):
+    """KV pool in tokens. SGLang reports it on its server info. Otherwise it's the boot log:
+    the tail first (the latest boot of a restarted container), then the head (#1537: on a
+    container that has served for a while the boot line has scrolled out of a --tail window,
+    and the card read "KV ?")."""
+    if url:
+        info = _sglang_info(url)
+        tok = (info or {}).get("max_total_num_tokens")
+        if isinstance(tok, int) and tok > 0:
+            return tok
     if not container:
         return None
     try:
@@ -121,8 +131,8 @@ def detect_kv_tokens(container):
         )
         txt = (out.stdout or "") + (out.stderr or "")
     except Exception:
-        return None
-    return parse_kv_tokens_text(txt)
+        txt = ""
+    return parse_kv_tokens_text(txt) or parse_kv_tokens_text(_docker_logs_head(container))
 
 
 def plan_matrix(
@@ -1217,20 +1227,24 @@ def format_recommend(rec):
     slug = rec.get("slug") or "<slug>"
     engine = (rec.get("engine") or "").lower()
     lines = ["=== recommend ==="]
+    # The compose env knobs: SGLang composes take MAX_RUNNING_REQUESTS / CONTEXT_LENGTH, and
+    # ignore MAX_NUM_SEQS / MAX_MODEL_LEN (#1537's card told an SGLang user to set MAX_NUM_SEQS).
+    seq_knob, ctx_knob = (("MAX_RUNNING_REQUESTS", "CONTEXT_LENGTH") if engine == "sglang"
+                          else ("MAX_NUM_SEQS", "MAX_MODEL_LEN"))
 
     def knobs(n, ctx_keep, ctx_set=None):
-        launch = [f"MAX_NUM_SEQS={n}"]
+        launch = [f"{seq_knob}={n}"]
         if ctx_set is not None:
-            launch.append(f"MAX_MODEL_LEN={ctx_set}")
+            launch.append(f"{ctx_knob}={ctx_set}")
         launch.append(f"bash scripts/switch.sh {slug}")
         out = [
-            f"    MAX_NUM_SEQS={n}",
+            f"    {seq_knob}={n}",
         ]
         if ctx_set is not None:
-            out.append(f"    MAX_MODEL_LEN={ctx_set}")
+            out.append(f"    {ctx_knob}={ctx_set}")
         else:
             keep = fmt_ctx(ctx_keep) if ctx_keep else "compose default"
-            out.append(f"    MAX_MODEL_LEN=<keep {keep}>")
+            out.append(f"    {ctx_knob}=<keep {keep}>")
         out.append(f"    {' '.join(launch)}")
         if engine in ("llamacpp", "llama.cpp", "ik_llama", "ik-llama"):
             c = ctx_set if ctx_set is not None else ctx_keep
@@ -1265,7 +1279,7 @@ def format_recommend(rec):
             lines.extend(knobs(peak["n"], served, ctx_set=peak["ctx"]))
             if served and peak["ctx"] < served:
                 lines.append(
-                    f"    do not drop MAX_MODEL_LEN unless traffic stays near {fmt_ctx(peak['ctx'])} — "
+                    f"    do not drop {ctx_knob} unless traffic stays near {fmt_ctx(peak['ctx'])} — "
                     f"raising slots to {peak['n']} at {served_s} will not reproduce {peak['agg']:.0f} tok/s"
                 )
         elif engine.startswith("vllm") or engine == "":
@@ -1332,7 +1346,7 @@ def main(argv=None):
         print(gpu_label(container_gpus(_env("CONTAINER"))[0]))
         return 0
     if args.detect_kv:
-        tok = detect_kv_tokens(_env("CONTAINER"))
+        tok = detect_kv_tokens(_env("CONTAINER"), _env("URL"))
         if tok:
             print(tok)
         return 0

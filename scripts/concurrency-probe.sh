@@ -413,11 +413,13 @@ if [[ "$MATRIX" == "1" ]]; then
   slots_src="undetected"
   if [[ -n "$(_served_seqs || true)" ]]; then slots_src="container max-num-seqs"
   elif [[ -n "$(_served_np || true)" ]]; then slots_src="container -np"
+  elif [[ -n "$(_served_max_running || true)" ]]; then slots_src="container max-running-requests"
+  elif [[ -n "$(_sgl_max_running || true)" ]]; then slots_src="server max_running_requests"
   elif [[ -n "$(_props_slots || true)" ]]; then slots_src="server /props total_slots"
   fi
   max_len="$(_served_ctx || true)"
   if [[ -z "$KV_TOKENS" || "$KV_TOKENS" == "0" ]]; then
-    KV_TOKENS="$(CONTAINER="$CONTAINER" python3 "$PROBE_PY" --detect-kv || true)"
+    KV_TOKENS="$(CONTAINER="$CONTAINER" URL="$URL" python3 "$PROBE_PY" --detect-kv || true)"
   fi
 
   if [[ "$SWEEP_DRY" != "1" && -z "$slots" && "$N_LIST_EXPLICIT" != "1" ]]; then
@@ -569,6 +571,7 @@ PY
   rec_json="$(mktemp /tmp/cprobe-rec.XXXXXX)"
   if [[ "$slots_src" == "container -np" ]]; then engine="llamacpp"
   elif [[ "$slots_src" == "container max-num-seqs" ]]; then engine="vllm"
+  elif [[ "$slots_src" == "container max-running-requests" || "$slots_src" == "server max_running_requests" ]]; then engine="sglang"
   else engine=""
   fi
   MODEL="$MODEL" SLUG="${SLUG:-}" SPEC="$(_spec_fp)" GPUS="$(_gpu_fp)" \

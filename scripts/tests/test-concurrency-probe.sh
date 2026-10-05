@@ -336,4 +336,79 @@ command grep -qF -- '--spec-label' "$PROBE" || fail "concurrency-probe.sh's _spe
 rm -rf "$SPEC_STUB"
 echo "  ✓ container found by URL port (any engine); spec label from the engine (vLLM log head, SGLang server info)"
 
+# #1537 follow-up: the KV pool, the slot count's source and the recommendation's knob names.
+# xtj7's cards read "KV ?" on both engines, the SGLang sweep header said "slots=4 (undetected)"
+# with the count right, and the SGLang recommendation said MAX_NUM_SEQS (a vLLM knob).
+got="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import concurrency_probe as c; print(c.parse_kv_tokens_text("[2026-10-05] max_total_num_tokens=1059144, chunked_prefill_size=2048"))' "$ROOT_DIR/scripts/lib")"
+[[ "$got" == "1059144" ]] || fail "SGLang's max_total_num_tokens boot line should parse as the KV pool: got '$got'"
+
+KV_STUB="$(mktemp -d)"
+cat > "$KV_STUB/docker" <<'DOCK'
+#!/usr/bin/env bash
+case "$1" in
+  logs)
+    if [ "$2" = "--tail" ]; then
+      # The --tail window holds only traffic: the boot line has scrolled out of it.
+      for i in $(seq 1 50); do echo "INFO Engine 000: Running: 1 reqs, Waiting: 0 reqs"; done
+    else
+      echo "INFO [kv_cache_utils.py] GPU KV cache size: 1,019,004 tokens, Maximum concurrency for 262,144 tokens per request: 3.89x"
+      for i in $(seq 1 3000); do echo "INFO Engine 000: Running: 1 reqs, Waiting: 0 reqs"; done
+    fi ;;
+  *) exit 0 ;;
+esac
+DOCK
+chmod +x "$KV_STUB/docker"
+got="$(PATH="$KV_STUB:$PATH" CONTAINER=vllm-long-running URL=http://127.0.0.1:9 python3 "$LIB" --detect-kv)"
+[[ "$got" == "1019004" ]] || fail "--detect-kv must fall back to the log head when the boot line left the --tail window: got '$got'"
+
+# SGLang: KV and the slot source both come from /get_server_info. Drive the real script (dry sweep)
+# against a local stand-in, so the header line users see is what's asserted.
+SGL2_PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
+python3 -c '
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+INFO = {"model_path": "/m", "max_running_requests": 4, "max_total_num_tokens": 547147,
+        "speculative_algorithm": None}
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        ok = self.path == "/get_server_info"
+        self.send_response(200 if ok else 404)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(INFO if ok else {}).encode())
+    def log_message(self, *a):
+        pass
+HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+' "$SGL2_PORT" &
+SGL2_PID=$!
+for _ in $(seq 1 50); do curl -s -m 1 "http://127.0.0.1:$SGL2_PORT/get_server_info" >/dev/null 2>&1 && break; sleep 0.1; done
+got_kv="$(PATH="$KV_STUB:$PATH" CONTAINER= URL="http://127.0.0.1:$SGL2_PORT" python3 "$LIB" --detect-kv)"
+hdr="$(URL="http://127.0.0.1:$SGL2_PORT" N_LIST="1 2 4" CTX_SWEEP="1k" SWEEP_DRY=1 bash "$PROBE" --sweep 2>&1 | head -1)"
+kill "$SGL2_PID" 2>/dev/null || true
+wait "$SGL2_PID" 2>/dev/null || true
+rm -rf "$KV_STUB"
+[[ "$got_kv" == "547147" ]] || fail "--detect-kv from SGLang's server info: got '$got_kv', want 547147"
+[[ "$hdr" == *"slots=4 (server max_running_requests)"* ]] || fail "sweep header should name the slot source: got '$hdr'"
+[[ "$hdr" == *"KV=547147"* ]] || fail "sweep header should carry SGLang's KV pool: got '$hdr'"
+
+card_sgl="$(python3 "$LIB" --card <<'JSON'
+{
+  "model": "qwen3.8-27b", "slug": "sgl/qwen38-27b-single-fast", "spec": "MTP n=4",
+  "gpus": "1× CMP 170HX", "kv_tokens": 1059144, "slots": 4, "served_max_len": null,
+  "engine": "sglang", "gen_tokens": 256, "cache": "shared 75%",
+  "command": "bash scripts/concurrency-probe.sh --sweep",
+  "rows": [
+    {"ctx": 1024, "n": 1, "strm": 94.1, "agg": 92, "ttft_s": 0.1, "vram_gb": 58.2, "clean": 1, "pass": 1, "skip": null},
+    {"ctx": 1024, "n": 4, "strm": 85.0, "agg": 314, "ttft_s": 0.2, "vram_gb": 58.4, "clean": 1, "pass": 1, "skip": null},
+    {"ctx": 16384, "n": 1, "strm": 84.0, "agg": 81, "ttft_s": 0.1, "vram_gb": 58.4, "clean": 1, "pass": 1, "skip": null},
+    {"ctx": 16384, "n": 4, "strm": 69.7, "agg": 261, "ttft_s": 0.2, "vram_gb": 58.4, "clean": 1, "pass": 1, "skip": null}
+  ]
+}
+JSON
+)"
+command grep -q "MAX_RUNNING_REQUESTS=4" <<<"$card_sgl" || fail "an SGLang recommendation should use MAX_RUNNING_REQUESTS"
+command grep -q "CONTEXT_LENGTH=" <<<"$card_sgl" || fail "an SGLang recommendation should use CONTEXT_LENGTH"
+command grep -q "MAX_NUM_SEQS\|MAX_MODEL_LEN" <<<"$card_sgl" && fail "an SGLang recommendation must not name vLLM's knobs"
+echo "  ✓ KV pool (SGLang server info; vLLM log head past the --tail window), slot source, SGLang knob names"
+
 echo "test-concurrency-probe: ok"
