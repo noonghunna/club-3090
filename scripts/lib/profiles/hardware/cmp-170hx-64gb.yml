@@ -11,13 +11,20 @@
 #   serves at TP=1 on the CMP alone, with their own config (Vishva007 W4A16 GPTQ +
 #   DFlash2 drafter, fp8_e4m3 KV, 262K ctx, mem-fraction 0.85): 510,075-token KV pool,
 #   decode 58-106 tok/s at ~142K tokens of context, board power-capped to 175 W of 250.
-# Still UNMEASURED: vLLM on it, and club-3090's own recipes.
+# Measured by the same user (club-3090#1537, 2026-10-05, stock 250 W, driver 610.57.04):
+#   club-3090's vllm/qwen38-27b-single-fast (vLLM v0.30.0) and sgl/qwen38-27b-single-fast
+#   (SGLang v0.5.21) boot their full tier (W4A8, MTP n=4, vision, 262K) and pass the whole
+#   report.sh chain. vLLM: 84 / 114 tok/s narrative / code, 2,606 tok/s prefill at 10K.
+#   SGLang: 79 / 107, 2,011. Both fill 240,662 tokens. The firmware compute limits mining
+#   boards are reported to have did not stop either recipe.
 #
 # What follows from the measurements:
 #   - Use it as a single card. On a Gen 2 x4 link, splitting a model across cards
 #     (TP) or offloading experts to the CPU is link-bound, and a TP group with 24 GB
 #     cards caps every card at 24 GB, wasting the 64.
-#   - Model loads are slow over that link; decode then runs from VRAM.
+#   - Model loads are slow over that link; decode then runs from VRAM (vLLM decode drew
+#     36 MB/s over it). Open: SGLang decode drew ~1.1 GB/s host->GPU, near the link's
+#     limit, with no host cache tier configured; the cause is unknown.
 #   - VRAM differs between boards: the detector maps a CMP 170HX here only at >= 60 GB,
 #     and a smaller one gets no profile rather than an inflated one.
 #   - No NVLink. The board reports a 250 W default and max power limit (#1537); no
@@ -47,8 +54,8 @@ kv_format_default:
 cudagraph: full
 driver_pin_recommended:
   min: "580.0"
-  notes: "CUDA 13 vLLM images require a 580.x-class NVIDIA driver; CMP support in that driver line is unverified."
+  notes: "CUDA 13 vLLM images require a 580.x-class NVIDIA driver. Verified on 610.57.04 with the CUDA 13.0 vLLM v0.30.0 and SGLang v0.5.21 images (club-3090#1537, 2026-10-05)."
 nvlink_capable: false
 power_cap_w_optimal: null
 power_cap_w_max: null
-notes: "COMMUNITY-VALIDATED: GA100 (sm_8.0) mining board, 64 GB, PCIe Gen 2 x4 (nvidia-smi from xtj7, 2026-10-02); not booted on the reference rig. Use it as a single card. SGLang boots and serves on it at TP=1 (xtj7's own config, club-3090#1537); vLLM and club-3090's recipes are unmeasured — send a report.sh run to promote."
+notes: "COMMUNITY-VALIDATED: GA100 (sm_8.0) mining board, 64 GB, PCIe Gen 2 x4 (nvidia-smi from xtj7, 2026-10-02); not booted on the reference rig. Use it as a single card. club-3090's single-fast recipes run their full tier on it (vLLM v0.30.0 and SGLang v0.5.21, full report.sh chain PASS, club-3090#1537, 2026-10-05); vLLM was the faster engine there."
