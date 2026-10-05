@@ -449,6 +449,32 @@ def _sglang_info(url):
     return None
 
 
+def served_max_len(url, container=""):
+    """The context one request may use, as the ENGINE reports it: SGLang's server-info
+    context_length, vLLM's /v1/models max_model_len, else vLLM's max_seq_len boot line. None
+    when none of them answers (the caller falls back to the container's flags). #1537: a Cmd
+    grep for `max-model-len N` read "?" for vLLM auto-fit (`--max-model-len -1`) and for every
+    SGLang compose (`--context-length`, set from CONTEXT_LENGTH in the entrypoint)."""
+    if url:
+        info = _sglang_info(url)
+        v = (info or {}).get("context_length")
+        if isinstance(v, int) and v > 0:
+            return v
+        try:
+            with urllib.request.urlopen(url.rstrip("/") + "/v1/models", timeout=5) as r:
+                data = json.loads(r.read().decode("utf-8", "replace")).get("data") or []
+            v = (data[0] or {}).get("max_model_len") if data else None
+            if isinstance(v, int) and v > 0:
+                return v
+        except Exception:
+            pass
+    if container:
+        found = list(re.finditer(r"max_seq_len=(\d+)", _docker_logs_head(container)))
+        if found:
+            return int(found[-1].group(1))
+    return None
+
+
 def spec_label(container, url):
     """What the engine says it is running, or "" when it can't be read (the caller then falls
     back to the container's flags)."""
@@ -1261,7 +1287,8 @@ def format_recommend(rec):
         )
 
     served_s = fmt_ctx(served) if served else "compose default"
-    lines.append(f"  served max-model-len={served_s} (usually keep this)")
+    ctx_word = "context length" if engine == "sglang" else "max-model-len"
+    lines.append(f"  served {ctx_word}={served_s} (usually keep this)")
     lines.append("")
 
     if full:
@@ -1327,6 +1354,8 @@ def main(argv=None):
                    help="'N× <GPU name>' for the GPUs $CONTAINER sees (every GPU when it can't be resolved)")
     p.add_argument("--container-for-url", action="store_true",
                    help="name of the running container publishing $URL's port (empty when none)")
+    p.add_argument("--served-max-len", action="store_true",
+                   help="context length the engine at $URL / in $CONTAINER serves (empty when unreadable)")
     p.add_argument("--spec-label", action="store_true",
                    help="drafter the engine at $URL / in $CONTAINER says it runs (empty when unreadable)")
     args = p.parse_args(argv)
@@ -1335,6 +1364,11 @@ def main(argv=None):
         name = container_for_url(_env("URL"))
         if name:
             print(name)
+        return 0
+    if args.served_max_len:
+        n = served_max_len(_env("URL"), _env("CONTAINER"))
+        if n:
+            print(n)
         return 0
     if args.spec_label:
         lab = spec_label(_env("CONTAINER"), _env("URL"))

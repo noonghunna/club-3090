@@ -408,7 +408,63 @@ JSON
 )"
 command grep -q "MAX_RUNNING_REQUESTS=4" <<<"$card_sgl" || fail "an SGLang recommendation should use MAX_RUNNING_REQUESTS"
 command grep -q "CONTEXT_LENGTH=" <<<"$card_sgl" || fail "an SGLang recommendation should use CONTEXT_LENGTH"
-command grep -q "MAX_NUM_SEQS\|MAX_MODEL_LEN" <<<"$card_sgl" && fail "an SGLang recommendation must not name vLLM's knobs"
+command grep -q "MAX_NUM_SEQS\|MAX_MODEL_LEN\|max-model-len" <<<"$card_sgl" && fail "an SGLang recommendation must not name vLLM's knobs"
 echo "  ✓ KV pool (SGLang server info; vLLM log head past the --tail window), slot source, SGLang knob names"
+
+# #1537 follow-up: the served context ("max-len"). A grep of the container's flags for
+# `max-model-len N` read "?" for vLLM auto-fit (`--max-model-len -1`) and for every SGLang compose
+# (`--context-length`, set in the entrypoint); it feeds the header, the planner's ctx clip and
+# VALIDATE's default fill. The engine's own number wins now.
+ENGINE_STUB_PY='
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+mode, port = sys.argv[1], int(sys.argv[2])
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if mode == "vllm" and self.path == "/v1/models":
+            code, body = 200, {"object": "list", "data": [{"id": "qwen3.8-27b", "max_model_len": 262144}]}
+        elif mode == "sglang" and self.path == "/get_server_info":
+            code, body = 200, {"model_path": "/m", "context_length": 32768, "max_running_requests": 1}
+        else:
+            code, body = 404, {"detail": "Not Found"}
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(body).encode())
+    def log_message(self, *a):
+        pass
+HTTPServer(("127.0.0.1", port), H).serve_forever()
+'
+free_port() { python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'; }
+wait_up() { for _ in $(seq 1 50); do curl -s -m 1 "http://127.0.0.1:$1/" >/dev/null 2>&1 && return 0; sleep 0.1; done; }
+
+VPORT="$(free_port)"; python3 -c "$ENGINE_STUB_PY" vllm "$VPORT" & VPID=$!
+SPORT="$(free_port)"; python3 -c "$ENGINE_STUB_PY" sglang "$SPORT" & SPID=$!
+wait_up "$VPORT"; wait_up "$SPORT"
+got_v="$(URL="http://127.0.0.1:$VPORT" CONTAINER= python3 "$LIB" --served-max-len)"
+got_s="$(URL="http://127.0.0.1:$SPORT" CONTAINER= python3 "$LIB" --served-max-len)"
+hdr_v="$(URL="http://127.0.0.1:$VPORT" N_LIST="1 2" CTX_SWEEP="1k" SWEEP_DRY=1 bash "$PROBE" --sweep 2>&1 | head -1)"
+hdr_s="$(URL="http://127.0.0.1:$SPORT" N_LIST="1" CTX_SWEEP="1k" SWEEP_DRY=1 bash "$PROBE" --sweep 2>&1 | head -1)"
+kill "$VPID" "$SPID" 2>/dev/null || true
+wait "$VPID" "$SPID" 2>/dev/null || true
+[[ "$got_v" == "262144" ]] || fail "--served-max-len from vLLM's /v1/models max_model_len: got '$got_v', want 262144"
+[[ "$got_s" == "32768" ]] || fail "--served-max-len from SGLang's context_length: got '$got_s', want 32768"
+[[ "$hdr_v" == *"max-len=262144"* ]] || fail "sweep header should carry vLLM's served context: got '$hdr_v'"
+[[ "$hdr_s" == *"max-len=32768"* ]] || fail "sweep header should carry SGLang's served context: got '$hdr_s'"
+
+CTX_STUB="$(mktemp -d)"
+cat > "$CTX_STUB/docker" <<'DOCK'
+#!/usr/bin/env bash
+if [ "$1" = logs ]; then
+  echo "INFO Initializing a V1 LLM engine (v0.30.0) with config: model='/m', max_seq_len=81920, speculative_config=None"
+  for i in $(seq 1 3000); do echo "INFO Engine 000: Running: 1 reqs, Waiting: 0 reqs"; done
+fi
+exit 0
+DOCK
+chmod +x "$CTX_STUB/docker"
+got="$(PATH="$CTX_STUB:$PATH" CONTAINER=vllm-x URL=http://127.0.0.1:9 python3 "$LIB" --served-max-len)"
+rm -rf "$CTX_STUB"
+[[ "$got" == "81920" ]] || fail "--served-max-len should fall back to vLLM's max_seq_len boot line: got '$got'"
+echo "  ✓ served context from the engine (vLLM /v1/models, SGLang context_length, vLLM boot line)"
 
 echo "test-concurrency-probe: ok"

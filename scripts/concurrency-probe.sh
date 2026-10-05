@@ -31,7 +31,7 @@
 #   max-num-seqs, else 2) · ROUNDS (5; --sweep defaults to 3) ·
 #   PROMPT_TOKENS (16000) · GEN_TOKENS (256) ·
 #   VRAM_GROWTH_MB (200) · REQ_TIMEOUT (600).
-#   Validation knobs: VALIDATE (0) · TARGET_CTX (auto from --max-model-len) ·
+#   Validation knobs: VALIDATE (0) · TARGET_CTX (auto: the served context length) ·
 #   TPS_FLOOR (0 = report-only) · RETENTION_MIN (0.98) ·
 #   SWEEP ("" = single-N) · SLUG (required for SWEEP) · SWEEP_DRY (0) ·
 #   BOOT_TIMEOUT (360).
@@ -204,7 +204,15 @@ CONTAINER="${CONTAINER:-$(docker ps --format '{{.Names}}' 2>/dev/null | command 
 _container_cmd() { docker inspect "$CONTAINER" --format '{{join .Config.Cmd " "}}' 2>/dev/null || true; }
 _served_seqs()   { _container_cmd | command grep -oE 'max-num-seqs [0-9]+'  | command grep -oE '[0-9]+' | head -1; }
 _served_np()     { _container_cmd | command grep -oE '\-np +[0-9]+'         | command grep -oE '[0-9]+' | head -1; }
-_served_ctx()    { _container_cmd | command grep -oE 'max-model-len [0-9]+' | command grep -oE '[0-9]+' | head -1; }
+# The served context: what the ENGINE reports first (SGLang server info, vLLM /v1/models, vLLM's
+# boot line), the container's literal --max-model-len only as the fallback. #1537: the flag grep
+# read "?" for vLLM auto-fit (--max-model-len -1) and for every SGLang compose.
+_served_ctx()    {
+  local n
+  n="$(URL="$URL" CONTAINER="$CONTAINER" python3 "$PROBE_PY" --served-max-len 2>/dev/null || true)"
+  if [[ -n "$n" ]]; then echo "$n"; return; fi
+  _container_cmd | command grep -oE 'max-model-len [0-9]+' | command grep -oE '[0-9]+' | head -1
+}
 # SGLang names the same knob --max-running-requests. Without this the detector fell
 # through vLLM's --max-num-seqs, llama.cpp's -np and /props (none of which SGLang has)
 # and hit the #818 FATAL — so concurrency-probe could not run against ANY sgl/ slug.
