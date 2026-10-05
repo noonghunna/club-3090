@@ -9,7 +9,8 @@
 #   Drafter:   native MTP head, in-checkpoint — n=4 on the full tier; OFF on the lean tier
 #              (24 GB: SGLang's MTP draft does not fit next to the weights)
 #   KV:        fp8_e4m3
-#   Vision:    tower present; measured only on the dual sibling — re-probe here
+#   Vision:    tower present; image input verified on a 64 GB CMP 170HX (verify-full vision
+#              4/4, club-3090#1537)
 #   Max ctx:   262144 on the full tier; 32768 on the lean tier (24 GB). SGLang has no
 #              auto-fit, so the lean tier sets a context its ~35K-token pool can hold.
 #   KV offload: none — the HiCache host tier is probed only on the dual MTP composes
@@ -47,10 +48,16 @@
 #     boot                 ✅ 36,588-token pool, context 32768, ready in 104 s
 #     29,839-token prompt  ✅ 14.0 s (~2,128 tok/s prefill)
 #     verify-full          ✅ all checks passed
-#   The FULL tier is UNMEASURED on any card: it needs more than 24 GB, and the reference rig has
-#   only 3090s. A community 64 GB CMP 170HX serves SGLang v0.5.20 at TP=1 with a different
-#   checkpoint and drafter (club-3090#1537: 510,075-token pool at mem 0.85, 262144 context) —
-#   evidence the card class works, not a number for this recipe.
+#   The FULL tier, MEASURED on a community 64 GB CMP 170HX (club-3090#1537, 2026-10-05, stock
+#   250 W, one boot, SGLang v0.5.21). The reference rig has only 3090s, which can't boot it:
+#     context 262144 · KV pool 1,059,144 tokens · 2 running requests · 59,563 MiB
+#     decode narr / code 78.6 / 107.2 tok/s · prefill 10K / 90K 2,011 / 1,397 tok/s
+#     decode at 90K depth 100 tok/s · MTP acceptance length 3.20
+#     verify-full ✅ (vision 4/4) · verify-stress ✅ (filled to 240,662) · soak PASS · agentic ✅
+#   On the same card vllm/qwen38-27b-single-fast was faster: prefill +18-30%, decode at 90K
+#   depth +17%, and 8 concurrent requests to this recipe's 2. The 2-request cap comes from the
+#   dual recipe (two 24 GB cards); this card's pool holds ~4 full-length requests. Raising it
+#   also needs MAX_MAMBA_CACHE_SIZE raised (each running request locks 3-5 SSM slots): untested.
 #
 # PINNING THE CARD — this slug is 🧪, so it boots with --force, and FORCE=1 also skips the
 #   preflight that would otherwise pick the largest card. device_ids takes ESTATE_GPUS, else

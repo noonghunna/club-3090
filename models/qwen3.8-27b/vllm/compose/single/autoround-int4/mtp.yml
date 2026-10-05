@@ -8,8 +8,9 @@
 #   Drafter:   MTP n=4 built-in on the full tier; OFF on the lean tier (24 GB)
 #              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
 #   KV:        fp8 -> e4m3 (KV_CACHE_DTYPE override)
-#   Vision:    full tier: tower loaded (image input measured only on the dual sibling — re-probe
-#              here). Lean tier: OFF — the tower is never loaded (VISION=on brings it back).
+#   Vision:    full tier: tower loaded; image input verified on a 64 GB CMP 170HX (verify-full
+#              vision 4/4, club-3090#1537). Lean tier: OFF — the tower is never loaded
+#              (VISION=on brings it back).
 #   Template:  native + club-3090 alias — the model's own chat_template.jinja
 #              with `high` remapped to `xhigh` (patches/qwen38-reasoning-effort-template)
 #   Max ctx:   full: auto-fit up to 262144 (MAX_MODEL_LEN=-1 — vLLM keeps 262144 when one request
@@ -60,10 +61,15 @@
 #   fixed at 81920, below the measured ceiling. Other levers moved auto-fit little: SPEC_N=3
 #   64,896; batched 4096 65,296; MAMBA_CACHE_MODE=none no change.
 #
-# The FULL tier is UNMEASURED on any card: it needs more than 24 GB, and the reference rig has only
-#   3090s. On a 3090, SIZE_TIER=full logs the whole recipe and then runs out of memory during
-#   weight load, as expected. kv-calc projects one full 262144-token session fitting on 32 GB
-#   and above (estimate, ±1.5 GB).
+# The FULL tier, MEASURED on a community 64 GB CMP 170HX (club-3090#1537, 2026-10-05, stock 250 W,
+#   one boot, vLLM v0.30.0). The reference rig has only 3090s, which can't boot it:
+#     auto-fit kept 262144 · KV pool 1,019,004 tokens (3.89 full-length requests) · 59,428 MiB
+#     decode narr / code 84.1 / 113.9 tok/s · prefill 10K / 90K 2,606 / 1,649 tok/s
+#     decode at 90K depth 117 tok/s · MTP acceptance length 3.46
+#     verify-full ✅ (vision 4/4) · verify-stress ✅ (filled to 240,662) · soak PASS · agentic ✅
+#   On a 3090, SIZE_TIER=full logs the whole recipe and then runs out of memory during weight
+#   load, as expected. kv-calc projects one full 262144-token session fitting on 32 GB and
+#   above (estimate, ±1.5 GB).
 #
 # PINNING THE CARD — this slug is 🧪, so it boots with --force, and FORCE=1 also skips the
 #   preflight that would otherwise pick the largest card. On a rig with several cards, pin one:
