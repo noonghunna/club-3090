@@ -668,6 +668,7 @@ async def test_advance_to_serve_leaves_focus_somewhere_useful():
         "model scope",
         "sort — group-by-model",
         "deprecated + hardware-incompatible",
+        "needing more GPUs than this rig",
         "downloaded-only",
         "columns picker",
         "copy the serving API URL",

@@ -124,6 +124,11 @@ def apply_persisted_settings(app, environ) -> None:
     srt = s.get("catalog_sort")
     if isinstance(srt, str) and srt:
         app.catalog_sort_pref = srt
+    # Catalog [w] downloaded-only: the persisted last choice (ON by default when
+    # unset — CatalogPane applies the default, so only a saved bool is passed on).
+    dl = s.get("catalog_downloaded_only")
+    if isinstance(dl, bool):
+        app.catalog_downloaded_only_pref = dl
     # Master logging: strict C3_LOG=1|0 shell override wins for this launch.
     # Invalid/absent values fall back to the persisted boolean, default OFF.
     from .session_logging import env_log_override

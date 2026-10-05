@@ -1124,8 +1124,8 @@ class HelpScreen(ModalScreen):
             # terminal.  Help is where they have to be findable.
             "  [cyan]\\ [/cyan]model scope (dropdown)   [cyan]/[/cyan] filter   "
             "[cyan]s[/cyan] sort — group-by-model → TPS ↓ → GB ↑ → ctx ↓",
-            "  [cyan]h[/cyan] reveal 🗑️ deprecated + hardware-incompatible slugs   "
-            "[cyan]w[/cyan] downloaded-only",
+            "  [cyan]h[/cyan] reveal 🗑️ deprecated + hardware-incompatible slugs and those needing more GPUs than this rig   "
+            "[cyan]w[/cyan] downloaded-only (on by default; remembered)",
             "  [cyan]|[/cyan] columns picker (show/hide + reorder; persisted)   "
             "[cyan]u[/cyan] copy the serving API URL",
             "",
@@ -1427,9 +1427,14 @@ class CatalogPane(Container):
         # [h] toggle: hide 🗑️ deprecated slugs by default (mirrors `switch.sh --list`).
         self._show_deprecated: bool = False
         # [w] toggle (#963): narrow to slugs whose weights are already on disk.
-        # OFF by default so the catalog still answers "what COULD I run?" — this
-        # is opt-in for "what can I run right now, without a download?".
-        self._downloaded_only: bool = False
+        # ON by default since 2026-10-05 (maintainer: pressing w on every launch
+        # was the common path) and REMEMBERED — the last choice is persisted as
+        # "catalog_downloaded_only" in c3-settings.json, read here from the app
+        # attribute __main__ sets (a directly-constructed app starts ON). A rig
+        # with NOTHING downloaded falls back to showing everything
+        # (_downloaded_fallback), so a fresh install never opens on an empty list.
+        _dl_pref = getattr(self.app, "catalog_downloaded_only_pref", None)
+        self._downloaded_only: bool = _dl_pref if isinstance(_dl_pref, bool) else True
         # [s] sort cycle: group-by-model (default) → TPS ↓ → GB ↑ → ctx ↓.
         # Seeded from the persisted "catalog_sort" pref (same launch plumbing
         # as the [|] picker's "catalog_columns" — an app attribute the pane
@@ -1713,11 +1718,14 @@ class CatalogPane(Container):
         # (both 0 when revealed — one toggle, one bucket).
         dep_n = self._deprecated_hidden_count()
         inc_n = self._incompatible_hidden_count()
+        gpu_n = self._gpu_hidden_count()
         _hidden_bits = []
         if dep_n:
             _hidden_bits.append(f"+{dep_n} deprecated")
         if inc_n:
             _hidden_bits.append(f"+{inc_n} incompatible-hw")
+        if gpu_n:
+            _hidden_bits.append(f"+{gpu_n} need more GPUs")
         dep_note = (
             f"  ·  [dim]{' · '.join(_hidden_bits)} hidden — h[/dim]"
             if _hidden_bits else ""
@@ -1733,7 +1741,9 @@ class CatalogPane(Container):
         #   OFF → "+N not on disk — w"   (an invitation to narrow)
         #   ON  → "downloaded only (+N hidden) — w"  (state + how to undo)
         abs_n = self._absent_count_in_pool()
-        if self._downloaded_only:
+        if self._downloaded_only and self._downloaded_fallback():
+            dep_note += "  ·  [dim]nothing downloaded yet — showing all — w[/dim]"
+        elif self._downloaded_only:
             dep_note += (
                 f"  ·  [dim]downloaded only (+{abs_n} not on disk hidden) — w[/dim]"
                 if abs_n else "  ·  [dim]downloaded only — w[/dim]"
@@ -1842,15 +1852,12 @@ class CatalogPane(Container):
         # Ampere) share the SAME bucket: hidden by default, [h] reveals. The
         # verdict lands with async fit enrichment, so such rows may be visible
         # briefly on first paint, then fold away on refresh_enriched.
-        pool = (
-            self._entries
-            if self._show_deprecated
-            else [
-                e for e in self._entries
-                if (e.status or "").strip().lower() != "deprecated"
-                and not self._hw_incompatible(e)
-            ]
-        )
+        # Slugs needing MORE GPUS than this rig has (multi4 / multi8 on a 2-card
+        # rig) join the same bucket — `switch.sh --list` hides them too, and
+        # `--list --all` is its [h]. The GPU count arrives with the first estate
+        # poll, which re-renders the catalog (_poll_estate), so they fold away
+        # the same way. See _h_hidden.
+        pool = self._h_pool()
         # [w] downloaded-only (#963): an INDEPENDENT narrowing, AND-combined with
         # the [h] bucket above — the two answer different questions, so neither
         # subsumes the other. Hides ONLY `absent`; `partial` and `downloading`
@@ -1859,7 +1866,9 @@ class CatalogPane(Container):
         # tell" — most often a self-grabbed GGUF that IS present. Hiding on a
         # guess is the worse failure here: a false hide looks like the slug
         # vanished from the catalog.
-        if self._downloaded_only:
+        # Nothing on disk at all (a fresh install) → show everything rather than an
+        # empty catalog; the status line says so (_downloaded_fallback).
+        if self._downloaded_only and not self._downloaded_fallback():
             pool = [e for e in pool if not self._weights_absent(e)]
         # Model-scope dropdown first — AND-combined with the text filter below.
         base = (
@@ -1931,16 +1940,31 @@ class CatalogPane(Container):
         self._render_rows()
 
     def toggle_deprecated(self) -> None:
-        """[h] show/hide 🗑️ deprecated slugs (hidden by default, mirroring
-        `switch.sh --list`).  Re-renders (cursor resets to the top of the
-        now-widened / narrowed set)."""
+        """[h] show/hide what this rig can't or shouldn't run — 🗑️ deprecated,
+        incompatible-hw, and slugs needing more GPUs than the rig has (hidden by
+        default, mirroring `switch.sh --list`; [h] is its `--list --all`).
+        Re-renders (cursor resets to the top of the now-widened / narrowed set)."""
         self._show_deprecated = not self._show_deprecated
         self._render_rows()
 
     def toggle_downloaded_only(self) -> None:
-        """[w] show only slugs whose weights are already on disk (#963).  OFF by
-        default.  Re-renders (cursor resets to the top of the narrowed set)."""
+        """[w] show only slugs whose weights are already on disk (#963).  ON by
+        default; the choice persists ("catalog_downloaded_only" in
+        c3-settings.json, the same pattern as the [s] sort).  Re-renders (cursor
+        resets to the top of the narrowed set)."""
         self._downloaded_only = not self._downloaded_only
+        try:
+            setattr(self.app, "catalog_downloaded_only_pref", self._downloaded_only)  # in-session remounts
+        except Exception:
+            pass
+        try:
+            from .__main__ import load_settings, save_settings
+
+            s = load_settings()
+            s["catalog_downloaded_only"] = self._downloaded_only
+            save_settings(s)
+        except Exception:
+            pass
         self._render_rows()
 
     @staticmethod
@@ -1951,24 +1975,72 @@ class CatalogPane(Container):
         return (getattr(e, "weights_state", "") or "") == WEIGHTS_ABSENT
 
     def _absent_hidden_count(self) -> int:
-        """How many not-downloaded slugs [w] is currently HIDING (0 when off)."""
-        return self._absent_count_in_pool() if self._downloaded_only else 0
+        """How many not-downloaded slugs [w] is currently HIDING (0 when off, and
+        0 when the nothing-downloaded fallback is showing everything)."""
+        if not self._downloaded_only or self._downloaded_fallback():
+            return 0
+        return self._absent_count_in_pool()
+
+    def _downloaded_fallback(self) -> bool:
+        """[w] is ON but NOTHING in the [h] pool has weights on disk (a fresh
+        install): the filter would empty the catalog, so it shows everything
+        instead and the status line says so. `unknown` / `partial` /
+        `downloading` count as on disk here, exactly as in the filter."""
+        if not self._downloaded_only:
+            return False
+        pool = self._h_pool()
+        return bool(pool) and all(self._weights_absent(e) for e in pool)
+
+    def _h_pool(self) -> list[CatalogEntry]:
+        """The entries [h] leaves visible — everything when revealed."""
+        if self._show_deprecated:
+            return list(self._entries)
+        return [e for e in self._entries if not self._h_hidden(e)]
+
+    def _h_hidden(self, e: CatalogEntry) -> bool:
+        """The [h] bucket, ONE predicate for the filter and every count: 🗑️
+        deprecated, a card this slug's kernels can't run on (incompatible-hw), or
+        more GPUs than this rig has."""
+        return (
+            (e.status or "").strip().lower() == "deprecated"
+            or self._hw_incompatible(e)
+            or self._needs_more_gpus(e)
+        )
+
+    def _rig_gpu_count(self) -> Optional[int]:
+        """This rig's GPU count from the last estate poll (None until polled, or
+        on a pane mounted outside the cockpit app)."""
+        try:
+            n = self.app._known_gpu_count()
+        except Exception:
+            return None
+        return n if isinstance(n, int) and n > 0 else None
+
+    def _needs_more_gpus(self, e: CatalogEntry) -> bool:
+        """The slug's topology needs more GPUs than this rig has (multi4 on 2
+        cards). Unknown GPU count or topology → False: never hide on a guess."""
+        n = self._rig_gpu_count()
+        cards = _TOPO_CARDS.get((getattr(e, "topology", "") or "").strip())
+        return n is not None and cards is not None and cards > n
+
+    def _gpu_hidden_count(self) -> int:
+        """How many slugs [h] hides ONLY for needing more GPUs (rows already
+        hidden as deprecated / incompatible-hw are counted there, not here)."""
+        if self._show_deprecated:
+            return 0
+        return sum(
+            1 for e in self._entries
+            if self._needs_more_gpus(e)
+            and (e.status or "").strip().lower() != "deprecated"
+            and not self._hw_incompatible(e)
+        )
 
     def _absent_count_in_pool(self) -> int:
         """How many not-downloaded slugs are in the [h]-filtered pool, regardless
         of whether [w] is on.  Counted over the SAME pool the filter narrows — i.e.
         excluding rows already hidden by [h] — so the two hints never double-count
         one row.  Drives the hint in BOTH states (see _render_rows)."""
-        pool = (
-            self._entries
-            if self._show_deprecated
-            else [
-                e for e in self._entries
-                if (e.status or "").strip().lower() != "deprecated"
-                and not self._hw_incompatible(e)
-            ]
-        )
-        return sum(1 for e in pool if self._weights_absent(e))
+        return sum(1 for e in self._h_pool() if self._weights_absent(e))
 
     @staticmethod
     def _hw_incompatible(e: CatalogEntry) -> bool:
@@ -9951,8 +10023,8 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("filter_catalog", "Filter catalog", "Catalog — filter by slug / engine / status"),
     ("toggle_catalog_model", "Model scope (Catalog)", "Catalog — narrow to one model (\\[\\] dropdown)"),
     ("catalog_columns", "Catalog columns…", "Catalog — show/hide + reorder columns (\\[|] · persisted)"),
-    ("toggle_catalog_deprecated", "Show/hide deprecated", "Catalog — reveal 🗑️ deprecated slugs (hidden by default)"),
-    ("toggle_catalog_downloaded", "Show only downloaded", "Catalog — narrow to slugs whose weights are already on disk"),
+    ("toggle_catalog_deprecated", "Show/hide deprecated", "Catalog — reveal 🗑️ deprecated, hardware-incompatible and needs-more-GPUs slugs (hidden by default)"),
+    ("toggle_catalog_downloaded", "Show only downloaded", "Catalog — narrow to slugs whose weights are already on disk (on by default; remembered)"),
     ("copy_endpoint", "Copy the serving API URL", "Run & Operate — copy http://<lan>:<port>/v1 for your agent/client (no auth by default)"),
     ("set_default", "Set default", "Catalog — pin the selected slug as model default"),
     ("clear_default", "Clear default", "Catalog — clear the model default pin"),
@@ -10462,7 +10534,7 @@ class CockpitApp(App):
     _CONTEXT_KEYS: dict[str, tuple[set[int], Optional[set[str]]]] = {
         # Merged mode 0 · Catalog tab
         "filter_catalog":   ({0}, {"tab-catalog"}),  # Catalog
-        "toggle_catalog_deprecated": ({0}, {"tab-catalog"}),  # Catalog — [h] hide/show deprecated
+        "toggle_catalog_deprecated": ({0}, {"tab-catalog"}),  # Catalog — [h] hide/show deprecated / incompatible / needs-more-GPUs
         "toggle_catalog_downloaded": ({0}, {"tab-catalog"}),  # Catalog — [w] downloaded-only (#963)
         # [u] copy the serving API URL — the endpoint is rig-global, so it's
         # live on EVERY merged-mode tab (F3; guards inside the action when
@@ -11902,6 +11974,16 @@ class CockpitApp(App):
             self._profile_topology_defaulted = True
             try:
                 self._refresh_profile_templates(reapply_default=True)
+            except Exception:
+                pass
+        # The catalog's [h] bucket hides slugs needing more GPUs than the rig has;
+        # it learns the count from this poll, so re-render whenever the count
+        # changes (first poll included). refresh_enriched keeps the cursor.
+        _gpu_n = len(getattr(state, "gpus", None) or []) or None
+        if _gpu_n != getattr(self, "_catalog_gpu_count_seen", None):
+            self._catalog_gpu_count_seen = _gpu_n
+            try:
+                self.query_one("#catalog-pane", CatalogPane).refresh_enriched()
             except Exception:
                 pass
         # Capture the live target for profile-triage / validation launches.
@@ -13960,7 +14042,7 @@ class CockpitApp(App):
                 pass
 
     def action_toggle_catalog_deprecated(self) -> None:
-        """[h] show/hide 🗑️ deprecated slugs (merged mode 0 · Catalog tab)."""
+        """[h] show/hide deprecated, incompatible-hw and needs-more-GPUs slugs (merged mode 0 · Catalog tab)."""
         if self._active_mode == 0 and self._current_subtab() == "tab-catalog":
             try:
                 self.query_one("#catalog-pane", CatalogPane).toggle_deprecated()

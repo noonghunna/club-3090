@@ -1644,8 +1644,15 @@ class TestCatalogWired:
                 [present, absent, partial, unknown, downloading, dep_absent], None
             )
 
-            # OFF by default — the catalog still answers "what COULD I run?".
-            assert pane._downloaded_only is False
+            # ON by default since 2026-10-05 (no saved pref on a directly-
+            # constructed app) — only the known-missing row goes.
+            assert pane._downloaded_only is True
+            got = {e.slug for e in pane._filtered_entries()}
+            assert got == {"v/present", "v/partial", "v/unknown", "v/downloading"}
+            assert pane._absent_hidden_count() == 1
+
+            # OFF — the catalog answers "what COULD I run?" again...
+            pane.toggle_downloaded_only()
             assert "v/absent" in {e.slug for e in pane._filtered_entries()}
             assert pane._absent_hidden_count() == 0
             # ...but the count is still reported while OFF, because that is what
@@ -1654,7 +1661,7 @@ class TestCatalogWired:
             # [w] with nothing on screen cannot be learned about at all.
             assert pane._absent_count_in_pool() == 1   # v/absent (dep-absent is [h]-hidden)
 
-            # ON — only the known-missing row goes.
+            # back ON — only the known-missing row goes.
             pane.toggle_downloaded_only()
             got = {e.slug for e in pane._filtered_entries()}
             assert got == {"v/present", "v/partial", "v/unknown", "v/downloading"}
@@ -1677,6 +1684,116 @@ class TestCatalogWired:
             assert len(pane._filtered_entries()) == 5   # dep-absent hidden by [h]
             assert pane._absent_hidden_count() == 0     # hiding nothing again
             assert pane._absent_count_in_pool() == 1    # ...but still advertised
+
+    @staticmethod
+    def _topo_entry(slug: str, topo: str, *, weights: str = "present", status: str = "production"):
+        from club3090_cockpit.data import CatalogEntry as _CE
+        from club3090_tui_core import VariantRow as _VR
+
+        cp = f"models/m/vllm/compose/{topo}/q/base.yml"
+        return _CE(
+            row=_VR(
+                slug=slug, switch_engine="vllm", launch_engine="vllm",
+                compose_dir=cp.rsplit("/", 1)[0], file="base.yml", port=8000,
+                model="m", engine="vllm-stable", kvcalc_key="m:x",
+                container="c", compose_path=cp, status=status,
+                ctx_label="262K", status_note="",
+            ),
+            weights_state=weights,
+        )
+
+    @pytest.mark.asyncio
+    async def test_catalog_downloaded_only_nothing_on_disk_shows_all(self):
+        """[w] defaults ON, but a rig with NOTHING downloaded (a fresh install)
+        must not open on an empty catalog: everything shows, nothing counts as
+        hidden, and the status line says why."""
+        from club3090_cockpit.data import WEIGHTS_ABSENT
+
+        a = self._topo_entry("v/a", "dual", weights=WEIGHTS_ABSENT)
+        b = self._topo_entry("v/b", "single", weights=WEIGHTS_ABSENT)
+        app, _, _ = make_app()
+        async with app.run_test(size=(160, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate([a, b], None)
+            assert pane._downloaded_only is True
+            assert pane._downloaded_fallback() is True
+            assert {e.slug for e in pane._filtered_entries()} == {"v/a", "v/b"}
+            assert pane._absent_hidden_count() == 0
+            pane._render_rows()
+            status = str(app.query_one("#catalog-status", Label).render())
+            assert "nothing downloaded yet" in status
+            # One downloaded slug is enough: the filter applies again.
+            from club3090_cockpit.data import WEIGHTS_PRESENT
+            c = self._topo_entry("v/c", "dual", weights=WEIGHTS_PRESENT)
+            pane.populate([a, b, c], None)
+            assert pane._downloaded_fallback() is False
+            assert {e.slug for e in pane._filtered_entries()} == {"v/c"}
+
+    @pytest.mark.asyncio
+    async def test_catalog_downloaded_only_persists(self):
+        """[w] saves "catalog_downloaded_only" to c3-settings.json and the next
+        launch opens with it; an absent or malformed value means ON."""
+        from club3090_cockpit import __main__ as M
+
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            assert pane._downloaded_only is True
+            pane.toggle_downloaded_only()
+        assert M.load_settings()["catalog_downloaded_only"] is False
+
+        app2, _, _ = make_app()
+        M.apply_persisted_settings(app2, {})
+        async with app2.run_test(size=(120, 40)):
+            assert app2.query_one("#catalog-pane", CatalogPane)._downloaded_only is False
+
+        s = M.load_settings()
+        s["catalog_downloaded_only"] = "yes"   # not a bool → ignored → default ON
+        M.save_settings(s)
+        app3, _, _ = make_app()
+        M.apply_persisted_settings(app3, {})
+        async with app3.run_test(size=(120, 40)):
+            assert app3.query_one("#catalog-pane", CatalogPane)._downloaded_only is True
+
+    @pytest.mark.asyncio
+    async def test_catalog_hides_slugs_needing_more_gpus(self, monkeypatch):
+        """On a 2-GPU rig, multi4 / multi8 slugs join the [h] bucket — hidden by
+        default (as `switch.sh --list` does), counted in the hint, revealed by
+        [h]. An unknown GPU count hides nothing (never hide on a guess)."""
+        single = self._topo_entry("v/single", "single")
+        dual = self._topo_entry("v/dual", "dual")
+        m4 = self._topo_entry("v/m4", "multi4")
+        m8 = self._topo_entry("v/m8", "multi8")
+        m4_dep = self._topo_entry("v/m4-dep", "multi4", status="deprecated")
+        app, _, _ = make_app()
+        async with app.run_test(size=(160, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate([single, dual, m4, m8, m4_dep], None)
+
+            monkeypatch.setattr(app, "_known_gpu_count", lambda: None)
+            assert {e.slug for e in pane._filtered_entries()} == {"v/single", "v/dual", "v/m4", "v/m8"}
+            assert pane._gpu_hidden_count() == 0
+
+            monkeypatch.setattr(app, "_known_gpu_count", lambda: 2)
+            assert {e.slug for e in pane._filtered_entries()} == {"v/single", "v/dual"}
+            # the deprecated multi4 is counted ONCE, as deprecated
+            assert pane._gpu_hidden_count() == 2
+            assert pane._deprecated_hidden_count() == 1
+            pane._render_rows()
+            status = str(app.query_one("#catalog-status", Label).render())
+            assert "+2 need more GPUs" in status
+
+            pane.toggle_deprecated()   # [h] reveals the whole bucket
+            assert {e.slug for e in pane._filtered_entries()} == {
+                "v/single", "v/dual", "v/m4", "v/m8", "v/m4-dep"}
+            assert pane._gpu_hidden_count() == 0
+
+            pane.toggle_deprecated()
+            monkeypatch.setattr(app, "_known_gpu_count", lambda: 8)
+            assert {e.slug for e in pane._filtered_entries()} == {"v/single", "v/dual", "v/m4", "v/m8"}
 
     @pytest.mark.asyncio
     async def test_catalog_multiword_filter_is_and(self):
