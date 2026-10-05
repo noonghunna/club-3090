@@ -1796,6 +1796,41 @@ class TestCatalogWired:
             assert {e.slug for e in pane._filtered_entries()} == {"v/single", "v/dual", "v/m4", "v/m8"}
 
     @pytest.mark.asyncio
+    async def test_catalog_gpu_count_from_fast_read_before_estate_poll(self):
+        """#1552 follow-up: the first estate poll lands ~20 s after launch, and the
+        needs-more-GPUs filter waited for it — a 2-GPU rig showed every multi4/8
+        slug for those 20 s (measured on the reference rig: 42 rows until t+22 s).
+        The fast docker-free nvidia-smi read (_refresh_gpu_bars) must supply the
+        count on its own, with NO estate state, and re-render the catalog."""
+        from club3090_tui_core.detect import GpuInfo
+
+        single = self._topo_entry("v/single", "single")
+        dual = self._topo_entry("v/dual", "dual")
+        m4 = self._topo_entry("v/m4", "multi4")
+        app, _, _ = make_app()
+
+        async def _two_gpus():
+            return [GpuInfo(index=0), GpuInfo(index=1)]
+
+        async with app.run_test(size=(160, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            app._last_estate_state = None          # the estate poll has not landed
+            app._fast_gpu_count = None
+            app._catalog_gpu_count_seen = None
+            app._data._get_gpu_info = _two_gpus
+            pane.populate([single, dual, m4], None)
+            assert "v/m4" in {e.slug for e in pane._filtered_entries()}   # count unknown yet
+
+            app._refresh_gpu_bars()
+            for _ in range(5):
+                await pilot.pause()
+            assert app._last_estate_state is None
+            assert app._known_gpu_count() == 2
+            assert app._catalog_gpu_count_seen == 2
+            assert {e.slug for e in pane._filtered_entries()} == {"v/single", "v/dual"}
+
+    @pytest.mark.asyncio
     async def test_catalog_multiword_filter_is_and(self):
         """Round-4 CHANGE 2: a multi-word filter ("gemma dual") is AND-of-substrings
         across the searchable text (slug + topology + engine + model + status +

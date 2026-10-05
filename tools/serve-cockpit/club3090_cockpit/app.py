@@ -1462,6 +1462,10 @@ class CatalogPane(Container):
         # failed but the raw-tab fallback still produced rows — they render with
         # reduced columns and the reason shows as a yellow one-liner.
         self._degraded_note: str = ""
+        # refresh_enriched() gate: no re-render before the first populate (the
+        # status line still says "Loading catalog…") or over a hard load error.
+        self._populated: bool = False
+        self._load_error: str = ""
 
     # ── Column picker (#724) ─────────────────────────────────────────────────
 
@@ -1581,8 +1585,10 @@ class CatalogPane(Container):
         status_label = self.query_one("#catalog-status", Label)
         table = self.query_one("#catalog-table", DataTable)
 
+        self._populated = True
         if error and not entries:
             self._degraded_note = ""
+            self._load_error = error
             self._entries = []
             table.clear()
             status_label.update(f"[red]Catalog error:[/red] {error}")
@@ -1592,6 +1598,7 @@ class CatalogPane(Container):
         # Rows + a note = the degraded-catalog path: render the rows, surface
         # the note (yellow) on the status line instead of failing the pane.
         self._degraded_note = (error or "").strip() if entries else ""
+        self._load_error = ""
         self._entries = list(entries)
         self._refresh_model_options()
         self._render_rows()
@@ -1786,7 +1793,14 @@ class CatalogPane(Container):
 
     def refresh_enriched(self) -> None:
         """Re-render after background enrichment mutated the shared entries in
-        place (fit / measurement), preserving the cursor row + active filter."""
+        place (fit / measurement), preserving the cursor row + active filter.
+
+        A no-op before the first populate and over a hard load error: the
+        early GPU-count sync and the Operate poll both call this, and a
+        re-render there would replace "Loading catalog…" / the red error with
+        "0 variants loaded"."""
+        if not self._populated or self._load_error:
+            return
         table = self.query_one("#catalog-table", DataTable)
         saved = table.cursor_row
         self._render_rows()
@@ -11267,6 +11281,10 @@ class CockpitApp(App):
             self.notify(text, title="Settings", severity=severity, timeout=12)
         self._startup_notices = []
         self.load_catalog()
+        # One fast, docker-free GPU read now (it otherwise waits for the first
+        # 3 s tick): the catalog hides slugs needing more GPUs than the rig has,
+        # and needs the count to do it.
+        self._refresh_gpu_bars()
         # A3: ONE periodic refresh interval, created once.  It is GATED at fire
         # time (_periodic_estate_refresh) to the MERGED Run & Operate mode
         # (_active_mode == 0 — the live estate tabs + host-stats rail + catalog
@@ -11458,6 +11476,10 @@ class CockpitApp(App):
             return
         if not gpus:
             return
+        # The GPU COUNT for the catalog's needs-more-GPUs filter — known here, on
+        # the first fast tick, long before the first estate poll (~20 s).
+        self._fast_gpu_count = len(gpus)
+        self._sync_catalog_gpu_count()
         try:
             self.query_one("#operate-orch-pane", OperateOrchPane).refresh_gpu_cards(gpus)
         except Exception:
@@ -11853,13 +11875,28 @@ class CockpitApp(App):
         return out
 
     def _known_gpu_count(self) -> Optional[int]:
-        """Best-known live GPU count (from the last estate poll), or None when the
-        estate hasn't been polled yet (the dropdown default then degrades to the
-        first matching/`dual` template)."""
+        """Best-known live GPU count: the last estate poll's, else the fast
+        docker-free nvidia-smi read (_refresh_gpu_bars), else None. The fast read
+        matters: the first estate poll lands ~20 s after launch (docker + host
+        batch), and the catalog's needs-more-GPUs filter waited for it, so a 2-GPU
+        rig showed every multi4/multi8 slug for those 20 s (#1552 follow-up)."""
         st = self._last_estate_state
         if st is not None and getattr(st, "gpus", None):
             return len(st.gpus)
-        return None
+        n = getattr(self, "_fast_gpu_count", None)
+        return n if isinstance(n, int) and n > 0 else None
+
+    def _sync_catalog_gpu_count(self) -> None:
+        """Re-render the catalog when the known GPU count changes — its [h] bucket
+        hides slugs needing more GPUs than the rig has. Called from BOTH the fast
+        GPU read and the estate poll, so whichever learns the count first wins."""
+        n = self._known_gpu_count()
+        if n != getattr(self, "_catalog_gpu_count_seen", None):
+            self._catalog_gpu_count_seen = n
+            try:
+                self.query_one("#catalog-pane", CatalogPane).refresh_enriched()
+            except Exception:
+                pass
 
     def _refresh_profile_templates(self, *, reapply_default: bool = False) -> None:
         """#6/A12 — (re)derive the profile-template options from the loaded variants
@@ -11977,15 +12014,8 @@ class CockpitApp(App):
             except Exception:
                 pass
         # The catalog's [h] bucket hides slugs needing more GPUs than the rig has;
-        # it learns the count from this poll, so re-render whenever the count
-        # changes (first poll included). refresh_enriched keeps the cursor.
-        _gpu_n = len(getattr(state, "gpus", None) or []) or None
-        if _gpu_n != getattr(self, "_catalog_gpu_count_seen", None):
-            self._catalog_gpu_count_seen = _gpu_n
-            try:
-                self.query_one("#catalog-pane", CatalogPane).refresh_enriched()
-            except Exception:
-                pass
+        # re-render if this poll changed the count (refresh_enriched keeps the cursor).
+        self._sync_catalog_gpu_count()
         # Capture the live target for profile-triage / validation launches.
         self._target_slug = state.matched_slug or ""
         tgt = state.target
