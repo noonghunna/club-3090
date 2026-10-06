@@ -292,3 +292,175 @@ class TestNamespaceHardCut:
             "assert e['origin'] == 'local'\n",
         )
         assert r.returncode == 0, r.stderr
+
+
+# ---------------------------------------------------------------------------
+# extends.d — LOCAL extensions of CORE models (local_extensions.py)
+# ---------------------------------------------------------------------------
+CORE_MODEL = "qwen3.6-27b"
+EXT_VARIANT = "test-ext-gguf"
+EXT_COMPOSE = "scripts/lib/profiles-local/composes/qwen3.6-27b/vllm/compose/dual/test-ext-gguf/base.yml"
+ATTACHED_KWARGS = dict(GOOD_KWARGS, model=CORE_MODEL, weights_variant=EXT_VARIANT,
+                       compose_path=EXT_COMPOSE)
+
+
+def _write_ext(root, data, name=CORE_MODEL):
+    p = root / "scripts/lib/profiles-local/extends.d" / f"{name}.yml"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2), encoding="utf-8")   # JSON is valid YAML
+    return p
+
+
+def _good_ext(**over):
+    data = {
+        "schema_version": 1,
+        "extends": CORE_MODEL,
+        "weights": {EXT_VARIANT: {"path": "test-ext", "size_gb": 1.0, "format": "gguf",
+                                  "kind": "main", "status": "community-experimental"}},
+        "valid_tp_add": [3],
+    }
+    data.update(over)
+    return data
+
+
+def _write_compose(root, rel=EXT_COMPOSE):
+    src = REPO / "models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml"
+    dst = root / rel
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+class TestCoreModelExtensions:
+    def test_attach_without_extension_is_refused_and_names_the_fix(self, root):
+        # Negative control for everything below: no extends.d file, old behaviour.
+        _write_local(root, {"vllm/qwen36-ext-dual": dict(ATTACHED_KWARGS)})
+        r = _py(root, "from scripts.lib.profiles.compose_registry import get_registry\nget_registry()\n")
+        assert r.returncode != 0
+        assert "core model" in r.stderr and "extends.d" in r.stderr
+
+    def test_attach_with_extension_loads(self, root):
+        _write_ext(root, _good_ext())
+        _write_local(root, {"vllm/qwen36-ext-dual": dict(ATTACHED_KWARGS)})
+        r = _py(root,
+                "from scripts.lib.profiles.compose_registry import get_registry\n"
+                "e = get_registry()['vllm/qwen36-ext-dual']\n"
+                f"assert e['model'] == {CORE_MODEL!r} and e['origin'] == 'local', e\n")
+        assert r.returncode == 0, r.stderr
+
+    def test_several_slugs_attach_to_one_core_model(self, root):
+        _write_ext(root, _good_ext())
+        _write_local(root, {
+            "vllm/qwen36-ext-dual": dict(ATTACHED_KWARGS),
+            "vllm/qwen36-ext-single": dict(ATTACHED_KWARGS, tp=1, default_port=20243),
+        })
+        r = _py(root,
+                "from scripts.lib.profiles.compose_registry import get_registry\n"
+                "g = get_registry()\n"
+                "assert 'vllm/qwen36-ext-dual' in g and 'vllm/qwen36-ext-single' in g\n")
+        assert r.returncode == 0, r.stderr
+
+    def test_duplicate_local_only_model_id_still_refused(self, root):
+        # The one-slug rule still holds for models that exist only locally.
+        _write_ext(root, _good_ext())
+        kwargs2 = dict(GOOD_KWARGS, compose_path="scripts/lib/profiles-local/composes/other/x.yml")
+        _write_local(root, {LOCAL_SLUG: dict(GOOD_KWARGS), "vllm/my-model-single-x": kwargs2})
+        r = _py(root, "from scripts.lib.profiles.compose_registry import get_registry\nget_registry()\n")
+        assert r.returncode != 0
+        assert "duplicate local model id" in r.stderr
+
+    def test_profiles_gain_the_variant_and_tp_and_keep_core_fields(self, root):
+        _write_ext(root, _good_ext())
+        r = _py(root,
+                "from scripts.lib.profiles.compat import load_profiles\n"
+                f"m = load_profiles().models[{CORE_MODEL!r}]\n"
+                f"assert {EXT_VARIANT!r} in m.weights, list(m.weights)\n"
+                "assert 'autoround-int4' in m.weights\n"
+                "assert 3 in m.valid_tp and 2 in m.valid_tp, m.valid_tp\n"
+                "assert m.display_name.startswith('Qwen'), m.display_name\n")
+        assert r.returncode == 0, r.stderr
+
+    def test_extension_cannot_override_a_core_variant(self, root):
+        _write_ext(root, _good_ext(weights={"autoround-int4": {"path": "hijack", "format": "gguf"}}))
+        r = _py(root, "from scripts.lib.profiles.compat import load_profiles\nload_profiles()\n")
+        assert r.returncode != 0
+        assert "only ADD" in r.stderr
+
+    def test_extension_must_target_a_core_model(self, root):
+        _write_ext(root, _good_ext(extends="no-such-model"), name="no-such-model")
+        r = _py(root, "from scripts.lib.profiles.compat import load_profiles\nload_profiles()\n")
+        assert r.returncode != 0
+        assert "not a core model" in r.stderr
+
+    def test_extension_may_not_set_other_fields(self, root):
+        _write_ext(root, _good_ext(display_name="Hijacked"))
+        r = _py(root, "from scripts.lib.profiles.compat import load_profiles\nload_profiles()\n")
+        assert r.returncode != 0
+        assert "unknown key" in r.stderr
+
+    def test_extension_name_must_match_its_target(self, root):
+        _write_ext(root, _good_ext(extends="gemma-4-31b"))   # file is qwen3.6-27b.yml
+        r = _py(root, "from scripts.lib.profiles.compat import load_profiles\nload_profiles()\n")
+        assert r.returncode != 0
+        assert "must match" in r.stderr
+
+    def test_models_d_profile_cannot_shadow_a_core_model(self, root):
+        # Before extends.d this silently REPLACED the curated profile (local merged last).
+        core = (root / "scripts/lib/profiles/models/qwen3.6-27b.yml").read_text(encoding="utf-8")
+        local = root / "scripts/lib/profiles-local/models.d/qwen3.6-27b.yml"
+        local.parent.mkdir(parents=True, exist_ok=True)
+        line = next(l for l in core.splitlines() if l.startswith("display_name:"))
+        local.write_text(core.replace(line, 'display_name: "HIJACKED"'), encoding="utf-8")
+        r = _py(root,
+                "from scripts.lib.profiles.compat import load_profiles\n"
+                f"m = load_profiles().models[{CORE_MODEL!r}]\n"
+                "assert m.display_name != 'HIJACKED', 'local models.d shadowed the core profile'\n")
+        assert r.returncode == 0, r.stderr
+
+    def test_weights_catalog_lists_the_variant(self, root):
+        _write_ext(root, _good_ext())
+        r = subprocess.run([sys.executable, "scripts/lib/profiles/weights.py", "list", "--json"],
+                           cwd=str(root), capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        rows = json.loads(r.stdout)
+        assert any(x["model"] == CORE_MODEL and x["variant"] == EXT_VARIANT for x in rows)
+
+    def test_registry_emit_carries_the_variant_format(self, root):
+        _write_ext(root, _good_ext())
+        _write_compose(root)
+        _write_local(root, {"vllm/qwen36-ext-dual": dict(ATTACHED_KWARGS)})
+        r = subprocess.run(["bash", "scripts/lib/registry-emit.sh", "--json"],
+                           cwd=str(root), capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        row = [v for v in json.loads(r.stdout)["variants"] if v["slug"] == "vllm/qwen36-ext-dual"]
+        assert row and row[0]["model"] == CORE_MODEL
+        assert row[0]["weights_format"] == "gguf", row[0]["weights_format"]
+
+    def test_demote_keeps_the_extension(self, root):
+        _write_ext(root, _good_ext())
+        _write_local(root, {"vllm/qwen36-ext-dual": dict(ATTACHED_KWARGS)})
+        r = subprocess.run([sys.executable, "scripts/lib/profiles/demote.py", "--slug",
+                            "vllm/qwen36-ext-dual", "--root", str(root), "--dry-run"],
+                           cwd=str(root), capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        assert "extension   KEPT" in r.stderr
+        assert (root / "scripts/lib/profiles/models/qwen3.6-27b.yml").is_file()
+
+    def test_export_refuses_an_attached_slug_with_the_reason(self, root):
+        _write_ext(root, _good_ext())
+        r = _py(root,
+                "from pathlib import Path\n"
+                "from scripts.lib.profiles.export_pr import load_local_state, Refusal\n"
+                "try:\n"
+                f"    load_local_state(Path('.').resolve(), {CORE_MODEL!r})\n"
+                "except Refusal as e:\n"
+                "    assert 'CORE model extended' in str(e), e\n"
+                "else:\n"
+                "    raise SystemExit('no refusal')\n")
+        assert r.returncode == 0, r.stderr
+
+    def test_extends_dir_constants_agree(self, root):
+        r = _py(root,
+                "from scripts.lib.profiles.compose_registry import LOCAL_EXTENDS_REL\n"
+                "from scripts.lib.profiles.local_extensions import EXTENDS_DIR_REL\n"
+                "assert LOCAL_EXTENDS_REL == EXTENDS_DIR_REL\n")
+        assert r.returncode == 0, r.stderr

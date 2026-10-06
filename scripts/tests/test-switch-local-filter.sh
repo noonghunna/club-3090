@@ -67,6 +67,30 @@ else
   echo "  ok   pristine listing unchanged (no marker, no footer)"
 fi
 
+# 6. local rows GROUP under their model, not under "lib". The listing derived the
+#    model from the compose path's 2nd segment, which for a local compose
+#    (scripts/lib/profiles-local/composes/<model>/…) is always "lib". Extract the
+#    helper and check both layouts, plus that BOTH passes use it.
+fn="$(sed -n '/^  _list_model_of_dir() {/,/^  }/p' scripts/switch.sh)"
+if [[ -z "$fn" ]]; then
+  echo "  FAIL _list_model_of_dir not found in switch.sh"; rc=1
+else
+  got="$(eval "$fn"; _list_model_of_dir models/qwen3.6-27b/vllm/compose; echo; \
+        _list_model_of_dir scripts/lib/profiles-local/composes/my-model/vllm/compose; echo; \
+        _list_model_of_dir scripts/lib/profiles-local/composes/qwen3.8-flash-next/strata/compose)"
+  want=$'qwen3.6-27b\nmy-model\nqwen3.8-flash-next'
+  if [[ "$got" == "$want" ]]; then
+    echo "  ok   curated, local and core-attached rows group under their model"
+  else
+    echo "  FAIL model grouping: got [${got//$'\n'/, }] want [${want//$'\n'/, }]"; rc=1
+  fi
+fi
+n="$(command grep -c '_list_model_of_dir "\$' scripts/switch.sh)"
+if [[ "$n" -ge 2 ]]; then
+  echo "  ok   the count and render passes both use it ($n sites)"
+else
+  echo "  FAIL only $n listing pass uses _list_model_of_dir — header and rows would disagree"; rc=1
+fi
 [[ "$rc" == "0" ]] && echo "PASS: --local filters and local rows are marked" \
                    || echo "FAIL: switch --local regression"
 exit "$rc"

@@ -735,6 +735,27 @@ def _weights_meta(model: str, variant: str):
                     (_wv or {}).get("quant_label"),
                     (_wv or {}).get("format"),
                 )
+        # LOCAL extensions of core models (extends.d/<core-id>.yml): the variants a
+        # local slug attaches to a curated model with. Without this the slug's
+        # weights column renders blank, the same half-visible failure as above.
+        # Validated additive-only; a bad file is skipped here (compat.load_profiles
+        # raises on it), and setdefault keeps any core key authoritative.
+        try:
+            from scripts.lib.profiles import local_extensions as _lext
+            _core_ids = {q.stem for q in (root / "scripts/lib/profiles/models").glob("*.yml")}
+            for _p in _lext.extension_paths(root):
+                try:
+                    _data = _yaml.safe_load(_p.read_text(encoding="utf-8")) or {}
+                    _ext = _lext.validate(_data, _p, core_model_ids=_core_ids)
+                except Exception:
+                    continue
+                for _wk, _wv in _ext["weights"].items():
+                    _WFMT.setdefault((_ext["extends"], _wk), (
+                        (_wv or {}).get("quant_label"),
+                        (_wv or {}).get("format"),
+                    ))
+        except ImportError:
+            pass
     return _WFMT.get((model, variant)) or (None, None)
 
 # --- variants: exactly the fields parse_variant_rows produces from the tab form,

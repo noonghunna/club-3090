@@ -12,7 +12,7 @@ import logging
 import os
 import subprocess
 import time
-from dataclasses import dataclass, field, fields as dataclass_fields
+from dataclasses import dataclass, field, fields as dataclass_fields, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -827,15 +827,7 @@ def load_profiles(root: Path = PROFILE_ROOT) -> Profiles:
     root = Path(root)
     profiles = Profiles(
         hardware=_load_dir(root, "hardware", _hardware),
-        models={
-            **_load_dir(root, "models", _model),
-            # C4-rev: merge the gitignored LOCAL layer's models.d profiles so
-            # every profile consumer (diagnose-profile, the weights catalog,
-            # registry-emit's model facet) sees community models. Local model
-            # ids are collision-checked by the registry loader, and a local
-            # profile SHADOWING a core id is impossible by that check.
-            **_load_local_models(root),
-        },
+        models=_merge_models(root),
         workloads=_load_dir(root, "workloads", _workload),
         # Local first, core second: core wins a collision (same precedence as
         # the registry — a user cannot redefine a shipped engine out from under us).
@@ -863,6 +855,53 @@ def load_profiles(root: Path = PROFILE_ROOT) -> Profiles:
     log.info("  calibration rows: %s", cal_counts)
     log.info("  compose_registry entries: %d", len(COMPOSE_REGISTRY))
     return profiles
+
+
+def _merge_models(root: Path) -> dict[str, Any]:
+    """Core models + the LOCAL layer: models.d profiles and extends.d additions.
+
+    C4-rev: the gitignored layer's models.d profiles merge in so every profile
+    consumer (diagnose-profile, the weights catalog, registry-emit's model facet)
+    sees community models. ⚠️ CORE WINS a models.d id collision. This used to merge
+    local LAST, so a models.d/<core-id>.yml silently replaced the curated profile;
+    only the registry loader's core-collision refusal kept that from happening, and
+    a profile file with no registry row slipped past it. To attach local slugs to a
+    curated model, use extends.d/<core-id>.yml (local_extensions.py), which can
+    only ADD weights variants and valid_tp values. A broken extension raises, like
+    a broken core or local profile (a half-loaded catalog is worse than a failure).
+    """
+    from . import local_extensions as _ext
+
+    core = _load_dir(root, "models", _model)
+    local = _load_local_models(root)
+    clash = sorted(set(core) & set(local))
+    if clash:
+        _logger().warning(
+            "profiles-local/models.d redefines core model(s) %s: IGNORED, the curated "
+            "profile wins. To add a local variant of a curated model, use "
+            "profiles-local/extends.d/<id>.yml.", clash,
+        )
+    merged = {**core, **{k: v for k, v in local.items() if k not in core}}
+    repo_root = Path(root).parents[2]
+    for path in _ext.extension_paths(repo_root):
+        data = _load_yaml(path)
+        target = data.get("extends") if isinstance(data, dict) else None
+        try:
+            ext = _ext.validate(
+                data, path, core_model_ids=core,
+                core_weights=(core[target].weights if target in core else None),
+                allowed_variant_keys=WEIGHTS_VARIANT_KEYS,
+            )
+        except _ext.ExtensionError as exc:
+            raise ProfileError(str(exc)) from exc
+        base = core[ext["extends"]]
+        tp = tuple(base.valid_tp) + tuple(x for x in ext["valid_tp_add"] if x not in base.valid_tp)
+        merged[base.id] = replace(
+            base,
+            weights={**base.weights, **_normalize_weights(ext["weights"])},
+            valid_tp=tp,
+        )
+    return merged
 
 
 def _load_local_models(root: Path) -> dict[str, Any]:

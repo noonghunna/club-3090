@@ -178,6 +178,12 @@ def _describe(plan: dict) -> str:
         )
     if plan["compose_warning"]:
         lines.append(f"⚠  {plan['compose_warning']}")
+    ext = plan["registry"].parent / "extends.d" / f"{plan['model_id']}.yml"
+    if ext.is_file():
+        # A slug ATTACHED to a core model (local_extensions.py). The extension may
+        # carry variants other slugs use; never removed here. The core profile is
+        # never touched by this tool at all.
+        lines.append(f"extension   KEPT — {ext} (remove it yourself once no slug uses its variants)")
     return "\n".join(f"[demote]   {ln}" for ln in lines)
 
 

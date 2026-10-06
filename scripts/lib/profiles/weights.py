@@ -104,6 +104,37 @@ def _load_models() -> dict[str, dict[str, Any]]:
                 continue
             model_id = str(data.get("id") or path.stem)
             out[model_id] = data
+    # LOCAL extensions of core models (extends.d/<core-id>.yml, local_extensions.py):
+    # additive weights variants a local slug attaches with. Applied to the core
+    # entry so the variant gets its provider / size like any other. A broken or
+    # non-additive extension is SKIPPED with a warning here: this listing must
+    # never go down for a local file (compat.load_profiles raises on it instead).
+    # weights.py runs as a SCRIPT (setup.sh, preflight.sh, c3's `weights.py list`),
+    # where the package import fails but this file's own dir is sys.path[0].
+    try:
+        from scripts.lib.profiles import local_extensions as _ext
+    except ImportError:
+        try:
+            import local_extensions as _ext  # type: ignore[no-redef]
+        except ImportError:  # pragma: no cover
+            _ext = None
+    if _ext is not None:
+        core_ids = set()
+        try:
+            core_ids = {p.stem for p in (PROFILE_ROOT / "models").glob("*.yml")}
+        except OSError:
+            pass
+        for path in _ext.extension_paths(PROFILE_ROOT.parents[2]):
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+                target = data.get("extends") if isinstance(data, dict) else None
+                ext = _ext.validate(data, path, core_model_ids=core_ids,
+                                    core_weights=(out.get(target) or {}).get("weights"))
+            except (OSError, yaml.YAMLError, _ext.ExtensionError) as exc:
+                print(f"[weights] skipping local extension: {exc}", file=sys.stderr)
+                continue
+            out[ext["extends"]] = _ext.merge_model_dict(out[ext["extends"]], ext)
     return out
 
 

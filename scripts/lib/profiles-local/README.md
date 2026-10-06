@@ -49,8 +49,9 @@ compose no longer exists.
 It only ever touches this layer. There is no `--layer core`: a curated entry
 lives in git-tracked files and git is its removal tool, so asking to remove a
 non-`local/` slug is refused before anything is read. If two local slugs share a
-model id, the shared profile and compose tree are **kept** and only the slug you
-named is unregistered.
+model id (only slugs attached to a core model can, see below), the shared compose
+tree is **kept** and only the slug you named is unregistered. An `extends.d` file
+is never removed by demote.
 
 ## The manual way
 
@@ -82,6 +83,40 @@ named is unregistered.
 
    Keys are exactly the `compose_registry._entry(...)` kwargs; defaults are
    applied the same way. Validate with `bash scripts/diagnose-profile.sh <slug>`.
+
+## Extending a core model (`extends.d/`)
+
+To run a local slug of a model the curated catalog already has (another engine,
+another quant, a fine-tune), don't invent a new model id. Attach it to the curated
+model with `extends.d/<core-model-id>.yml`:
+
+```yaml
+schema_version: 1
+extends: qwen3.8-flash-next     # a CORE model id; must match this file's name
+weights:                        # NEW variants only
+  ista-iq3s:
+    path: "qwen3.8-flash-next-gsq-rco-gguf/IQ3_S"
+    size_gb: 83.6
+    format: "gguf"
+    hf_repo: "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
+    engine: "strata"
+    kind: "main"
+valid_tp_add: [1]               # optional: GPU counts the core profile doesn't list
+```
+
+Then register slugs in `registry.local.json` with `"model": "qwen3.8-flash-next"` and
+`"weights_variant": "ista-iq3s"`. Any number of slugs may attach to one core model,
+and c3 / `switch.sh --list` show them under it.
+
+**Additive only.** An extension can add weights variants and `valid_tp` values,
+nothing else. A variant key the curated profile already has is refused, as is an
+`extends:` that isn't a core model; the profile loader raises on a bad file, and a
+slug's undeclared variant fails the usual C14 check. The curated profile itself is
+never changed. (A `models.d/<core-id>.yml` is ignored with a warning: core wins.)
+Without the extension file, a local entry using a core model id is refused as before.
+
+`demote.py` never removes an extension, and `export_pr.py` refuses an attached slug:
+promoting it means adding the variant to the curated `models/<id>.yml` in a PR.
 
 ## Rules
 

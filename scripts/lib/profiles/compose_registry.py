@@ -821,6 +821,9 @@ RECOMMENDED_DEFAULT_MODELS = _CORE_RECOMMENDED_MODELS
 
 LOCAL_LAYER_DIR_REL = "scripts/lib/profiles-local"
 LOCAL_REGISTRY_REL = "scripts/lib/profiles-local/registry.local.json"
+# Core models that local slugs may ATTACH to (local_extensions.EXTENDS_DIR_REL —
+# test_local_registry keeps the two in step).
+LOCAL_EXTENDS_REL = "scripts/lib/profiles-local/extends.d"
 # The slug namespace every LOCAL entry lives under (promote.py --layer local
 # enforces it at write time; the loader refuses anything else).
 LOCAL_SLUG_PREFIX = "local/"
@@ -866,6 +869,16 @@ def load_local_registry(root=None):
         )
     core_slugs = set(COMPOSE_REGISTRY)
     core_models = {e.get("model") for e in COMPOSE_REGISTRY.values()}
+    # Core models a local EXTENSION attaches slugs to (local_extensions.py): the
+    # file's existence is the opt-in. A stdlib file-stem check on purpose — this
+    # loader runs on the launcher's PyYAML-free table path (#584). The file's
+    # CONTENT (additive-only weights, a real core target) is validated where YAML
+    # is read: compat.load_profiles, which every launch's compat check runs.
+    ext_dir = root / LOCAL_EXTENDS_REL
+    try:
+        extended = {p.stem for p in ext_dir.glob("*.yml")} if ext_dir.is_dir() else set()
+    except OSError:
+        extended = set()
     local: dict = {}
     local_models: set = set()
     for slug, kwargs in raw.items():
@@ -894,11 +907,18 @@ def load_local_registry(root=None):
         # can rename it. Silent shadowing in either direction is the bad outcome.
         shadowed = slug in core_slugs
         model = kwargs.get("model")
-        if model in core_models:
+        attached = model in core_models
+        if attached and model not in extended:
             raise LocalRegistryError(
-                f"{path}: local model id {model!r} collides with a core model"
+                f"{path}: local model id {model!r} collides with a core model. To run "
+                f"a local slug of a curated model, ADD its weights variant in "
+                f"{LOCAL_EXTENDS_REL}/{model}.yml (profiles-local/README.md, "
+                f"'Extending a core model')"
             )
-        if model in local_models:
+        # One slug per LOCAL-only model id (its models.d profile and compose tree
+        # belong to that slug). Slugs ATTACHED to a core model share the curated
+        # profile, so any number may attach — Strata dual + single, bucko, Swift.
+        if not attached and model in local_models:
             raise LocalRegistryError(f"{path}: duplicate local model id {model!r}")
         if "origin" in kwargs:
             raise LocalRegistryError(
@@ -915,7 +935,8 @@ def load_local_registry(root=None):
             raise LocalRegistryError(f"{path}: local entry {slug!r}: {exc}") from exc
         entry["shadowed_by_core"] = shadowed
         local[slug] = entry
-        local_models.add(model)
+        if not attached:
+            local_models.add(model)
     return local
 
 

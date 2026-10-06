@@ -97,6 +97,17 @@ def load_local_state(root: Path, mid: str) -> dict:
     """Read EVERYTHING the export needs from the LOCAL layer (disk truth, not
     the scaffold preview). Raises Refusal when the id is absent/broken."""
     profile_path = root / _LOCAL_MODELS_REL / f"{mid}.yml"
+    ext_path = root / _LOCAL_DIR_REL / "extends.d" / f"{mid}.yml"
+    if not profile_path.exists() and ext_path.exists():
+        # A slug ATTACHED to a core model (local_extensions.py): there is no local
+        # profile to export. Promoting it means adding its weights variant to the
+        # curated models/<id>.yml in the PR by hand — the bundle format here is
+        # one new model, not an edit to an existing one.
+        raise Refusal(
+            f"{mid} is a CORE model extended by {ext_path}: export_pr bundles a new "
+            f"model, not an edit to a curated one. Add the variant from that file to "
+            f"scripts/lib/profiles/models/{mid}.yml in the PR instead."
+        )
     if not profile_path.exists():
         raise Refusal(f"no LOCAL model profile: {profile_path} — nothing to export")
     try:

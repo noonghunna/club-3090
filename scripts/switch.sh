@@ -526,6 +526,20 @@ list_variants() {
   # Provenance (#1202). Local rows were INDISTINGUISHABLE in this listing: nothing
   # rendered a marker, which mattered little while they lived under a `local/`
   # namespace and matters a lot now they share the curated <engine>/<name> shape.
+  # The model a listing row groups under. Curated composes live at
+  # models/<model>/…, so the 2nd path segment is the model. LOCAL composes live at
+  # scripts/lib/profiles-local/composes/<model>/… — taking the 2nd segment there
+  # grouped every local slug under a model called "lib". Use the segment after
+  # composes/ instead: the local layer's own layout, and for slugs attached to a
+  # core model (extends.d) that segment is the core id, so they list under it.
+  _list_model_of_dir() {
+    local d="$1"
+    if [[ "$d" == scripts/lib/profiles-local/composes/* ]]; then
+      d="${d#scripts/lib/profiles-local/composes/}"; printf '%s' "${d%%/*}"
+    else
+      local -a _s; IFS=/ read -ra _s <<< "$d"; printf '%s' "${_s[1]:-?}"
+    fi
+  }
   declare -A _is_local=(); local _shadowed=""
   if declare -F registry_local_slugs >/dev/null; then
     local _k _v
@@ -583,7 +597,7 @@ list_variants() {
     if [[ "${LIST_LOCAL:-0}" == "1" && -z "${_is_local[$v]:-}" ]]; then
       continue                       # --local: yours only
     fi
-    _seen_models["${_ds[1]:-?}"]=1
+    _seen_models["$(_list_model_of_dir "$_d")"]=1
     case "${VARIANT_STATUS[$v]:-production}" in
       production) _prod=$((_prod + 1)) ;;
       caveats)    _cav=$((_cav + 1)) ;;
@@ -633,7 +647,7 @@ list_variants() {
   {
     for v in "${!VARIANTS[@]}"; do
       IFS='|' read -r eng dir file <<< "${VARIANTS[$v]}"
-      IFS=/ read -ra dseg <<< "$dir"    # dseg[1] = model
+      _lm="$(_list_model_of_dir "$dir")"
       IFS=/ read -ra fseg <<< "$file"   # fseg[0]=topology fseg[1]=quant fseg[2]=serving
       topo="${fseg[0]:-unknown}"
       rank="$(topology_rank "$topo")"
@@ -649,7 +663,7 @@ list_variants() {
       fi
       marker="$(status_marker "${VARIANT_STATUS[$v]:-production}")"
       printf '%s\t%d\t%s\t%s\t%s/%s\t%s\t%s\t%s\n' \
-        "${dseg[1]:-?}" "$rank" "$topo" "$v" "${fseg[1]:-?}" "${fseg[2]:-${file}}" "$marker" "${VARIANT_CTX[$v]:-}" \
+        "${_lm:-?}" "$rank" "$topo" "$v" "${fseg[1]:-?}" "${fseg[2]:-${file}}" "$marker" "${VARIANT_CTX[$v]:-}" \
         "${_is_local[$v]:+local}"
     done
   } | LC_ALL=C sort -t$'\t' -k1,1 -k2,2n -k4,4 | awk -F'\t' '
