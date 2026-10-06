@@ -2323,6 +2323,67 @@ preflight_offload_thp() {
   return 0
 }
 
+# preflight_nvidia_page_pool
+# WARN-only hint: host RAM parked in the NVIDIA open driver's system-memory page pool.
+#
+# OpenRM keeps freed system-memory pages in per-NUMA-node pools to speed up
+# reallocation (NVreg_EnableSystemMemoryPools, default 0x211 = 4K/64K/2M pages;
+# kernel-open/nvidia/nv-vm.c). A slug that keeps tens of GB of host memory through
+# CUDA VMM (cuMemCreate on a host NUMA node) leaves that much in the pool after it
+# stops. Those pages show in no /proc/meminfo category and are NOT in MemAvailable,
+# so the host-RAM gates below read them as used: on the reference rig a ~58 GiB pool
+# made available RAM read 160 GB against ~166 GB needed (2026-10-06). The pool has a
+# kernel shrinker, so `echo 2 > /proc/sys/vm/drop_caches` hands it back (measured
+# 17.4 -> 1.2 GiB) — no module reload.
+#
+# ⚠️ The gap (MemTotal minus every category) is NOT the pool size: a still-running
+#    process's VMM host memory sits there too, and so does the ZFS ARC (subtracted
+#    below). So this only HINTS, never blocks, and stays quiet unless the driver has
+#    pools enabled. Ordinary pinned memory (cudaHostAlloc, torch pin_memory, the
+#    llama.cpp / exl3 offload paths) does not fill the pool.
+#
+# Fixture overrides for tests: NV_POOL_MEMINFO, NV_POOL_PARAMS, NV_POOL_ARCSTATS.
+preflight_nvidia_page_pool() {
+  local meminfo="${NV_POOL_MEMINFO:-/proc/meminfo}"
+  local params="${NV_POOL_PARAMS:-/proc/driver/nvidia/params}"
+  local arcstats="${NV_POOL_ARCSTATS:-/proc/spl/kstat/zfs/arcstats}"
+  [[ -r "$meminfo" && -r "$params" ]] || return 0
+  local pools
+  pools="$(awk -F': *' '$1 == "EnableSystemMemoryPools" { print $2; exit }' "$params")"
+  [[ "$pools" =~ ^[0-9]+$ ]] && (( pools != 0 )) || return 0   # no pools -> nothing to hint
+
+  local gap_kb arc_kb=0
+  gap_kb="$(awk '
+    { v[$1] = $2 }
+    END {
+      if (!("MemTotal:" in v) || !("MemFree:" in v)) exit
+      hp = ("Hugetlb:" in v) ? v["Hugetlb:"] : v["HugePages_Total:"] * v["Hugepagesize:"]
+      known = v["MemFree:"] + v["Buffers:"] + v["Cached:"] + v["AnonPages:"] + v["Slab:"] \
+            + v["KernelStack:"] + v["PageTables:"] + v["SecPageTables:"] + v["VmallocUsed:"] \
+            + v["Percpu:"] + v["Zswap:"] + hp
+      printf "%d\n", v["MemTotal:"] - known
+    }' "$meminfo")"
+  [[ "$gap_kb" =~ ^-?[0-9]+$ ]] || return 0
+  if [[ -r "$arcstats" ]]; then
+    arc_kb="$(awk '$1 == "size" { printf "%d\n", $3 / 1024; exit }' "$arcstats")"
+    [[ "$arc_kb" =~ ^[0-9]+$ ]] || arc_kb=0
+  fi
+  gap_kb=$(( gap_kb - arc_kb ))
+  # 4 GiB: a freshly loaded driver leaves ~0.5-1.5 GiB unaccounted on the reference rig and the
+  # non-VMM offload engines add under 1 GiB; only a VMM host pool reaches tens of GB.
+  (( gap_kb >= 4 * 1024 * 1024 )) || return 0
+
+  local gap_gb=$(( gap_kb * 1024 / 1000000000 ))
+  echo "[preflight] NOTE: ~${gap_gb} GB of host RAM is held outside every /proc/meminfo category and" >&2
+  echo "            does not count as available. With no other GPU program running, this is" >&2
+  echo "            usually the NVIDIA driver's page pool, left by a slug that kept host memory" >&2
+  echo "            through CUDA VMM. The kernel can reclaim it; to free it now:" >&2
+  echo "              sync; echo 2 | sudo tee /proc/sys/vm/drop_caches" >&2
+  echo "            (drops only reclaimable kernel caches; cached model files stay. Relaunching" >&2
+  echo "            the slug that filled the pool reuses it, so skip it then.)" >&2
+  return 0
+}
+
 # preflight_cpu_offload_ram <compose_file>
 # Guards an offload compose against a host that cannot hold the experts.
 #

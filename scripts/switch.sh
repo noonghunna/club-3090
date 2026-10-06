@@ -1424,6 +1424,10 @@ up_variant() {
       # so its settle-retry also covers the just-torn-down container's VRAM lag.
       preflight_compose_gpu_fit "${full_dir}/${file}" "${FORCE:-0}" || exit 1
     fi
+    # NVIDIA driver page-pool hint — WARN-only, runs even under --force, and BEFORE the
+    # host-RAM gates below: a just-stopped slug's CUDA VMM host memory stays in the
+    # driver's pool, outside MemAvailable, so those gates would read it as used.
+    preflight_nvidia_page_pool || true
     # LMCache host-RAM guard — runs even under --force (incubating LMCache slugs
     # launch WITH --force, yet over-sizing --l1-size-gb can OOM the host; #133).
     # No-op for composes without an LMCache-l1-gb metadata header.
