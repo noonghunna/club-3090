@@ -53,13 +53,12 @@
 #   Best for:  a single-card long-context vision assistant that leaves the second
 #              GPU entirely free for another workload.
 #
-# ⚠️ TOOL CALLS NEED THE VENDORED TEMPLATE (2026-09-23, temporary). llama.cpp b10920
-#   routes MiMo's template to its Qwen3-Coder handler, whose grammar requires newlines
-#   MiMo never writes — every tool-calling turn ran to the token cap. The mounted
-#   ../../../patches/qwen3coder-handler-bypass-chat-template/ is MiMo's own template
-#   with one literal split so that routing no longer fires (rendered prompt
-#   byte-identical). Fixed upstream in ggml-org/llama.cpp#29257; DROP the mount and the
-#   --chat-template-file flag in the pin bump past it. Details: that directory's README.
+# TOOL CALLS: the GGUF's own template again (2026-10-06). llama.cpp b10920 routed MiMo's
+#   template to its Qwen3-Coder handler, whose grammar requires newlines MiMo never writes,
+#   so every tool-calling turn ran to the token cap; a vendored template with one literal
+#   split carried tool use from 2026-09-23. Fixed upstream in ggml-org/llama.cpp#29257,
+#   shipped in the engine pin since v0.5.0; the patch was dropped with the v0.6.0 (b11429)
+#   bump after cli-40 CLI-21…26 passed 6/6 without it (thinking on, 230 W).
 #
 # VALIDATED 2026-09-21 on 2x3090 (one card used), engine b10920:
 #   verify-full  8/8 applicable pass (vision 4/4 on ground truth)
@@ -201,15 +200,13 @@
 
 services:
   llama-cpp-mimo-9b-single:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:52192a23c7b258044463aebba78826cdff39a7393b713edc313324b343a7b836}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:883915ea20a4b350e98f7284098f4d400c21e9b366e248d397cd42d90602a84c}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-mimo-9b-single}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8094}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
-      # Temporary — see the header and patches.yml `mimo-qwen3coder-handler-bypass-chat-template`.
-      - "../../../patches/qwen3coder-handler-bypass-chat-template/chat_template.jinja:/etc/club3090/mimo-chat-template.jinja:ro"
     environment:
       # ⚠️⚠️ THE ROW VARS MUST BE DECLARED HERE OR THE FLIP SILENTLY DOES NOTHING.
       # The entrypoint resolves the sampler row INSIDE the container, and docker
@@ -298,7 +295,6 @@ services:
       --cache-type-v ${KV_TYPE:-q8_0}
       -np ${NP:-1}
       --jinja
-      --chat-template-file /etc/club3090/mimo-chat-template.jinja
       --reasoning-format ${REASONING_FORMAT:-deepseek}
       --top-k ${TOP_K:-20}
       --min-p ${MIN_P:-0.0}

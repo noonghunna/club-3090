@@ -737,39 +737,6 @@ patches:
       drop_when: "the APEX GGUF ships a corrected default chat template, OR the override is re-vendored (the same drift_guard must clear the next re-vendor)"
     status: unverified
 
-  - id: mimo-qwen3coder-handler-bypass-chat-template
-    model: [mimo-v2.6-9b]
-    files:
-      - models/mimo-v2.6-9b/llama-cpp/patches/qwen3coder-handler-bypass-chat-template/chat_template.jinja
-    load_bearing_when:
-      - composes:
-          - llamacpp/mimo9b-single-vision
-        reason: "llama.cpp b10920 routes any template containing <tool_call>, <function= and <parameter= to its newline-strict Qwen3-Coder tool-call handler. MiMo writes tool calls without newlines, so under that grammar a call never closes and every tool-calling turn runs to the token cap (cli-40 multi-round 0/6; toolcall-15 resamples 14/36 at the cap). This is MiMo's embedded template with the <function= literal split so that routing does not fire: the rendered prompt is byte-identical and llama.cpp falls through to its auto-parser, which is what upstream's fix does."
-        evidence: "models/mimo-v2.6-9b/llama-cpp/patches/qwen3coder-handler-bypass-chat-template/README.md (provenance, both sha256s, the one-line diff, before/after table)"
-    delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
-      dockerfile_bake: false
-      entrypoint_invoke: false
-      genesis: false
-    delivery_gaps: []
-    delivery_mechanism: chat_template
-    delivery_spec:
-      jinja: models/mimo-v2.6-9b/llama-cpp/patches/qwen3coder-handler-bypass-chat-template/chat_template.jinja
-      mounted_at: /etc/club3090/mimo-chat-template.jinja
-      mount_mode: ro
-      invoke: "--chat-template-file /etc/club3090/mimo-chat-template.jinja"
-      wired_at: [volumes, command]
-      note: "TEMPORARY. sha256 83f5ec365ea00579f6160ce7cae73a9b47882502c9c7589392e1faec7c335301 (vendored) vs 59a64ebb4df6d1489d09a91267cf3ceb106162d4a893c4f84833cfb8c897ff63 (embedded, bartowski GGUF rev 4371da10); they differ only on line 44."
-    drift_guard:
-      kind: behavioral
-      check: "With the template mounted: /props chat_template contains no '<function=' literal; a thinking-on tool request (the cli-40 CLI-21 first turn) ends finish_reason=tool_calls with well-formed JSON arguments, NOT finish_reason=length with one runaway argument; /apply-template output is byte-identical to the stock embedded template's on the same build. Any behavioral/TPS comparison the guard performs MUST use the SELF-CONTAINED symmetric restart+settle protocol: identical docker restart on BOTH arms -> healthy -> fixed 60s settle -> >=3 bench.sh runs/arm -> compare the GRAND MEAN of the SAME canonical segment; flag ONLY a deterministic regression reproduced across ALL 3 runs."
-      on_fail: capability-degraded   # tool-calling turns run to the token cap; chat and vision are unaffected
-    capability: chat-template-override
-    foundational: false
-    upstream:
-      ref: "ggml-org/llama.cpp#29257 (bfd73a876, merged 2026-09-22): excludes templates rendering tool calls without newlines from the Qwen3-Coder handler. Published in release v0.5.0 (b11146, `server-cuda-v0.5.0`), which the llama-cpp-local pin moved to on 2026-09-23 — so drop_when is MET, but the patch stays wired until the CLI-21 first-turn probe runs on v0.5.0 without it (not run at pin time: both GPUs busy). Keeping it is safe: it only swaps the template."
-      status: merged
-      drop_when: "the llama-cpp-mainline pin for llamacpp/mimo9b-single-vision reaches a published ggml-org/llama.cpp image built from bfd73a876 or later: drop the volume, the --chat-template-file flag, this entry and the patch directory in that same bump, then re-run the CLI-21 first-turn probe."
-    status: verified
   - id: gemma-vllm-pr41800-truncate-prompt-tokens
     deprecated_on: "2026-06-05"
     deprecation_reason: "merged upstream + redundant on stock v0.22.0 (#254)."
