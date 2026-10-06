@@ -947,8 +947,12 @@ _preflight_compose_path_default() {
   # Compose files commonly use ${VAR:-default/path}. Presence checks should use
   # the path the compose will use by default; explicit env overrides are handled
   # by callers for user-facing knobs such as GGUF_FILE.
-  value="$(printf '%s' "$value" | sed -E 's#\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]*)\}#\1#g')"
+  # ⚠️ ORDER MATTERS: strip the ${MODEL_DIR…} prefix BEFORE resolving defaults.
+  # The other way round, `${MODEL_DIR:-/mnt/models}/sub` resolved to
+  # `/mnt/models/sub`, the strip then found nothing, and the caller prefixed
+  # model_dir again: a doubled `/mnt/models//mnt/models/sub`, reported missing.
   value="$(printf '%s' "$value" | sed -E 's#\$\{MODEL_DIR[^}]*\}/?##g')"
+  value="$(printf '%s' "$value" | sed -E 's#\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]*)\}#\1#g')"
   value="${value#/models/}"
   value="${value#/root/.cache/huggingface/}"
   # Strip a trailing `}` left when a path is the DEFAULT inside an outer
@@ -1365,7 +1369,9 @@ preflight_compose_deps() {
       elif [[ -d "${model_dir}/${path}" ]]; then
         shard_dirs+=("${model_dir}/${path}")
       fi
-    done < <(command grep -hoE '\$\{MODEL_DIR[^}]*\}/[^"[:space:]]+' "${compose_files[@]}" || true)
+    # Comment lines are skipped, as in the vLLM extractor above: a compose header
+    # that MENTIONS `${MODEL_DIR}/sub` was otherwise checked as a mount.
+    done < <(command grep -hv '^[[:space:]]*#' "${compose_files[@]}" 2>/dev/null | command grep -oE '\$\{MODEL_DIR[^}]*\}/[^"[:space:]]+' || true)
   fi
 
   # Present on the host, unreachable from the container. Reported SEPARATELY from

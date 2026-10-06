@@ -194,4 +194,28 @@ touch "${TMP_DIR}/bl-models/qwen3.6-27b-gguf/anbeeld-dflash-iq4xs/Qwen3.6-27B-DF
 out="$(run_deps "$beellama_compose" "${TMP_DIR}/bl-models")"
 [[ -z "$out" ]]
 
+# A MODEL_DIR volume spelled with a DEFAULT, `${MODEL_DIR:-/abs}/sub`, plus a header
+# comment that mentions `${MODEL_DIR}/sub`. Both were misread: the default resolved
+# into the path and model_dir was prefixed again (a doubled path), and the comment
+# was checked as a mount (with its trailing punctuation). Found on a local Strata
+# recipe that boots fine with `docker compose` but was refused by switch.sh.
+dflt_compose="${TMP_DIR}/defaulted-volume.yml"
+cat > "$dflt_compose" <<'YAML'
+# Model: downloaded to ${MODEL_DIR}/vendor-gguf/IQ3_S; setup checks it.
+services:
+  engine:
+    image: example
+    volumes:
+      - "${MODEL_DIR:-/mnt/models/huggingface}/vendor-gguf/IQ3_S:/gguf:ro"
+YAML
+mkdir -p "${TMP_DIR}/dflt-models/vendor-gguf/IQ3_S"
+out="$(run_deps "$dflt_compose" "${TMP_DIR}/dflt-models")"
+[[ -z "$out" ]] || { echo "ASSERTION FAILED: defaulted volume present but reported: $out" >&2; exit 1; }
+# NEGATIVE CONTROL: the folder absent → reported missing, ONCE, at the right single path.
+rmdir "${TMP_DIR}/dflt-models/vendor-gguf/IQ3_S"
+out="$(expect_missing "$dflt_compose" "${TMP_DIR}/dflt-models")"
+assert_contains "$out" "${TMP_DIR}/dflt-models/vendor-gguf/IQ3_S (MODEL_DIR volume path)"
+assert_not_contains "$out" "/mnt/models/huggingface/vendor-gguf"
+assert_not_contains "$out" "IQ3_S;"
+
 echo "test-preflight-compose-deps: ok"
