@@ -43,7 +43,7 @@ ID_030=sha256:30030030030030030030030030030030030030030030030030030030030030
 ID_029=sha256:29029029029029029029029029029029029029029029029029029029029029
 ID_NEW=sha256:77777777777777777777777777777777777777777777777777777777777777
 ID_022=sha256:22022022022022022022022022022022022022022022022022022022022022
-KEY_030=vllm-vllm-openai-v0.30.0-300300300300
+KEY_030=vllm-vllm-openai-v0.31.0-300300300300
 VCOMPOSE=models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml    # cache + KV disk tier
 VSLUG=vllm/qwen38-27b-dual-fast                                          # the slug for that compose
 
@@ -55,7 +55,7 @@ while IFS='|' read -r ref id want; do
   got="$(key "$ref" "$id")"
   [[ "$got" == "$want" ]] || { bad "key($ref, $id) = '$got', want '$want'"; k_ok=0; }
 done <<EOF
-vllm/vllm-openai:v0.30.0|sha256:8a69ffad015f138d7170c4ddc429e230a3bc1c1719f67e14324749df200a4b90|vllm-vllm-openai-v0.30.0-8a69ffad015f
+vllm/vllm-openai:v0.31.0|sha256:8a69ffad015f138d7170c4ddc429e230a3bc1c1719f67e14324749df200a4b90|vllm-vllm-openai-v0.31.0-8a69ffad015f
 docker.io/library/ubuntu:24.04|sha256:ABCDEF0123456789abcdef|ubuntu-24.04-abcdef012345
 ghcr.io/noonghunna/llamacpp-club3090:moecachev1.5-rc0|sha256:0123456789abcdef00|ghcr.io-noonghunna-llamacpp-club3090-moecachev1.5-rc0-0123456789ab
 lmsysorg/sglang@sha256:06e4f2ed21af06e4f2ed21af|sha256:06e4f2ed21af06e4f2ed21af|lmsysorg-sglang-06e4f2ed21af
@@ -70,7 +70,7 @@ python3 "$PY" key --image x:1 --id "not-an-id" >/dev/null 2>&1 && bad "a malform
 mkdir -p "$T/bin" "$T/images" "$T/running"
 img_file() { printf '%s/%s' "$T/images" "$(printf '%s' "$1" | tr '/:@' '___')"; }
 set_image() { printf '%s\n' "$2" > "$(img_file "$1")"; }
-set_image vllm/vllm-openai:v0.30.0 "$ID_030"
+set_image vllm/vllm-openai:v0.31.0 "$ID_030"
 set_image vllm/vllm-openai:v0.29.0 "$ID_029"
 set_image vllm/vllm-openai:v0.22.0 "$ID_022"
 cat > "$T/bin/docker" <<EOF
@@ -185,11 +185,11 @@ K22="$T/cache/vllm-vllm-openai-v0.22.0-220220220220"
    && "$(mounted /root/.cache/vllm/torch_compile_cache)" == "$K22/torch_compile_int8" ]] && mine "$K22/triton_int8" \
   && ok "a slug on another image (the engine profile's v0.22.0) gets its own dir, with the compose's own variant subdirs" \
   || bad "gemma v0.22.0 slug: cache='$(envout CACHE)' mounts='$(mounted /root/.triton/cache) $(mounted /root/.cache/vllm/torch_compile_cache)'"
-set_image vllm/vllm-openai:v0.30.0 "$ID_NEW"
+set_image vllm/vllm-openai:v0.31.0 "$ID_NEW"
 out="$(sw wt1)"
-[[ "$(envout CACHE)" == "$T/cache/vllm-vllm-openai-v0.30.0-777777777777" ]] \
+[[ "$(envout CACHE)" == "$T/cache/vllm-vllm-openai-v0.31.0-777777777777" ]] \
   && ok "the same tag re-pulled to a new image ID gets a new dir" || bad "re-pulled tag: cache='$(envout CACHE)'"
-set_image vllm/vllm-openai:v0.30.0 "$ID_030"
+set_image vllm/vllm-openai:v0.31.0 "$ID_030"
 out="$(sw wt1 -u CLUB3090_DATA_DIR XDG_DATA_HOME="$T/xd-explicit" KV_OFFLOAD_DIR=/srv/kv-explicit)"
 # (the data dir itself may exist: switch.sh keeps the slug-label override in
 # <data dir>/compose-labels — what must not appear is a KV-offload dir)
@@ -216,14 +216,14 @@ out="$(sw wt1 CLUB3090_CACHE_DIR=relative/cache)"
   && command grep -qF 'CLUB3090_CACHE_DIR must be an absolute path' <<<"$out" \
   && ok "a relative CLUB3090_CACHE_DIR is refused with a reason; the launch goes ahead on the in-repo cache" \
   || bad "relative CLUB3090_CACHE_DIR: cache='$(envout CACHE)' mount='$(mounted /root/.triton/cache)'"
-rm -f "$(img_file vllm/vllm-openai:v0.30.0)"
+rm -f "$(img_file vllm/vllm-openai:v0.31.0)"
 out="$(sw wt1)"
 [[ "$(envout CACHE)" == "<unset>" && "$(realpath -m "$(mounted /root/.triton/cache)")" == "$ROOT/models/qwen3.8-27b/vllm/cache/triton" ]] \
-  && command grep -q '^PULL vllm/vllm-openai:v0.30.0' "$MOCK_LOG" \
+  && command grep -q '^PULL vllm/vllm-openai:v0.31.0' "$MOCK_LOG" \
   && ok "an image that can't be pulled: the launch still happens, on the in-repo cache (and says why)" \
   || bad "unpullable image: cache='$(envout CACHE)' pulls=$(command grep -c PULL "$MOCK_LOG")"
 out="$(sw wt1 STUB_PULL_ID="$ID_030")"
-[[ "$(envout CACHE)" == "$T/cache/$KEY_030" ]] && command grep -q '^PULL vllm/vllm-openai:v0.30.0' "$MOCK_LOG" \
+[[ "$(envout CACHE)" == "$T/cache/$KEY_030" ]] && command grep -q '^PULL vllm/vllm-openai:v0.31.0' "$MOCK_LOG" \
   && ok "a missing image is pulled first, then keyed by its ID" || bad "pull-then-key: cache='$(envout CACHE)'"
 
 # ── 3. gpu-mode: `sudo docker compose`, which drops HOME and the environment ───
@@ -296,7 +296,7 @@ out="$(prep python3 "$PY" prepare --compose "$ROOT/services/searxng/docker-compo
 [[ -z "$out" ]] && ok "a compose that mounts neither variable: no output" || bad "non-cache compose printed: $out"
 # The legacy notice: the compose's old in-repo cache dir still holds a cache.
 LG="$T/legacy"; mkdir -p "$LG/models/m/vllm/compose/single/q" "$LG/models/m/vllm/cache/triton/abc"
-printf 'services:\n  s:\n    image: vllm/vllm-openai:v0.30.0\n    volumes:\n      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton:/root/.triton/cache\n' > "$LG/models/m/vllm/compose/single/q/base.yml"
+printf 'services:\n  s:\n    image: vllm/vllm-openai:v0.31.0\n    volumes:\n      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton:/root/.triton/cache\n' > "$LG/models/m/vllm/compose/single/q/base.yml"
 out="$(prep python3 "$PY" prepare --compose "$LG/models/m/vllm/compose/single/q/base.yml" --root "$LG" 2>&1)"
 command grep -qF "models/m/vllm/cache still holds this checkout's old compile cache" <<<"$out" \
   && command grep -qF 'settings.sh caches' <<<"$out" \
@@ -311,10 +311,10 @@ printf 'x\n' > "$R/models/a/vllm/cache/.gitignore"; printf 'r\n' > "$R/models/a/
 head -c 300000 /dev/zero > "$R/models/a/vllm/cache/torch_compile/y/graph.bin"
 printf 'k\n' > "$R/kv-offload/blocks/b0.bin"; printf 't\n' > "$R/models/b/vllm/cache/triton/z/k.bin"
 chmod 0555 "$R/models/b/vllm/cache/triton/z"     # stands in for a root-owned folder: you can't delete inside it
-mkdir -p "$T/cache/vllm-vllm-openai-v0.30.0-300300300300/triton"
+mkdir -p "$T/cache/vllm-vllm-openai-v0.31.0-300300300300/triton"
 cs() { env CLUB3090_CONFIG_DIR="$C" CLUB3090_CACHE_DIR="$T/cache" CLUB3090_DATA_DIR="$T/data" python3 "$PY" caches --root "$R" "$@" 2>&1; }
 out="$(cs)"
-command grep -q 'vllm-vllm-openai-v0.30.0-300300300300' <<<"$out" && command grep -qE 'models/a/vllm/cache/torch_compile +[0-9.]+ KiB' <<<"$out" \
+command grep -q 'vllm-vllm-openai-v0.31.0-300300300300' <<<"$out" && command grep -qE 'models/a/vllm/cache/torch_compile +[0-9.]+ KiB' <<<"$out" \
   && command grep -qE 'models/b/vllm/cache/triton .*root-owned: needs sudo' <<<"$out" && command grep -q 'kv-offload/blocks' <<<"$out" \
   && ! command grep -qE 'README.md|\.gitignore' <<<"$out" \
   && ok "report: per-image dirs, the old in-repo caches with sizes (tracked README/.gitignore not listed), the ones needing sudo flagged" \
@@ -329,7 +329,7 @@ out="$(cs --remove-legacy --yes)"
   && command grep -qF "sudo rm -rf -- $R/models/b/vllm/cache/triton" <<<"$out" \
   && ok "--remove-legacy --yes removes what you own, keeps the tracked files, and prints the sudo command for the rest" \
   || bad "--remove-legacy --yes: $out"
-[[ -d "$T/cache/vllm-vllm-openai-v0.30.0-300300300300" ]] && ok "… and never touches the shared per-image caches" || bad "a shared cache dir was removed"
+[[ -d "$T/cache/vllm-vllm-openai-v0.31.0-300300300300" ]] && ok "… and never touches the shared per-image caches" || bad "a shared cache dir was removed"
 chmod 0755 "$R/models/b/vllm/cache/triton/z"
 mkdir -p "$R/kv-offload/live"; out="$(env KV_OFFLOAD_DIR="$R/kv-offload" CLUB3090_CONFIG_DIR="$C" CLUB3090_CACHE_DIR="$T/cache" CLUB3090_DATA_DIR="$T/data" python3 "$PY" caches --root "$R" 2>&1)"
 ! command grep -q 'kv-offload/live' <<<"$out" && command grep -q 'is your KV_OFFLOAD_DIR, so it is in use' <<<"$out" \

@@ -13,6 +13,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.30.0
         loads: true
+      - pin: vllm-stable@v0.31.0
+        loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
@@ -56,6 +58,8 @@ arches:
       - pin: vllm-stable@v0.29.0
         loads: true
       - pin: vllm-stable@v0.30.0
+        loads: true
+      - pin: vllm-stable@v0.31.0
         loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
@@ -143,6 +147,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.30.0
         loads: true
+      - pin: vllm-stable@v0.31.0
+        loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
@@ -174,6 +180,8 @@ arches:
       - pin: vllm-stable@v0.29.0
         loads: true
       - pin: vllm-stable@v0.30.0
+        loads: true
+      - pin: vllm-stable@v0.31.0
         loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
@@ -207,6 +215,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.30.0
         loads: true
+      - pin: vllm-stable@v0.31.0
+        loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
@@ -238,6 +248,8 @@ arches:
       - pin: vllm-stable@v0.29.0
         loads: true
       - pin: vllm-stable@v0.30.0
+        loads: true
+      - pin: vllm-stable@v0.31.0
         loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
@@ -271,6 +283,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.30.0
         loads: true
+      - pin: vllm-stable@v0.31.0
+        loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-stable-next@>=0.21.0rc0,<0.21.0
@@ -303,6 +317,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.30.0
         loads: true
+      - pin: vllm-stable@v0.31.0
+        loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
@@ -334,6 +350,8 @@ arches:
       - pin: vllm-stable@v0.29.0
         loads: true
       - pin: vllm-stable@v0.30.0
+        loads: true
+      - pin: vllm-stable@v0.31.0
         loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
@@ -418,6 +436,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.30.0
         loads: true
+      - pin: vllm-stable@v0.31.0
+        loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
@@ -449,6 +469,8 @@ arches:
       - pin: vllm-stable@v0.29.0
         loads: true
       - pin: vllm-stable@v0.30.0
+        loads: true
+      - pin: vllm-stable@v0.31.0
         loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
@@ -482,6 +504,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.30.0
         loads: true
+      - pin: vllm-stable@v0.31.0
+        loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
@@ -513,6 +537,8 @@ arches:
       - pin: vllm-stable@v0.29.0
         loads: true
       - pin: vllm-stable@v0.30.0
+        loads: true
+      - pin: vllm-stable@v0.31.0
         loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
@@ -547,6 +573,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.30.0
         loads: true
+      - pin: vllm-stable@v0.31.0
+        loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
@@ -580,6 +608,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.30.0
         loads: true
+      - pin: vllm-stable@v0.31.0
+        loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
@@ -612,6 +642,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.30.0
         loads: true
+      - pin: vllm-stable@v0.31.0
+        loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
@@ -643,6 +675,8 @@ arches:
       - pin: vllm-stable@v0.29.0
         loads: true
       - pin: vllm-stable@v0.30.0
+        loads: true
+      - pin: vllm-stable@v0.31.0
         loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
@@ -735,6 +769,8 @@ arches:
       - pin: vllm-stable@v0.29.0
         loads: true
       - pin: vllm-stable@v0.30.0
+        loads: true
+      - pin: vllm-stable@v0.31.0
         loads: true
       - pin: vllm-stable@v0.25.1
         loads: true
