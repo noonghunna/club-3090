@@ -109,3 +109,72 @@ gpu_select_assert_placement() {
   fi
   return 0
 }
+
+# gpu_vram_report_lines ["<our_container>"]
+#   One markdown line per GPU — its VRAM in use and WHO holds it, attributed
+#   PER CARD. report.sh's "Display / desktop state" section prints these.
+#   ⚠️ Why per card (#1537): the old loop credited the one running club
+#   container with EVERY card's memory. A CMP rig's report said GPUs 0 and 2
+#   were "held by running `sglang-cmp170hx`" — a container that could see only
+#   GPU 1 — while another container's VLLM::Worker_TP0/1 held them.
+#   Attribution, in order:
+#     1. host `--query-compute-apps`: each process on the card, mapped to its
+#        container through /proc/<pid>/cgroup (falls back to the process name);
+#     2. the container's own compute-apps view (gpu_select_container_uuids),
+#        for hosts whose nvidia-smi shows no processes (some VMs / runtimes).
+#   A card with memory in use and no owner found is flagged, never assigned.
+#   GPU_ATTR_PROC overrides /proc (tests).
+gpu_vram_report_lines() {
+  local ours="${1:-}" proc="${GPU_ATTR_PROC:-/proc}"
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+  local gpus apps="" idmap="" ours_uuids=""
+  gpus="$(nvidia-smi --query-gpu=index,uuid,memory.used --format=csv,noheader,nounits 2>/dev/null)"
+  [[ -z "$gpus" ]] && return 0
+  apps="$(nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name --format=csv,noheader 2>/dev/null)"
+  if command -v docker >/dev/null 2>&1; then
+    idmap="$(docker ps --no-trunc --format '{{.ID}} {{.Names}}' 2>/dev/null)"
+    [[ -n "$ours" ]] && ours_uuids="$(gpu_select_container_uuids "$ours")"
+  fi
+  local idx uuid used owners auuid apid aname who cid line
+  while IFS=, read -r idx uuid used; do
+    idx="${idx// /}"; uuid="${uuid// /}"; used="${used// /}"
+    [[ -z "$idx" ]] && continue
+    if ! [[ "$used" =~ ^[0-9]+$ ]] || (( used <= 100 )); then
+      echo "- **GPU $idx idle VRAM:** ${used} MiB ✓"
+      continue
+    fi
+    owners=""
+    while IFS=, read -r auuid apid aname; do
+      auuid="${auuid// /}"; apid="${apid// /}"; aname="${aname# }"
+      [[ -n "$auuid" && "$auuid" == "$uuid" ]] || continue
+      who=""
+      cid="$(command grep -oE '[0-9a-f]{64}' "$proc/$apid/cgroup" 2>/dev/null | head -1)"
+      [[ -n "$cid" && -n "$idmap" ]] && who="$(awk -v id="$cid" '$1==id {print $2; exit}' <<<"$idmap")"
+      [[ -z "$who" ]] && who="${aname:-pid $apid}"
+      case ",${owners}," in *",${who},"*) ;; *) owners="${owners:+${owners},}${who}" ;; esac
+    done <<<"$apps"
+    if [[ -z "$owners" && -n "$ours" && ",${ours_uuids}," == *",${uuid},"* ]]; then
+      owners="$ours"
+    fi
+    if [[ -z "$owners" ]]; then
+      line="- **GPU $idx idle VRAM:** ${used} MiB ⚠ something is using this GPU (display, browser, or a process this report can't see)"
+      [[ -n "$ours" ]] && line="${line} — not \`${ours}\`"
+      echo "$line"
+    else
+      local -a _own=() _rest=()
+      IFS=',' read -ra _own <<<"$owners"
+      local o mine=0
+      for o in "${_own[@]}"; do
+        if [[ -n "$ours" && "$o" == "$ours" ]]; then mine=1; else _rest+=("\`${o}\`"); fi
+      done
+      local others; others="$(printf '%s, ' "${_rest[@]}")"; others="${others%, }"
+      if (( mine )); then
+        line="- **GPU $idx idle VRAM:** ${used} MiB (held by running \`${ours}\`"
+        [[ -n "$others" ]] && line="${line}; also ${others}"
+        echo "${line})"
+      else
+        echo "- **GPU $idx idle VRAM:** ${used} MiB (held by ${others}${ours:+ — not \`${ours}\`})"
+      fi
+    fi
+  done <<<"$gpus"
+}

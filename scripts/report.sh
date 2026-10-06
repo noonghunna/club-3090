@@ -111,6 +111,7 @@ cd "$REPO_ROOT"
 source "$REPO_ROOT/scripts/lib/engine-kind.sh"
 # shellcheck source=lib/club-containers.sh
 source "$REPO_ROOT/scripts/lib/club-containers.sh"
+source "$REPO_ROOT/scripts/lib/gpu-select.sh"
 source "$REPO_ROOT/scripts/lib/report_calib.sh"
 # shellcheck source=lib/p2p-state.sh
 source "$REPO_ROOT/scripts/lib/p2p-state.sh"
@@ -763,19 +764,8 @@ section "Display / desktop state"
     if have docker && docker info >/dev/null 2>&1; then
       our_container=$(club_running_container)
     fi
-    nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
-      | while IFS=, read -r idx used; do
-          idx="${idx# }"; used="${used# }"
-          if [[ "$used" =~ ^[0-9]+$ ]] && [[ "$used" -gt 100 ]]; then
-            if [[ -n "$our_container" ]]; then
-              echo "- **GPU $idx idle VRAM:** ${used} MiB (held by running \`${our_container}\`)"
-            else
-              echo "- **GPU $idx idle VRAM:** ${used} MiB ⚠ something is using this GPU (display, browser, container)"
-            fi
-          else
-            echo "- **GPU $idx idle VRAM:** ${used} MiB ✓"
-          fi
-        done
+    # Per card, not per container (#1537): see gpu_vram_report_lines.
+    gpu_vram_report_lines "$our_container"
   fi
 } | redact
 
