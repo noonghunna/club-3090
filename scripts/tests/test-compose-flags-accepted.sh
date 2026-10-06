@@ -25,9 +25,63 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-FAIL=0; CHECKED=0; SKIPPED=0; SKIPPED_FORK=0; DEPRECATED_HITS=0
+FAIL=0; CHECKED=0; SKIPPED=0; SKIPPED_FORK=0; DEPRECATED_HITS=0; UNCOVERED=()
 ok()  { echo "  ✓ $1"; }
 bad() { echo "  ✗ $1" >&2; FAIL=1; }
+
+# The flags a compose passes, from its first service's `command:`. Both forms:
+#   - a LIST is a clean argv;
+#   - a STRING (the folded `command: >-` most llama.cpp composes use) is split on
+#     whitespace, the way compose itself splits it.
+# ⚠️ Until 2026-10-06 only the LIST form was read, and a string command was
+# skipped WITHOUT being counted: every mainline llama.cpp compose (all folded) was
+# unchecked while the test printed ok. A bogus flag injected into one passed.
+# `${VAR:+--flag …}` passes --flag when VAR is set, so it counts; `${VAR:-x}` is a
+# value. `--flag=value` counts as --flag. A bash -c entrypoint can add flags in
+# its script body (ROW+=(--x …)); those stay uncovered, and composes with nothing
+# parseable are LISTED at the end, not skipped silently.
+FLAGS_PY="$(cat <<'PY'
+import sys, re, yaml
+FLAG = re.compile(r"--?[A-Za-z][A-Za-z0-9-]*")
+PREFIX = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:[+-]")
+
+def flags_of(cmd):
+    if isinstance(cmd, list):
+        toks = [str(t) for t in cmd]
+    elif isinstance(cmd, str):
+        toks = cmd.split()
+    else:
+        return []
+    out = []
+    for t in toks:
+        while (m := PREFIX.match(t)):
+            t = t[m.end():]
+        t = t.rstrip("}")
+        if t.startswith("-"):
+            t = t.split("=", 1)[0]
+        if FLAG.fullmatch(t):
+            out.append(t)
+    return out
+
+if sys.argv[1] == "--selftest":
+    folded = ("--host 0.0.0.0\n-c ${CTX:-262144}\n-fa on\n--cache-type-k ${KV:-q4_0}\n"
+              "--club-bogus-flag-control\n${IMG:+--image-min-tokens ${IMG}}\n--ctx-checkpoints=8\n"
+              "-m /models/${GGUF:-a/b.gguf}\n--temp ${T:--1}")
+    want = ["--host", "-c", "-fa", "--cache-type-k", "--club-bogus-flag-control",
+            "--image-min-tokens", "--ctx-checkpoints", "-m", "--temp"]
+    assert flags_of(folded) == want, flags_of(folded)
+    assert flags_of(["--jinja", "${KV:-q8_0}", "-ngl", "99"]) == ["--jinja", "-ngl"]
+    assert flags_of(None) == [] and flags_of({"x": 1}) == []
+    sys.exit(0)
+
+d = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
+svc = next(iter((d.get("services") or {}).values()), {})
+print("\n".join(flags_of(svc.get("command"))))
+PY
+)"
+# The parser is the part that silently broke, so it is checked on every run,
+# docker or not — including a bogus flag in a folded string (the positive control).
+python3 -c "$FLAGS_PY" --selftest || { echo "  ✗ flag parser self-test failed — fix the parser, not the composes" >&2; echo "test-compose-flags-accepted: FAIL" >&2; exit 1; }
 
 command -v docker >/dev/null 2>&1 || { echo "  ⊘ docker unavailable — skipping"; echo "test-compose-flags-accepted: skipped"; exit 0; }
 
@@ -72,32 +126,20 @@ for row in "${ROWS[@]}"; do
   fi
   for c in "${composes[@]}"; do
     [[ -f "$c" ]] || continue
-    # Only a LIST `command:` is a clean argv. A bash -c entrypoint hides flags in
-    # a script body; those are reported as uncovered rather than half-parsed.
+    # Flags come from `command:` (list or string, see FLAGS_PY). A bash -c
+    # entrypoint can hide more in its script body; those stay uncovered.
     # ⚠️ ONE ENGINE ID, TWO BINARIES. ik-llama/* slugs register against
     # `llama-cpp-local` but their composes pin ${IK_LLAMA_IMAGE:-…}, a different
     # fork with a different flag set (that split is why #1365 gave the profile
     # `image_env: null`). Checking an ik compose against the MAINLINE binary
-    # would be a confident wrong answer in both directions. Today these composes
-    # have no list `command:` so they fall out below anyway — luck, not design.
+    # would be a confident wrong answer in both directions. They are skipped
+    # by the image comparison below, which is what keeps them out.
     compose_img="$(command sed -nE 's/^[[:space:]]*image:[[:space:]]*"?\$\{[A-Z_0-9]+:-([^}"]+)\}"?.*/\1/p;s/^[[:space:]]*image:[[:space:]]*"?([^$"[:space:]]+)"?[[:space:]]*$/\1/p' "$c" | head -1)"
     if [[ -n "$compose_img" && "$compose_img" != "$spec" ]]; then
       SKIPPED_FORK=$((SKIPPED_FORK + 1)); continue
     fi
-    flags="$(python3 - "$c" <<'PY'
-import sys, yaml, re
-d = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
-svc = next(iter((d.get("services") or {}).values()), {})
-cmd = svc.get("command")
-if not isinstance(cmd, list):
-    sys.exit(0)
-for tok in cmd:
-    t = str(tok)
-    if re.fullmatch(r"--?[A-Za-z][A-Za-z0-9-]*", t):
-        print(t)
-PY
-)"
-    [[ -n "$flags" ]] || continue
+    flags="$(python3 -c "$FLAGS_PY" "$c")"
+    if [[ -z "$flags" ]]; then UNCOVERED+=("$c"); continue; fi
     CHECKED=$((CHECKED + 1))
     unknown=""
     while read -r fl; do
@@ -133,7 +175,11 @@ PY
   done
 done
 
-echo "  checked ${CHECKED} compose(s); ${SKIPPED} skipped (image not local); ${SKIPPED_FORK} skipped (compose pins a different fork than its engine profile)"
+echo "  checked ${CHECKED} compose(s); ${SKIPPED} skipped (image not local); ${SKIPPED_FORK} skipped (compose pins a different image than its engine profile: another fork, or a deprecated compose on an older pin)"
+if (( ${#UNCOVERED[@]} )); then
+  echo "  ⊘ ${#UNCOVERED[@]} compose(s) UNCOVERED — no flag parseable from command: (flags live in the entrypoint):"
+  printf '      %s\n' "${UNCOVERED[@]}"
+fi
 if (( DEPRECATED_HITS )); then
   echo "  ⚠ ${DEPRECATED_HITS} compose(s) pass a flag their pin marks DEPRECATED — not a failure, but it is how #1370 happened"
 fi
