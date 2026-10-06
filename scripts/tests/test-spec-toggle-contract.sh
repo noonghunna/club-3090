@@ -32,6 +32,8 @@
 # list, applies docker-compose ${VAR:-default} interpolation, runs the script
 # under bash with `vllm` replaced by a stub that prints its argv, and inspects
 # the argv the engine would actually have received. No GPU, no weights, no image.
+# `nvidia-smi` is stubbed too (see BIG_CARD_MIB), so the verdict never depends
+# on the card in the machine running the gate.
 
 # SCOPE: vLLM (`--speculative-config`) and the llama.cpp lineage (mainline,
 # ik-llama, beellama, llamacpp-club3090 — `--spec-type` / `--spec-draft-model` /
@@ -177,9 +179,21 @@ def _command_list(text, env):
     return args
 
 
-def argv_under(text, env):
+# The card an auto-sizing entrypoint sees. Those composes read the card's total
+# VRAM with nvidia-smi and pick a tier from it (the single-fast slugs, #1540: a
+# card under 30 GiB gets the lean tier, whose default has NO drafter). Left to
+# the host's real nvidia-smi, the verdict depended on the machine running the
+# gate: a 3090 host failed it, a GPU-less one passed. So the sandbox carries its
+# own nvidia-smi. The default contract is checked on a card big enough for every
+# tier (the recipe as written); check() repeats the toggle legs on a 24 GB card.
+BIG_CARD_MIB = 81920
+SMALL_CARD_MIB = 24576
+
+
+def argv_under(text, env, vram_mib=BIG_CARD_MIB):
     """Run the compose's entrypoint with `vllm` stubbed, under the env docker
-    would actually give the container; return the argv string."""
+    would actually give the container; return the argv string. `vram_mib` is
+    the total memory the stubbed nvidia-smi reports."""
     body = entrypoint_of(text)
     if body is None:
         return None, ("no block-scalar entrypoint found, so the drafter cannot be "
@@ -195,6 +209,12 @@ def argv_under(text, env):
         stub = dp / "vllm"
         stub.write_text('#!/bin/bash\nfor a in "$@"; do printf "ARG:%s\\n" "$a"; done\nexit 0\n')
         stub.chmod(0o755)
+        smi = dp / "nvidia-smi"
+        smi.write_text('#!/bin/bash\ncase "$*" in\n'
+                       f'  *memory.total*) echo {int(vram_mib)} ;;\n'
+                       '  *) echo "nvidia-smi stub: no answer for: $*" >&2; exit 9 ;;\n'
+                       'esac\n')
+        smi.chmod(0o755)
         etc = dp / "etc" / "club3090"
         etc.mkdir(parents=True, exist_ok=True)
         (etc / "detect_nvlink.sh").write_text("_NVLINK_ENABLED=0\n")
@@ -229,7 +249,8 @@ def argv_under(text, env):
                               .replace("/root/.cache/huggingface", str(hfc))
                               .replace("/app/llama-server", str(srv)))
         # only what the compose declares crosses into the container
-        e = {k: v for k, v in os.environ.items() if not k.startswith(("SPEC", "NUM_SPEC"))}
+        e = {k: v for k, v in os.environ.items()
+             if not k.startswith(("SPEC", "NUM_SPEC", "SIZE_TIER"))}
         e.update(container_env(text, env)); e["PATH"] = f"{d}:{os.environ['PATH']}"
         # A drafter compose may verify its external draft GGUF exists before
         # exec (deepseek moecache fail-loud, club-3090#1054). Stub any
@@ -331,6 +352,19 @@ def check(text, label, sink):
     a, _ = argv_under(text, {"SPEC_N": str(pick)})
     if depth(a) != pick:
         sink.append(f"{label}: SPEC_N={pick} ignored — engine would get n={depth(a)}")
+    # An entrypoint that sizes itself from the card may default the drafter OFF
+    # on a small one (that is a recipe choice), but the switch must still work
+    # there: SPEC_N=<n> turns it on at that depth, SPEC_N=0 / SPEC=off keep it off.
+    if not re.search(r"\bnvidia-smi\b", entrypoint_of(text) or ""):
+        return
+    card = f"on a {SMALL_CARD_MIB // 1024} GB card"
+    for env, desc in [({"SPEC_N": "0"}, "SPEC_N=0"), ({"SPEC": "off"}, "SPEC=off")]:
+        a, _ = argv_under(text, env, vram_mib=SMALL_CARD_MIB)
+        if depth(a) is not None:
+            sink.append(f"{label}: {card}, {desc} does not disable the drafter (n={depth(a)})")
+    a, _ = argv_under(text, {"SPEC_N": str(pick)}, vram_mib=SMALL_CARD_MIB)
+    if depth(a) != pick:
+        sink.append(f"{label}: {card}, SPEC_N={pick} ignored — engine would get n={depth(a)}")
 
 
 # ---------------------------------------------------------------------------
@@ -393,8 +427,27 @@ MALFORMED = _compose(
     '"- \'{\\"method\\":\\"mtp\\",\\"num_speculative_tokens\\":$$_spec_n}")\n'
     'exec vllm serve "$$@" "$${SPEC_ARGS[@]}"')
 
+# Sizes itself from the card: drafter on by default only on a card of 30 GiB or
+# more, OFF on a smaller one or when nvidia-smi gives nothing. It passes only
+# when the sandbox's nvidia-smi answers with the big card, so on ANY host (a 24 GB
+# card, or no GPU at all) this case is flagged if the stub stops being used.
+_AUTOSIZE = (
+    '_v="$$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits -i 0 2>/dev/null | tr -dc \'0-9\')"\n'
+    'if [ -n "$$_v" ] && [ "$$_v" -ge 30720 ]; then : "$${SPEC_N:=3}"; else {LEAN}; fi\n'
+    '_spec_n="$$SPEC_N"\n'
+    'case "$${SPEC:-}" in off|0) _spec_n=0 ;; esac\n'
+    'SPEC_ARGS=()\n'
+    '[ "$$_spec_n" -gt 0 ] && SPEC_ARGS=(--speculative-config '
+    '"{\\"method\\":\\"mtp\\",\\"num_speculative_tokens\\":$$_spec_n}")\n'
+    'exec vllm serve "$$@" "$${SPEC_ARGS[@]}"')
+AUTOSIZED = _compose(_AUTOSIZE.replace("{LEAN}", ': "$${SPEC_N:=0}"'))
+# the small-card branch overwrites SPEC_N, so a user can't turn the drafter on there
+AUTOSIZED_STUCK = _compose(_AUTOSIZE.replace("{LEAN}", "SPEC_N=0"))
+
 CASES = [
     ("honours the full contract",      GOOD,       False),
+    ("sizes from the card, honours the contract on both", AUTOSIZED, False),
+    ("small-card tier ignores SPEC_N", AUTOSIZED_STUCK, True),
     ("payload is not valid JSON",      MALFORMED,  True),
     ("knob never declared in environment:", UNDECLARED, True),
     ("hardcoded drafter, no escape",   HARDCODED,  True),
