@@ -456,6 +456,7 @@ def validate_spec(spec: Any, root: Path, layer: str) -> dict:
             raise Refusal(f"local model id already exists in {_LOCAL_REGISTRY_REL}: {mid!r}")
         if slug in local_raw:
             raise Refusal(f"registry slug already exists in {_LOCAL_REGISTRY_REL}: {slug}")
+        _check_local_engine_profile(root, spec)
 
         # Dry-wrap the kwargs EXACTLY like the loader will — a bad kwarg or a
         # bad status must refuse BEFORE anything is written.
@@ -534,7 +535,31 @@ def validate_spec(spec: Any, root: Path, layer: str) -> dict:
     local_raw = _load_local_raw(root)
     if slug in local_raw:
         raise Refusal(f"registry slug already exists in {_LOCAL_REGISTRY_REL}: {slug}")
+    if spec.get("local_engine_profile"):
+        raise Refusal("local_engine_profile is LOCAL-layer only — a curated engine "
+                      "profile is a scripts/lib/profiles/engines/<id>.yml in a PR")
     return spec
+
+
+_LOCAL_ENGINES_REL = f"{_LOCAL_DIR_REL}/engines.d"
+
+
+def _check_local_engine_profile(root: Path, spec: dict) -> None:
+    """Optional spec.local_engine_profile = {id, yaml}: a NEW local engine profile
+    (catalog.sh sends one for an engine the catalog does not know). Validated here,
+    written by _write_local — never before the plan / --dry-run / confirm. An
+    existing profile is never overwritten (spec['_engine_profile_action'] = keep)."""
+    ep = spec.get("local_engine_profile")
+    if not ep:
+        return
+    if not isinstance(ep, dict) or not isinstance(ep.get("id"), str) or not isinstance(ep.get("yaml"), str):
+        raise Refusal("spec.local_engine_profile must be {id: str, yaml: str}")
+    eid = ep["id"]
+    if not eid or "/" in eid or eid.startswith(".") or not eid.replace("-", "").replace("_", "").replace(".", "").isalnum():
+        raise Refusal(f"spec.local_engine_profile.id {eid!r} is not a safe engine id")
+    path = root / _LOCAL_ENGINES_REL / f"{eid}.yml"
+    spec["_engine_profile_path"] = path
+    spec["_engine_profile_action"] = "keep" if path.exists() else "write"
 
 
 def plan_lines(root: Path, spec: dict) -> list[str]:
@@ -542,8 +567,15 @@ def plan_lines(root: Path, spec: dict) -> list[str]:
     mid = spec["model_id"]
     slug = spec["registry_entry"]["slug"]
     if spec["_layer"] == "local":
+        eng = []
+        if spec.get("_engine_profile_path") is not None:
+            rel = f"{_LOCAL_ENGINES_REL}/{spec['_engine_profile_path'].name}"
+            eng = [f"  write {rel} (new local ENGINE profile)"
+                   if spec.get("_engine_profile_action") == "write"
+                   else f"  keep  {rel} (already exists — not overwritten)"]
         return [
             f"plan (layer LOCAL — gitignored {_LOCAL_DIR_REL}/, root {root}):",
+            *eng,
             f"  write {_LOCAL_MODELS_REL}/{mid}.yml",
             f"  write {spec['compose']['path']}",
             f"  merge entry into {_LOCAL_REGISTRY_REL} (JSON — no source edit)",
@@ -568,6 +600,19 @@ def _write_local(root: Path, spec: dict) -> tuple[Path, Path]:
     mid = spec["model_id"]
     profile_path = root / _LOCAL_MODELS_REL / f"{mid}.yml"
     compose_abs = root / spec["compose"]["path"]
+
+    # ── Write 0/3 (optional): a NEW local engine profile ────────────────────
+    # First, so the registry entry written last never references an engine that
+    # failed to land, and before the post-write checks, whose cross-reference
+    # validation needs it.
+    if spec.get("_engine_profile_action") == "write":
+        ep_path = spec["_engine_profile_path"]
+        try:
+            ep_path.parent.mkdir(parents=True, exist_ok=True)
+            ep_path.write_text(spec["local_engine_profile"]["yaml"], encoding="utf-8")
+            _info(f"wrote {ep_path}")
+        except OSError as exc:
+            raise InternalError(f"could not write {ep_path}: {exc}")
 
     # ── Write 1/3: the ModelProfile ─────────────────────────────────────────
     try:

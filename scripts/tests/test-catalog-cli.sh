@@ -84,6 +84,25 @@ else
   echo "  FAIL unknown engine lineage was guessed rather than refused"; rc=1
 fi
 
+# 2d. --dry-run writes NOTHING, the new engine profile included. catalog.sh used to
+#     write engines.d/<engine>.yml itself BEFORE promote ran, so every dry run above
+#     left one behind while promote printed "dry-run — nothing written" (and the
+#     round trip below then passed on that leaked file). Now promote writes it, after
+#     its plan / dry-run exit / confirm, and the plan names it.
+EP0="$TMP/scripts/lib/profiles-local/engines.d/their-engine.yml"
+if [[ -e "$EP0" ]]; then
+  echo "  FAIL --dry-run left engines.d/their-engine.yml behind"; rc=1
+else
+  echo "  ok   --dry-run wrote no engine profile"
+fi
+out="$(scripts/catalog.sh register --compose "$C" --engine their-engine --engine-type llama.cpp --weights "$W" --root "$TMP" --dry-run -y 2>&1)"
+if [[ "$out" == *"engines.d/their-engine.yml (new local ENGINE profile)"* ]]; then
+  echo "  ok   the dry-run plan lists the engine profile it would write"
+else
+  echo "  FAIL the dry-run plan does not list the engine profile"; rc=1
+fi
+[[ -e "$EP0" ]] && { echo "  FAIL a second --dry-run wrote the engine profile"; rc=1; }
+
 # 3. round trip
 if scripts/catalog.sh register --compose "$C" --engine their-engine --engine-type llama.cpp --weights "$W" --root "$TMP" -y >/dev/null 2>&1; then
   REG="$TMP/scripts/lib/profiles-local/registry.local.json"

@@ -458,3 +458,66 @@ def _write_spec(root):
     f = root / "spec.json"
     f.write_text(json.dumps(_spec()), encoding="utf-8")
     return f
+
+
+# ---------------------------------------------------------------------------
+# spec.local_engine_profile — a NEW local engine profile written by promote with
+# the rest of the plan (catalog.sh used to write it itself, before --dry-run /
+# the confirm could stop it).
+# ---------------------------------------------------------------------------
+ENGINE_YAML = (
+    "schema_version: 1\n"
+    "id: my-engine\n"
+    "display_name: my-engine (local, registered from a compose)\n"
+    "type: llama.cpp\n"
+    "stability: experimental\n"
+    "min_sm: 7.5\n"
+)
+ENGINE_REL = "scripts/lib/profiles-local/engines.d/my-engine.yml"
+
+
+def _spec_with_engine(**kw):
+    spec = _spec(**kw)
+    spec["local_engine_profile"] = {"id": "my-engine", "yaml": ENGINE_YAML}
+    return spec
+
+
+class TestLocalEngineProfile:
+    def test_dry_run_writes_no_engine_profile_but_plans_it(self, root):
+        res = _run_cli(root, _spec_with_engine(), "--layer", "local", "--dry-run")
+        assert res.returncode == 0, res.stderr
+        assert not (root / ENGINE_REL).exists()
+        assert "engines.d/my-engine.yml (new local ENGINE profile)" in (res.stdout + res.stderr)
+
+    def test_real_write_lands_the_engine_profile(self, root):
+        res = _run_cli(root, _spec_with_engine(), "--layer", "local")
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert (root / ENGINE_REL).read_text(encoding="utf-8") == ENGINE_YAML
+        for rel in LOCAL_ARTIFACTS:
+            assert (root / rel).exists(), rel
+
+    def test_existing_engine_profile_is_never_overwritten(self, root):
+        p = root / ENGINE_REL
+        p.parent.mkdir(parents=True, exist_ok=True)
+        mine = ENGINE_YAML.replace("min_sm: 7.5", "min_sm: 8.6")
+        p.write_text(mine, encoding="utf-8")
+        res = _run_cli(root, _spec_with_engine(), "--layer", "local")
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert p.read_text(encoding="utf-8") == mine
+        assert "already exists — not overwritten" in (res.stdout + res.stderr)
+
+    def test_unsafe_engine_id_is_refused_before_any_write(self, root):
+        spec = _spec_with_engine()
+        spec["local_engine_profile"]["id"] = "../escape"
+        res = _run_cli(root, spec, "--layer", "local")
+        assert res.returncode == 3, res.stderr + res.stdout
+        assert "not a safe engine id" in res.stderr
+        for rel in LOCAL_ARTIFACTS:
+            assert not (root / rel).exists(), rel
+
+    def test_core_layer_refuses_a_local_engine_profile(self, root):
+        res = _run_cli(root, _spec_with_engine(layer_local=False), "--layer", "core",
+                       env_extra={"C3_ALLOW_CORE_PROMOTE": "1"})
+        assert res.returncode == 3, res.stderr + res.stdout
+        assert "LOCAL-layer only" in res.stderr
+        assert not (root / "scripts/lib/profiles/models/my-model.yml").exists()

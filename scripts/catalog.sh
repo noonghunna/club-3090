@@ -464,13 +464,15 @@ spec = {
         "max_ctx": max_ctx, "max_num_seqs": 1, "mem_util": 0.9,
         "compose_path": cpath, "default_port": port, "kvcalc_key": "SKIP"}},
 }
-Path(out).write_text(json.dumps(spec, indent=1), encoding="utf-8")
+# The engine profile rides in the SPEC and promote.py writes it with the other
+# local artifacts — AFTER its plan, its --dry-run exit and its confirm. It used to
+# be written HERE, before promote ran, so `register --dry-run` (and a declined
+# confirm) left engines.d/<engine>.yml behind while promote printed "nothing written".
 if engine_yaml:
-    d = Path(wroot) / "scripts/lib/profiles-local/engines.d"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / f"{engine}.yml").write_text(engine_yaml, encoding="utf-8")
-    print(f"[catalog] wrote a local ENGINE profile: profiles-local/engines.d/{engine}.yml "
-          f"(type={etype}, capabilities evidenced from the compose)")
+    spec["local_engine_profile"] = {"id": engine, "yaml": engine_yaml}
+    print(f"[catalog] new local ENGINE profile for {engine!r} (type={etype}, capabilities "
+          f"evidenced from the compose) — written by promote with the rest of the plan")
+Path(out).write_text(json.dumps(spec, indent=1), encoding="utf-8")
 
 def mark(v, given):  # show the user which values THEY chose vs which we guessed
     return "given" if given else "derived"
