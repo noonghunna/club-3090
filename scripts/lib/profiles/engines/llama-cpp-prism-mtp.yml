@@ -12,16 +12,21 @@ install:
   # This image is OURS and SOURCE-BUILT, so a retag would silently change what every
   # user runs with no registry-visible signal — hence the digest, verified by a real
   # registry round-trip (local tag removed, then pulled back by digest).
+  #   2026-10-06  PrismML-Eng/llama.cpp tag prism-b10754-2459f68 + ONE open PR (#189,
+  #               applies cleanly), built FROM the llama-cpp-prism b10754 image
+  #               (sha256:906e7bf2…). Recipe: .../patches/prism-mtp-b10754/. Tag
+  #               b10754-2459f68-pr189 points at this digest. SASS sm_86/89/120a (CMake
+  #               maps 120 → 120a, = the stock tarball); no stub path in RUNPATH.
   #   2026-09-24  PrismML-Eng/llama.cpp tag prism-b10735-842b188 + ONE open PR (#189),
   #               built FROM the llama-cpp-prism b10735 image. #205 and #216 merged
   #               upstream and ship in b10735, so their vendored diffs were DROPPED.
-  #               Recipe: models/qwen3.8-27b/llama-cpp-prism/patches/prism-mtp-b10735/.
-  #               Tag b10735-pr189 points at this digest.
+  #               Recipe dir was prism-mtp-b10735/ (renamed with the b10754 bump).
+  #               Tag b10735-pr189, digest cd299c55….
   #   2026-09-19  prism-b10709-9a9394a + #205 + #216 + #189 (previous pin, digest 7f859a60…)
   #
   # ⚠️ CUDA **12.8**, deliberately — see the llama-cpp-prism sibling. The container is
   # the runtime, not this rig's CUDA 13.2 host.
-  spec: ghcr.io/noonghunna/llamacpp-prism-mtp@sha256:cd299c55f9dd8e12bbd609733208b4eb07b96905b43fa226a2c8c145282a3ca4
+  spec: ghcr.io/noonghunna/llamacpp-prism-mtp@sha256:e6988801b7c760d9ed9dd5d11bcb89f8c447f2b2b2d1e04c7cef665ff58582c0
 
 # ---------------------------------------------------------------------------
 # WHY A SEPARATE ENGINE RATHER THAN A FLAG ON AN EXISTING ONE
@@ -119,7 +124,7 @@ required_overlays: []
 vendored_overlays:
   # ⚠️⚠️ UNLIKE THE `llama-cpp-prism` SIBLING, THIS IS NOT UPSTREAM'S BINARY. That
   # profile documents `vendored_overlays: GENUINELY EMPTY — we patch nothing`.
-  # This one is SOURCE-BUILT from PrismML-Eng/llama.cpp at tag prism-b10735-842b188
+  # This one is SOURCE-BUILT from PrismML-Eng/llama.cpp at tag prism-b10754-2459f68
   # with the one still-OPEN upstream PR applied (#189). Each entry carries a drop
   # trigger: when the PR merges AND ships in a prism release, drop it. When the last
   # one drops, delete this profile and fold the slug back onto `llama-cpp-prism`.
@@ -159,7 +164,7 @@ vendored_overlays:
     drop_trigger: merged upstream AND present in a prism release tarball
   - id: prism-pr189-shortq-fa-quantv
     image_baked: true   # compiled into the binary at build time, not a mounted overlay
-    vendored_diff: models/qwen3.8-27b/llama-cpp-prism/patches/prism-mtp-b10735
+    vendored_diff: models/qwen3.8-27b/llama-cpp-prism/patches/prism-mtp-b10754
     source: https://github.com/PrismML-Eng/llama.cpp/pull/189
     files: [ggml/src/ggml-cuda/fattn.cu]
     diff: '+6/-0'

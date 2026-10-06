@@ -1,4 +1,4 @@
-# prism b10735 + 1 upstream PR — build recipe for `llama-cpp-prism-mtp`
+# prism b10754 + 1 upstream PR — build recipe for `llama-cpp-prism-mtp`
 
 ⚠️ This patch is **baked into the engine image at build time**, not mounted at
 runtime. The engine profile marks it `image_baked: true` for that reason. It is
@@ -8,6 +8,14 @@ tracked to its drop trigger.
 | patch | upstream | diff | why |
 |---|---|---|---|
 | `pr189.diff` | [#189](https://github.com/PrismML-Eng/llama.cpp/pull/189) OPEN | +6/-0 | Guards a CUDA illegal memory access in short-query MMA FA with quantized V (Q 3-4). Inert at the shipped `SPEC_N=4` (Q=5); carried for `SPEC_N=2`/`3`, reachable via env. |
+
+⚠️ **2026-10-06, #189 is not free at `SPEC_N=2`/`3`.** A reviewer on the PR (RTX 4070, sm_89,
+q4_0 K/V, on this same `2459f68` base) measured MTP decode **−14.2%** at `--spec-draft-n-max 2`,
+acceptance 71.6% → 54.9% with outputs no longer identical, and `test-backend-ops -o FLASH_ATTN_EXT`
+aborting with an illegal memory access that passes without the patch. They could not reproduce
+the crash #189 fixes, which they say needs mixed K/V types (K f16, V quantized). This compose
+uses matched `q8_0`/`q8_0`. Not re-measured here; the shipped `SPEC_N=4` never takes the branch.
+Open question for the maintainer: keep #189, or drop it and fold this slug onto `llama-cpp-prism`.
 
 **Dropped 2026-09-24** (drop trigger fired — merged upstream AND shipped in `prism-b10735-842b188`):
 
@@ -24,7 +32,7 @@ this patch, delete the `llama-cpp-prism-mtp` engine profile and fold the slug ba
 ## Rebuild
 
 ```bash
-git clone --depth 1 --branch prism-b10735-842b188 \
+git clone --depth 1 --branch prism-b10754-2459f68 \
   https://github.com/PrismML-Eng/llama.cpp.git
 cd llama.cpp && git apply ../pr189.diff
 ```
@@ -49,7 +57,7 @@ RUN cmake -B build -G Ninja \
       -DCMAKE_CUDA_ARCHITECTURES="86;89;120" \
       -DLLAMA_CURL=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
  && cmake --build build --target llama-server -j 32
-FROM ghcr.io/noonghunna/llamacpp-prism@sha256:20c43cb73ad3075cb689770682a7cde3c9dc0df2d16ba585986de9d69ddaec62
+FROM ghcr.io/noonghunna/llamacpp-prism@sha256:906e7bf2e07445c717444eac0bcede9f19b9ce7c105130a377e052a68b2e4b77
 COPY --from=build /src/build/bin/ /app/
 ```
 
@@ -61,6 +69,8 @@ COPY --from=build /src/build/bin/ /app/
    the stock release matrix** — verify with `cuobjdump --list-elf`, do not read it off
    release notes. A first build at `86` alone was *narrower than stock* and would not
    have run on a 4090 or 5090.
+   On b10754 `cuobjdump --list-elf` shows `sm_86 / sm_89 / sm_120a` on BOTH the stock
+   tarball and this build: CMake maps `120` to `120a`, so the recipe line stays `86;89;120`.
 2. **`-Wl,-rpath-link`, not `-L`.** `-L` resolves explicit `-lfoo`; `libcuda.so.1` is a
    transitive `DT_NEEDED` of `libggml-cuda.so` and is searched via `rpath-link`. `ld`
    says so verbatim and it still took two builds to act on.
@@ -68,7 +78,7 @@ COPY --from=build /src/build/bin/ /app/
    container loads the stub instead of the real driver. Verify with
    `readelf -d /app/llama-server` that **no stub path** (`…/lib64/stubs`) appears in
    `RPATH`/`RUNPATH`. ⚠️ An empty RUNPATH is NOT what you will see: CMake's build-tree
-   `RUNPATH [/src/build/bin:]` is present on both the b10709 and b10735 images. That is
+   `RUNPATH [/src/build/bin:]` is present on the b10709, b10735 and b10754 images. That is
    harmless — the directory does not exist in the runtime image and `LD_LIBRARY_PATH=/app`
    resolves first — so check for the stub path, not for an empty field. (This line
    used to say "no RPATH/RUNPATH is present", which neither image ever satisfied.)
@@ -76,4 +86,4 @@ COPY --from=build /src/build/bin/ /app/
    `libggml-cuda.so.0.21.0`.
 
 ⚠️ The built binary reports `build 1` because the shallow clone has no git history to
-count from. The **commit hash** (`842b188`) is the reliable identifier.
+count from. The **commit hash** (`2459f68` on b10754) is the reliable identifier.
