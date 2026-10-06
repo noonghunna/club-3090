@@ -5,8 +5,9 @@
 #              per 128, stored in a blockwise Hadamard-rotated basis folded in
 #              offline. Architecture UNCHANGED from Qwen3.8-27B; the GGUF
 #              declares `general.architecture = qwen35`, 64 blocks, 851 tensors.
-#   Engine:    llama.cpp PrismML ternary fork, SOURCE-BUILT prism-b10754-2459f68 + 1 open PR (#189); #205/#216 now upstream
-#              ⚠️ NOT upstream's binary — see engines/llama-cpp-prism-mtp.yml
+#   Engine:    llama.cpp PrismML ternary fork, release prism-b10754-2459f68 — the STOCK
+#              llama-cpp-prism image, same as the pq2 sibling (2026-10-06: #205/#216 ship
+#              upstream, #189 dropped; this slug was llama-cpp-prism-mtp/… on a source build)
 #   Topology:  Single 3090 — the whole 27B fits one card with room to spare.
 #              No offload, no expert cache, no split tuning.
 #   Drafter:   ⭐ BUILT-IN MTP, via the bundled target+head GGUF. This is the
@@ -102,7 +103,7 @@ services:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
     # The engine profile (engines/llama-cpp-prism.yml) is authoritative.
     # Image = upstream's linux-cuda-12.8 release tarball + libgomp1, nothing else.
-    image: ${LLAMACPP_PRISM_MTP_IMAGE:-ghcr.io/noonghunna/llamacpp-prism-mtp@sha256:e6988801b7c760d9ed9dd5d11bcb89f8c447f2b2b2d1e04c7cef665ff58582c0}
+    image: ${LLAMACPP_PRISM_IMAGE:-ghcr.io/noonghunna/llamacpp-prism@sha256:906e7bf2e07445c717444eac0bcede9f19b9ce7c105130a377e052a68b2e4b77}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-prism-qwen38-27b-ternary-mtp}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # Reap orphaned children — a wedged server otherwise becomes a <defunct>
@@ -249,8 +250,8 @@ services:
         # at n=4 (89.58 / 90.47). FREE-FORM PROSE peaks at n=2 (67.85) and by n=5 has
         # fallen to 49.69 — within 2% of no-spec, i.e. paying full draft cost for
         # nothing. n=4 favours code/structured work. Set SPEC_N=2 for prose-heavy use.
-        # ⭐ n=4 also puts Q=n+1=5 OUTSIDE the Q<=4 window of the vendored FA crash
-        # fallback (PR #189), so that fallback never fires at the shipping depth.
+        # (PrismML #189, a FA fallback for Q<=4 with quantized V, was vendored until
+        # 2026-10-06 and dropped: never fired at n=4, cost ~14% at n=2 per its review.)
         _spec_n="$${SPEC_N:-4}"
         case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
         case "$$_spec_n" in ""|*[!0-9]*)

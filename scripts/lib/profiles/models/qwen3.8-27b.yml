@@ -245,14 +245,14 @@ weights:
     # file (42.35/40.72 vs 40.95/40.94 decode, 828.96 vs 833.04 prefill, bench.sh)
     # and at IDENTICAL VRAM, because with spec off llama.cpp does not load the MTP
     # tensors at all. So the +450 MB on disk costs nothing until you draft.
-    # ⚠️⚠️ NEEDS THE PrismML FORK *AND* A PATCHED BUILD. Same ternary-type caveat
-    # as prism-ternary-pq2 (stock llama.cpp loads it as Q2_0 and emits GARBAGE with
-    # no warning), PLUS: --spec-type draft-mtp cannot START on the stock prism
-    # release either — llama_verify_hadamard_graph refuses the graph. Engine
-    # `llama-cpp-prism-mtp` vendors the fix (upstream #205, still OPEN).
+    # ⚠️⚠️ NEEDS THE PrismML FORK. Same ternary-type caveat as prism-ternary-pq2
+    # (stock llama.cpp loads it as Q2_0 and emits GARBAGE with no warning). MTP needs
+    # PrismML #205 (llama_verify_hadamard_graph otherwise refuses the graph); it ships
+    # in prism releases from b10735, so the stock `llama-cpp-prism` engine runs it
+    # (until 2026-10-06 a source-built `llama-cpp-prism-mtp` engine did).
     # ⚠️ Download ONLY the .gguf. The repo carries ~86 files including an
     # SM120-only runtime tarball and experiment logs that are useless here.
-    manual_note: "Bundled target+MTP head for Bonsai 2 27B ternary. MEASURED on 2x3090 sm_86 (one card) with engine llama-cpp-prism-mtp: 1.84x at --spec-draft-n-max 4 (89.58 vs 48.70 tok/s spec-off), acceptance 58-95%. Depth is NOT free to guess -- n=2 gives only 1.64x and n=5 collapses to 1.50x. Cross-platform corroboration in PrismML-Eng/llama.cpp#205: 1.76-1.82x on RX 7900 XTX (41.6 t/s baseline) and 1.34x on RTX 4080 SUPER (~67 t/s), i.e. speculation pays more where the target decodes slower -- our ~48 t/s baseline sits between them and so does our speedup. ⚠️ QUALITY UNMEASURED at time of cataloguing, as for the -pq2 sibling."
+    manual_note: "Bundled target+MTP head for Bonsai 2 27B ternary. MEASURED on 2x3090 sm_86 (one card) with the source-built engine llama-cpp-prism-mtp (retired 2026-10-06; the stock llama-cpp-prism engine now runs it): 1.84x at --spec-draft-n-max 4 (89.58 vs 48.70 tok/s spec-off), acceptance 58-95%. Depth is NOT free to guess -- n=2 gives only 1.64x and n=5 collapses to 1.50x. Cross-platform corroboration in PrismML-Eng/llama.cpp#205: 1.76-1.82x on RX 7900 XTX (41.6 t/s baseline) and 1.34x on RTX 4080 SUPER (~67 t/s), i.e. speculation pays more where the target decodes slower -- our ~48 t/s baseline sits between them and so does our speedup. ⚠️ QUALITY UNMEASURED at time of cataloguing, as for the -pq2 sibling."
   prism-ternary-mmproj-q8:
     path: qwen3.8-27b-gguf/prism-ternary
     local_subdir: qwen3.8-27b-gguf/prism-ternary

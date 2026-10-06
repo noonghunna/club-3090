@@ -40,7 +40,7 @@ assert len(p.models) - _nloc("scripts/lib/profiles-local/models.d") == 23   # +i
 assert len(p.workloads) == 5
 _p = __import__("pathlib").Path
 _nloc = lambda d: len(list(_p(d).glob("*.yml"))) if _p(d).is_dir() else 0
-assert len(p.engines) - _nloc("scripts/lib/profiles-local/engines.d") == 21   # +llamacpp-club3090-v1.1, -v1.5, -v1.6, +sglang-stable, +exllamav3, +llama-cpp-prism, +llama-cpp-prism-mtp
+assert len(p.engines) - _nloc("scripts/lib/profiles-local/engines.d") == 20   # +llamacpp-club3090-v1.1, -v1.5, -v1.6, +sglang-stable, +exllamav3, +llama-cpp-prism, +llama-cpp-prism-mtp, -llama-cpp-prism-mtp (2026-10-06, folded onto llama-cpp-prism)
 assert len(p.drafters) == 20  # +syvai-qwen38-dflash2, +anbeeld-glm53-dflash2, +zlab-qwen38-dflash2, +prism-mtp-bundled
 assert len(p.calibration) == 6
 PY

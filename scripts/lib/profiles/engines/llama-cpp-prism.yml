@@ -103,7 +103,7 @@ supported_kv_formats:
                           # q4_0 etc. remain UNBOOTED here; add them only from a
                           # boot, never from upstream's docs.
 
-supported_drafters: []
+supported_drafters: [mtp_gguf]   # bundled MTP head (prism-mtp-bundled); stock since b10735 (#205). Boot-tested 2026-10-06 on b10754.
   # ⛔ EMPTY, AND FOR THE BONSAI PACKS IT IS NOT EVEN AVAILABLE — VERIFIED IN THE
   # GGUF, not assumed:
   #     qwen35.block_count = 64 · blk indices 0..63 · nextn/mtp tensors = 0

@@ -1212,7 +1212,6 @@ export_variant_engine_pin() {
       SGLANG_IMAGE) export SGLANG_IMAGE="$value" ;;
       LLAMACPP_CLUB3090_IMAGE) export LLAMACPP_CLUB3090_IMAGE="$value" ;;
       LLAMACPP_PRISM_IMAGE) export LLAMACPP_PRISM_IMAGE="$value" ;;
-      LLAMACPP_PRISM_MTP_IMAGE) export LLAMACPP_PRISM_MTP_IMAGE="$value" ;;
       # #246 arch-aware env (pilot slugs; hardware-profile balanced default)
       # KV_CACHE_DTYPE) — arm REMOVED 2026-09-21 (#1371) along with the #246
       # Phase 1 injector that emitted it. Nothing resolves it any more, so an arm

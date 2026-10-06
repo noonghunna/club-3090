@@ -207,7 +207,7 @@ Both `🐣 Incubating` (`exllamav3/qwen38-flash-next-dual-exl3-305-cpumoe`, `-40
 | club3090 (moe-cache) | 28 (`llamacpp-club3090/*`) | `llamacpp-club3090-v1.5` (7), `-v1.6` (21); `llamacpp-club3090`, `-v1.1` have 0 users | `ghcr.io/noonghunna/llamacpp-club3090@sha256:…` | `[c3090-help v1.6]` |
 | ik_llama | 15 (`ik-llama/*`, 13 deprecated) | **`llama-cpp-local`** — there is no ik-llama engine profile; these slugs are registered against the *mainline* profile, whose `supported_kv_formats`/`supported_drafters` therefore do not describe them | `${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1…}` (13) / `…b35e062…` (2) | `[ik-src baac291]` |
 | beellama | 10 (`beellama/*`, all deprecated) | `beellama-local` | `ghcr.io/anbeeld/beellama.cpp@sha256:858e7cfb…` | `[bee-src 98caf25]` |
-| prism | 2 (`llama-cpp-prism*/`) | `llama-cpp-prism`, `llama-cpp-prism-mtp` | `ghcr.io/noonghunna/llamacpp-prism*@sha256:…` | `[prism-src 9a9394a]` |
+| prism | 2 (`llama-cpp-prism/`) | `llama-cpp-prism` (`llama-cpp-prism-mtp` folded in 2026-10-06) | `ghcr.io/noonghunna/llamacpp-prism@sha256:…` | `[prism-src 9a9394a]` |
 
 Rows are tagged with the sub-engines that pass them. Flags shared with mainline were checked in both `[lcpp-help b10920]` and `[c3090-help v1.6]`; the two help outputs differ only in `--moe-cache`, `--direct-io`, `--tensor-read-lazy`, `--mlock/--mmap/--no-mmap` (present in club3090) and `--lazy-mode`, `--log-jsonl` (present in mainline).
 
