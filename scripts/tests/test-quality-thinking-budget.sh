@@ -155,6 +155,11 @@ case "${1:-}" in
     fi
     exit 1 ;;
   ps) exit 0 ;;
+  # `logs <name>` replays a boot log (DOCKER_MOCK_LOGS); vLLM prints its resolved
+  # args there, which is how a parser added by an image's own launcher is seen.
+  logs)
+    [[ -n "${DOCKER_MOCK_LOGS:-}" && -f "${DOCKER_MOCK_LOGS}" ]] && cat "${DOCKER_MOCK_LOGS}"
+    exit 0 ;;
 esac
 exit 1
 MOCK_DOCKER
@@ -212,6 +217,11 @@ mk_inspect "${tmp_work}/lcpp-none.json"     '["/app/llama-server"]' '["--port","
 mk_inspect "${tmp_work}/lcpp-envonly.json"  '["/app/llama-server"]' '["--port","8080"]' '["LLAMA_ARG_THINK_BUDGET=8192"]'
 mk_inspect "${tmp_work}/vllm-parser.json"   '["vllm","serve"]' '["/models/x","--reasoning-parser","qwen3","--port","8000"]' '[]'
 mk_inspect "${tmp_work}/vllm-noparser.json" '["vllm","serve"]' '["/models/x","--port","8000"]' '[]'
+# A launcher-started vLLM (bucko's qwen38-serve): no parser in the container argv, but the
+# boot log's `non-default args` carries the one the launcher added — and one that does not.
+mk_inspect "${tmp_work}/vllm-launcher.json" '["/usr/local/bin/qwen38-serve"]' '["/models/x","/models/draft"]' '[]'
+printf "%s\n" "(APIServer pid=1) INFO 10-07 09:50:52 [api_utils.py:272] non-default args: {'model_tag': '/models/x', 'enable_auto_tool_choice': True, 'tool_call_parser': 'qwen3_coder', 'reasoning_parser': 'qwen3', 'max_model_len': 262144}" > "${tmp_work}/vllm-launcher-parser.log"
+printf "%s\n" "(APIServer pid=1) INFO 10-07 09:50:52 [api_utils.py:272] non-default args: {'model_tag': '/models/x', 'max_model_len': 262144}" > "${tmp_work}/vllm-launcher-noparser.log"
 mk_inspect "${tmp_work}/sgl-flag.json"      '["python3","-m","sglang.launch_server"]' '["--reasoning-parser","qwen3","--enable-custom-logit-processor"]' '[]'
 mk_inspect "${tmp_work}/sgl-noflag.json"    '["python3","-m","sglang.launch_server"]' '["--reasoning-parser","qwen3"]' '[]'
 
@@ -335,6 +345,18 @@ assert_not_invoked I
 assert_contains I "$OUT" "booted WITHOUT --reasoning-parser"
 assert_contains I "$OUT" "VLLMValidationError"
 assert_contains I "$OUT" "--reasoning-parser <name>"
+
+echo "--- I2: parser added by the image's launcher -> read from vLLM's boot log, accepted ---"
+run_wrapper CONTAINER=vllm-mock "DOCKER_MOCK_INSPECT=${tmp_work}/vllm-launcher.json" "DOCKER_MOCK_LOGS=${tmp_work}/vllm-launcher-parser.log" -- --quick --thinking-budget 8192
+assert_rc I2 0 "$RUN_RC"
+assert_contains I2 "$OUT" "boot log reports reasoning_parser=qwen3"
+[[ "$(arg_after --extra-body)" == '{"thinking_token_budget": 8192}' ]] || { echo "ASSERTION FAILED [I2]: extra-body was '$(arg_after --extra-body)'" >&2; FAILED=1; }
+
+echo "--- I3 (NEGATIVE): launcher-started vLLM whose boot log has NO parser -> still refused ---"
+run_wrapper CONTAINER=vllm-mock "DOCKER_MOCK_INSPECT=${tmp_work}/vllm-launcher.json" "DOCKER_MOCK_LOGS=${tmp_work}/vllm-launcher-noparser.log" -- --quick --thinking-budget 8192
+assert_rc I3 2 "$RUN_RC"
+assert_not_invoked I3
+assert_contains I3 "$OUT" "booted WITHOUT --reasoning-parser"
 
 echo "--- J (NEGATIVE): per-request engine + an in-sandbox agentic pack -> refused ---"
 run_wrapper CONTAINER=vllm-mock "DOCKER_MOCK_INSPECT=${tmp_work}/vllm-parser.json" -- --full --thinking-budget 8192

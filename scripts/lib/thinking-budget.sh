@@ -331,7 +331,19 @@ thinking_budget_verify() {
       facts="$(docker inspect "$c" 2>/dev/null | _thinking_budget_container_facts vllm)"
       case "$facts" in
         "PARSER none")
-          THINKING_BUDGET_EVIDENCE="container ${c} was booted WITHOUT --reasoning-parser — vLLM v0.29.0 rejects thinking_token_budget per request (VLLMValidationError), so every scenario would fail"
+          # The container's own argv can miss it: an image that starts vLLM through its
+          # own launcher (bucko's qwen38-serve adds --reasoning-parser inside the script)
+          # shows no parser in `docker inspect`. vLLM prints the arguments it actually
+          # resolved in its boot log, so read that before refusing.
+          local logged
+          logged="$(docker logs "$c" 2>&1 | command grep -m1 'non-default args' \
+            | command grep -oE "'reasoning_parser': '[^']+'" | command grep -oE "'[^']+'$" | tr -d "'")"
+          if [[ -n "$logged" ]]; then
+            THINKING_BUDGET_EVIDENCE="container ${c}: vLLM's boot log reports reasoning_parser=${logged} (set by the image's launcher, not the container argv)"
+            THINKING_BUDGET_REASONING_PARSER="$logged"
+            return 0
+          fi
+          THINKING_BUDGET_EVIDENCE="container ${c} was booted WITHOUT --reasoning-parser (container argv and vLLM's boot log both lack it) — vLLM v0.29.0 rejects thinking_token_budget per request (VLLMValidationError), so every scenario would fail"
           return 1 ;;
         "PARSER "*)
           THINKING_BUDGET_EVIDENCE="container ${c} boots vLLM with --reasoning-parser ${facts#PARSER }"
