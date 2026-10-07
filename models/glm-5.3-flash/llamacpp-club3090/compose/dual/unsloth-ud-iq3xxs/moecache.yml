@@ -5,6 +5,11 @@
 #   Engine:    llamacpp-club3090 v1.5-rc0 (fork: leloch's MoE expert cache v2 + our
 #              L1/L3/E ports + vendored ggml-org/llama.cpp#27754 for `glm5next`)
 #   Topology:  Dual 3090 PCIe (layer-split -ts 1,1, no NVLink)
+#   ⚠️ DEFAULTS RETUNED 2026-10-07: UBATCH 2048 -> 1024, MOE_ADMIT_AFTER 64 -> 32.
+#              MEASURED ON 2x RTX 5090 ONLY (TR PRO 3975WX, PCIe 4, NPS1) —
+#              ⛔ NOT YET TESTED ON 2x 3090. Pending a 3090 check; to restore the
+#              previous behaviour: UBATCH=2048 MOE_ADMIT_AFTER=64. Numbers at the
+#              UBATCH and ADMIT_AFTER lines below.
 #   Drafter:   ✅ DFlash2 Q4_K_M external (0.70 GB) — ON GPU1, depth n=3
 #              MEASURED 2026-08-29: +18.4% on CODE, −2.0% on prose.
 #              Toggle: SPEC_N=<n> depth (default 2); SPEC_N=0 disables.
@@ -191,10 +196,10 @@
 #       model copy; with --no-mmap + -devd none that needs ~285 GB RAM against
 #       196 GB → kernel OOM-kill. #27752 also caps GLM at ~32K (compute buffer
 #       55,138 MiB @205K). Reverted; this slug vendors #27754.
-#     • ⚠️ moe-cache RESERVE_MB / ADMIT_AFTER below are INHERITED from the
-#       DeepSeek sibling and are NOT measured on GLM. They were derived from a
-#       compute-buffer swing measured on a DIFFERENT model. Re-derive before
-#       quoting any tuned number for this slug.
+#     • ⚠️ moe-cache RESERVE_MB below is INHERITED from the DeepSeek sibling
+#       (measured on GLM only as "raising it is worse", see the RESERVE line).
+#       ADMIT_AFTER was re-measured on GLM 2026-10-07 (2x 5090) and changed
+#       64 -> 32; see the ADMIT_AFTER line. ⛔ Not yet measured on 2x 3090.
 #     • ⚠️ QUALITY UNTESTED. No 8-pack, no soak. Both the cache and the drafter
 #       touch the generation path. Stays 🐣 until verify-full + bench + quality.
 #     • ⚠️ COLD-START TAX: the first request after boot is slow while the expert
@@ -250,9 +255,17 @@ services:
       # Drafter toggle - docker forwards only what is declared here.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
-      # Expert-cache tuning — ⚠️ INHERITED from the DeepSeek sibling, NOT
-      # measured on GLM. See Caveats.
-      - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
+      # Expert-cache admission threshold. ⭐ 32 since 2026-10-07 (was 64,
+      # inherited from DeepSeek and never measured on GLM). MEASURED on 2x 5090
+      # (UBATCH 1024, DFlash2 n=2), 3 boots per arm, ms per verify cycle:
+      #     ~32K occupied   73.9 -> 64.3   (-13%, outside boot-to-boot noise)
+      #     ~190K occupied  81.7 -> 74.4   (-9%, inside noise)
+      #     short prompt    67.7 -> 69.4   (no gain)
+      #   Compare ms/cycle, not tok/s, at depth: DFlash acceptance swings
+      #   0.52-0.84 between boots. Cache policy only, output unaffected.
+      # ⛔ NOT YET TESTED ON 2x 3090: its pool is ~4x smaller at 205K, so faster
+      # admission may churn more. Restore with MOE_ADMIT_AFTER=64.
+      - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-32}
       # ⚠️ MEASURED 2026-09-03: at this default CUDA1 leaves ~1,800 MiB of its
       # 11,562 MiB grant UNUSED (15.6%), byte-identical across two boots, while
       # CUDA0 fills to within 7 MiB. Cause: the pool allocator halves a pool on a
@@ -470,8 +483,19 @@ services:
       # they simply do not match — correct by construction, no special case.
       - '-ot'
       - 'blk\.[0-9]+\.ffn_(gate|up|down)_exps\.weight=CPU'
-      # ⭐ -ub/-b 2048 here (the multi4/multi8 siblings stay 4096) — a MEASURED
-      # trade, not a default. Matched A/B on this compose, v1.6 engine
+      # ⭐ -ub/-b 1024 here since 2026-10-07 (was 2048; the multi4/multi8 siblings
+      # stay 4096). MEASURED on 2x RTX 5090, CTX 204800, DFlash2 n=2, short-prompt
+      # decode, 4 boots at 1024 vs 2 at 2048 (2026-10-05/06, NPS4):
+      #     code 33.55 +/- 0.84 vs 29.59 +/- 0.28 (+13%), narrative +13%
+      #     prefill  ~32K 526 -> ~364 tok/s, ~190K 385 -> ~290 (-25 to -31%)
+      #   Same mechanism as the 4096 -> 2048 step below: smaller kpool masks
+      #   return compute-buffer VRAM to the expert pool.
+      # ⛔ NOT YET TESTED ON 2x 3090. Expected to help there at least as much
+      # (the 3090 pool is ~11 GiB at 205K, so freed VRAM is a larger share), but
+      # unmeasured. Whether 1024 also avoids #28282 (below) is UNTESTED.
+      # Restore with UBATCH=2048; long-document prefill still wants 4096.
+      # --- history: the 4096 -> 2048 step ---
+      # -ub/-b 2048 was a MEASURED trade. Matched A/B on this compose, v1.6 engine
       # (d9cc8af98), drafter on, only UBATCH differing, 2026-08-31:
       #     decode   14.58 -> 18.12 narrative | 14.93 -> 18.47 code   (+24%)
       #     prefill  415.44 -> 340.03 tok/s @10K                      (-18%)
@@ -495,7 +519,8 @@ services:
       # is NOT arch-specific. Independent of the DFlash2 drafter and of
       # --cache-reuse.
       #   WORKAROUND: UBATCH=512 (or 128). Confirmed full fix by two reporters.
-      # ⭐ 2048 IS KEPT AS THE DEFAULT DELIBERATELY (maintainer call 2026-09-11):
+      # (2026-09-11 maintainer call, superseded 2026-10-07 by the 1024 default:)
+      # 2048 WAS KEPT AS THE DEFAULT DELIBERATELY:
       # it is worth ~+24% decode on the i-quant arm (BENCHMARKS row 8 vs 9,
       # 14.58 -> 18.12 narrative), and the crash needs a long prompt to trigger.
       # Short- and mid-context work is unaffected. Set UBATCH=512 if you do bulk
@@ -503,9 +528,9 @@ services:
       # ⚠️ Whether K-quant experts dodge this is UNTESTED — all three reports so
       # far are i-quant. If you hit it on a DevQuasar arm, say so on #28282.
       - '-ub'
-      - '${UBATCH:-2048}'
+      - '${UBATCH:-1024}'
       - '-b'
-      - '${UBATCH:-2048}'
+      - '${UBATCH:-1024}'
       - '--cache-prompt'
       # --no-mmap: with -ot ...=CPU the offloaded experts must be resident, not
       # page-cache-backed. Validated for GLM 2026-08-28 (two runs, both correct
