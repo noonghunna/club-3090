@@ -1565,12 +1565,16 @@ preflight_autodetect_endpoint() {
     # through an engine port (club_container_for_url) — binding "the first engine
     # container" made a run against another machine (or another local port) read
     # this container's logs and boot facts as its own.
-    found_line="$(club_container_for_url "$explicit_url")"
-    if [[ -z "$found_line" ]]; then
+    local url_container
+    url_container="$(club_container_for_url "$explicit_url")"
+    if [[ -z "$url_container" ]]; then
       CONTAINER="none"
       echo "[autodetect] no running container publishes ${explicit_url} on an engine port here — host-only mode (CONTAINER=none; set CONTAINER=<name> if one serves it)" >&2
       return 0
     fi
+    # club_container_for_url returns the NAME; the code below reads "name|ports|image".
+    found_line=$(awk -F'|' -v c="$url_container" '$1 == c' <<<"$ps_lines" | head -1)
+    [[ -n "$found_line" ]] || found_line="$url_container"
   elif [[ -n "$explicit_container" ]]; then
     # #1584: CONTAINER= names the server, so the URL is ITS port — not the first
     # engine container's. Named by you, so it needs no evidence either.
@@ -1599,10 +1603,13 @@ preflight_autodetect_endpoint() {
   # or "127.0.0.1:8011->8000/tcp" forms (BIND_HOST=127.0.0.1 produces the last).
   # llama-cpp container maps to internal 8080, vllm to 8000, sglang to 30000,
   # TabbyAPI (exllamav3) to 5000.
+  # `|| true` is load-bearing for the same reason as above: no match makes grep exit 1,
+  # and under the callers' `set -euo pipefail` the assignment would end the script
+  # silently (quality-test.sh with URL= set died with rc=1 and no output).
   detected_port=$(cut -d'|' -f2 <<<"$found_line" \
     | command grep -oE "([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(${CLUB_ENGINE_PORTS_ANY})/tcp" \
     | head -1 \
-    | sed -E 's|^[^:]+:([0-9]+)->.*|\1|')
+    | sed -E 's|^[^:]+:([0-9]+)->.*|\1|' || true)
 
   # Apply, but only fields the user didn't already set explicitly.
   if [[ -z "$explicit_container" && -n "$detected_name" ]]; then

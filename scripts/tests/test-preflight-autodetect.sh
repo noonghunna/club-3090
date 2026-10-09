@@ -110,7 +110,11 @@ BYO="my-llm|0.0.0.0:8099->8080/tcp|ghcr.io/ggml-org/llama.cpp:server-cuda"
 
 # detect MOCK_PS URL CONTAINER → "URL=… CONTAINER=… AUTODET=…" on stdout, notices in $tmp/err
 detect() {
+  # Under the callers' own shell options (quality-test.sh, rebench-full.sh and soak-test.sh
+  # all run `set -euo pipefail`): without them a failing pipeline inside the function is
+  # invisible here, and it killed quality-test.sh silently whenever URL= was set.
   MOCK_PS="$1" URL_IN="$2" CONTAINER_IN="$3" bash -c '
+    set -euo pipefail
     unset URL CONTAINER PREFLIGHT_ENDPOINT_AUTODETECTED PREFLIGHT_NO_AUTODETECT
     source scripts/preflight.sh
     [[ -n "$URL_IN" ]] && URL="$URL_IN"
