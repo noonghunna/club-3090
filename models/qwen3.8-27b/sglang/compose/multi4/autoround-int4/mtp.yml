@@ -3,8 +3,10 @@
 #   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
 #              Frozenlock AutoRound INT4 W4A16 g128 — the collapse-free checkpoint
 #              (Avuja's export dies at 0% MTP acceptance; see learnings/qwen3.8-27b.md).
-#   Engine:    SGLang STOCK v0.5.21 (`lmsysorg/sglang:v0.5.21`) — engine profile
-#              `sglang-stable`. ⚠️ NO PATCHES. That is the POINT of this compose.
+#   Engine:    SGLang stock v0.5.21 (`lmsysorg/sglang:v0.5.21`) — engine profile
+#              `sglang-stable` + vendored patches: `sglang-effort-thinking-budget` (per-effort
+#              reasoning budgets; THINKING_BUDGETS=off drops the budgets, strict thinking stays on)
+#              and the AutoRound W4A8 patch (ON by default; W4A8=0 reverts).
 #   Topology:  4x GPU (TP=4) — NOT the reference rig
 #   Drafter:   native MTP head, in-checkpoint (29 `mtp.*` tensors,
 #              text_config.mtp_num_hidden_layers=1) — NOT an external drafter.
@@ -17,7 +19,7 @@
 #              long-context quality leg (bf16 SSM drift is OPEN). See
 #              learnings/sglang-engine.md 2026-09-10.
 #
-#   Best for:  ⭐ long-context chat on the zero-patch SGLang reference — the widest pool in the sgl/ matrix
+#   Best for:  ⭐ long-context chat on the near-stock SGLang reference — the widest pool in the sgl/ matrix
 # ---------------------------------------------------------------------------
 # ⭐⭐ WHY THIS COMPOSE EXISTS: to find out what STOCK v0.5.19 does.
 #

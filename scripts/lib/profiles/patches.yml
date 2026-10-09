@@ -1539,8 +1539,11 @@ patches:
           models/qwen3.8-27b/sglang/patches/sglang-effort-thinking-budget/README.md; selftest.sh on
           lmsysorg/sglang:v0.5.21 (stock control drops thinking_token_budget; negative controls;
           request scenarios through the real patched functions); compose defaults low 4096 /
-          medium 16384 / xhigh 32768 (maintainer-set 2026-10-09, same for both models); no live
-          boot has probed enforcement yet (plan S1 / scripts/probe-effort-budget.sh)
+          medium 16384 / xhigh 32768 (maintainer-set 2026-10-09, same for both models); plan S1
+          2026-10-09 verified strict-thinking enforcement live on sgl/qwen38-27b-dual-fast (EAGLE)
+          and -dual-superfast (DFLASH): budget 128 -> 129 reasoning tokens then the answer, tool
+          calls parse, thinking-off clean, require_reasoning True, no visible decode cost; the
+          hooks' own live check is scripts/probe-effort-budget.sh
     delivery:
       dockerfile_bake: false
       entrypoint_invoke: true

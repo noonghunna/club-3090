@@ -3,8 +3,10 @@
 #   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
 #              OFFICIAL Qwen/Qwen3.8-27B-FP8 — block-quantised e4m3
 #              (weight_block_size [128,128], activation_scheme dynamic), ~29 GB.
-#   Engine:    SGLang STOCK v0.5.21 (`lmsysorg/sglang:v0.5.21`) — engine profile
-#              `sglang-stable`. ⚠️ NO PATCHES. That is the POINT of this compose.
+#   Engine:    SGLang stock v0.5.21 (`lmsysorg/sglang:v0.5.21`) — engine profile
+#              `sglang-stable` + ONE vendored patch, `sglang-effort-thinking-budget` (per-effort
+#              reasoning budgets; THINKING_BUDGETS=off drops the budgets, strict thinking stays on),
+#              plus the dormant W4A8 patch (off by default; W4A8=1 enables).
 #   Topology:  4x GPU (TP=4) — NOT the reference rig
 #   Drafter:   native MTP head, in-checkpoint (29 `mtp.*` tensors,
 #              text_config.mtp_num_hidden_layers=1) — NOT an external drafter.

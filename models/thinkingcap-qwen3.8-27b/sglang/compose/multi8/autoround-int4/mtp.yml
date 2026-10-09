@@ -9,8 +9,10 @@
 #              name (thinkingcap38-27b), service/container name and port. Everything
 #              else in this header is the SIBLING's text — its numbers are for BASE
 #              Qwen3.8 (Frozenlock INT4 / official FP8), NOT for ThinkingCap.
-#   Engine:    SGLang STOCK v0.5.21 (`lmsysorg/sglang:v0.5.21`) — engine profile
-#              `sglang-stable`. ⚠️ NO PATCHES. That is the POINT of this compose.
+#   Engine:    SGLang stock v0.5.21 (`lmsysorg/sglang:v0.5.21`) — engine profile
+#              `sglang-stable` + vendored patches: `sglang-effort-thinking-budget` (per-effort
+#              reasoning budgets; THINKING_BUDGETS=off drops the budgets, strict thinking stays on)
+#              and the AutoRound W4A8 patch (ON by default; W4A8=0 reverts).
 #   Topology:  8x GPU (TP=8) — NOT the reference rig
 #   Drafter:   native MTP head, in-checkpoint (29 `mtp.*` tensors,
 #              text_config.mtp_num_hidden_layers=1) — NOT an external drafter.
@@ -23,7 +25,7 @@
 #              LICENSE: PolyForm Small Business 1.0.0 + BottleCap's personal-use grant — commercial
 #              use by an organization that is not a small business needs a BottleCap license.
 #
-#   Best for:  ⭐ long-context chat on the zero-patch SGLang reference — the widest pool in the sgl/ matrix
+#   Best for:  ⭐ long-context chat on the near-stock SGLang reference — the widest pool in the sgl/ matrix
 # ---------------------------------------------------------------------------
 # ⭐⭐ WHY THIS COMPOSE EXISTS: to find out what STOCK v0.5.19 does.
 #

@@ -102,6 +102,24 @@ thinking also blocks `<tool_call>`, `</tool_call>`, `<|im_end|>` and `<|endoftex
 is thinking (Qwen3 detector `think_excluded_tokens`; `</think>` is not blocked). Plan decision D4
 accepts that if toolcall-15 / hermesagent-20 / cli-40 don't regress.
 
+## Live validation
+
+S1 (main session, 2026-10-09) verified the enforcement this patch feeds — stock strict thinking —
+live on `sgl/qwen38-27b-dual-fast` (EAGLE / native MTP) and `sgl/qwen38-27b-dual-superfast`
+(DFLASH):
+
+| Check | Result |
+|---|---|
+| per-request budget 128 | 129 reasoning tokens, then the answer |
+| tool calls under strict thinking | parse |
+| thinking off | clean |
+| `require_reasoning` for a Qwen3.8 thinking request | True (so the hook and the floor are live, not inert) |
+| decode, narrative / code tok/s | dual-fast 102.2 / ~142, dual-superfast 129.0 / 219.1 — no visible cost |
+
+The hooks themselves (effort → budget, the `thinking_token_budget` alias, `/v1/messages`
+`budget_tokens`) are covered offline by `selftest.sh`; their live check is
+`scripts/probe-effort-budget.sh`.
+
 ## Re-anchoring (an SGLang pin bump)
 
 1. `bash models/qwen3.8-27b/sglang/patches/sglang-effort-thinking-budget/selftest.sh <new image>`.

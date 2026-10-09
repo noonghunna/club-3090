@@ -5,6 +5,8 @@
 #              sgl/qwen38-27b-dual-fast, on ONE card. Served W4A8 by default (vendored
 #              AutoRound W4A8 patch, mounted below; W4A8=0 for W4A16).
 #   Engine:    SGLang v0.5.21 (`lmsysorg/sglang:v0.5.21`) — engine profile `sglang-stable`
+#              + vendored `sglang-effort-thinking-budget` (per-effort reasoning budgets;
+#              THINKING_BUDGETS=off drops the budgets, strict thinking stays on)
 #   Topology:  Single card (TP=1), AUTO-SIZED at boot from the card's VRAM (see AUTO-SIZE)
 #   Drafter:   native MTP head, in-checkpoint — n=4 on the full tier; OFF on the lean tier
 #              (24 GB: SGLang's MTP draft does not fit next to the weights)

@@ -2,7 +2,10 @@
 # Profile (at-a-glance):
 #   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
 #              OFFICIAL Qwen/Qwen3.8-27B-FP8 — block-quantised e4m3, ~29 GB.
-#   Engine:    SGLang STOCK v0.5.21 (`lmsysorg/sglang:v0.5.21`) — NO PATCHES.
+#   Engine:    SGLang stock v0.5.21 (`lmsysorg/sglang:v0.5.21`) + ONE vendored patch,
+#              `sglang-effort-thinking-budget` (per-effort reasoning budgets; THINKING_BUDGETS=off
+#              drops the budgets, strict thinking stays on), plus the dormant W4A8 patch
+#              (off by default; W4A8=1 enables).
 #   Topology:  8x GPU (TP=8) — NOT the reference rig
 #   Drafter:   DFlash2 EXTERNAL block-drafter, 5 layers, `DFlash2DraftModel`
 #              — NOT the in-checkpoint MTP head. DEFAULT is the z-lab BF16
@@ -126,7 +129,7 @@
 #
 #   ⚠️ AND THESE ARE NOT ACTIVATION-EQUIVALENT TO THEIR vLLM NAMESAKES. The vLLM
 #   superfast tier serves W4A8 (int8 activations) through vendored Marlin
-#   patches. We run STOCK SGLang with NO patches, so both tiers here are W4A16.
+#   patches. W4A8 is opt-in here (W4A8=1), so by default neither tier serves int8 activations.
 #   Do not compare a number from these against a vLLM W4A8 number and call the
 #   delta an engine difference.
 # ---------------------------------------------------------------------------
