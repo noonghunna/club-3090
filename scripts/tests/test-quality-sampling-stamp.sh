@@ -10,6 +10,10 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #        server · explicit overrides · max_tokens-only overrides (NOT explicit —
 #        the negative control for the default 4,096 budget) · extra-body ·
 #        --thinking-sampler · canonical OFF / ON / mixed · pre-2026-05-24 JSON.
+#   1b. the server reasoning budget stamp (`budget=server N (effort E)` /
+#      `budget=server off`), passed as --server-budget/--server-effort or recorded
+#      by benchlocal as server_thinking_budget (that wins). UNKNOWN must leave the
+#      line BYTE-IDENTICAL to a run without the options.
 #   2. quality-test.sh end to end with a mocked docker: a container that does
 #      not publish URL is never read (no --run-meta engine=… reaches benchlocal),
 #      and the same container IS read when URL is its own port (positive
@@ -124,6 +128,52 @@ line="$(python3 "$EMIT" "$tmp/r.json" --full)"
 [[ "$line" == *"(--full, thinking OFF, sampling=explicit temperature=0.7/top_p=0.8, tp=2, packs tc1.0.1, "* ]] \
   || fail "suffix order / comma-free stamp: $line"
 pass "suffix order intact: ${line#*(}"
+
+# ---------------------------------------------------------------------------
+echo "--- 1b. server reasoning budget stamp ---"
+# budget_stamp [QUALITY_LINE_OPT ...] -- JSON_BODY → the budget=… stamp, or "<none>"
+budget_stamp() {
+  local opts=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do opts+=("$1"); shift; done
+  shift
+  printf '{%s,%s}\n' "$1" "$PACKS" > "$tmp/b.json"
+  local line
+  line="$(python3 "$EMIT" ${opts[@]+"${opts[@]}"} "$tmp/b.json" --quick)" || fail "emitter exited non-zero (${opts[*]-})"
+  [[ "$line" == "Quality:   toolcall-15 14/15 (93%) ("* ]] || fail "unexpected Quality line: $line"
+  local s
+  s="$(sed -nE 's/.*, (budget=server [^,]*),.*/\1/p' <<<"$line")"
+  printf '%s\n' "${s:-<none>}"
+}
+expect "--server-budget N + effort" "budget=server 16384 (effort xhigh)" \
+  "$(budget_stamp --server-budget 16384 --server-effort xhigh -- '"thinking_mode":"force-on","sampling_source":"server"')"
+expect "--server-budget off" "budget=server off" \
+  "$(budget_stamp --server-budget off --server-effort xhigh -- '"thinking_mode":"force-on"')"
+expect "recorded by benchlocal (a --resume: no wrapper option)" "budget=server 8192" \
+  "$(budget_stamp -- '"thinking_mode":"force-on","server_thinking_budget":8192')"
+expect "recorded value wins; a disagreeing effort is dropped" "budget=server 8192" \
+  "$(budget_stamp --server-budget 4096 --server-effort low -- '"thinking_mode":"force-on","server_thinking_budget":8192')"
+expect "recorded value + matching option keeps the effort" "budget=server 8192 (effort medium)" \
+  "$(budget_stamp --server-budget 8192 --server-effort medium -- '"thinking_mode":"force-on","server_thinking_budget":8192')"
+expect "a non-number is not a budget" "<none>" \
+  "$(budget_stamp --server-budget lots -- '"thinking_mode":"force-on","server_thinking_budget":"lots"')"
+expect "null recorded (a --no-thinking run), nothing passed" "<none>" \
+  "$(budget_stamp -- '"thinking_mode":"force-off","server_thinking_budget":null')"
+# order: right after the sampler, before topology/validity/versions
+printf '{"thinking_mode":"force-on","sampling_source":"server","run_meta":{"tp":"2"},%s}\n' "$PACKS" > "$tmp/b.json"
+line="$(python3 "$EMIT" --server-budget 32768 --server-effort xhigh "$tmp/b.json" --full)"
+[[ "$line" == *"(--full, thinking ON, sampling=server, budget=server 32768 (effort xhigh), tp=2, packs tc1.0.1, "* ]] \
+  || fail "budget stamp order: $line"
+pass "budget stamp sits after the sampler: ${line#*(}"
+# UNKNOWN: byte-identical to the pre-budget line, with or without an empty option
+plain="$(python3 "$EMIT" "$tmp/b.json" --full run --extra-body '{"temperature":0.3}')"
+[[ "$plain" == *"(--full, thinking ON, sampling=server, tp=2, packs tc1.0.1, "* ]] || fail "plain line changed: $plain"
+[[ "$(python3 "$EMIT" --server-budget '' "$tmp/b.json" --full run --extra-body '{"temperature":0.3}')" == "$plain" ]] \
+  || fail "an empty --server-budget must leave the line byte-identical"
+pass "unknown budget → line byte-identical"
+# the benchlocal argv after MODE is never mistaken for wrapper options
+after_mode="$(python3 "$EMIT" "$tmp/b.json" --full run --server-budget 9)"
+[[ "$after_mode" != *"budget=server"* ]] || fail "a --server-budget AFTER the mode (benchlocal argv) was read as a wrapper option: $after_mode"
+pass "options only before the results path"
 
 # ---------------------------------------------------------------------------
 echo "--- 2. quality-test.sh never reads a container that does not serve URL ---"
