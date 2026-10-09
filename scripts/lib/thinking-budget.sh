@@ -41,6 +41,11 @@
 #                  SGLANG_MAX_THINK_TOKENS >= 0 at boot
 #                  (reasoner_grammar_backend.py:288). Parsers that block nothing
 #                  (deepseek-r1, gemma4, gpt-oss, …) need that env var too.
+#              Spec decode keeps it: the EAGLE and DFLASH v2 verify paths apply
+#              the grammar vocab mask whenever a request has a grammar object,
+#              which strict thinking gives every request
+#              (speculative/eagle_worker_common.py:578, dflash_worker_v2.py:2774,
+#              managers/schedule_batch.py:3731) — still to be confirmed live.
 #              The old route — custom_logit_processor with SGLang's
 #              Qwen3ThinkingBudgetLogitProcessor — is GONE: that class hard-codes
 #              the Qwen3 think ids 151667/151668, while Qwen3.5/3.6/3.8 use
@@ -475,7 +480,8 @@ EOF
     sglang)
       cat <<EOF
   Fix: add --enable-strict-thinking (with a --reasoning-parser) to the SGLang server
-       command and reboot — the shipped qwen3.8 SGLang composes carry it. Without it
+       command and reboot. The qwen3.8 SGLang composes carry it once their effort-budget
+       wiring lands; until then add it to the compose's command block. Without it
        SGLang ignores custom_params.thinking_budget silently. If the parser blocks no
        tokens while thinking (anything but qwen3 / qwen3-thinking / glm45 / … — see
        THINKING_BUDGET_SGLANG_FILTER_PARSERS), also boot with SGLANG_MAX_THINK_TOKENS=<n>

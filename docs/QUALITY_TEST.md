@@ -614,12 +614,12 @@ bash scripts/quality-test.sh --full --no-sandboxed --enable-thinking --thinking-
 
 #### Server-side budgets by effort — read back, not sent
 
-The qwen3.8 vLLM / SGLang composes can cap reasoning **server-side**, with a budget chosen by the request's effort
-(`scripts/lib/effort_budget.py`; `THINKING_BUDGETS=off` turns it off). It applies to every request the server
-serves — the in-sandbox agentic packs' own calls included — and the wrapper sends nothing for it. The wrapper reads
-it back instead, from the serving container's
-boot log (`docker logs`, the last `[effort-budget] v1` line, since the log spans restarts), for the run's
-`REASONING_EFFORT` or the server's default effort:
+A vLLM / SGLang compose wired for it (the qwen3.8 and ThinkingCap composes, from their effort-budget PRs) caps
+reasoning **server-side**, with a budget chosen by the request's effort (`scripts/lib/effort_budget.py`;
+`THINKING_BUDGETS=off` turns it off). It applies to every request the server serves — the in-sandbox agentic
+packs' own calls included — and the wrapper sends nothing for it. The wrapper reads it back instead, from the
+serving container's boot log (`docker logs`, the last `[effort-budget] v1` line, since the log spans restarts),
+for the run's `REASONING_EFFORT` or the server's default effort:
 
 | Readback | Thinking cap (`--thinking-max-tokens`) | Recorded |
 |---|---|---|

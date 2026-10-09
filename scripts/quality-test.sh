@@ -1197,11 +1197,11 @@ if [[ "${BENCHLOCAL_HERMES_RESOLVE_LOCALHOST:-}" == "1" && "$NO_SANDBOX" != "1" 
 fi
 
 # ---- server-side reasoning budget: read it back, size the client cap --------
-# A club vLLM / SGLang compose can cap reasoning SERVER-side with a budget chosen
-# by the request's effort (scripts/lib/effort_budget.py); its entrypoint prints
-# one `[effort-budget] v1 …` line at boot. A client cap at or below that budget
-# cuts off the answer that follows the server's forced close, and the run then
-# measures the cap — so on a thinking leg the DEFAULT thinking cap grows to
+# A club vLLM / SGLang compose wired for it can cap reasoning SERVER-side with a
+# budget chosen by the request's effort (scripts/lib/effort_budget.py); its
+# entrypoint prints one `[effort-budget] v1 …` line at boot. A client cap at or
+# below that budget cuts off the answer that follows the server's forced close,
+# and the run then measures the cap — so on a thinking leg the DEFAULT thinking cap grows to
 # budget + THINKING_BUDGET_HEADROOM when that is larger. The budget is also
 # stamped on the Quality: line and recorded by benchlocal (--server-thinking-budget,
 # when the installed benchlocal-cli has it).
