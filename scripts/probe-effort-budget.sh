@@ -193,7 +193,7 @@ def reasoning_len(text, reported):
 
 def chat(extra, prompt=LONG, max_tokens=None):
     body = {"model": MODEL, "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens or 2048, "stream": False}
+            "max_tokens": max_tokens or 6144, "stream": False}
     body.update(extra)
     r = post("/v1/chat/completions", body)
     ch = r["choices"][0]
@@ -292,22 +292,31 @@ if MODE == "budgets":
 
     def topk_off():
         # vllm#58231: under spec decode, a row with top_p < 1 and NO active top-k turns the forced
-        # reasoning end into token 0 (Qwen's "!") repeated to max_tokens. Every thinking request now
-        # gets a budget (the map or the floor), so a client that disables top_k must still get an
-        # answer when its budget is hit. Effort low = the tiny budget, so the forced close happens.
-        r = chat({"reasoning_effort": "low", "top_k": -1, "top_p": 0.95, "temperature": 1.0}, max_tokens=1024)
+        # reasoning end into token 0 (Qwen's "!") repeated to max_tokens. The vLLM patches skip the
+        # budget for exactly those requests (sampled, top_p < 1, top_k 0/-1), so on vLLM the request
+        # must reason PAST the low budget with no token-0 run; SGLang has no such bug and must apply
+        # the budget normally. Drop the vLLM leg's expectation when the pinned image has the fix.
+        r = chat({"reasoning_effort": "low", "top_k": -1, "top_p": 0.95, "temperature": 1.0}, max_tokens=2048)
         garbage = "!!!!!!!!" in r["content"] or "!!!!!!!!" in r["text"][-64:]
-        ok = r["finish"] == "stop" and r["content"].strip() and not garbage
-        report("top_k off + top_p<1 (vllm#58231)", bool(ok),
-               f"reasoning {r['n']} tok, finish={r['finish']}, token-0 run: {garbage}, content={r['content'].strip()[:40]!r}")
+        if KIND == "vllm":
+            ok = not garbage and r["n"] > int(LOW) + SLACK
+            report("top_k off + top_p<1 (vllm#58231): no budget, no token-0 run", bool(ok),
+                   f"reasoning {r['n']} tok vs low's {LOW} (want past it: the guard skips the budget), "
+                   f"token-0 run: {garbage}, finish={r['finish']}")
+        else:
+            ok = not garbage
+            report("top_k off + top_p<1: budget applies, no token-0 run", bool(ok),
+                   f"reasoning {r['n']} tok vs low's {LOW}, token-0 run: {garbage}, finish={r['finish']}")
+            if ok:
+                about("top_k off + top_p<1: the low budget", r, LOW)
     safe("top_k off + top_p<1 (vllm#58231)", topk_off)
 
     safe("/v1/messages without budget_tokens", lambda: about(
-        "/v1/messages without budget_tokens -> the server default", messages({}, 2048), DEFAULT))
+        "/v1/messages without budget_tokens -> the server default", messages({}, 6144), DEFAULT))
 
     def msg_explicit():
         # 1024 is the floor of thinking.budget_tokens: vLLM validates ge=1024 and SGLang 400s below it.
-        r = messages({"thinking": {"type": "enabled", "budget_tokens": 1024}}, 4096)
+        r = messages({"thinking": {"type": "enabled", "budget_tokens": 1024}}, 8192)
         lo, hi = int(XHIGH) + SLACK, 1024 + SLACK
         ok = lo < r["n"] <= hi and r["finish"] == "stop" and r["content"].strip()
         report("/v1/messages budget_tokens=1024 wins over the map", bool(ok),

@@ -82,6 +82,18 @@ check("ENABLE_THINKING=false server + kwargs enable_thinking=true -> server defa
 check("thinking_token_budget=-1 is parsed to None -> the map applies (documented)", THINK_ON,
       {"reasoning_effort": "xhigh", "thinking_token_budget": -1}, 256)
 
+# vllm#58231 guard: sampled + top_p < 1 + top-k off -> no map budget (the forced end would be token 0).
+check("#58231 guard: top_k -1, top_p 0.95, sampled -> no map budget", THINK_ON,
+      {"reasoning_effort": "xhigh", "top_k": -1, "top_p": 0.95, "temperature": 1.0}, None)
+check("#58231 guard: top_k 0, top_p unset (server 0.95) -> no map budget", THINK_ON,
+      {"reasoning_effort": "xhigh", "top_k": 0}, None)
+check("#58231 guard: greedy (temperature 0) with top_k 0 keeps the budget", THINK_ON,
+      {"reasoning_effort": "xhigh", "top_k": 0, "temperature": 0.0}, 256)
+check("#58231 guard: top_k 20 keeps the budget", THINK_ON,
+      {"reasoning_effort": "xhigh", "top_k": 20, "top_p": 0.95}, 256)
+check("#58231 guard: top_k -1 with top_p 1.0 keeps the budget", THINK_ON,
+      {"reasoning_effort": "xhigh", "top_k": -1, "top_p": 1.0}, 256)
+
 print("--- /v1/messages: AnthropicServingMessages sets the budget BEFORE the hook ---")
 from vllm.entrypoints.anthropic.protocol import AnthropicMessagesRequest  # noqa: E402
 from vllm.entrypoints.anthropic.serving import AnthropicServingMessages  # noqa: E402

@@ -28,6 +28,20 @@ import club3090_effort_budget as _eb
 BUDGETS = _eb.budgets_from_env()
 
 
+def topk_off_sampled(temperature: Any, top_p: Any, top_k: Any) -> bool:
+    """True for a request vllm#58231 breaks once a budget fires: sampled (not greedy), top_p < 1
+    and top-k explicitly off (0 or -1). Under spec decode the forced reasoning end then comes out
+    as token 0 repeated to max_tokens. Such a request gets NO default budget — it reasons
+    unbounded, as on stock vLLM — until the fix is in the pinned image (drop this guard then).
+    A request that leaves top_k unset gets the server's default top_k (the composes set 20),
+    and top_p unset counts as < 1 (the composes' samplers use 0.95)."""
+    if top_k is None or top_k > 0:
+        return False
+    if temperature is not None and temperature < 1e-5:
+        return False                       # greedy: vLLM forces top_p=1 / top_k off, unaffected
+    return top_p is None or top_p < 1.0
+
+
 def apply_effort_budget(request: Any,
                         effective_chat_template_kwargs: Optional[Mapping[str, Any]]) -> Optional[int]:
     """Set `request.thinking_token_budget` from the map when the request has none.
@@ -37,6 +51,9 @@ def apply_effort_budget(request: Any,
     it calls create_chat_completion). Returns the budget it set, or None.
     """
     if getattr(request, "thinking_token_budget", None) is not None:
+        return None
+    if topk_off_sampled(getattr(request, "temperature", None), getattr(request, "top_p", None),
+                        getattr(request, "top_k", None)):
         return None
     budget = _eb.budget_for(BUDGETS, None, effective_chat_template_kwargs, None)
     if budget is not None:

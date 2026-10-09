@@ -65,6 +65,14 @@ rt = msgspec.msgpack.decode(msgspec.msgpack.encode(SamplingParams(thinking_token
 check("msgpack round trip keeps an explicit budget", rt.thinking_token_budget, 300)
 rt = msgspec.msgpack.decode(msgspec.msgpack.encode(SamplingParams()), type=SamplingParams)
 check("msgpack round trip keeps the floor", rt.thinking_token_budget, 64)
+# vllm#58231 guard: a sampled row with top_p < 1 and top-k off gets no floor.
+check("#58231 guard: sampled, top_p 0.95, top_k -1 -> no floor",
+      SamplingParams(temperature=1.0, top_p=0.95, top_k=-1).thinking_token_budget, None)
+check("#58231 guard: sampled, top_p 0.9, top_k 0 -> no floor",
+      SamplingParams(temperature=0.7, top_p=0.9, top_k=0).thinking_token_budget, None)
+check("#58231 guard: greedy keeps the floor", SamplingParams(temperature=0.0, top_p=0.95, top_k=0).thinking_token_budget, 64)
+check("#58231 guard: top_k 20 keeps the floor", SamplingParams(temperature=1.0, top_p=0.95, top_k=20).thinking_token_budget, 64)
+check("#58231 guard: top_p 1.0 keeps the floor", SamplingParams(temperature=1.0, top_p=1.0, top_k=-1).thinking_token_budget, 64)
 
 print("--- entrypoints without patch B's hook get the floor ---")
 r = ResponsesRequest(input="hi", reasoning={"effort": "high"})

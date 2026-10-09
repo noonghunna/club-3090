@@ -46,7 +46,9 @@ INSERT = (
     "        if self.thinking_token_budget is None and not self.trace_decode_token_ids:\n"
     "            import os as _club3090_os\n"
     f"            _club3090_floor = _club3090_os.environ.get(\"{ENV}\", \"\").strip()\n"
-    "            if _club3090_floor:\n"
+    "            # vllm#58231: a sampled row with top_p < 1 and top-k off turns the forced end into token 0\n"
+    "            # under spec decode, so such a request gets no floor (stock behaviour) until the fix lands.\n"
+    "            if _club3090_floor and not (self.temperature >= 1e-5 and self.top_p < 1.0 and self.top_k <= 0):\n"
     "                self.thinking_token_budget = validate_thinking_token_budget(int(_club3090_floor))\n"
 )
 
