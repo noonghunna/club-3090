@@ -358,28 +358,8 @@ def engine_stats(container):
 # a grep of the container's Cmd. Both lied on #1537: an SGLang container was never found (card
 # listed every GPU on the host, spec "?"), and a vLLM compose that builds --speculative-config in
 # its entrypoint script from SPEC_N read "spec off" with MTP n=4 running. These read the truth:
-# the container publishing the probed URL's port, and the drafter the ENGINE says it loaded.
-def container_for_url(url, ps_lines=None):
-    """Name of the running container publishing ``url``'s host port, else ""."""
-    m = re.match(r"^[a-z]+://[^/:]+:(\d+)", url or "")
-    if not m:
-        return ""
-    port = m.group(1)
-    if ps_lines is None:
-        try:
-            out = subprocess.run(["docker", "ps", "--format", "{{.Names}}|{{.Ports}}"],
-                                 capture_output=True, text=True, encoding="utf-8", timeout=10)
-            ps_lines = out.stdout.splitlines()
-        except Exception:
-            return ""
-    pat = re.compile(r":" + port + r"->")
-    for line in ps_lines:
-        name, _, ports = line.partition("|")
-        if name and pat.search(ports):
-            return name.strip()
-    return ""
-
-
+# the container publishing the probed URL (chosen in concurrency-probe.sh by club_container_for_url,
+# which also checks the URL's host — #1584), and the drafter the ENGINE says it loaded.
 def _docker_logs_head(container, max_lines=6000):
     """The first ``max_lines`` lines of the container's log. The boot config lives there, and on
     a container that has served for a while a --tail window has long scrolled past it."""
@@ -1352,19 +1332,12 @@ def main(argv=None):
     p.add_argument("--detect-kv", action="store_true")
     p.add_argument("--gpu-label", action="store_true",
                    help="'N× <GPU name>' for the GPUs $CONTAINER sees (every GPU when it can't be resolved)")
-    p.add_argument("--container-for-url", action="store_true",
-                   help="name of the running container publishing $URL's port (empty when none)")
     p.add_argument("--served-max-len", action="store_true",
                    help="context length the engine at $URL / in $CONTAINER serves (empty when unreadable)")
     p.add_argument("--spec-label", action="store_true",
                    help="drafter the engine at $URL / in $CONTAINER says it runs (empty when unreadable)")
     args = p.parse_args(argv)
 
-    if args.container_for_url:
-        name = container_for_url(_env("URL"))
-        if name:
-            print(name)
-        return 0
     if args.served_max_len:
         n = served_max_len(_env("URL"), _env("CONTAINER"))
         if n:

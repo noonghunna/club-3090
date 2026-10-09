@@ -296,10 +296,14 @@ case "$1" in
 esac
 DOCK
 chmod +x "$SPEC_STUB/docker"
-got="$(PATH="$SPEC_STUB:$PATH" URL=http://localhost:8144 python3 "$LIB" --container-for-url)"
-[[ "$got" == "sglang-qwen38-27b-mtp-single" ]] || fail "--container-for-url :8144 should find the SGLang container: got '$got'"
-got="$(PATH="$SPEC_STUB:$PATH" URL=http://localhost:9999 python3 "$LIB" --container-for-url)"
-[[ -z "$got" ]] || fail "--container-for-url on a port nobody publishes must be empty: got '$got'"
+# The container is club_container_for_url's (#1584): the one publishing URL on THIS host.
+cfu() { PATH="$SPEC_STUB:$PATH" bash -c 'source scripts/lib/club-containers.sh; club_container_for_url "$1"' _ "$1"; }
+got="$(cfu http://localhost:8144)"
+[[ "$got" == "sglang-qwen38-27b-mtp-single" ]] || fail "club_container_for_url :8144 should find the SGLang container: got '$got'"
+got="$(cfu http://localhost:9999)"
+[[ -z "$got" ]] || fail "club_container_for_url on a port nobody publishes must be empty: got '$got'"
+got="$(cfu http://10.9.9.9:8144)"
+[[ -z "$got" ]] || fail "club_container_for_url for ANOTHER machine's :8144 must be empty (the port-only match bound the local one): got '$got'"
 got="$(PATH="$SPEC_STUB:$PATH" CONTAINER=vllm-mtp URL=http://127.0.0.1:9 python3 "$LIB" --spec-label)"
 [[ "$got" == "MTP n=4" ]] || fail "--spec-label from vLLM's engine-config line at the log head: got '$got', want 'MTP n=4'"
 got="$(PATH="$SPEC_STUB:$PATH" CONTAINER=vllm-off URL=http://127.0.0.1:9 python3 "$LIB" --spec-label)"
@@ -334,10 +338,42 @@ wait "$SGL_PID" 2>/dev/null || true
 [[ "$got" == "MTP n=4" ]] || fail "--spec-label from SGLang's server info: got '$got', want 'MTP n=4'"
 
 # The script must USE the two helpers (the library being right is no help if the card never asks it).
-command grep -qF -- '--container-for-url' "$PROBE" || fail "concurrency-probe.sh no longer resolves CONTAINER from URL's port"
+command grep -qF -- 'club_container_for_url' "$PROBE" || fail "concurrency-probe.sh no longer resolves CONTAINER from URL"
+if command grep -vE '^[[:space:]]*#' "$PROBE" | command grep -qE -- "vllm-\(qwen\|gemma\)"; then fail "concurrency-probe.sh still falls back to the vllm-(qwen|gemma) name heuristic"; fi
 command grep -qF -- '--spec-label' "$PROBE" || fail "concurrency-probe.sh's _spec_fp no longer asks the engine"
 rm -rf "$SPEC_STUB"
-echo "  ✓ container found by URL port (any engine); spec label from the engine (vLLM log head, SGLang server info)"
+echo "  ✓ container found by URL (any engine, this host only); spec label from the engine (vLLM log head, SGLang server info)"
+
+# #1584, end to end: the slot count the probe detects. A local vLLM container publishes :8020 with
+# --max-num-seqs 4. For URL=<another machine>:8020 the old port-only match bound it and the probe
+# announced "CONCURRENCY=4 (detected: container max-num-seqs)" — the LOCAL server's slots as the
+# remote's. Now no container is bound, nothing answers the endpoint, and detection fails loudly
+# ("no container flag").
+# The same container's own URL is the positive control.
+SLOT_STUB="$(mktemp -d)"
+cat > "$SLOT_STUB/docker" <<'DOCK'
+#!/usr/bin/env bash
+case "$1" in
+  ps)      echo "vllm-local-slots|0.0.0.0:8020->8000/tcp, [::]:8020->8000/tcp" ;;
+  inspect) [[ "$*" == *vllm-local-slots* ]] || exit 1
+           [[ "$*" == *".Config.Cmd"* ]] && echo "--model /m --max-num-seqs 4" ;;
+  *) exit 0 ;;
+esac
+DOCK
+printf '#!/usr/bin/env bash\nexit 7\n' > "$SLOT_STUB/curl"   # no endpoint answers
+chmod +x "$SLOT_STUB/docker" "$SLOT_STUB/curl"
+slot_run() { PATH="$SLOT_STUB:$PATH" URL="$1" MODEL=m timeout 60 bash "$PROBE" </dev/null 2>&1 || true; }
+out="$(slot_run http://10.9.9.9:8020)"
+if command grep -q "CONCURRENCY=4 (detected: container" <<<"$out"; then
+  fail "a remote URL took the LOCAL container's --max-num-seqs as its slot count"
+fi
+command grep -q "FATAL: cannot detect the served slot count" <<<"$out" \
+  || { printf '%s\n' "$out" | tail -5 >&2; fail "a remote URL with no readable slots should stop loudly"; }
+out="$(slot_run http://localhost:8020)"
+command grep -q "CONCURRENCY=4 (detected: container max-num-seqs)" <<<"$out" \
+  || { printf '%s\n' "$out" | tail -5 >&2; fail "the container's own URL should read its --max-num-seqs (positive control)"; }
+rm -rf "$SLOT_STUB"
+echo "  ✓ slot count: a remote URL never borrows a local container's flags; the container's own URL does"
 
 # #1537 follow-up: the KV pool, the slot count's source and the recommendation's knob names.
 # xtj7's cards read "KV ?" on both engines, the SGLang sweep header said "slots=4 (undetected)"
