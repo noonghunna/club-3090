@@ -24,8 +24,9 @@
 #   docker_bridge_gateway
 #     the default bridge's gateway address, or nothing.
 #   container_serves_url CONTAINER URL
-#     exit 0 when URL names THIS host (loopback, 0.0.0.0, or one of its own
-#     addresses) and CONTAINER publishes URL's port; 1 otherwise (#1579).
+#     exit 0 when URL names THIS host (loopback, 0.0.0.0, one of its own
+#     addresses, or a name resolving to either) and CONTAINER publishes URL's
+#     port; 1 otherwise (#1579).
 #     preflight's autodetect binds the first engine-port container even when
 #     URL= points somewhere else, so a remote run would have recorded the local
 #     container's sampling defaults and topology as its own.
@@ -61,6 +62,21 @@ listen_scope() {
   fi
 }
 
+# A name counts when any address it resolves to does — `URL=http://<this rig's
+# hostname>:PORT` must keep its container, or --thinking-budget refuses.
+_host_is_this_machine() {
+  local host="$1" own a
+  case "$host" in localhost|127.*|::1|0.0.0.0) return 0 ;; esac
+  own=" $(hostname -I 2>/dev/null) "
+  [[ "$own" == *" ${host} "* ]] && return 0
+  [[ "$host" =~ ^[0-9.]+$ || "$host" == *:* ]] && return 1   # an address that is not ours
+  while read -r a _; do
+    case "$a" in 127.*|::1) return 0 ;; esac
+    [[ "$own" == *" ${a} "* ]] && return 0
+  done < <(getent ahosts "$host" 2>/dev/null)
+  return 1
+}
+
 container_serves_url() {
   local container="$1" url="$2" rest hostport host port
   [[ -n "$container" && -n "$url" ]] || return 1
@@ -76,10 +92,7 @@ container_serves_url() {
   if [[ -z "$port" ]]; then
     if [[ "$url" == https://* ]]; then port=443; else port=80; fi
   fi
-  case "$host" in
-    localhost|127.*|::1|0.0.0.0) ;;
-    *) [[ " $(hostname -I 2>/dev/null) " == *" ${host} "* ]] || return 1 ;;
-  esac
+  _host_is_this_machine "$host" || return 1
   # `docker port` prints one mapping per line: "8000/tcp -> 0.0.0.0:8020".
   docker port "$container" 2>/dev/null | sed -nE 's/.*:([0-9]+)[[:space:]]*$/\1/p' | command grep -qx -- "$port"
 }

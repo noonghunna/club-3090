@@ -134,7 +134,17 @@ cat > "$fake/hostname" <<'EOF'
 #!/usr/bin/env bash
 echo "192.168.1.5 172.17.0.1 "
 EOF
-chmod +x "$fake/docker" "$fake/hostname"
+cat > "$fake/getent" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == "ahosts" ]] || exit 2
+case "$2" in
+  rig.lan)   printf '192.168.1.5     STREAM rig.lan\n192.168.1.5     DGRAM\n' ;;
+  myrig)     printf '127.0.1.1       STREAM myrig\n' ;;
+  other.lan) printf '10.9.9.9        STREAM other.lan\n' ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "$fake/docker" "$fake/hostname" "$fake/getent"
 
 serves() {
   PATH="$fake:$PATH" bash -c 'source "$1"; container_serves_url "$2" "$3"' _ "$LIB" "$1" "$2"
@@ -150,6 +160,10 @@ yes_ srv http://192.168.1.5:8020        # this host's own LAN address
 no_  srv http://10.9.9.9:8020           # same port, another machine
 yes_ srv http://172.17.0.1:8020         # the bridge gateway is this host too
 no_  srv http://localhost               # no port → 80
+yes_ srv http://rig.lan:8020            # a name resolving to this host's LAN address
+yes_ srv http://myrig:8020              # this host's own name (Debian: 127.0.1.1)
+no_  srv http://other.lan:8020          # a name resolving to another machine
+no_  srv http://unresolvable:8020
 yes_ lo  http://localhost:8031
 no_  nobody http://localhost:8020       # a container that publishes nothing
 no_  "" http://localhost:8020
