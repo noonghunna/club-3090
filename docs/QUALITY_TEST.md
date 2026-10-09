@@ -143,12 +143,12 @@ flags it: per-pack `thinking_validity` in the saved JSON, or `--strict-thinking`
 ```bash
 # ---- leg A: thinking (the shipped default since 2026-09-01) ----
 bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast
-REASONING_EFFORT=low bash scripts/quality-test.sh --full --enable-thinking --sampling-from-server
+REASONING_EFFORT=low bash scripts/quality-test.sh --full --enable-thinking
 
 # ---- leg B: instruct (one var — the compose derives the card's instruct
 #      sampler from it, except presence_penalty; see docs/RUN_EVALS.md) ----
 ENABLE_THINKING=false bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast
-bash scripts/quality-test.sh --full --no-thinking --sampling-from-server
+bash scripts/quality-test.sh --full --no-thinking
 ```
 
 The completion budgets and sandbox clocks are the wrapper's defaults (4,096 / 16,384 tokens, 900 s
@@ -168,9 +168,9 @@ the three sampler vars by hand remains the only way to change them.
 
 | Flag | Why |
 |---|---|
-| `--sampling-from-server` | Uses the compose's card-correct sampler instead of the pack contract (greedy on the instruct leg, benchlocal's generic temperature 1.0 / top_p 0.95 / top_k 20 thinking sampler on the thinking leg). Without it you measure **the pack's sampler, not the shipped config** — the `Quality:` line says which (`sampling=server` vs `sampling=pack:…`, see [Sampling & temperature](#which-sampler-a-quality-line-was-measured-with-1579)). |
+| *(no sampling flag)* | The server's sampler is the default since 2026-10-09 (#1579): the compose's card-correct sampler, not the packs' fixed one (greedy on the instruct leg, benchlocal's generic temperature 1.0 / top_p 0.95 / top_k 20 thinking sampler on the thinking leg). `--pack-sampling` opts into the latter, the reproducible baseline; the `Quality:` line says which ran (`sampling=server` vs `sampling=pack:…`, see [Sampling & temperature](#sampling--temperature)). |
 | `REASONING_EFFORT=` | Env only — forwarded as the per-request OpenAI `reasoning_effort`. The qwen3.8 composes default to `low` server-side since #1029; pin it anyway so the run records what it measured. ⚠️ Effort is **not** comparable across runs. ⚠️ Qwen3.8's own rungs are `xhigh`/`medium`/`low` — there is no `high`. On the vLLM and SGLang slugs the vendored template (`qwen38-reasoning-effort-template`) maps `high` → `xhigh`; anything else still raises. Elsewhere `high` **raises**. ⚠️ On SGLang before 2026-09-27 the per-request effort was **ignored** — the server default (the compose's `REASONING_EFFORT`, `low` unless set at launch) rendered instead ([sglang#38104](https://github.com/sgl-project/sglang/issues/38104)); an SGLang run that set `REASONING_EFFORT` only for the runner measured the boot default. |
-| `--repeat 3` | Add it for anything you'll quote. With `--sampling-from-server` both legs are sampled, so single draws aren't quotable. |
+| `--repeat 3` | Add it for anything you'll quote. Under the server's sampler (the default) both legs are sampled, so single draws aren't quotable. |
 
 ⚠️⚠️ **Read the failure modes before reading the score.** `timeout` and `token_limit` are **harness
 artifacts**; only `verifier_fail` / `wrong_answer` are the model. A score that looks catastrophic is
@@ -366,7 +366,7 @@ The principle that makes this work: **same-family checkpoints tie on the determi
 
 **Two rules to not over-apply it:**
 - **The floor is model-line-specific and a *one-way* trigger.** A retrain that lifts the *mid-tier* churny scenarios (the ones that pass 1-in-4) can leave the floor flat — so a flat floor is ambiguous, not a "skip." Floor-moved is a strong yes; floor-flat means fall back to `--medium` or the full run, don't conclude "no gain."
-- **OFF is the clean discriminator; ON is churny.** Gate on the greedy OFF leg (deterministic, reproducible). ON legs sample at temp 1.0 — a single ON probe is a draw; use `--repeat 3` if an ON number is load-bearing.
+- **OFF is the clean discriminator; ON is churny.** Gate on the greedy OFF leg — `--pack-sampling`, deterministic and reproducible. ON legs, and every leg under the default server sampler, are sampled — a single probe is a draw; use `--repeat 3` if the number is load-bearing.
 
 **Free pre-screen where you have it: KLD.** If the checkpoints ship KL-divergence self-reports (many quant exports do), they predict the quant ranking at *zero* GPU cost — 2026-07-12 the reports (fp8 0.013 < NVFP4A16 0.042 < NVFP4-W4A4) called the cli-40 order exactly. Sort by KLD, then cli-40-probe only the top candidate.
 
@@ -374,7 +374,7 @@ The principle that makes this work: **same-family checkpoints tie on the determi
 
 ## pass@1 vs pass@N — the churn-harvest ceiling (and why we don't report it)
 
-Every `/150` total in this repo is **pass@1 at pack-contract sampling**: think-OFF legs are greedy (deterministic), think-ON legs are a *single draw* at temp 1.0 / top-p 0.95 / top-k 20. That contract is what makes totals comparable across rigs, engines, and dates.
+Every `/150` total in this repo is **pass@1** — one draw per scenario — under the sampler its `sampling=` stamp states. Until 2026-10-09 the default was the pack sampler (think-OFF greedy and deterministic, think-ON a *single draw* at temp 1.0 / top-p 0.95 / top-k 20); since then it is the server's sampler ([#1579](https://github.com/noonghunna/club-3090/issues/1579)), under which both legs are draws. A shared sampler is what makes totals comparable across rigs, engines and dates, so compare only across matching stamps.
 
 **The observation** (from the #665 cross-rig work, 2026-07-12): at temp 1.0, many "failing" scenarios aren't failures — they're **churners** with a per-draw pass probability. Measured examples on Tess-4-27B: scenarios that read as hard-0 on any single run pass 1-in-7 to ~2-in-5 across repeated draws (`tess4-model-floor.txt` Tier 2 documents six of them with evidence). Take the union of passes across enough draws and the effective ceiling rises sharply: a 7-draw window on a single 4090 reached ~139/150-equivalent coverage, and across every stack we've measured only **10 scenarios sit at p≈0** (Tier 1). The gap between a model's pass@1 total (~116–118) and its churn-harvest ceiling (~139) is ~20 points of *probability*, not capability.
 
@@ -402,9 +402,9 @@ pass@N and pass@1 are different metrics, and mixing them inflates a model's numb
 
 - Selection results are labeled `PARTIAL SELECTION` and refuse history/`rescore` ingestion without `--allow-partial`.
 - `--repeat N` aggregates at ≥50% per scenario — a *majority* vote, not a best-of harvest.
-- Canonical sampling is pinned per pack; overrides mark the run non-canonical.
+- The sampler is recorded per run (`sampling=` stamp; `sampling_source` / `sampling_overrides` in the JSON), so totals under different samplers are never pooled unnoticed.
 
-**Reporting rules:** BENCHMARKS `/150` columns are pass@1-at-contract, always. If you publish a harvested number, label it `pass@k` with k and the verifier stated (e.g. "pass@7, pack verifiers as oracle") — and never in the same column as pass@1 totals. Scenario-level claims ("X now passes") follow the same discipline: a churner observed once is `1/N draws`, not "passes".
+**Reporting rules:** BENCHMARKS `/150` columns are pass@1 under the stated sampler, always (`sampling=server` since 2026-10-09; the pack sampler before). If you publish a harvested number, label it `pass@k` with k and the verifier stated (e.g. "pass@7, pack verifiers as oracle") — and never in the same column as pass@1 totals. Scenario-level claims ("X now passes") follow the same discipline: a churner observed once is `1/N draws`, not "passes".
 
 *Credit: the ceiling observation and the "probability lifted vs capability trained in" framing come from @seanyourhighness's 7-draw b9967 window in #665.*
 
@@ -480,31 +480,33 @@ caused it, and refuses to leave the bare TOTAL standing:
 
 ## Sampling & temperature
 
-By default the packs send their own sampler — the **pack contract**, and the **canonical** baseline that regression tracking and cross-config ranking use:
+**The default is the server's sampler** (since 2026-10-09, [#1579](https://github.com/noonghunna/club-3090/issues/1579)). A quality number measures the model *as it is served*: requests carry no sampling params, so the server applies the compose's model-card sampler (vLLM `--override-generation-config`, SGLang's generation config, llama.cpp `--temp` / `--top-p` / …), and the values are recorded with the results. The composes ship those model-recommended defaults (Qwen3.6 `0.6`, Qwopus3.6 `0.8`, Gemma `1.0`; set via `TEMP` / `TEMPERATURE` / `TOP_P` / `TOP_K` / `MIN_P` / `REPEAT_PENALTY`), so "serve at the recommended sampler" and "evaluate at it" stay in sync from one source. ⚠️ vLLM and SGLang cannot apply a compose's `presence_penalty` server-side (both chat endpoints hard-default it to 0) — [`RUN_EVALS.md`](RUN_EVALS.md) has the per-request workaround.
 
-- **thinking OFF:** every pack's `sampling_defaults` is **temperature 0 / top_p 1** (greedy) — deterministic and reproducible, so scores compare across rigs and runs.
+**The reproducible baseline is `--pack-sampling`** (`SAMPLING_FROM_SERVER=0`; `rebench-full.sh` takes the env var) — each pack's own fixed sampler, the same for every model:
+
+- **thinking OFF:** every pack's `sampling_defaults` is **temperature 0 / top_p 1** (greedy) — deterministic, so two runs of the same artifact give the same answers.
 - **thinking ON:** benchlocal's thinking sampler, **temperature 1.0 / top_p 0.95 / top_k 20 / min_p 0** (benchlocal-cli `DEFAULT_THINKING_SAMPLER`), unless a pack pins its own — `hermesagent-20` stays at temperature 0.
 
-The pack contract is not any model card's sampler. For Qwen3.8, whose cards prescribe a non-greedy instruct sampler, the canonical thinking-OFF leg is off-card ([#1579](https://github.com/noonghunna/club-3090/issues/1579)); use `--sampling-from-server` to measure the shipped config.
+Use it where reproducibility is the point: regression gates (`quality-baseline.sh` uses it, and benchlocal refuses `--exit-on-regression` under server sampling, since sampled runs are not deterministic) and apples-to-apples ranking of different models under one sampler. It is nobody's model card, though — for Qwen3.8, whose cards prescribe a non-greedy instruct sampler, its thinking-OFF leg is off-card.
 
-Two opt-in modes evaluate a model at a non-zero / model-recommended temperature instead. Both **tag the run non-canonical** (markdown header + saved JSON) and refuse to gate CI:
-
-| Mode | What it does | When to use |
-|---|---|---|
-| `--sampling-from-server` | Omits all sampling params from requests, so the server applies its **compose-configured** defaults; reads them back from `/props` (llama.cpp) and records them. The compose is the single source of truth. | "Evaluate the model exactly as it's served." |
-| `benchlocal-cli … --temperature N` (+ `--top-p` / `--top-k` / `--min-p` / `--repeat-penalty`) | Eval at sampling values you specify. Mutually exclusive with `--sampling-from-server`. | When you know the model's recommended temp and want it explicit and recorded. |
-
-The composes ship **model-recommended sampling defaults** (Qwen3.6 `0.6`, Qwopus3.6 `0.8`, Gemma `1.0`), set via the `TEMP` / `TEMPERATURE` / `TOP_P` / `TOP_K` / `MIN_P` / `REPEAT_PENALTY` env (see [`.env.example`](../.env.example)). `--sampling-from-server` inherits whatever the running compose declares — so "serve at the recommended temp" and "eval at the recommended temp" stay in sync from one source.
+| You pass | Sampler (`Quality:` stamp) |
+|---|---|
+| nothing | the server's (`sampling=server`) |
+| `--pack-sampling` / `SAMPLING_FROM_SERVER=0` | the packs' fixed one (`sampling=pack:greedy` / `pack:thinking` / `pack`) |
+| `-- --temperature N` (+ `--top-p` / `--top-k` / `--min-p` / `--repeat-penalty`) | your values (`sampling=explicit …`) — server sampling is switched off for you, since benchlocal refuses explicit values alongside it |
+| `--resume` | the resumed run's (benchlocal restores it; an explicit sampling flag with `--resume` is refused) |
+| `-- --retry-failed` | its baseline run's |
 
 ```bash
-# canonical (default): temp 0, reproducible — use for ranking + regression tracking
+# the default: the served sampler
 bash scripts/quality-test.sh --full
+bash scripts/rebench-full.sh --with-8pack-thinking=both
 
-# evaluate at the model's served / recommended temperature (inherits the compose default)
-bash scripts/quality-test.sh --full --sampling-from-server
-SAMPLING_FROM_SERVER=1 bash scripts/rebench-full.sh --with-8pack-thinking=both
+# the reproducible baseline
+bash scripts/quality-test.sh --full --pack-sampling
+SAMPLING_FROM_SERVER=0 bash scripts/rebench-full.sh --with-8pack-thinking=both
 
-# or an explicit temperature, via benchlocal-cli directly.
+# or an explicit sampler, via benchlocal-cli directly.
 # NB: invoking benchlocal-cli directly BYPASSES the wrapper's localhost guard. With a
 # localhost endpoint + a sandboxed *agentic* pack (HermesAgent-20 runs the agent INSIDE
 # the sandbox), you must set BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=1 yourself — otherwise the
@@ -516,23 +518,25 @@ BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=1 \
 bash scripts/quality-test.sh --full -- --temperature 0.8 --top-p 0.95
 ```
 
+⚠️ **Before 2026-10-09 the default was the pack sampler**, so a plain `quality-test.sh` / `rebench-full.sh` run from before then is `sampling=pack:…` and one from after is `sampling=server`. Compare totals only across matching stamps.
+
 ### Which sampler a `Quality:` line was measured with ([#1579](https://github.com/noonghunna/club-3090/issues/1579))
 
 Every `Quality:` line carries a `sampling=` stamp. Before #1579 only `sampling=server` was stamped, so a run with explicit `--temperature`/`--top-p` overrides printed the same line as a canonical one. The stamp follows the precedence benchlocal applies to each request:
 
 | Stamp | Meaning |
 |---|---|
-| `sampling=server` | `--sampling-from-server`: no sampler sent; the server's defaults apply. The values are on the Results Card when they could be read (llama.cpp `/props`, or the vLLM / SGLang boot log of the container serving `URL`). |
+| `sampling=server` | The default (or `--sampling-from-server`): no sampler sent; the server's defaults apply. The values are on the Results Card when they could be read (llama.cpp `/props`, or the vLLM / SGLang boot log of the container serving `URL`). |
 | `sampling=explicit temperature=0.7/top_p=0.8/…` | `--temperature` / `--top-p` / `--top-k` / `--min-p` / `--repeat-penalty` overrides. They win on both thinking legs. |
 | `sampling=pack+extra-body …` | The pack contract plus sampler keys from `--extra-body`. On a thinking leg, the thinking sampler still overrides temperature / top_p / top_k / min_p. |
 | `sampling=pack+thinking-sampler …` | The pack contract with `--thinking-sampler` replacing the thinking sampler. |
-| `sampling=pack:greedy` | Canonical, thinking OFF. |
-| `sampling=pack:thinking` | Canonical, thinking ON (the thinking sampler above; `hermesagent-20` greedy). |
-| `sampling=pack` | Canonical, pack-default thinking (mixed legs). |
+| `sampling=pack:greedy` | `--pack-sampling`, thinking OFF (greedy). |
+| `sampling=pack:thinking` | `--pack-sampling`, thinking ON (the thinking sampler above; `hermesagent-20` greedy). |
+| `sampling=pack` | `--pack-sampling`, pack-default thinking (mixed legs). |
 | *(no stamp)* | A results JSON from before 2026-05-24, when benchlocal didn't record its sampler yet. |
 
 - `max_tokens` is a length budget, not a sampler. The wrapper's default 4,096 rides in `sampling_overrides` on every run, and it never turns a run into `explicit`.
-- ⚠️ **The two "both legs" entry points use different samplers.** `quality-test.sh --both-modes` pins each leg to `--sampling-from-server` (#983C), while `rebench-full.sh --with-8pack-thinking=both` runs the pack contract unless `SAMPLING_FROM_SERVER=1`. Compare `sampling=` stamps before comparing scores.
+- **Both "both legs" entry points use the server's sampler** — `quality-test.sh --both-modes` and `rebench-full.sh --with-8pack-thinking=both` — since 2026-10-09 (until then rebench ran the pack sampler unless `SAMPLING_FROM_SERVER=1`). `--pack-sampling` / `SAMPLING_FROM_SERVER=0` move either to the reproducible baseline.
 - **`URL=` another machine.** The server's sampling defaults and the rig are read only from a container that publishes `URL` on this host through an engine port. When none does, `CONTAINER=none` (host-only), with a notice — since [#1584](https://github.com/noonghunna/club-3090/issues/1584) for every script that uses the shared endpoint autodetect (verify, bench, health, rebench-full, quality-test, power-cap-sweep) and for soak-test.sh; for this wrapper since #1579. Before that, a remote run could carry the local container's defaults and `tp` as its own. Set `CONTAINER=<name>` when the URL is served by a container the check can't see (e.g. through a proxy): an explicit `CONTAINER=` is trusted.
 
 ### Reasoning-on evals
@@ -549,7 +553,7 @@ bash scripts/quality-test.sh --full --enable-thinking --thinking-max-tokens 1638
 # full rebench incl. the 8-pack in both reasoning modes (off + on — the promotion gate).
 # The 8-pack thinking is driven by --with-8pack-thinking (=off forces --no-thinking,
 # =on forces --enable-thinking), NOT ENABLE_THINKING (which now only affects bench.sh). #338
-THINKING_MAX_TOKENS=16384 SAMPLING_FROM_SERVER=1 bash scripts/rebench-full.sh --with-8pack-thinking=both
+THINKING_MAX_TOKENS=16384 bash scripts/rebench-full.sh --with-8pack-thinking=both
 
 # TPS bench only
 ENABLE_THINKING=1 bash scripts/bench.sh
@@ -594,7 +598,7 @@ Two things the flag does that a bare engine flag does not:
 ```bash
 # llama.cpp: the budget is a BOOT flag — set it, reboot, then run
 REASONING_BUDGET=8192 bash scripts/switch.sh --force <slug>
-bash scripts/quality-test.sh --full --enable-thinking --sampling-from-server --thinking-budget 8192
+bash scripts/quality-test.sh --full --enable-thinking --thinking-budget 8192
 #   → verifies the container resolves --reasoning-budget 8192, caps at 12288 total,
 #     hermesagent-20 governed by the boot flag
 
@@ -608,7 +612,7 @@ is bimodal (either well under the cap or pinned exactly at it), which is itself 
 unbounded run destroys. Reporting `token_limit` / `timeout` apart from `verifier_fail` is
 noonghunna/benchlocal-cli#148.
 
-**Why it matters:** a reasoning / exploratory fine-tune (e.g. Qwopus3.6, whose author recommends temp 0.75–1) is *under-represented* at temp 0 or with thinking disabled — greedy, thinking-off decoding collapses the path-exploration the fine-tune was trained for. But high temp and reasoning also *hurt* deterministic packs (DataExtract / StructOutput want exact, repeatable output), so read **per-pack deltas**, not just the total — and keep canonical temp-0 thinking-off as the bar for any apples-to-apples ranking.
+**Why it matters:** a reasoning / exploratory fine-tune (e.g. Qwopus3.6, whose author recommends temp 0.75–1) is *under-represented* at temp 0 or with thinking disabled — greedy, thinking-off decoding collapses the path-exploration the fine-tune was trained for. But high temp and reasoning also *hurt* deterministic packs (DataExtract / StructOutput want exact, repeatable output), so read **per-pack deltas**, not just the total — and keep the reproducible baseline (`--pack-sampling`: temp-0 thinking-off) as the bar for any apples-to-apples ranking of different models.
 
 ## Compose `Quality:` schema field
 
@@ -629,16 +633,16 @@ The line documents what the compose was tested on — **against which pack versi
 | Stamp | Meaning |
 |---|---|
 | `thinking OFF / ON` | reasoning gate forced off/on for every pack (absent = pack defaults) |
-| `sampling=server` | `--sampling-from-server`: sampling inherited from the serving config (absent = canonical pack-default temp=0) |
+| `sampling=…` | which sampler produced the scores — `server` (the default since #1579), `pack:greedy` / `pack:thinking` / `pack` (`--pack-sampling`), `explicit …`; see [Sampling & temperature](#sampling--temperature) |
 | `tp=N` | tensor-parallel size the scores were measured at (#1396) — from the engine's own startup dump; absent on llama.cpp and on results that predate it |
 | `validity=valid / CONTAMINATED` | #126 thinking-validity check: CONTAMINATED means a requested arm did not reason as asked — do not trust that leg |
 | `packs tc1.0.1·if1.0.0·…` | exact per-pack versions, compact ids (`tc`=toolcall-15, `if`=instructfollow-15, `so`=structoutput-15, `de`=dataextract-15, `rm`=reasonmath-15, `bf`=bugfind-15, `hm`=hermesagent-20, `cli`=cli-40) |
 
-**The rig and the sampling in effect are recorded with the results (#1396).** When the wrapper can see the serving container, `scripts/lib/run_context.py` reads what the engine *applied* — not the flags we passed it — and passes it to benchlocal-cli itself, as run metadata (plus the server's sampling defaults under `--sampling-from-server`). The results JSON gains `run_meta` + `server_defaults_source`, and the summary header and Results Card gain a `Rig:` line (engine, TP/PP, quant, KV, spec, max ctx, GPUs × model, power cap, PCIe, NVLink) and a `Sampling:` line. It reads the engine's post-processing log lines deliberately: vLLM silently drops `presence_penalty` from its generation-config override, and SGLang's preferred-sampling-params boot flag is inert on `/v1/chat/completions` (sglang#39096) — reporting either flag would record sampling that never ran. llama.cpp is untouched (benchlocal-cli reads `GET /props`). Needs a benchlocal-cli that accepts run metadata; an older one gets a one-line upgrade warning and the run proceeds unchanged.
+**The rig and the sampling in effect are recorded with the results (#1396).** When the wrapper can see the serving container, `scripts/lib/run_context.py` reads what the engine *applied* — not the flags we passed it — and passes it to benchlocal-cli itself, as run metadata (plus the server's sampling defaults under server sampling, the default). The results JSON gains `run_meta` + `server_defaults_source`, and the summary header and Results Card gain a `Rig:` line (engine, TP/PP, quant, KV, spec, max ctx, GPUs × model, power cap, PCIe, NVLink) and a `Sampling:` line. It reads the engine's post-processing log lines deliberately: vLLM silently drops `presence_penalty` from its generation-config override, and SGLang's preferred-sampling-params boot flag is inert on `/v1/chat/completions` (sglang#39096) — reporting either flag would record sampling that never ran. llama.cpp is untouched (benchlocal-cli reads `GET /props`). Needs a benchlocal-cli that accepts run metadata; an older one gets a one-line upgrade warning and the run proceeds unchanged.
 
 Never hand-write a `packs v1.0.x` wildcard — the eight packs span six distinct versions. For richer provenance (per-pack latency p50/p95, variance under `--repeat`, benchlocal-cli version), pass `--report md --report-out card.md` and link the generated Results Card v2 next to the Quality line.
 
-**Supported two-leg workflow (#983):** run thinking OFF and ON with `--both-modes`, or by hand with `--no-thinking --sampling-from-server` then `--enable-thinking --sampling-from-server`. The compose is the single source of truth for per-mode sampler rows (the `ENABLE_THINKING=1` env/flag couples the request-level gate to the serving config's sampler block); never pass explicit sampler numbers (`--temperature` etc.) — they duplicate the model card into a second place that drifts, and leg A vs leg B must differ ONLY in the thinking gate to be a valid A/B.
+**Supported two-leg workflow (#983):** run thinking OFF and ON with `--both-modes`, or by hand with `--no-thinking` then `--enable-thinking` — both on the server's sampler, the default. The compose is the single source of truth for per-mode sampler rows (the `ENABLE_THINKING=1` env/flag couples the request-level gate to the serving config's sampler block); never pass explicit sampler numbers (`--temperature` etc.) — they duplicate the model card into a second place that drifts, and leg A vs leg B must differ ONLY in the thinking gate to be a valid A/B.
 
 Compact format (one line) so the schema header doesn't bloat. Full per-scenario detail lives in the JSON saved by quality-test.sh, which can be diffed against past runs for regression tracking.
 
@@ -715,7 +719,7 @@ bash scripts/quality-baseline.sh --slug vllm/qwen-35b-a3b-dual --mode enable-thi
 3. **Verifier translation is lossy in places** — the upstream BenchLocal evaluators have partial-credit branches we collapsed to pass/fail. See benchlocal-cli's [`docs/EXTRACTOR_NOTES.md`](https://github.com/noonghunna/benchlocal-cli/blob/master/docs/EXTRACTOR_NOTES.md) for the specific surfaces.
 4b. **cli-40 variance is MODE-DEPENDENT (2026-07-20, [#662](https://github.com/noonghunna/club-3090/discussions/662#discussioncomment-17703413)).** @henrykrinkle01 ran cli-40 at 4 draws per scenario in both modes on one artifact: **thinking-OFF is near-deterministic — 1 flaky scenario of 40** (everything else 4/4 or 0/4) — while **thinking-ON is genuinely churny (~9 flaky of 40)**. Consequences for reading scores: a think-off cli-40 difference between artifacts is *not* explainable by draw variance and should be treated as signal; a think-on cli-40 difference from single draws should not. `--repeat 3` (and @seanyourhighness's 7-draw thawed-vs-flipped resolution) is worth the time on the **think-on** leg specifically. Thinking also redistributes rather than lifts uniformly: some scenarios go 0/4 → 4/4, others 4/4 → 1/4, and some think-on failures are `token_limit` (budget) rather than capability.
 
-4. **Single-run sampling at temperature 0** — each scenario runs once, greedy, by default (see [Sampling & temperature](#sampling--temperature) for the non-canonical override modes). For non-determinism debugging, use `benchlocal-cli run --pack <id> --repeat N`.
+4. **One draw per scenario** — each scenario runs once by default, and under the default server sampler every answer is sampled, so a single run is one draw; `--pack-sampling` makes the thinking-OFF leg greedy and repeatable (see [Sampling & temperature](#sampling--temperature)). For non-determinism, use `--repeat N`.
 
 For the full pipeline architecture + JSONL pack format, read [benchlocal-cli's docs](https://github.com/noonghunna/benchlocal-cli/tree/master/docs).
 

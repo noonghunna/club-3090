@@ -74,7 +74,7 @@ or `FORCE=1 bash scripts/launch.sh --variant <slug>`. (`launch.sh … --force` f
 
 ```bash
 bash scripts/switch.sh --force <slug>
-REASONING_EFFORT=low bash scripts/quality-test.sh --full --enable-thinking --sampling-from-server
+REASONING_EFFORT=low bash scripts/quality-test.sh --full --enable-thinking
 ```
 
 ### Instruct leg
@@ -83,12 +83,12 @@ vLLM and llama.cpp, where the server serves the instruct row:
 
 ```bash
 ENABLE_THINKING=false bash scripts/switch.sh --force <slug>   # llama.cpp: INSTRUCT=1 instead
-bash scripts/quality-test.sh --full --no-thinking --sampling-from-server
+bash scripts/quality-test.sh --full --no-thinking
 ```
 
-SGLang, where it doesn't: send the row yourself, as benchlocal flags after `--`. Don't combine this
-with `--sampling-from-server` (benchlocal refuses the mix), and don't use `--both-modes` on an `sgl/`
-slug, which pins `--sampling-from-server` on both legs.
+SGLang, where it doesn't: send the row yourself, as benchlocal flags after `--`. Explicit sampler
+flags switch the default server sampling off for that run (benchlocal refuses the mix). Don't use
+`--both-modes` on an `sgl/` slug: both its legs run on the server's sampler.
 
 ```bash
 ENABLE_THINKING=false bash scripts/switch.sh --force <sgl-slug>
@@ -107,9 +107,9 @@ Each of these exists because leaving it out produced a wrong number for us.
 
 | Flag | Why |
 |---|---|
-| `--sampling-from-server` | Scores the compose's shipped sampler instead of the pack's `temperature=0`. Without it you measure greedy decoding. (Not on an SGLang instruct leg, above.) |
+| *(no sampling flag)* | The server's sampler is the default (since 2026-10-09): it scores the compose's shipped sampler, not the packs' fixed one. `--pack-sampling` gives the reproducible baseline instead (a greedy instruct leg). On an SGLang instruct leg, send the row yourself (above). |
 | `REASONING_EFFORT=low` | Qwen3.8 only; forwarded per request. Pin it so the run records what it measured. Effort changes both cost and score, so results at different efforts aren't comparable. Other models ignore it. |
-| `--repeat 3` | For anything you'll quote: with `--sampling-from-server` every answer is sampled, so one draw isn't enough. |
+| `--repeat 3` | For anything you'll quote: under the server's sampler (the default) every answer is sampled, so one draw isn't enough. |
 | `URL=http://localhost:<port>` | Optional. The endpoint is auto-detected, but naming it avoids picking up something else you have running. |
 
 ### Budgets: set for you

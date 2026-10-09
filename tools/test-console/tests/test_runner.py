@@ -104,6 +104,17 @@ class TestCommandBuilding:
         assert "3" in cmd
         assert env["BENCHLOCAL_HERMES_RESOLVE_LOCALHOST"] == "1"  # localhost
 
+    def test_quality_sampling_defaults_to_the_server(self):
+        # #1579: quality-test.sh measures the model as served by default, so the console adds
+        # nothing; turning the toggle off opts into the packs' fixed sampler.
+        target = ServingTarget(url="http://localhost:8010", model="qwen", container="vllm-test")
+        runner = self._make_runner_with_target(target)
+        cmd, _env = runner._build_command(TestConfig(test_type=TestType.QUALITY, quality_tier="quick"))
+        assert "--pack-sampling" not in cmd and "--sampling-from-server" not in cmd
+        cmd, _env = runner._build_command(
+            TestConfig(test_type=TestType.QUALITY, quality_tier="quick", quality_sampling_server=False))
+        assert "--pack-sampling" in cmd
+
     def test_quality_non_localhost_no_hermes(self):
         target = ServingTarget(url="http://192.168.1.50:8887", model="qwen", container="vllm-test")
         runner = self._make_runner_with_target(target)

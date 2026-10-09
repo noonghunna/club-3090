@@ -268,11 +268,13 @@ PASS_THROUGH_OK = {
     "--exit-on-regression",              # quality-baseline.sh passes it through
     "--extra-body",                      # benchlocal-cli; --thinking-budget composes it (#1383)
     "--thinking-sampler",                # benchlocal-cli; the Quality: line stamps it (#1579)
+    "--retry-failed",                    # benchlocal-cli; keeps its baseline's sampler (#1579)
 }
 # flags belonging to OTHER commands the docs mention alongside quality-test.sh
 OTHER_TOOL_OK = {
     "--with-8pack-thinking",             # rebench-full.sh
     "--reasoning-parser", "--served-model-name", "--add-host",  # vLLM / docker boot
+    "--override-generation-config",      # vLLM boot flag — where a compose's sampler lives (#1579)
     "--reasoning-budget",                # llama-server boot flag (#1383)
     "--enable-custom-logit-processor",   # SGLang boot flag (#1383)
     "--in-place",                        # benchlocal-cli rescore

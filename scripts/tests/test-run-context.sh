@@ -32,8 +32,8 @@
 #        CUDA_VISIBLE_DEVICES indexing INTO them), power cap, PCIe, NVLink.
 #   7.   --engine is required (the engine family is engine-kind.sh's call, #1282);
 #        a log with no dump says so instead of emitting an empty rig.
-#   8.   the wrapper passes both flags; drops --server-defaults without
-#        --sampling-from-server; re-reads nothing on --resume; warns on a
+#   8.   the wrapper passes both flags (server sampling is the default, #1579);
+#        drops --server-defaults under --pack-sampling; re-reads nothing on --resume; warns on a
 #        benchlocal-cli that predates the flags.
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -225,8 +225,13 @@ assert_contains "$argv" $'--run-meta\ngpus=2x RTX 3090'
 assert_contains "$argv" $'--server-defaults\n{"temperature":0.7,'
 assert_contains "$out" "[quality-test] rig (vllm): engine=vllm 0.30.0 · tp=4"
 assert_contains "$out" "server defaults resolved from the vllm boot log"
+# Server sampling is the default since #1579: a run with no sampling flag records the defaults too.
 : > "$tmp/argv"; out="$(qrun)"; argv="$(cat "$tmp/argv")"
+assert_contains "$argv" "--sampling-from-server"
+assert_contains "$argv" $'--server-defaults\n{"temperature":0.7,'
+: > "$tmp/argv"; out="$(qrun --pack-sampling)"; argv="$(cat "$tmp/argv")"
 assert_contains "$argv" $'--run-meta\ntp=4'
+assert_not_contains "$argv" "--sampling-from-server"
 assert_not_contains "$argv" "--server-defaults"   # benchlocal-cli refuses it without --sampling-from-server
 : > "$tmp/argv"; out="$(MOCK_OLD_BLC=1 qrun --sampling-from-server)"; argv="$(cat "$tmp/argv")"
 assert_contains "$out" "predates --run-meta/--server-defaults (#1396)"

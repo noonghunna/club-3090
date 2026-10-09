@@ -43,7 +43,9 @@ class TestConfig:
     quality_pack: str = ""           # quality --pack <id>
     quality_no_sandboxed: bool = False
     quality_sandboxed_only: bool = False
-    quality_sampling_server: bool = False
+    # The server's sampler is quality-test.sh's default (#1579); False opts into the
+    # packs' fixed sampler (--pack-sampling), the reproducible baseline.
+    quality_sampling_server: bool = True
     quality_repeat: int = 1
     max_tokens: int = 0              # quality MAX_TOKENS (0 = default)
     thinking_max_tokens: int = 0     # quality THINKING_MAX_TOKENS (0 = default)
@@ -198,8 +200,8 @@ class TestRunner:
                     args.append("--enable-thinking")
                 else:
                     args.append("--no-thinking")
-                if config.quality_sampling_server:
-                    args.append("--sampling-from-server")
+                if not config.quality_sampling_server:
+                    args.append("--pack-sampling")
                 if config.quality_repeat > 1:
                     args.extend(["--repeat", str(config.quality_repeat)])
                 if config.max_tokens > 0:

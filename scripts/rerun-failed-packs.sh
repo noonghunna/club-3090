@@ -72,14 +72,25 @@ for p in d.get("packs", []):
             selections.append(f"{pid}/{s.get('id','?')}")
             failures.append(f"{pid}/{s.get('id','?')}:{s.get('failure_mode','fail')}")
 mode = "--enable-thinking" if d.get("thinking_enabled") else "--no-thinking"
+# The original run's sampler (#1579): server, or the packs' own — plus any explicit
+# overrides it carried — so a re-run never measures under a different one.
+sampling = "--sampling-from-server" if d.get("sampling_source") == "server" else "--pack-sampling"
+flag = {"temperature": "--temperature", "top_p": "--top-p", "top_k": "--top-k",
+        "min_p": "--min-p", "repeat_penalty": "--repeat-penalty"}
+overrides = " ".join(f"{flag[k]} {v}" for k, v in (d.get("sampling_overrides") or {}).items() if k in flag)
 print(mode)
 print(" ".join(selections))
 print(" ".join(failures))
+print(sampling)
+print(overrides)
 PY
 )"
 MODE_FLAG="$(sed -n '1p' <<<"$PLAN")"
 SELECTIONS="$(sed -n '2p' <<<"$PLAN")"
 ORIG_FAILURES="$(sed -n '3p' <<<"$PLAN")"
+SAMPLING_FLAG="$(sed -n '4p' <<<"$PLAN")"
+read -r -a SAMPLER_OVERRIDES <<<"$(sed -n '5p' <<<"$PLAN")"
+[[ ${#SAMPLER_OVERRIDES[@]} -gt 0 ]] && SAMPLING_FLAG="--pack-sampling"
 
 if [[ -z "$SELECTIONS" ]]; then
   echo "✓ no failed scenarios in $RESULT_JSON — nothing to re-run."
@@ -87,7 +98,7 @@ if [[ -z "$SELECTIONS" ]]; then
 fi
 N_SEL="$(wc -w <<<"$SELECTIONS" | tr -d ' ')"
 
-echo "[rerun] original run: $RESULT_JSON  (mode: ${MODE_FLAG#--})"
+echo "[rerun] original run: $RESULT_JSON  (mode: ${MODE_FLAG#--}, sampling: ${SAMPLING_FLAG#--}${SAMPLER_OVERRIDES[*]:+ ${SAMPLER_OVERRIDES[*]}})"
 echo "[rerun] failed scenarios (${N_SEL}): $SELECTIONS"
 
 SEL_FILE="$(mktemp --suffix=.rerun-scenarios.txt)"
@@ -102,16 +113,25 @@ RERUN_JSON="${RESULT_JSON}.rerun.json"
 if [[ "${RERUN_DRY:-0}" == "1" ]]; then
   echo "[dry] selection file (${SEL_FILE}):"
   sed 's/^/[dry]   /' "$SEL_FILE"
-  echo "[dry] quality-test.sh --scenarios-file $SEL_FILE $MODE_FLAG --previous-result $RESULT_JSON --incremental --save-json $RERUN_JSON $*"
+  echo "[dry] quality-test.sh --scenarios-file $SEL_FILE $MODE_FLAG $SAMPLING_FLAG --previous-result $RESULT_JSON --incremental --save-json $RERUN_JSON $*${SAMPLER_OVERRIDES[*]:+ -- ${SAMPLER_OVERRIDES[*]}}"
   exit 0
 fi
 
 # --- 2. one selection re-run via the wrapper -----------------------------------
-bash "${SCRIPT_DIR}/quality-test.sh" --scenarios-file "$SEL_FILE" "$MODE_FLAG" \
+# Your own args come after ours, so a sampling flag of yours wins. The original's explicit
+# sampler overrides ride after `--` (appended to an existing one — everything after it is
+# benchlocal's).
+_extra=("$@")
+if [[ ${#SAMPLER_OVERRIDES[@]} -gt 0 ]]; then
+  _has_dd=0; for _a in "${_extra[@]+"${_extra[@]}"}"; do [[ "$_a" == "--" ]] && _has_dd=1; done
+  [[ "$_has_dd" == "1" ]] || _extra+=(--)
+  _extra+=("${SAMPLER_OVERRIDES[@]}")
+fi
+bash "${SCRIPT_DIR}/quality-test.sh" --scenarios-file "$SEL_FILE" "$MODE_FLAG" "$SAMPLING_FLAG" \
   --previous-result "$RESULT_JSON" \
   --incremental \
   --save-json "$RERUN_JSON" \
-  "$@"
+  "${_extra[@]+"${_extra[@]}"}"
 
 # --- 3. consolidated verdict ----------------------------------------------------
 python3 - "$RESULT_JSON" "$RERUN_JSON" <<'PY'

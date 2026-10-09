@@ -76,11 +76,11 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/club-containers.
 #                       compose paths.)
 #   SOAK_TURNS          passed through to soak-test.sh (default: 5)
 #   SAMPLING_FROM_SERVER
-#                       Set to 1 to inherit sampling from the serving config
-#                       instead of the pack's default temp=0. Passed through
-#                       to quality-test.sh --sampling-from-server. Useful when
-#                       the compose encodes the model's recommended sampling
-#                       (e.g. Qwopus temp=0.8). Tags runs as non-canonical.
+#                       Default 1: the 8-pack measures the model as served —
+#                       the compose's model-card sampler (quality-test.sh's
+#                       default since #1579). Set to 0 for each pack's own
+#                       fixed sampler (greedy thinking-off), the reproducible
+#                       baseline — quality-test.sh --pack-sampling.
 #   ENABLE_THINKING
 #                       Set to 1 to pass request-level enable_thinking=true
 #                       through bench.sh. (The 8-pack quality passes are now
@@ -164,7 +164,7 @@ OPTIONS
 ENV OVERRIDES (rarely needed — preflight autodetects our composes)
   URL MODEL TAG OUT_DIR · SOAK_SESSIONS (10) · SOAK_TURNS (5)
   MAX_TOKENS (both 8-pack passes, default 4096) · THINKING_MAX_TOKENS (reasoning-ON pass, 16384)
-  SAMPLING_FROM_SERVER (inherit serving sampling; tags runs non-canonical)
+  SAMPLING_FROM_SERVER (default 1 = the served sampler; 0 = the packs' fixed one)
   AGENTIC_SESSIONS (1) · AGENTIC_TURNS (12)
   CONCURRENCY_RUNGS ("1 2 4", auto-capped at the served slot count) ·
   CONCURRENCY_PROMPT_TOKENS (256) · CONCURRENCY_GEN_TOKENS (256) ·
@@ -525,7 +525,7 @@ URL="$URL" MODEL="$MODEL" \
 # A/B against step 4 — NOT the pack-default mixed mode. Skipped unless opted in. #338.
 if [[ "$RUN_8PACK_OFF" == "1" ]]; then
   URL="$URL" MODEL="$MODEL" \
-    SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
+    SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-1}" \
     MAX_TOKENS="${MAX_TOKENS:-}" \
     NO_THINKING=1 \
     run_step quality-full "$OUT_DIR/quality-full.log" \
@@ -541,7 +541,7 @@ fi
 # <think> leaks into the graded answer. Skipped unless opted in. #338.
 if [[ "$RUN_8PACK_ON" == "1" ]]; then
   URL="$URL" MODEL="$MODEL" \
-    SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
+    SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-1}" \
     THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}" \
     MAX_TOKENS="${MAX_TOKENS:-}" \
     ENABLE_THINKING=1 \

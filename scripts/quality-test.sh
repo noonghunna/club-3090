@@ -108,12 +108,21 @@ OPTIONS (extra)
                    anything is wrong mid-run. Pass --no-progress for CI / when
                    stderr volume matters. Also settable via PROGRESS=0/1 env.
   --sampling-from-server
-                   Inherit sampling from the serving config instead of using
-                   the pack's default temp=0. Omits sampling params from
-                   requests so the server applies its own defaults (llama.cpp
-                   --temp, vLLM --override-generation-config). Reads back via
-                   GET /props and records the values. Tags the run as
-                   non-canonical. Also settable via SAMPLING_FROM_SERVER=1 env.
+                   The DEFAULT: measure the model as it is served. Sampling
+                   params are omitted from requests, so the server applies its
+                   own (the compose's model-card sampler: llama.cpp --temp,
+                   vLLM --override-generation-config, SGLang generation config).
+                   The values are recorded with the results (GET /props, or the
+                   engine's boot log). ⚠ vLLM / SGLang cannot apply a compose's
+                   presence_penalty server-side — see docs/RUN_EVALS.md.
+                   SAMPLING_FROM_SERVER=1 env is the same.
+  --pack-sampling  Use each pack's own fixed sampler instead — greedy with
+                   thinking off, benchlocal's generic thinking sampler with it
+                   on. Identical for every model, so it is the REPRODUCIBLE
+                   BASELINE for regression gates (quality-baseline.sh uses it;
+                   benchlocal refuses --exit-on-regression on server sampling).
+                   SAMPLING_FROM_SERVER=0 env is the same. Explicit sampler
+                   overrides after `--` (--temperature …) also imply it.
   --enable-thinking
                    Forward to benchlocal-cli --enable-thinking so reasoning
                    models are evaluated with request-level thinking enabled
@@ -190,8 +199,8 @@ OPTIONS (extra)
   --report FORMAT  Forward to benchlocal-cli --report: emit the paste-ready
   --report-out PATH  Results Card v2 report, e.g. --report md --report-out card.md.
   --both-modes     Run BOTH reasoning legs back-to-back (#983A): first
-                   --no-thinking, then --enable-thinking — each pinned to
-                   --sampling-from-server unless already requested, so the
+                   --no-thinking, then --enable-thinking — each on the server's
+                   sampler (the default; --pack-sampling carries over), so the
                    compose's per-mode sampler rows stay the single source of
                    truth and the legs differ only in the thinking gate.
                    With --report-out PATH, each leg writes its own card:
@@ -353,7 +362,13 @@ NO_SANDBOX=0
 SANDBOXED_ONLY=0
 LIST_PACKS=0
 SANDBOX_LOG_DIR="${SANDBOX_LOG_DIR:-}"
-SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}"
+# The server's sampler is the default: a quality number should measure the model
+# as it is served (#1579). SAMPLING_EXPLICIT records whether YOU chose — --resume
+# restores the original run's sampling and rejects a choice, and an explicit
+# sampler override or --retry-failed must not have server sampling forced on it.
+SAMPLING_EXPLICIT=0
+[[ -n "${SAMPLING_FROM_SERVER:-}" ]] && SAMPLING_EXPLICIT=1
+SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-1}"
 ENABLE_THINKING="${ENABLE_THINKING:-0}"
 NO_THINKING="${NO_THINKING:-0}"
 REASONING_EFFORT="${REASONING_EFFORT:-}"
@@ -478,6 +493,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --sampling-from-server)
       SAMPLING_FROM_SERVER=1
+      SAMPLING_EXPLICIT=1
+      shift
+      ;;
+    --pack-sampling)
+      SAMPLING_FROM_SERVER=0
+      SAMPLING_EXPLICIT=1
       shift
       ;;
     --enable-thinking)
@@ -651,7 +672,9 @@ if [[ -n "$RESUME" ]]; then
   if [[ -n "$THINKING_MAX_TOKENS" ]]; then _resume_conflicts+=(--thinking-max-tokens); fi
   if [[ -n "$THINKING_BUDGET" ]]; then _resume_conflicts+=(--thinking-budget); fi
   if [[ -n "$MAX_TOKENS" ]]; then _resume_conflicts+=(--max-tokens); fi
-  if [[ "$SAMPLING_FROM_SERVER" == "1" ]]; then _resume_conflicts+=(--sampling-from-server); fi
+  if [[ "$SAMPLING_EXPLICIT" == "1" ]]; then
+    if [[ "$SAMPLING_FROM_SERVER" == "1" ]]; then _resume_conflicts+=(--sampling-from-server); else _resume_conflicts+=(--pack-sampling); fi
+  fi
   if [[ ${#_resume_conflicts[@]} -gt 0 ]]; then
     echo "✗ --resume restores the original run configuration; drop: ${_resume_conflicts[*]}" >&2
     exit 2
@@ -681,9 +704,10 @@ fi
 # ---- #983A: --both-modes orchestration ---------------------------------------
 # Two legs around the existing single-run path:
 #   leg 1: --no-thinking  → leg 2: --enable-thinking
-# Each leg is pinned to --sampling-from-server unless already requested (#983C):
-# the compose encodes the model card's sampler rows per mode, so it stays the
-# single source of truth and the legs differ ONLY in the thinking gate. Cards
+# Each leg runs on the server's sampler (#983C) — the default since #1579, so
+# nothing is injected; a --pack-sampling in ORIG_ARGS carries over. The compose
+# encodes the model card's sampler rows per mode, so it stays the single source
+# of truth and the legs differ ONLY in the thinking gate. Cards
 # are namespaced per leg (<report-out>.thinking-off/on.<ext>) so both survive;
 # exit code is the worst leg's. Implemented as a self re-exec with ORIG_ARGS so
 # endpoint autodetect / hermes env / sandbox preflight all rerun per leg.
@@ -711,7 +735,6 @@ if [[ "$BOTH_MODES" == "1" && -z "${QUALITY_BOTH_LEG:-}" ]]; then
     if [[ "$_leg" == "no-thinking" ]]; then _tag="thinking-off"; _label="OFF"; else _tag="thinking-on"; _label="ON"; fi
     echo "[quality-test] --both-modes: leg ${_leg_no}/2 — ${_leg} (thinking ${_label})"
     _leg_args=("${_pre[@]+"${_pre[@]}"}" "--${_leg}")
-    if [[ "$SAMPLING_FROM_SERVER" != "1" ]]; then _leg_args+=(--sampling-from-server); fi
     if [[ -n "$_leg_report_out" && -n "$REPORT" ]]; then
       _sp="$(dirname -- "$_leg_report_out")"
       _bn="$(basename -- "$_leg_report_out")"
@@ -1296,9 +1319,31 @@ if [[ -n "$SANDBOX_LOG_DIR" ]]; then
   CLI_ARGS+=(--sandbox-log-dir "$SANDBOX_LOG_DIR")
   echo "[quality-test] sandbox logs → ${SANDBOX_LOG_DIR}/sandbox-<pack>.log"
 fi
-if [[ "$SAMPLING_FROM_SERVER" == "1" ]]; then
+# Server sampling by default — but not over choices that already fix the sampler:
+#   --resume       benchlocal restores the original run's sampling itself;
+#   --retry-failed restores its baseline's sampling (passing ours would override it);
+#   --temperature / --top-p / --top-k / --min-p / --repeat-penalty after `--` are an
+#                  explicit sampler, which benchlocal refuses alongside server sampling.
+if [[ "$SAMPLING_EXPLICIT" == "0" && "$SAMPLING_FROM_SERVER" == "1" ]]; then
+  for _sa in "${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}"; do
+    case "$_sa" in
+      --temperature|--temperature=*|--top-p|--top-p=*|--top-k|--top-k=*|--min-p|--min-p=*|--repeat-penalty|--repeat-penalty=*)
+        SAMPLING_FROM_SERVER=0
+        echo "[quality-test] sampling: explicit sampler flags after -- (${_sa%%=*}) — the server's sampler is not used" ;;
+      --retry-failed|--retry-failed=*)
+        SAMPLING_FROM_SERVER=0
+        echo "[quality-test] sampling: --retry-failed re-runs under its baseline's sampling" ;;
+    esac
+    [[ "$SAMPLING_FROM_SERVER" == "0" ]] && break
+  done
+fi
+if [[ -n "$RESUME" ]]; then
+  echo "[quality-test] sampling: restored from the resumed run"
+elif [[ "$SAMPLING_FROM_SERVER" == "1" ]]; then
   CLI_ARGS+=(--sampling-from-server)
-  echo "[quality-test] sampling: inherited from server (non-canonical)"
+  echo "[quality-test] sampling: the server's (the compose's model-card sampler — the default)"
+else
+  echo "[quality-test] sampling: each pack's own fixed sampler (reproducible baseline, --pack-sampling)"
 fi
 # ---- #1396: record the sampling in effect and the rig with the results --------
 # vLLM and SGLang expose no sampling-defaults endpoint and nothing recorded the
