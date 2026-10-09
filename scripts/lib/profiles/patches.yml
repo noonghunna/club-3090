@@ -1446,10 +1446,11 @@ patches:
           (club-3090#1226); its substantive addition is the per-shard K%128==0 / N%64==0 shape guard that
           jb-seo's eligibility gate omitted -- without it Qwen3.8-27B's merged GDN in_proj_ba (N=96 ->
           48/rank at TP=4) crashes in gptq_marlin_repack with 'size_n=48 is not divisible by 64'; the
-          guard routes non-conformant shards to standard Marlin W4A16 instead. DORMANT AT THE DEFAULT:
-          W4A8=0 ships, the installer is never invoked, and the composes serve stock W4A16 -- so this is
-          load-bearing only for the W4A8=1 path, and the toggle hard-fails rather than silently serving
-          W4A16 if the mount does not resolve. Measured on the reference 2x3090 PCIe rig: dual-fast
+          guard routes non-conformant shards to standard Marlin W4A16 instead. ON BY DEFAULT on the
+          autoround-int4 composes since 2026-09-19 (c18c8a48): their entrypoints default W4A8=1, so the
+          installer runs on every boot and they serve int8 activations; W4A8=0 reverts them to stock
+          W4A16. The fp8 composes default W4A8=0 (opt-in). Either way the toggle hard-fails rather than
+          silently serving W4A16 if the mount does not resolve. Measured on the reference 2x3090 PCIe rig: dual-fast
           prefill@10K 1183 -> 1710 (+44.5%, n=3 CV 0.8%) and @90K 953 -> 1276 (+33.9%) for -11.1% code
           decode; dual-superfast prefill@10K 1234 -> 1779 (+44.1%, n=3 CV 0.4%) and @90K 973 -> 1345
           (+38.3%), decode ~flat, MTP accept unchanged 3.71 -> 3.72. A trade, not a free win. NOT load-

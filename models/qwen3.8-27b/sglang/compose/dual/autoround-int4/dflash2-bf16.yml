@@ -97,11 +97,11 @@
 #     MEASURED here. If bf16 buys nothing on SGLang, ultrafast should be
 #     retired rather than kept for symmetry with vLLM.
 #
-#   ⚠️ AND THESE ARE NOT ACTIVATION-EQUIVALENT TO THEIR vLLM NAMESAKES. The vLLM
+#   ⚠️ ACTIVATION-EQUIVALENT TO THEIR vLLM NAMESAKES ONLY AT THE DEFAULT. The vLLM
 #   superfast tier serves W4A8 (int8 activations) through vendored Marlin
-#   patches. With W4A8=0 both tiers here are W4A16 — but W4A8 is ON by default (see below).
-#   Do not compare a number from these against a vLLM W4A8 number and call the
-#   delta an engine difference.
+#   patches; W4A8 is ON by default here too (W4A8=1, since 2026-09-19 — see below).
+#   With W4A8=0 both tiers here are W4A16: then do not compare a number from these
+#   against a vLLM W4A8 number and call the delta an engine difference.
 # ---------------------------------------------------------------------------
 #   ⭐⭐ DFLASH WIRING — four things that are NOT obvious, all verified against
 #   the v0.5.19 image on 2026-09-10:

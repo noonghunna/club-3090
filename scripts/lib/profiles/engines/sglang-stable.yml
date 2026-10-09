@@ -139,11 +139,12 @@ required_overlays: []
 vendored_overlays: []
 required_genesis: false
 notes: >-
-  SGLang stable, REGISTERED BUT NOT YET WIRED: no compose targets this engine and it has
-  never been booted on this rig. It is deliberately absent from arch_patches.yml, so
-  generate_compose/pull-gate will REFUSE an sglang pin ("engine pin has no loads:true
-  match") until a compose is live-validated — that refusal is correct, not a gap to
-  paper over. Add the arch/pin row in the same change as the first working compose.
+  SGLang stable. WIRED: the qwen3.8-27b and thinkingcap-qwen3.8-27b SGLang composes target
+  this engine (23 registered sgl/ slugs); first booted on the reference rig 2026-09-10
+  (v0.5.19) and re-booted on v0.5.21 (dual-fast + dual-superfast, 2026-10-09). STILL ABSENT
+  from arch_patches.yml, so generate_compose/pull-gate REFUSE an sglang pin ("engine pin
+  has no loads:true match"): the arch/pin row this note asked to add with the first
+  working compose has not been added yet.
   Patch delivery for this engine follows models/<model>/sglang/patches/ (see the README
   there); it mirrors the vLLM install_script contract rather than the older bare-.py
   sglang patches under models/qwen3.6-27b/sglang/patches/, which are deprecated (#254).
