@@ -1280,10 +1280,10 @@ _reg_tmp="$(mktemp)"
 # SAMPLE_* block to generic hints (documented above), never a wrong hint.
 bash "${ROOT_DIR}/scripts/lib/registry-emit.sh" --json >"${_reg_tmp}" 2>/dev/null || true
 if [[ -s "${_reg_tmp}" ]]; then
-  eval "$(python3 - "${MODEL_NAME}" "${ROOT_DIR}" "${_reg_tmp}" <<'PY'
+  eval "$(python3 - "${MODEL_NAME}" "${ROOT_DIR}" "${_reg_tmp}" "${SETUP_SLUG}" <<'PY'
 import json, os, re, shlex, sys
 
-model, root, reg_path = sys.argv[1], sys.argv[2], sys.argv[3]
+model, root, reg_path, setup_slug = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with open(reg_path, encoding="utf-8") as _fh:
     data = json.load(_fh)
 
@@ -1307,7 +1307,11 @@ def q(v):
 
 
 pick = None
-for slug in defaults:
+# `setup.sh <slug>` hints the slug that was asked for, whatever its status.
+asked = [v for v in variants if setup_slug and v.get("slug") == setup_slug]
+if asked:
+    pick = asked[0]
+for slug in defaults if pick is None else []:
     c = [v for v in variants if v.get("slug") == slug]
     if c and c[0].get("status") in FUNCTIONAL:
         pick = c[0]
