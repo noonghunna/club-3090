@@ -612,6 +612,26 @@ bash scripts/quality-test.sh --full --enable-thinking --thinking-budget 8192
 bash scripts/quality-test.sh --full --no-sandboxed --enable-thinking --thinking-budget 8192
 ```
 
+#### Server-side budgets by effort — read back, not sent
+
+The qwen3.8 vLLM / SGLang composes can cap reasoning **server-side**, with a budget chosen by the request's effort
+(`scripts/lib/effort_budget.py`; `THINKING_BUDGETS=off` turns it off). It applies to every request the server
+serves — the in-sandbox agentic packs' own calls included — and the wrapper sends nothing for it. The wrapper reads
+it back instead, from the serving container's
+boot log (`docker logs`, the last `[effort-budget] v1` line, since the log spans restarts), for the run's
+`REASONING_EFFORT` or the server's default effort:
+
+| Readback | Thinking cap (`--thinking-max-tokens`) | Recorded |
+|---|---|---|
+| budget N | default 16384 raised to N + `THINKING_BUDGET_HEADROOM` (4096) when that is larger, so the answer after the server's forced close is not cut off | `budget=server N (effort E)` on the Quality: line; benchlocal `--server-thinking-budget N` when the installed benchlocal-cli has it |
+| `off` | unchanged | `budget=server off` |
+| unknown (no line, no container) | unchanged | nothing — the line is unchanged |
+
+Never applied on a `--no-thinking` leg or `--resume` (benchlocal restores the original record). Never overrides a
+choice: `--thinking-max-tokens` / `THINKING_MAX_TOKENS` and `--pack-budgets` keep their caps (the budget is still
+recorded), and `--thinking-budget N` wins outright — its per-request budget overrides the server's, so the server's
+is not recorded.
+
 Reading a bounded run: a capped scenario still fails — as `token_limit` rather than `timeout` — so the budget
 bounds cost and makes wall-time estimable; it does not rescue a score. The latency distribution under a budget
 is bimodal (either well under the cap or pinned exactly at it), which is itself a diagnostic that the
@@ -640,6 +660,7 @@ The line documents what the compose was tested on — **against which pack versi
 |---|---|
 | `thinking OFF / ON` | reasoning gate forced off/on for every pack (absent = pack defaults) |
 | `sampling=…` | which sampler produced the scores — `server` (the default since #1579), `pack:greedy` / `pack:thinking` / `pack` (`--pack-sampling`), `explicit …`; see [Sampling & temperature](#sampling--temperature) |
+| `budget=server N (effort E)` / `budget=server off` | the server-side reasoning budget in effect for the run's effort, read from the compose's boot log; absent when unknown or on a thinking-off leg — see [Server-side budgets by effort](#server-side-budgets-by-effort--read-back-not-sent) |
 | `tp=N` | tensor-parallel size the scores were measured at (#1396) — from the engine's own startup dump; absent on llama.cpp and on results that predate it |
 | `validity=valid / CONTAMINATED` | #126 thinking-validity check: CONTAMINATED means a requested arm did not reason as asked — do not trust that leg |
 | `packs tc1.0.1·if1.0.0·…` | exact per-pack versions, compact ids (`tc`=toolcall-15, `if`=instructfollow-15, `so`=structoutput-15, `de`=dataextract-15, `rm`=reasonmath-15, `bf`=bugfind-15, `hm`=hermesagent-20, `cli`=cli-40) |

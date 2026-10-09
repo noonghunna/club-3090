@@ -147,6 +147,12 @@ OPTIONS (extra)
                    (pack default or --enable-thinking). Default 16384, sent
                    explicitly: benchlocal-cli would otherwise give thinking packs
                    the --max-tokens value. Also settable via THINKING_MAX_TOKENS.
+                   When the serving compose caps reasoning server-side (its
+                   `[effort-budget] v1` boot line, read from `docker logs`), the
+                   default grows to that budget + THINKING_BUDGET_HEADROOM (4096)
+                   if that is larger, so the answer after the server's forced
+                   close is not cut off. Not on a --no-thinking leg, --resume,
+                   --pack-budgets, --thinking-budget, or when you set this cap.
   --max-tokens N   Completion budget for BOTH arms. Default 4096 — benchlocal's
                    per-pack ~1024 cuts long answers off into token_limit
                    failures that read as wrong answers (docs/RUN_EVALS.md).
@@ -256,7 +262,8 @@ ENV VARS
                    verified per engine and per pack class).
   THINKING_BUDGET_HEADROOM
                    Answer tokens added to the budget when deriving
-                   --thinking-max-tokens (default 4096).
+                   --thinking-max-tokens (default 4096) — from --thinking-budget,
+                   or from the server's own budget (see --thinking-max-tokens).
   THINKING_BUDGET_UNVERIFIED
                    Set to 1 to run --thinking-budget when NO evidence about the
                    server is available (no container, no readback). Positive
@@ -625,6 +632,14 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Whether YOU chose the thinking cap (flag or env). Recorded before anything below
+# derives one (--thinking-budget, the server budget readback, the defaults), so
+# only a real choice is ever kept over the server's budget.
+THINKING_MAX_TOKENS_EXPLICIT=0
+if [[ -n "$THINKING_MAX_TOKENS" ]]; then THINKING_MAX_TOKENS_EXPLICIT=1; fi
+# The wrapper's thinking cap when nothing else sets one (docs/RUN_EVALS.md).
+DEFAULT_THINKING_MAX_TOKENS=16384
 
 # ---- prerequisite checks -----------------------------------------------------
 
@@ -1181,6 +1196,93 @@ if [[ "${BENCHLOCAL_HERMES_RESOLVE_LOCALHOST:-}" == "1" && "$NO_SANDBOX" != "1" 
   fi
 fi
 
+# ---- server-side reasoning budget: read it back, size the client cap --------
+# A club vLLM / SGLang compose can cap reasoning SERVER-side with a budget chosen
+# by the request's effort (scripts/lib/effort_budget.py); its entrypoint prints
+# one `[effort-budget] v1 …` line at boot. A client cap at or below that budget
+# cuts off the answer that follows the server's forced close, and the run then
+# measures the cap — so on a thinking leg the DEFAULT thinking cap grows to
+# budget + THINKING_BUDGET_HEADROOM when that is larger. The budget is also
+# stamped on the Quality: line and recorded by benchlocal (--server-thinking-budget,
+# when the installed benchlocal-cli has it).
+#   Not read on --resume (benchlocal restores the original run's own record) or on
+#   a --no-thinking leg (no reasoning, nothing to bound). Never overrides a choice:
+#   --thinking-budget N (sent per request — the request's budget wins on the
+#   server, so the server's is not the one in effect), an explicit
+#   --thinking-max-tokens / THINKING_MAX_TOKENS, or --pack-budgets.
+# Engine-neutral by design: the readback line is the same on every engine, and
+# effort_budget.py owns its parsing (the LAST line wins: `docker logs` spans restarts).
+SERVER_THINKING_BUDGET=""          # N | off | empty = unknown / not in effect
+SERVER_THINKING_EFFORT=""          # the effort that budget was read for
+THINKING_MAX_TOKENS_FROM_SERVER="" # "server-budget+H" when the cap was raised from it
+if [[ -z "$RESUME" && "$NO_THINKING" != "1" && -n "${CONTAINER:-}" && "${CONTAINER}" != "none" ]] \
+   && command -v docker >/dev/null 2>&1 && docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  _sb_effort="$(printf '%s' "$REASONING_EFFORT" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  if [[ "$_sb_effort" == "none" ]]; then
+    echo "[quality-test] server budget: not applied — REASONING_EFFORT=none runs with thinking off"
+  else
+    _sb_lines="$(docker logs "$CONTAINER" 2>&1 | command grep -F '[effort-budget]' || true)"
+    _sb_args=(readback-budget --line -)
+    if [[ -n "$_sb_effort" ]]; then _sb_args+=(--effort "$_sb_effort"); fi
+    _sb_rc=0
+    _sb_out="$(printf '%s\n' "$_sb_lines" | python3 "${ROOT_DIR}/scripts/lib/effort_budget.py" "${_sb_args[@]}" 2>&1)" || _sb_rc=$?
+    if [[ "$_sb_rc" == "0" && "$_sb_out" =~ ^[0-9]+$ ]]; then
+      SERVER_THINKING_BUDGET="$_sb_out"
+      SERVER_THINKING_EFFORT="$_sb_effort"
+      if [[ -z "$SERVER_THINKING_EFFORT" ]]; then
+        # No effort sent: the server's default effort applies — name it from the same line.
+        SERVER_THINKING_EFFORT="$(printf '%s\n' "$_sb_lines" | python3 -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("effort_budget", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+info = m.parse_readback(sys.stdin.read()) or {}
+print(info.get("default_effort") or "")' "${ROOT_DIR}/scripts/lib/effort_budget.py" 2>/dev/null || true)"
+      fi
+      _sb_eff_note=""
+      if [[ -n "$_sb_effort" ]]; then
+        _sb_eff_note=" (effort ${_sb_effort})"
+      elif [[ -n "$SERVER_THINKING_EFFORT" ]]; then
+        _sb_eff_note=" (the server's default effort, ${SERVER_THINKING_EFFORT})"
+      fi
+      _sb_what="server budget ${SERVER_THINKING_BUDGET} reasoning tokens${_sb_eff_note}, read from ${CONTAINER}'s boot log"
+      if [[ -n "$THINKING_BUDGET" ]]; then
+        echo "[quality-test] ${_sb_what} — --thinking-budget ${THINKING_BUDGET} is sent per request and wins over it; cap from --thinking-budget"
+        SERVER_THINKING_BUDGET=""; SERVER_THINKING_EFFORT=""
+      elif [[ "$THINKING_MAX_TOKENS_EXPLICIT" == "1" ]]; then
+        echo "[quality-test] ${_sb_what} — your thinking cap ${THINKING_MAX_TOKENS} is kept"
+        if [[ "$THINKING_MAX_TOKENS" -le "$SERVER_THINKING_BUDGET" ]]; then
+          echo "[quality-test] WARN: thinking cap ${THINKING_MAX_TOKENS} is not above the server budget ${SERVER_THINKING_BUDGET}: an answer after the server's forced close has no room (token_limit, not a wrong answer)" >&2
+        fi
+      elif [[ "$PACK_BUDGETS" == "1" ]]; then
+        echo "[quality-test] ${_sb_what} — --pack-budgets keeps benchlocal's own caps (not raised)"
+      else
+        _sb_headroom="${THINKING_BUDGET_HEADROOM:-4096}"
+        if ! [[ "$_sb_headroom" =~ ^[1-9][0-9]*$ ]]; then
+          echo "✗ THINKING_BUDGET_HEADROOM must be a positive integer (answer tokens after the reasoning budget), got '${_sb_headroom}'" >&2
+          exit 2
+        fi
+        _sb_cap=$(( SERVER_THINKING_BUDGET + _sb_headroom ))
+        if [[ "$_sb_cap" -gt "$DEFAULT_THINKING_MAX_TOKENS" ]]; then
+          THINKING_MAX_TOKENS="$_sb_cap"
+          THINKING_MAX_TOKENS_FROM_SERVER="server-budget+${_sb_headroom}"
+          echo "[quality-test] ${_sb_what} — thinking cap raised to ${THINKING_MAX_TOKENS} (= ${SERVER_THINKING_BUDGET} + ${_sb_headroom} answer headroom; the default ${DEFAULT_THINKING_MAX_TOKENS} would cut the answer off)"
+        else
+          echo "[quality-test] ${_sb_what} — the default thinking cap ${DEFAULT_THINKING_MAX_TOKENS} already leaves ≥ ${_sb_headroom} tokens for the answer"
+        fi
+      fi
+    elif [[ "$_sb_rc" == "0" && "$_sb_out" == "off" ]]; then
+      SERVER_THINKING_BUDGET="off"
+      echo "[quality-test] server budget: off (${CONTAINER} booted with THINKING_BUDGETS=off) — thinking cap unchanged"
+    elif [[ "$_sb_rc" == "0" || "$_sb_rc" == "2" ]]; then
+      echo "[quality-test] server budget: unknown (no [effort-budget] v1 line in ${CONTAINER}'s boot log) — thinking cap unchanged"
+    else
+      echo "[quality-test] WARN: could not read the server budget from ${CONTAINER}'s boot log — thinking cap unchanged:" >&2
+      printf '%s\n' "$_sb_out" | sed 's/^/[quality-test]   /' >&2
+    fi
+  fi
+fi
+
 # ---- budget defaults (docs/RUN_EVALS.md) -------------------------------------
 # benchlocal-cli's per-pack budgets (~1024 completion tokens, 300s per sandbox
 # model turn, 300s per hermes episode) cut long answers off into token_limit and
@@ -1203,7 +1305,8 @@ if [[ -z "$RESUME" ]]; then
     if [[ -z "$MAX_TOKENS" ]]; then MAX_TOKENS=4096; _bd_default+=(max-tokens); fi
     # Explicit even though 16384 is benchlocal's own thinking default: once
     # --max-tokens is set, benchlocal gives thinking packs THAT value instead.
-    if [[ -z "$THINKING_MAX_TOKENS" ]]; then THINKING_MAX_TOKENS=16384; _bd_default+=(thinking-max-tokens); fi
+    if [[ -z "$THINKING_MAX_TOKENS" ]]; then THINKING_MAX_TOKENS=$DEFAULT_THINKING_MAX_TOKENS; _bd_default+=(thinking-max-tokens); fi
+    if [[ -n "$THINKING_MAX_TOKENS_FROM_SERVER" ]]; then _bd_default+=("thinking-max-tokens=${THINKING_MAX_TOKENS_FROM_SERVER}"); fi
     if [[ -z "${BENCHLOCAL_MODEL_TURN_TIMEOUT:-}" ]]; then
       export BENCHLOCAL_MODEL_TURN_TIMEOUT=900; _bd_default+=(model-turn)
     fi
@@ -1429,6 +1532,19 @@ fi
 if [[ -n "$THINKING_MAX_TOKENS" ]]; then
   CLI_ARGS+=(--thinking-max-tokens "$THINKING_MAX_TOKENS")
   echo "[quality-test] thinking max tokens: $THINKING_MAX_TOKENS (applies to thinking-enabled packs)"
+fi
+# The server budget rides with the results so two runs under different budgets are
+# not compared blind. Informational to benchlocal (never sent to the model), and
+# never on --resume: benchlocal restores the original run's value itself and
+# refuses a different one. SERVER_THINKING_BUDGET is only ever a number on a
+# fresh thinking-capable leg (see the readback above).
+if [[ "$SERVER_THINKING_BUDGET" =~ ^[0-9]+$ && -z "$RESUME" ]]; then
+  if benchlocal-cli run --help 2>/dev/null | command grep -q -- "--server-thinking-budget"; then
+    CLI_ARGS+=(--server-thinking-budget "$SERVER_THINKING_BUDGET")
+    echo "[quality-test] server thinking budget: $SERVER_THINKING_BUDGET (recorded with the results)"
+  else
+    echo "[quality-test] NOTE: this benchlocal-cli predates --server-thinking-budget — the budget is stamped on the Quality: line only"
+  fi
 fi
 if [[ -n "$MAX_TOKENS" ]]; then
   CLI_ARGS+=(--max-tokens "$MAX_TOKENS")
@@ -1689,7 +1805,14 @@ if [[ -f "$JSON_OUT" ]]; then
   # #1579: the emitter lives in scripts/lib/quality_line.py so its sampler stamp
   # is testable from fixture JSONs. CLI_ARGS rides along for the two sampler
   # flags benchlocal does not record in the results JSON.
-  python3 "${ROOT_DIR}/scripts/lib/quality_line.py" "$JSON_OUT" "${PACK:-$MODE}" "${CLI_ARGS[@]}"
+  # The server budget goes in as arguments for THIS run, never through the
+  # environment, so a stale export cannot stamp a budget the run never had.
+  _ql_opts=()
+  if [[ -n "$SERVER_THINKING_BUDGET" ]]; then
+    _ql_opts+=(--server-budget "$SERVER_THINKING_BUDGET")
+    if [[ -n "$SERVER_THINKING_EFFORT" ]]; then _ql_opts+=(--server-effort "$SERVER_THINKING_EFFORT"); fi
+  fi
+  python3 "${ROOT_DIR}/scripts/lib/quality_line.py" ${_ql_opts[@]+"${_ql_opts[@]}"} "$JSON_OUT" "${PACK:-$MODE}" "${CLI_ARGS[@]}"
 fi
 
 # ---- Results Card v2 pointer (#987/#981/#983E) --------------------------------
