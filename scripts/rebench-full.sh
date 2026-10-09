@@ -326,10 +326,13 @@ date +"  started:     %Y-%m-%dT%H:%M:%SZ" -u
 echo
 
 # --- capture container snapshot (one-shot, used by rebench-report.py) ------
-# Picks the first vllm-*/llama-cpp-*/sglang-* container — same heuristic
-# preflight uses. Silently no-ops in endpoint-first mode (CONTAINER=none).
+# The container preflight chose (or you named) — #1584: re-picking "the first
+# of ours by name" here snapshotted a different container than the one the run
+# measured whenever two were up. The name heuristic is only the fallback.
+# Silently no-ops in endpoint-first mode (CONTAINER=none).
 if [[ "${CONTAINER:-}" != "none" ]] && command -v docker >/dev/null 2>&1; then
-  CONTAINER_NAME=$(docker ps --format '{{.Names}}' 2>/dev/null \
+  CONTAINER_NAME="${CONTAINER:-}"
+  [[ -n "$CONTAINER_NAME" ]] || CONTAINER_NAME=$(docker ps --format '{{.Names}}' 2>/dev/null \
     | command grep -E "$(club_container_re)" | head -1 || true)
   if [[ -n "$CONTAINER_NAME" ]]; then
     docker inspect "$CONTAINER_NAME" > "$OUT_DIR/container-config.json" 2>/dev/null || true

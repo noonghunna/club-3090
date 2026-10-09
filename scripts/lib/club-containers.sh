@@ -141,6 +141,30 @@ CLUB_ENGINE_PORTS_NEED_EVIDENCE='8080|5000'
 # own SearXNG (8088→8080) picked it as "the inference container". The image arm
 # keeps a BYO llama.cpp container (any name, a llama.cpp image) visible. Callers
 # that still send two fields get the name arm only.
+# club_container_for_url URL — the running container that publishes URL on this
+# host through an engine-internal port, or nothing (#1584). URL names the server,
+# so no evidence rule applies: whatever publishes it on an engine port IS it.
+# The one answer for "which container serves this URL?" — preflight's endpoint
+# autodetect and soak-test.sh both ask it, instead of taking the first engine
+# container (which made a run against another machine or another local port
+# read that container's logs and boot facts as its own).
+club_container_for_url() {
+  declare -F ports_serve_url >/dev/null 2>&1 \
+    || source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/listen-scope.sh"
+  local url="$1" l maps
+  [[ -n "$url" ]] || return 0
+  while IFS= read -r l; do
+    [[ -n "$l" ]] || continue
+    maps=$(cut -d'|' -f2 <<<"$l" | tr ',' '\n' \
+      | command grep -E -- "->(${CLUB_ENGINE_PORTS_ANY})/tcp" | paste -sd, - || true)
+    if [[ -n "$maps" ]] && ports_serve_url "$maps" "$url"; then
+      printf '%s\n' "${l%%|*}"
+      return 0
+    fi
+  done < <(docker ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null || true)
+  return 0
+}
+
 club_engine_port_lines() {
   declare -F engine_kind_from_image >/dev/null 2>&1 \
     || source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/engine-kind.sh"

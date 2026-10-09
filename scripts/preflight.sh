@@ -1556,24 +1556,16 @@ preflight_autodetect_endpoint() {
   # The `|| true` is load-bearing: grep -E returns 1 when nothing matches, which
   # under `set -euo pipefail` in the caller would silently abort rebench-full.sh
   # before its own "endpoint not responding" path. Empty = the no-container case.
-  local ps_lines engine_lines found_line="" l engine_maps
+  local ps_lines engine_lines found_line=""
   ps_lines=$(docker ps --format '{{.Names}}|{{.Ports}}|{{.Image}}' 2>/dev/null || true)
   engine_lines=$(club_engine_port_lines <<<"$ps_lines" || true)
 
   if [[ -n "$explicit_url" ]]; then
     # #1584: URL= names the server. The container is the one publishing it here
-    # through an engine port — binding "the first engine container" made a run
-    # against another machine (or another local port) read this container's logs
-    # and boot facts as its own. You named the endpoint, so no evidence rule:
-    # whatever publishes it on an engine port IS the server.
-    while IFS= read -r l; do
-      [[ -n "$l" ]] || continue
-      engine_maps=$(cut -d'|' -f2 <<<"$l" | tr ',' '\n' \
-        | command grep -E -- "->(${CLUB_ENGINE_PORTS_ANY})/tcp" | paste -sd, - || true)
-      if [[ -n "$engine_maps" ]] && ports_serve_url "$engine_maps" "$explicit_url"; then
-        found_line="$l"; break
-      fi
-    done <<<"$ps_lines"
+    # through an engine port (club_container_for_url) — binding "the first engine
+    # container" made a run against another machine (or another local port) read
+    # this container's logs and boot facts as its own.
+    found_line="$(club_container_for_url "$explicit_url")"
     if [[ -z "$found_line" ]]; then
       CONTAINER="none"
       echo "[autodetect] no running container publishes ${explicit_url} on an engine port here — host-only mode (CONTAINER=none; set CONTAINER=<name> if one serves it)" >&2

@@ -14,6 +14,9 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #        URL= set    — the container publishing that URL, else CONTAINER=none;
 #        CONTAINER=  — the URL is that container's own port.
 #      Every negative has a positive leg in the same mock world.
+#   3. soak-test.sh, which picks its container itself: a URL no local container
+#      publishes runs in host mode and never inspects the local container; the
+#      matching URL does (positive control). Asserted at the docker layer.
 #
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -153,5 +156,41 @@ expect "PREFLIGHT_NO_AUTODETECT=1 → untouched" \
   "URL= CONTAINER= AUTODET=" "$(PREFLIGHT_NO_AUTODETECT_IN=1 MOCK_PS="$VLLM_A" bash -c '
     unset URL CONTAINER; source scripts/preflight.sh; PREFLIGHT_NO_AUTODETECT=1 preflight_autodetect_endpoint
     echo "URL=${URL:-} CONTAINER=${CONTAINER:-} AUTODET=${PREFLIGHT_ENDPOINT_AUTODETECTED:-}"' 2>/dev/null)"
+
+# club_container_for_url — the shared answer preflight and soak both use
+cfu() { MOCK_PS="$1" bash -c 'source scripts/lib/club-containers.sh; club_container_for_url "$1"' _ "$2"; }
+expect "club_container_for_url: the second engine's URL" "vllm-gemma-4-31b-dual" "$(cfu "$VLLM_A"$'\n'"$VLLM_B" http://localhost:8021)"
+expect "club_container_for_url: a remote URL → nothing" "" "$(cfu "$VLLM_A" http://10.9.9.9:8020)"
+expect "club_container_for_url: the gateway's own port → nothing" "" "$(cfu "$GATEWAY" http://localhost:4000)"
+
+# ---------------------------------------------------------------------------
+echo "--- 3. soak-test.sh decides its container by the URL too ---"
+sbin="$tmp/sbin"; mkdir -p "$sbin"
+cat > "$sbin/docker" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_LOG"
+case "$1" in
+  ps)      printf '%s\n' "vllm-mock|0.0.0.0:8020->8000/tcp|vllm/vllm-openai:v0" ;;
+  inspect) [[ "$*" == *"State.Running"* ]] && echo true
+           [[ "$*" == *vllm-mock* ]] || exit 1 ;;
+esac
+exit 0
+EOF
+# /v1/models never answers, so soak stops right after choosing its container.
+printf '#!/usr/bin/env bash\nexit 7\n' > "$sbin/curl"
+chmod +x "$sbin"/*
+soak() {   # soak URL → the run's output; docker calls land in $tmp/soak-docker.log
+  : > "$tmp/soak-docker.log"
+  PATH="$sbin:$PATH" MOCK_LOG="$tmp/soak-docker.log" URL="$1" SOAK_OUTPUT="$tmp/soak-out" \
+    timeout 120 bash scripts/soak-test.sh --quick 2>&1 || true
+}
+out="$(soak http://10.9.9.9:8020)"
+command grep -q "host mode: CONTAINER=none" <<<"$out" || { printf '%s\n' "$out" >&2; fail "soak: a remote URL did not run in host mode"; }
+if command grep -q "inspect.*vllm-mock" "$tmp/soak-docker.log"; then fail "soak: a remote URL inspected the local container"; fi
+pass "soak: remote URL → host mode, local container never inspected"
+out="$(soak http://localhost:8020)"
+if command grep -q "host mode" <<<"$out"; then printf '%s\n' "$out" >&2; fail "soak: the serving container's own URL went to host mode"; fi
+command grep -q "inspect.*vllm-mock" "$tmp/soak-docker.log" || fail "soak: the serving container was not inspected — the remote leg proves nothing"
+pass "soak: the container's own URL → that container (positive control)"
 
 echo "test-preflight-autodetect: ok"

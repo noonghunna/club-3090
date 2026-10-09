@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Guard: every copy of the engine-internal port set, and of the engine name
-# prefixes, must agree — and port 5000 must only ever admit OUR containers.
+# prefixes, must agree — and ports 5000 / 8080 must only ever admit evidenced
+# engines: OUR containers by name, or an engine image (#1584).
 #
 # #1360: TabbyAPI (exllamav3) listens on 5000 inside its container and our
 # composes name it `tabbyapi-…`. Six hand-copied lists of "engine ports"
@@ -16,8 +17,12 @@
 #   2. detect.py's ENGINE_PREFIXES covers every engine prefix in the shell
 #      fallback (CLUB_CONTAINER_PREFIX_RE_FALLBACK minus the estate `club3090-`);
 #   3. club_engine_port_lines: an exl3 container on 5000 is admitted, an
-#      unrelated app on 5000 is NOT (the negative control), 8000/8080 lines behave
-#      exactly as before.
+#      unrelated app on 5000 is NOT (the negative control), 8000 lines behave
+#      exactly as before. #1584: 8080 took the 5000 rule — SearXNG / Open WebUI
+#      on 8080 are NOT admitted, our llama-cpp- containers and a BYO llama.cpp
+#      image are. The evidence rule also admits a BYO TabbyAPI image on 5000,
+#      deliberately: #1360 was name-only, and an engine image is the same
+#      strength of evidence the 8080 rule needs.
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
