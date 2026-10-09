@@ -44,7 +44,9 @@ assert_contains() {
 }
 
 tmp_dir="$(mktemp -d)"
-cleanup() { rm -rf "$tmp_dir"; }
+# Kills the mock engine too, so an interrupted run can't orphan it (`|| true`: it is usually
+# already gone, and under set -e a failing kill would abort the trap before the rm).
+cleanup() { [[ -z "${MOCK_PID:-}" ]] || kill "$MOCK_PID" 2>/dev/null || true; rm -rf "$tmp_dir"; }
 trap cleanup EXIT
 
 # ---- Extract helpers under test -------------------------------------------

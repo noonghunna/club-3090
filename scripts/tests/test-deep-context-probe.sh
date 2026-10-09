@@ -69,7 +69,9 @@ ok "TTFT anchored on the first chunk carrying choices (#1096 trap avoided)"
 # usage stats) and one chunk carries MANY tokens (1 -> 9 -> 16, as measured under
 # DFlash), so a chunk-counting decode rate reads ~5x low.
 # ===========================================================================
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"
+FAKE_PIDS=()   # killed on EXIT too, so an interrupted run can't orphan a fake engine
+trap 'for p in "${FAKE_PIDS[@]+"${FAKE_PIDS[@]}"}"; do kill "$p" 2>/dev/null || true; done; rm -rf "$TMP"' EXIT
 cat > "$TMP/fake_engine.py" <<'PYEOF'
 import json, sys, time, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -147,7 +149,7 @@ run_fake() {
   local report="$1" mode="$2"; shift 2
   local port; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
   python3 "$TMP/fake_engine.py" "$port" "$report" >"$TMP/fake.$report.$mode.log" 2>&1 &
-  local pid=$!
+  local pid=$!; FAKE_PIDS+=("$pid")
   local i; for i in $(seq 1 50); do curl -sf -m 1 "http://127.0.0.1:$port/v1/models" >/dev/null 2>&1 && break; sleep 0.1; done
   out="$(env URL="http://127.0.0.1:$port" MODEL=fake MODE="$mode" "$@" bash "$S" 2>&1)"; rc=$?
   kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null

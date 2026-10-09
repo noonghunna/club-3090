@@ -108,14 +108,17 @@ with open(sys.argv[1], "w") as f: f.write(str(srv.server_address[1]))
 srv.serve_forever()
 PY
 
+# run_bench sets $out. It runs in THIS shell, never inside a command substitution, so server_pid
+# reaches cleanup(): when its output was captured that way the PID lived only in the subshell and
+# an interrupted run orphaned the mock engine.
 run_bench() {  # $1 = MOCK_EMIT_TOOLCALL  $2 = MOCK_MODE (default ar)  [extra env ...]
   rm -f "$port_file"
   local tc="$1" mode="${2:-ar}"; shift 2 2>/dev/null || shift $#
   MOCK_EMIT_TOOLCALL="$tc" MOCK_MODE="$mode" python3 "$tmp/mock.py" "$port_file" & server_pid=$!
   for _ in $(seq 1 50); do [[ -s "$port_file" ]] && break; sleep 0.1; done
   local port; port="$(cat "$port_file")"
-  env PREFLIGHT_NO_AUTODETECT=1 URL="http://127.0.0.1:${port}" MODEL=mock \
-    SESSIONS=1 TURNS=3 QUIET=1 "$@" bash scripts/bench-agentic.sh 2>&1
+  out="$(env PREFLIGHT_NO_AUTODETECT=1 URL="http://127.0.0.1:${port}" MODEL=mock \
+    SESSIONS=1 TURNS=3 QUIET=1 "$@" bash scripts/bench-agentic.sh 2>&1)" || true
   kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true
 }
 
@@ -123,7 +126,7 @@ assert_contains() { [[ "$1" == *"$2"* ]] || { echo "ASSERT FAIL: missing '$2'"; 
 assert_absent()   { [[ "$1" != *"$2"* ]] || { echo "ASSERT FAIL: unexpected '$2'"; echo "$1"; exit 1; }; }
 
 echo "── miss path: no parseable tool call → ramp must continue to turn 3 ──"
-out="$(run_bench 0 ar)"
+run_bench 0 ar
 assert_absent  "$out" "FAIL"                       # ramp did NOT abort
 assert_contains "$out" "tool-call misses: 3/3"     # all 3 turns missed, counted
 # turn 3 reached (the summary table prints the turn-3 row)
@@ -131,7 +134,7 @@ echo "$out" | grep -qE "^\s*3\s" || { echo "ASSERT FAIL: turn 3 not reached"; ec
 echo "  ✓ ramp reached configured depth despite 100% tool-call misses"
 
 echo "── success path: proper tool call → normal flow, zero misses ──"
-out="$(run_bench 1 ar)"
+run_bench 1 ar
 ar_out="$out"
 assert_absent  "$out" "FAIL"
 assert_absent  "$out" "tool-call misses"           # no misses line when all succeed
@@ -167,7 +170,7 @@ PY
 }
 
 echo "── canvas granularity: zero-width decode window must print n/a, never 8e5 ──"
-out="$(run_bench 1 canvas QUIET=0)"
+run_bench 1 canvas QUIET=0
 assert_no_absurd_decode "$out" "canvas ramp"
 assert_contains "$out" "n/a"                       # the per-turn column
 assert_contains "$out" "zero-width decode window"  # ...and WHY it is n/a
@@ -192,7 +195,7 @@ assert_no_absurd_decode "$ar_out" "AR ramp"
 echo "  ✓ AR output unchanged (the guard is a ratio — it cannot fire on a real decode window)"
 
 echo "── DECODE_GRANULARITY=token suppresses the classification ──"
-out="$(run_bench 1 canvas QUIET=0 DECODE_GRANULARITY=token)"
+run_bench 1 canvas QUIET=0 DECODE_GRANULARITY=token
 assert_absent   "$out" "⚠ CANVAS GRANULARITY"
 assert_contains "$out" "n/a"                       # the per-turn guard is NOT overridable
 assert_no_absurd_decode "$out" "canvas ramp, granularity forced to token"
@@ -205,7 +208,7 @@ echo "── thinking model: reasoning deltas count as first token ──"
 # COLLAPSE that did not happen. Measured 2026-09-08 on a live thinking model at
 # ~21K ctx: first reasoning delta 28.64s, first content delta 34.69s, window
 # 1.25s = 3.5% of wall = flagged. 278 reasoning deltas had streamed normally.
-out="$(run_bench 1 reasoning QUIET=0)"
+run_bench 1 reasoning QUIET=0
 assert_absent "$out" "zero-width decode window"
 assert_absent "$out" "decode-window  unmeasurable"
 # and it must still produce a real per-turn decode number, not n/a

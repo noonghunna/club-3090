@@ -60,13 +60,15 @@ print(srv.server_address[1], flush=True)
 srv.serve_forever()
 PY
 
-start_stub() {  # start_stub <mode> → prints port
-  local fifo="$TMP/port.$1"
-  python3 "$TMP/stub.py" "$1" > "$fifo" 2>/dev/null &
+# start_stub <mode> <var> — sets <var> to the stub's port. Call it in THIS shell, never inside a
+# command substitution: a PID recorded in that subshell never reaches the EXIT trap, and that is
+# how six stub servers per run were left behind for days.
+start_stub() {
+  local fifo="$TMP/port.$1.$RANDOM" i
+  python3 "$TMP/stub.py" "$1" > "$fifo" 2>/dev/null </dev/null &
   PIDS+=("$!")
-  local i
   for i in $(seq 1 50); do [[ -s "$fifo" ]] && break; sleep 0.1; done
-  head -1 "$fifo"
+  printf -v "$2" '%s' "$(head -1 "$fifo")"
 }
 
 # shellcheck source=../lib/served-model.sh
@@ -74,7 +76,7 @@ source scripts/lib/served-model.sh
 
 check() {  # check <label> <mode> <expected> [url-suffix]
   local port got
-  port="$(start_stub "$2")"
+  start_stub "$2" port
   got="$(club_served_model_id "http://127.0.0.1:${port}${4:-}")"
   [[ "$got" == "$3" ]] && ok "$1 → '$got'" || bad "$1 → got '$got', expected '$3'"
 }
@@ -85,7 +87,7 @@ check "non-card JSON on /v1/model is never read as an id" notcard modules
 check "URL with trailing /v1/models still resolves" tabby qwen-loaded /v1/models
 
 # 6. end-to-end through preflight_autodetect_model
-port="$(start_stub tabby)"
+start_stub tabby port
 got="$(bash -c '
   cd "$1"; source scripts/preflight.sh >/dev/null 2>&1
   unset MODEL; URL="http://127.0.0.1:$2"; PREFLIGHT_MODEL_WAIT_S=0

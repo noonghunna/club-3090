@@ -28,7 +28,10 @@ fail() { echo "FAIL: $1" >&2; exit 1; }
 # run for real, but cannot touch the estate, and any boot attempt is RECORDED so
 # the dry-run case can assert on the side effect instead of on stdout.
 SHIMDIR="$(mktemp -d)"
-trap 'rm -rf "$SHIMDIR"' EXIT
+# Stub servers are killed explicitly after use AND here: any failure between start and kill under
+# set -e used to leave them running (two orphaned engine stubs were found days later).
+STUB_PIDS=()
+trap 'for p in "${STUB_PIDS[@]+"${STUB_PIDS[@]}"}"; do kill "$p" 2>/dev/null || true; done; rm -rf "$SHIMDIR"' EXIT
 COMPOSE_UP_LOG="$SHIMDIR/compose-up.log"
 : > "$COMPOSE_UP_LOG"
 cat > "$SHIMDIR/docker" <<SHIM
@@ -323,7 +326,7 @@ class H(BaseHTTPRequestHandler):
         pass
 HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 ' "$SGL_PORT" &
-SGL_PID=$!
+SGL_PID=$!; STUB_PIDS+=("$SGL_PID")
 for _ in $(seq 1 50); do curl -s -m 1 "http://127.0.0.1:$SGL_PORT/get_server_info" >/dev/null 2>&1 && break; sleep 0.1; done
 got="$(PATH="$SPEC_STUB:$PATH" CONTAINER= URL="http://127.0.0.1:$SGL_PORT" python3 "$LIB" --spec-label)"
 kill "$SGL_PID" 2>/dev/null || true
@@ -380,7 +383,7 @@ class H(BaseHTTPRequestHandler):
         pass
 HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 ' "$SGL2_PORT" &
-SGL2_PID=$!
+SGL2_PID=$!; STUB_PIDS+=("$SGL2_PID")
 for _ in $(seq 1 50); do curl -s -m 1 "http://127.0.0.1:$SGL2_PORT/get_server_info" >/dev/null 2>&1 && break; sleep 0.1; done
 got_kv="$(PATH="$KV_STUB:$PATH" CONTAINER= URL="http://127.0.0.1:$SGL2_PORT" python3 "$LIB" --detect-kv)"
 hdr="$(URL="http://127.0.0.1:$SGL2_PORT" N_LIST="1 2 4" CTX_SWEEP="1k" SWEEP_DRY=1 bash "$PROBE" --sweep 2>&1 | head -1)"
@@ -438,8 +441,8 @@ HTTPServer(("127.0.0.1", port), H).serve_forever()
 free_port() { python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'; }
 wait_up() { for _ in $(seq 1 50); do curl -s -m 1 "http://127.0.0.1:$1/" >/dev/null 2>&1 && return 0; sleep 0.1; done; }
 
-VPORT="$(free_port)"; python3 -c "$ENGINE_STUB_PY" vllm "$VPORT" & VPID=$!
-SPORT="$(free_port)"; python3 -c "$ENGINE_STUB_PY" sglang "$SPORT" & SPID=$!
+VPORT="$(free_port)"; python3 -c "$ENGINE_STUB_PY" vllm "$VPORT" & VPID=$!; STUB_PIDS+=("$VPID")
+SPORT="$(free_port)"; python3 -c "$ENGINE_STUB_PY" sglang "$SPORT" & SPID=$!; STUB_PIDS+=("$SPID")
 wait_up "$VPORT"; wait_up "$SPORT"
 got_v="$(URL="http://127.0.0.1:$VPORT" CONTAINER= python3 "$LIB" --served-max-len)"
 got_s="$(URL="http://127.0.0.1:$SPORT" CONTAINER= python3 "$LIB" --served-max-len)"
