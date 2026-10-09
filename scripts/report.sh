@@ -181,6 +181,32 @@ details() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# The ONE container this bundle describes (#1590). Three sections used to pick their own — the
+# per-card VRAM attribution, the KV-math calibration and "Active container" — and none looked at
+# URL / ENDPOINT, while resolve_stage_endpoint() did. So a bundle for URL=<another machine>, or
+# for the second of two local engines, put one server's endpoint next to another's logs, image
+# and boot config. The rule is the one preflight's autodetect, soak and concurrency-probe follow:
+#   - an explicit CONTAINER= wins (CONTAINER=none: a host engine build);
+#   - URL / ENDPOINT set → the container publishing it on this host (club_container_for_url),
+#     else none: a remote server or a host process, nothing local to introspect;
+#   - neither → the stack default if it is up, then any container the registry knows.
+# Resolved here, at the top level, because the sections that read it run in `{ …; } | redact`
+# subshells, where an assignment would not survive.
+REPORT_CONTAINER_FROM_URL=0
+if [[ -z "$CONTAINER" ]] && have docker && docker info >/dev/null 2>&1; then
+  if [[ -n "${URL:-${ENDPOINT:-}}" ]]; then
+    CONTAINER="$(club_container_for_url "${URL:-${ENDPOINT:-}}")"
+    if [[ -z "$CONTAINER" ]]; then CONTAINER="none"; REPORT_CONTAINER_FROM_URL=1; fi
+  else
+    # Prefer the stack default if it happens to be up, then ANY container the
+    # registry knows. The ladder used to be five hardcoded prefixes, which meant a
+    # rig serving exl3 (tabbyapi-*) or SGLang reported "no engine container" over a
+    # healthy server — silently, since "not found" reads the same as "not there".
+    CONTAINER=$(docker ps --format '{{.Names}}' --filter 'name=vllm-qwen36' 2>/dev/null | head -1)
+    [[ -z "$CONTAINER" ]] && CONTAINER=$(club_running_container)
+  fi
+fi
+
 # gpu_power_caps — one "idx|limit_w|default_w|percent" row per GPU whose power
 # limit is BELOW its factory default. Empty output when nothing is capped.
 #
@@ -758,12 +784,11 @@ section "Display / desktop state"
   fi
 
   if have nvidia-smi; then
-    # Check if a club-3090 container is running (lightweight — full detection is later)
+    # The bundle's container (resolved once, near the top — #1590). `none` passes as empty:
+    # `docker inspect none` succeeds on any Docker host — it is the built-in network (#1067).
     # NB: top-level (not in a function) — plain assignment, not `local`.
-    our_container=""
-    if have docker && docker info >/dev/null 2>&1; then
-      our_container=$(club_running_container)
-    fi
+    our_container="$CONTAINER"
+    [[ "$our_container" == "none" ]] && our_container=""
     # Per card, not per container (#1537): see gpu_vram_report_lines.
     gpu_vram_report_lines "$our_container"
   fi
@@ -876,13 +901,11 @@ fi
 # verdict line + any FAIL rows here so a triage reply can immediately see
 # whether to trust kv-calc projections for this user's config.
 
-# Engine + model detection for kv-calc scoping (#168). Resolve the active
-# container (explicit --container wins; else first running club-3090 container),
-# then map it to a kv-calc engine family + model id via scripts/lib/report_calib.sh.
+# Engine + model detection for kv-calc scoping (#168). The bundle's container (resolved
+# once, near the top — #1590), mapped to a kv-calc engine family + model id via
+# scripts/lib/report_calib.sh. `none` (host engine, or nothing local serves the URL) is empty.
 _calib_container="${CONTAINER:-}"
-if [[ -z "$_calib_container" ]] && have docker && docker info >/dev/null 2>&1; then
-  _calib_container=$(club_running_container)
-fi
+[[ "$_calib_container" == "none" ]] && _calib_container=""
 CALIB_ENGINE_KIND="${ENGINE_KIND:-$(calib_engine_for_container "$_calib_container")}"
 CALIB_MODEL_ID="$(calib_model_for_container "$_calib_container")"
 
@@ -1023,18 +1046,9 @@ PYEOF
 # ---------------------------------------------------------------------------
 
 section "Active container"
-# Engine-agnostic auto-detection: try vllm-* first (most common on this stack),
-# fall back to llama-cpp-* (the alternate engine we ship). User can override
-# with CONTAINER=... env var for non-standard naming (microk8s deployments,
-# host engine builds via CONTAINER=none, etc.).
-if [[ -z "$CONTAINER" ]] && have docker && docker info >/dev/null 2>&1; then
-  # Prefer the stack default if it happens to be up, then ANY container the
-  # registry knows. The ladder used to be five hardcoded prefixes, which meant a
-  # rig serving exl3 (tabbyapi-*) or SGLang reported "no engine container" over a
-  # healthy server — silently, since "not found" reads the same as "not there".
-  CONTAINER=$(docker ps --format '{{.Names}}' --filter 'name=vllm-qwen36' 2>/dev/null | head -1)
-  [[ -z "$CONTAINER" ]] && CONTAINER=$(club_running_container)
-fi
+# CONTAINER was resolved once near the top (#1590): explicit CONTAINER= (non-standard naming,
+# microk8s deployments, host engine builds via CONTAINER=none) wins; with URL / ENDPOINT it is
+# the container publishing that endpoint here; otherwise the stack default, then any of ours.
 
 # Engine class — drives which probes run inside the container body. Inferred
 # from container name; user can override with ENGINE_KIND=<engine-family> env var.
@@ -1050,7 +1064,9 @@ case "${ENGINE_KIND:-}" in
     fi ;;
 esac
 
-if [[ "$CONTAINER" == "none" ]]; then
+if [[ "$CONTAINER" == "none" && "$REPORT_CONTAINER_FROM_URL" == "1" ]]; then
+  echo "_No local container serves the endpoint (CONTAINER=none) — a remote server or a host process; container-scoped probes skipped._"
+elif [[ "$CONTAINER" == "none" ]]; then
   # Host engine build: no container to introspect. Docker ships a built-in
   # network object named "none", so `docker inspect none` succeeds (exit 0) on
   # any Docker host (club-3090#1067) — guard it so the body can't inspect a phantom.

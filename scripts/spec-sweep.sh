@@ -76,6 +76,20 @@ PROMPT='Write a detailed 800-word essay on the history and impact of the printin
 # guard test fails if a private classifier reappears anywhere under scripts/.
 # shellcheck source=lib/engine-kind.sh
 source "${ROOT_DIR}/scripts/lib/engine-kind.sh"
+# shellcheck source=lib/club-containers.sh
+source "${ROOT_DIR}/scripts/lib/club-containers.sh"
+
+# _arm_container — the container whose logs hold THIS arm's acceptance rate: an explicit
+# CONTAINER= (none = no container), else the one publishing URL on this host — club_container_for_url,
+# the rule preflight's autodetect, soak, concurrency-probe and report.sh share (#1590). The old pick
+# was the first container whose NAME carried the engine family (`grep -m1 "$ENGINE_FAMILY"`): with
+# two engines of a family up, or URL on another machine, another server's acceptance rate landed in
+# this arm's row. Nothing local serving URL → empty, and the row reads an honest '—'.
+_arm_container() {
+  [[ "${CONTAINER:-}" == "none" ]] && return 0
+  if [[ -n "${CONTAINER:-}" ]]; then printf '%s\n' "$CONTAINER"; return 0; fi
+  club_container_for_url "$URL"
+}
 ENGINE_FAMILY="llamacpp"
 if [[ -n "$SLUG" ]]; then
   ENGINE_FAMILY="$(ENGINE_KIND_ROOT="$ROOT_DIR" engine_kind_from_slug "$SLUG")"
@@ -202,22 +216,8 @@ _measure_vllm_arm() {
   med="$(printf '%s\n' "${tps_list[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}')"
   if [[ "$n" != "0" ]]; then
     local cn
-    # Match the container to THIS arm's engine, not a hardcoded 'vllm'. The family
-    # (vllm/sglang/…) is already resolved once via the canonical resolver into
-    # ENGINE_FAMILY (#1282) and container names carry that token (vllm-…, sglang-…).
-    # A hardcoded 'vllm' left cn empty on an sglang-* container — so the gate
-    # below kept the SGLang fallback unreachable and SGLang arms printed '—' —
-    # and, when more than one engine container is up, picked the wrong engine
-    # entirely (grep -m1 = first match). ENGINE_FAMILY is a global set at engine
-    # resolution, so it is in scope here — no private re-classification
-    # (test-engine-kind-resolver arm 4).
-    # ⚠️ The family TOKEN is not always present in the container NAME. vllm-*
-    # and sglang-* carry theirs; exl3 does NOT — its containers are `tabbyapi-…`,
-    # so grepping for "exllamav3" matched nothing and the arm printed an
-    # honest-looking '—' forever. Map family -> name pattern.
-    _cn_pat="$ENGINE_FAMILY"
-    [[ "$ENGINE_FAMILY" == "exllamav3" ]] && _cn_pat='tabbyapi|exl3|exllamav3'
-    cn="$(docker ps --format '{{.Names}}' | command grep -m1 -E "$_cn_pat" || true)"
+    # The container serving URL — the one this arm measured (_arm_container, #1590).
+    cn="$(_arm_container)"
     # Two engines word this differently. vLLM: "SpecDecoding metrics: ... acceptance
     # rate: 85.0%". SGLang: "accept len: 5.66, accept rate: 0.67" (a RATE in [0,1],
     # so scale to % to keep the column comparable). Until 2026-09-11 only the vLLM
