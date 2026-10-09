@@ -34,6 +34,7 @@ SOURCED_OK = {
     "scripts/lib/gpu-select.sh",            # sourced by launch.sh
     "scripts/lib/p2p-state.sh",             # sourced by preflight.sh
     "scripts/lib/report_calib.sh",          # sourced by test-report-calib.sh
+    "scripts/lib/listen-scope.sh",          # sourced by quality-test.sh (#1578)
     "scripts/lib/served-model.sh",          # sourced by preflight/quality-test/rebench/switch/bench-agentic
     "scripts/lib/profiles/weights.py",      # imported by the profile loaders
     "scripts/tests/fixtures/report-harness/report-env.sh",  # test fixture, sourced

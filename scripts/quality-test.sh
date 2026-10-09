@@ -757,6 +757,7 @@ fi
 #                    the wrong one), and clobbering the user's choice routes the
 #                    whole run at the wrong model (see disc #152, @ampersandru).
 source "${ROOT_DIR}/scripts/lib/served-model.sh"   # #1360: TabbyAPI-aware served id
+source "${ROOT_DIR}/scripts/lib/listen-scope.sh"   # #1578: why a container can't reach the endpoint
 DETECTED_MODEL="$(club_served_model_id "${URL}")"
 if [[ -n "$DETECTED_MODEL" && "$DETECTED_MODEL" != "$MODEL" ]]; then
   if [[ "$MODEL_EXPLICIT" == "1" ]]; then
@@ -1116,22 +1117,49 @@ if [[ "${BENCHLOCAL_HERMES_RESOLVE_LOCALHOST:-}" == "1" && "$NO_SANDBOX" != "1" 
       fi
       break
     done
-    # No suitable image cached → fall back to a host-side bind check, which catches
-    # the exact failure mode (listening on loopback only) without pulling anything.
-    if [[ -z "$_q_reach" ]] && command -v ss >/dev/null 2>&1; then
-      if ss -ltn 2>/dev/null | command grep -qE "LISTEN.*(0\.0\.0\.0|\*|\[::\]):${_q_port}\b"; then
-        _q_reach=ok
-      elif ss -ltn 2>/dev/null | command grep -qE "LISTEN.*(127\.0\.0\.1|\[::1\]):${_q_port}\b"; then
-        _q_reach=fail
-      fi
+    # What the port actually listens on decides WHY a probe failed, and the fix (#1578).
+    # Also the fallback when no probe image is cached: it catches the common failure
+    # (listening on loopback only) without pulling anything.
+    _q_gw="$(docker_bridge_gateway)"
+    _q_scope="$(listen_scope "$_q_port" "$_q_gw")"
+    if [[ -z "$_q_reach" ]]; then
+      case "$_q_scope" in
+        wildcard|bridge)   _q_reach=ok ;;
+        loopback|specific) _q_reach=fail ;;
+      esac
     fi
     if [[ "$_q_reach" == "fail" ]]; then
+      _q_addrs="$(listen_addrs "$_q_port" | paste -sd ' ' -)"
+      _q_gwtxt="${_q_gw:-the Docker bridge address}"
       echo "[quality-test] ✗ endpoint is NOT reachable from a container — hermesagent-20 would return 20 silent server_errors" >&2
       echo "               (and those 20 would be counted as MODEL failures in the TOTAL)" >&2
-      echo "               The server on port ${_q_port} appears bound to loopback only." >&2
-      echo "               Fix: bind it to 0.0.0.0 — the shipped composes already do" >&2
-      echo "                    (\${BIND_HOST:-0.0.0.0}); a hand-rolled 'llama-server --host 127.0.0.1' does not." >&2
-      echo "               Bypass (scores will be wrong): --no-sandbox, or unset BENCHLOCAL_HERMES_RESOLVE_LOCALHOST." >&2
+      echo "               The sandbox reaches the host through host.docker.internal = ${_q_gwtxt} (the Docker bridge)." >&2
+      case "$_q_scope" in
+        loopback)
+          echo "               Port ${_q_port} listens on loopback only (${_q_addrs}), which the bridge cannot reach. Fix one of:" >&2
+          echo "                 · a club compose publishes on \${BIND_HOST:-0.0.0.0}: if you set BIND_HOST=127.0.0.1, set it back to 0.0.0.0" >&2
+          echo "                 · your own container: publish -p ${_q_port}:<port>, not -p 127.0.0.1:${_q_port}:<port>" >&2
+          echo "                 · your own server: --host 0.0.0.0 — 'llama-server --host 127.0.0.1' is the classic case" >&2
+          echo "               To keep it off the LAN instead, bind / publish / set BIND_HOST to ${_q_gwtxt} AND run against" >&2
+          echo "               URL=http://${_q_gwtxt}:${_q_port} — the host's loopback stops answering once it listens only there." >&2
+          ;;
+        specific)
+          _q_first="$(listen_addrs "$_q_port" | command grep -vE '^(127\.|\[::1\])' | head -1)"
+          echo "               Port ${_q_port} listens only on ${_q_addrs}: not loopback and not the bridge, so the rewritten URL misses it." >&2
+          echo "               Fix: run against that address — URL=http://${_q_first}:${_q_port} (a non-loopback URL is used as-is) —" >&2
+          echo "                    or also bind the server to ${_q_gwtxt} or 0.0.0.0." >&2
+          ;;
+        wildcard|bridge)
+          echo "               Port ${_q_port} listens on ${_q_addrs}, so the bind is NOT the problem: traffic from the Docker bridge to" >&2
+          echo "               the host is being dropped — usually a host firewall. With ufw: sudo ufw allow in on docker0 to any port ${_q_port} proto tcp" >&2
+          ;;
+        *)
+          echo "               Could not tell what port ${_q_port} listens on (${_q_scope}). The usual cause is a server bound to 127.0.0.1" >&2
+          echo "               only: bind or publish it on 0.0.0.0 (club composes publish on \${BIND_HOST:-0.0.0.0})." >&2
+          ;;
+      esac
+      # Note: unsetting the variable is NOT a bypass — this wrapper sets it to 1 whenever it is empty.
+      echo "               Bypass (scores will be wrong): --no-sandboxed, or BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=0." >&2
       exit 2
     elif [[ "$_q_reach" == "ok" ]]; then
       echo "[quality-test] endpoint reachable from a container — hermes sandbox can reach the model ✓" >&2
