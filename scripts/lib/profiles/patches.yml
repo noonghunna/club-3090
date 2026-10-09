@@ -1480,3 +1480,101 @@ patches:
       ref: jb-seo/club-3090 (0004-autoround-w4a8.patch, cut against SGLang v0.5.18)
       status: ours
       drop_when: "SGLang lands AutoRound W4A8 with the K%128/N%64 shape guard natively in the AutoRoundConfig eligibility gate — then this re-cut + guard is retired (keep the compose, drop the mount)."
+  - id: qwen38-sglang-effort-thinking-budget
+    model: [qwen3.8-27b, thinkingcap-qwen3.8-27b]
+    status: unverified
+    files:
+      - models/qwen3.8-27b/sglang/patches/sglang-effort-thinking-budget
+    load_bearing_when:
+      - composes:
+          - sgl/qwen38-27b-single-fast
+          - sgl/qwen38-27b-dual-fast
+          - sgl/qwen38-27b-dual-superfast
+          - sgl/qwen38-27b-dual-max
+          - sgl/qwen38-27b-multi4-fast
+          - sgl/qwen38-27b-multi4-superfast
+          - sgl/qwen38-27b-multi4-max
+          - sgl/qwen38-27b-multi4-supermax
+          - sgl/qwen38-27b-multi8-fast
+          - sgl/qwen38-27b-multi8-superfast
+          - sgl/qwen38-27b-multi8-max
+          - sgl/qwen38-27b-multi8-supermax
+          - sgl/thinkingcap38-27b-dual-fast
+          - sgl/thinkingcap38-27b-dual-superfast
+          - sgl/thinkingcap38-27b-dual-max
+          - sgl/thinkingcap38-27b-multi4-fast
+          - sgl/thinkingcap38-27b-multi4-superfast
+          - sgl/thinkingcap38-27b-multi4-max
+          - sgl/thinkingcap38-27b-multi4-supermax
+          - sgl/thinkingcap38-27b-multi8-fast
+          - sgl/thinkingcap38-27b-multi8-superfast
+          - sgl/thinkingcap38-27b-multi8-max
+          - sgl/thinkingcap38-27b-multi8-supermax
+        reason: >-
+          Server-side reasoning budget chosen by effort (plan thinking-budget-by-effort, D3: on by
+          default, THINKING_BUDGETS=off turns the map off). SGLang enforces a per-request budget
+          (strict thinking reads custom_params.thinking_budget) but never picks one from the effort,
+          so a client sending only reasoning_effort -- all the OpenAI API lets most coding agents
+          send -- is unbounded. One inserted call each in openai/serving_chat.py
+          _convert_to_internal_request (between _process_messages and to_sampling_params; covers
+          chat completions and /v1/messages) and anthropic/serving.py (thinking.budget_tokens ->
+          custom_params.thinking_budget, replacing the "not enforced" warning), plus a declared
+          thinking_token_budget field on ChatCompletionRequest (pydantic drops unknown keys there).
+          Precedence: custom_params.thinking_budget > thinking_token_budget > budget_tokens > the
+          map budget for the effort in use > SGLANG_MAX_THINK_TOKENS (the floor, exported by
+          effort_budget.py shell-env; the Responses API and /generate get only the floor). All
+          effort logic lives in the engine-neutral scripts/lib/effort_budget.py, mounted at
+          /etc/club3090/effort_budget.py like scripts/detect_nvlink.sh (outside patches/, so not a
+          patch artifact). Requires --enable-strict-thinking, which every wired compose passes;
+          strict thinking also blocks <tool_call>/</tool_call>/<|im_end|>/<|endoftext|> while the
+          model thinks (accepted under plan D4 if toolcall-15 / hermesagent-20 / cli-40 do not
+          regress). Also wired, but not load-bearing for a slug: the two unregistered composes
+          qwen3.8-27b dual/autoround-int4/dflash2-bf16.yml and dual/fp8/dflash2.yml.
+          CRITICALITY (exception class, plan D8, 2026-10-09): runaway reasoning is a measured defect
+          -- Flash-Next 2026-10-07: cap cut-offs on cli-40, -30% retry tokens recovered by a budget --
+          and SGLang's shipped budget path is silently broken here (wrong think-end ids, bypassed
+          under spec decode). DROP TRIGGER: upstream SGLang ships an equivalent in the sglang-stable
+          pin; posting the upstream equivalent is the drop path (plan D7, with the maintainer's go).
+        evidence: >-
+          models/qwen3.8-27b/sglang/patches/sglang-effort-thinking-budget/README.md; selftest.sh on
+          lmsysorg/sglang:v0.5.21 (stock control drops thinking_token_budget; negative controls;
+          request scenarios through the real patched functions); compose defaults low 4096 /
+          medium 16384 / xhigh 32768 (maintainer-set 2026-10-09, same for both models); no live
+          boot has probed enforcement yet (plan S1 / scripts/probe-effort-budget.sh)
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/sglang/patches/sglang-effort-thinking-budget/install.sh
+      mounted_at: /etc/club3090/effort-thinking-budget
+      invoke: "bash /etc/club3090/effort-thinking-budget/install.sh"
+      invoked_before: sglang-launch
+      wired_at: [volumes, entrypoint]
+      note: >-
+        Runs after `effort_budget.py shell-env --engine sglang` has exported
+        CLUB3090_REASONING_EFFORT_BUDGETS and SGLANG_MAX_THINK_TOKENS. Copies effort_budget.py
+        (mounted from scripts/lib) and the glue into site-packages, parses the map (a malformed map
+        stops the boot), patches the three call sites when the marker is absent. Idempotent.
+    drift_guard:
+      kind: boot
+      check: >-
+        bash models/qwen3.8-27b/sglang/patches/sglang-effort-thinking-budget/selftest.sh
+        lmsysorg/sglang:v0.5.21 -- offline, no GPU: the module's unit tests on the image python, a
+        stock-behaviour control, negative controls (anchor removed / duplicated, half-patched tree,
+        malformed map, module not mounted), install twice (second = no-op), AST checks that each
+        hook sits at its call site, and request scenarios through the real patched functions. At
+        boot, install.sh refuses (exit 1) when an anchor is missing or repeated, the tree is
+        half-patched, or the map does not parse. The live check is scripts/probe-effort-budget.sh.
+      on_fail: refuse-to-boot
+    capability: sglang-effort-thinking-budget
+    foundational: false
+    upstream:
+      ref: "none equivalent; related sgl-project/sglang#36750 (max_thinking_tokens on chat completions, open), #40634 (preferred_sampling_params custom_params clobbered, open), #23953 (strict thinking, merged)"
+      status: ours
+      drop_when: >-
+        SGLang ships, in the sglang-stable pin, a per-request reasoning budget chosen from the
+        effort (or a native field that covers the explicit alias and the map). If only #36750
+        lands, drop the protocol edit (thinking_token_budget) and keep the hooks.
