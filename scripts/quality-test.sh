@@ -297,6 +297,9 @@ EOF
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# #1579: remember whether YOU named the container, before preflight fills it in.
+_CONTAINER_EXPLICIT=0
+[[ -n "${CONTAINER:-}" ]] && _CONTAINER_EXPLICIT=1
 if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
   # shellcheck source=preflight.sh
   source "${ROOT_DIR}/scripts/preflight.sh"
@@ -758,6 +761,19 @@ fi
 #                    whole run at the wrong model (see disc #152, @ampersandru).
 source "${ROOT_DIR}/scripts/lib/served-model.sh"   # #1360: TabbyAPI-aware served id
 source "${ROOT_DIR}/scripts/lib/listen-scope.sh"   # #1578: why a container can't reach the endpoint
+
+# #1579: preflight binds the first engine-port container even when URL= points
+# elsewhere. Everything below that reads the container — the server's sampling
+# defaults and the rig (run_context.py), the reasoning-parser check, the restart
+# guard — would then describe a server this run never talked to, and the report
+# would carry them as the run's own. Keep an auto-detected container only when it
+# publishes URL's port on this host; a CONTAINER you set yourself is trusted.
+if [[ "$_CONTAINER_EXPLICIT" == "0" && -n "${CONTAINER:-}" && "${CONTAINER}" != "none" ]] \
+   && ! container_serves_url "$CONTAINER" "$URL"; then
+  echo "[quality-test] auto-detected container '${CONTAINER}' does not serve ${URL} — ignoring it, so the" >&2
+  echo "               report records no server sampling defaults or rig (set CONTAINER=<name> if it does serve it)" >&2
+  CONTAINER=""
+fi
 DETECTED_MODEL="$(club_served_model_id "${URL}")"
 if [[ -n "$DETECTED_MODEL" && "$DETECTED_MODEL" != "$MODEL" ]]; then
   if [[ "$MODEL_EXPLICIT" == "1" ]]; then
@@ -1648,65 +1664,10 @@ if [[ -f "$JSON_OUT" ]]; then
   echo "Quality: line for compose schema field (paste into compose YAML header):"
   echo "=========================================================================="
 
-  python3 - "$JSON_OUT" "${PACK:-$MODE}" <<'PYEOF'
-import json, sys, datetime
-path, mode = sys.argv[1], sys.argv[2]
-with open(path) as f:
-    d = json.load(f)
-
-date = datetime.date.today().isoformat()
-mode_short = mode.lstrip("-")
-parts = []
-versions = []
-for p in d.get("packs", []):
-    if p.get("status") == "stubbed" and p.get("total", 0) == 0:
-        continue
-    pid = p["pack_id"]
-    pa = p["passed"]
-    pt = p["total"]
-    pct = round(100 * p["score"]) if pt else 0
-    parts.append(f"{pid} {pa}/{pt} ({pct}%)")
-    # #981: per-pack version provenance — the same responses score 4/15 or 9/15
-    # on dataextract depending only on pack version, so a Quality: line without
-    # versions is untraceable. Compact id per #983E (tc·if·so·de·rm·bf·hm·cli);
-    # unknown packs fall back to their full id. Old schema-v1 JSONs without a
-    # version field omit the stamp rather than inventing one.
-    ver = p.get("version")
-    if ver:
-        base = pid.split("-", 1)[0]
-        short = {"toolcall": "tc", "instructfollow": "if", "structoutput": "so",
-                 "dataextract": "de", "reasonmath": "rm", "bugfind": "bf",
-                 "hermesagent": "hm", "cli": "cli"}.get(base, base)
-        versions.append(f"{short}{ver}")
-
-# Provenance suffix (#983E): mode, thinking gate, sampling source, thinking
-# validity, pack versions, date. Each stamp appears only when the results JSON
-# actually carries it — a missing field stays missing instead of lying.
-suffix_parts = [f"--{mode_short}"]
-tm = d.get("thinking_mode")
-if tm == "force-on":
-    suffix_parts.append("thinking ON")
-elif tm == "force-off":
-    suffix_parts.append("thinking OFF")
-if d.get("sampling_source") == "server":
-    suffix_parts.append("sampling=server")
-# #1396: the topology the scores were measured on (run_meta, from run_context.py).
-tp = (d.get("run_meta") or {}).get("tp")
-if tp:
-    suffix_parts.append(f"tp={tp}")
-validity = d.get("thinking_validity") or {}
-if validity:
-    statuses = {o.get("status") for o in validity.values()}
-    suffix_parts.append("validity=valid" if statuses <= {"ok"} else "validity=CONTAMINATED")
-if versions:
-    suffix_parts.append("packs " + "·".join(versions))
-suffix_parts.append(date)
-suffix = f" ({', '.join(suffix_parts)})"
-if parts:
-    print("Quality:   " + " · ".join(parts) + suffix)
-else:
-    print("Quality:   (no scoreable packs ran)")
-PYEOF
+  # #1579: the emitter lives in scripts/lib/quality_line.py so its sampler stamp
+  # is testable from fixture JSONs. CLI_ARGS rides along for the two sampler
+  # flags benchlocal does not record in the results JSON.
+  python3 "${ROOT_DIR}/scripts/lib/quality_line.py" "$JSON_OUT" "${PACK:-$MODE}" "${CLI_ARGS[@]}"
 fi
 
 # ---- Results Card v2 pointer (#987/#981/#983E) --------------------------------

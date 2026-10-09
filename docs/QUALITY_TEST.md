@@ -168,7 +168,7 @@ the three sampler vars by hand remains the only way to change them.
 
 | Flag | Why |
 |---|---|
-| `--sampling-from-server` | Uses the compose's card-correct sampler instead of the pack's `temperature=0`. Without it you measure **greedy decoding, not the shipped config**. |
+| `--sampling-from-server` | Uses the compose's card-correct sampler instead of the pack contract (greedy on the instruct leg, benchlocal's generic temperature 1.0 / top_p 0.95 / top_k 20 thinking sampler on the thinking leg). Without it you measure **the pack's sampler, not the shipped config** — the `Quality:` line says which (`sampling=server` vs `sampling=pack:…`, see [Sampling & temperature](#which-sampler-a-quality-line-was-measured-with-1579)). |
 | `REASONING_EFFORT=` | Env only — forwarded as the per-request OpenAI `reasoning_effort`. The qwen3.8 composes default to `low` server-side since #1029; pin it anyway so the run records what it measured. ⚠️ Effort is **not** comparable across runs. ⚠️ Qwen3.8's own rungs are `xhigh`/`medium`/`low` — there is no `high`. On the vLLM and SGLang slugs the vendored template (`qwen38-reasoning-effort-template`) maps `high` → `xhigh`; anything else still raises. Elsewhere `high` **raises**. ⚠️ On SGLang before 2026-09-27 the per-request effort was **ignored** — the server default (the compose's `REASONING_EFFORT`, `low` unless set at launch) rendered instead ([sglang#38104](https://github.com/sgl-project/sglang/issues/38104)); an SGLang run that set `REASONING_EFFORT` only for the runner measured the boot default. |
 | `--repeat 3` | Add it for anything you'll quote. With `--sampling-from-server` both legs are sampled, so single draws aren't quotable. |
 
@@ -480,7 +480,12 @@ caused it, and refuses to leave the bare TOTAL standing:
 
 ## Sampling & temperature
 
-By default the packs sample at **temperature 0** (greedy) — deterministic and reproducible, so scores are comparable across rigs and across runs. This is the **canonical** baseline, and it's what regression tracking and cross-config ranking should use.
+By default the packs send their own sampler — the **pack contract**, and the **canonical** baseline that regression tracking and cross-config ranking use:
+
+- **thinking OFF:** every pack's `sampling_defaults` is **temperature 0 / top_p 1** (greedy) — deterministic and reproducible, so scores compare across rigs and runs.
+- **thinking ON:** benchlocal's thinking sampler, **temperature 1.0 / top_p 0.95 / top_k 20 / min_p 0** (benchlocal-cli `DEFAULT_THINKING_SAMPLER`), unless a pack pins its own — `hermesagent-20` stays at temperature 0.
+
+The pack contract is not any model card's sampler. For Qwen3.8, whose cards prescribe a non-greedy instruct sampler, the canonical thinking-OFF leg is off-card ([#1579](https://github.com/noonghunna/club-3090/issues/1579)); use `--sampling-from-server` to measure the shipped config.
 
 Two opt-in modes evaluate a model at a non-zero / model-recommended temperature instead. Both **tag the run non-canonical** (markdown header + saved JSON) and refuse to gate CI:
 
@@ -507,7 +512,28 @@ SAMPLING_FROM_SERVER=1 bash scripts/rebench-full.sh --with-8pack-thinking=both
 # quality-test.sh sets this automatically for localhost URLs (see Limitations).
 BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=1 \
   benchlocal-cli run --full --endpoint http://localhost:8020 --model <name> --temperature 0.8
+# …or keep the wrapper (and its guard) and pass the flags through:
+bash scripts/quality-test.sh --full -- --temperature 0.8 --top-p 0.95
 ```
+
+### Which sampler a `Quality:` line was measured with ([#1579](https://github.com/noonghunna/club-3090/issues/1579))
+
+Every `Quality:` line carries a `sampling=` stamp. Before #1579 only `sampling=server` was stamped, so a run with explicit `--temperature`/`--top-p` overrides printed the same line as a canonical one. The stamp follows the precedence benchlocal applies to each request:
+
+| Stamp | Meaning |
+|---|---|
+| `sampling=server` | `--sampling-from-server`: no sampler sent; the server's defaults apply. The values are on the Results Card when they could be read (llama.cpp `/props`, or the vLLM / SGLang boot log of the container serving `URL`). |
+| `sampling=explicit temperature=0.7/top_p=0.8/…` | `--temperature` / `--top-p` / `--top-k` / `--min-p` / `--repeat-penalty` overrides. They win on both thinking legs. |
+| `sampling=pack+extra-body …` | The pack contract plus sampler keys from `--extra-body`. On a thinking leg, the thinking sampler still overrides temperature / top_p / top_k / min_p. |
+| `sampling=pack+thinking-sampler …` | The pack contract with `--thinking-sampler` replacing the thinking sampler. |
+| `sampling=pack:greedy` | Canonical, thinking OFF. |
+| `sampling=pack:thinking` | Canonical, thinking ON (the thinking sampler above; `hermesagent-20` greedy). |
+| `sampling=pack` | Canonical, pack-default thinking (mixed legs). |
+| *(no stamp)* | A results JSON from before 2026-05-24, when benchlocal didn't record its sampler yet. |
+
+- `max_tokens` is a length budget, not a sampler. The wrapper's default 4,096 rides in `sampling_overrides` on every run, and it never turns a run into `explicit`.
+- ⚠️ **The two "both legs" entry points use different samplers.** `quality-test.sh --both-modes` pins each leg to `--sampling-from-server` (#983C), while `rebench-full.sh --with-8pack-thinking=both` runs the pack contract unless `SAMPLING_FROM_SERVER=1`. Compare `sampling=` stamps before comparing scores.
+- **`URL=` another machine.** The wrapper reads the server's sampling defaults and the rig only from a container that publishes `URL`'s port on this host. A container auto-detected on a different port is ignored, with a notice. Before #1579 a remote run could carry the local container's defaults and `tp` as its own. Set `CONTAINER=<name>` when the URL is served by a container the check can't see (e.g. through a proxy). The wrapper trusts an explicit `CONTAINER=`.
 
 ### Reasoning-on evals
 

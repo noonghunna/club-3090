@@ -267,6 +267,7 @@ PASS_THROUGH_OK = {
     "--enable-sandboxed-packs",          # aider pack via raw benchlocal-cli
     "--exit-on-regression",              # quality-baseline.sh passes it through
     "--extra-body",                      # benchlocal-cli; --thinking-budget composes it (#1383)
+    "--thinking-sampler",                # benchlocal-cli; the Quality: line stamps it (#1579)
 }
 # flags belonging to OTHER commands the docs mention alongside quality-test.sh
 OTHER_TOOL_OK = {
