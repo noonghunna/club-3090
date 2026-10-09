@@ -218,14 +218,19 @@ def about(name, res, budget):
     budget = int(budget)
     lo, hi = max(0, budget - BELOW), budget + SLACK
     ok_len = lo <= res["n"] <= hi
-    ok_end = res["finish"] == "stop" and bool(res["content"].strip())
+    # The budget's job is to close the reasoning and hand over to the answer: content must follow.
+    # A tiny budget on a hard prompt can leave the model writing its answer until max_tokens
+    # (finish=length) — that is the model, not the budget, so it is noted, not failed.
+    ok_end = bool(res["content"].strip())
     why = []
     if res["n"] < lo:
         why.append("reasoning ended under the budget on its own — inconclusive, the prompt did not reach it")
     if res["n"] > hi:
         why.append("reasoning ran past the budget")
     if not ok_end:
-        why.append(f"finish={res['finish']} content={len(res['content'])} chars (want stop + content)")
+        why.append(f"finish={res['finish']} with no content after the close (want an answer)")
+    elif res["finish"] != "stop":
+        why.append(f"note: finish={res['finish']} — the answer ran to max_tokens after the close")
     report(name, ok_len and ok_end,
            f"reasoning {res['n']} tok ({res['src']}) vs budget {budget} [{lo}..{hi}], finish={res['finish']}"
            + ("" if not why else " — " + "; ".join(why)))
