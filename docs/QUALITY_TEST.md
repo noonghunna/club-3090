@@ -533,7 +533,7 @@ Every `Quality:` line carries a `sampling=` stamp. Before #1579 only `sampling=s
 
 - `max_tokens` is a length budget, not a sampler. The wrapper's default 4,096 rides in `sampling_overrides` on every run, and it never turns a run into `explicit`.
 - ⚠️ **The two "both legs" entry points use different samplers.** `quality-test.sh --both-modes` pins each leg to `--sampling-from-server` (#983C), while `rebench-full.sh --with-8pack-thinking=both` runs the pack contract unless `SAMPLING_FROM_SERVER=1`. Compare `sampling=` stamps before comparing scores.
-- **`URL=` another machine.** The wrapper reads the server's sampling defaults and the rig only from a container that publishes `URL`'s port on this host. A container auto-detected on a different port is ignored, with a notice. Before #1579 a remote run could carry the local container's defaults and `tp` as its own. Set `CONTAINER=<name>` when the URL is served by a container the check can't see (e.g. through a proxy). The wrapper trusts an explicit `CONTAINER=`.
+- **`URL=` another machine.** The server's sampling defaults and the rig are read only from a container that publishes `URL` on this host through an engine port. When none does, endpoint autodetect sets `CONTAINER=none` (host-only) and says so — for every serving script since [#1584](https://github.com/noonghunna/club-3090/issues/1584), for this wrapper since #1579. Before that, a remote run could carry the local container's defaults and `tp` as its own. Set `CONTAINER=<name>` when the URL is served by a container the check can't see (e.g. through a proxy): an explicit `CONTAINER=` is trusted.
 
 ### Reasoning-on evals
 

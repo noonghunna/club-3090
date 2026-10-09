@@ -125,24 +125,36 @@ club_container_re_loose() {
 # 5000. ⚠️ Mirrored in tools/tui-core/club3090_tui_core/detect.py and
 # scripts/catalog.sh; test-engine-port-set-drift.sh asserts every copy matches.
 CLUB_ENGINE_PORTS_ANY='8000|8080|30000|5000'
-# Ports that identify an engine on their own. 5000 is excluded: it is also a
-# common port for unrelated apps, so it only counts for a container that is ours.
-CLUB_ENGINE_PORTS_SELF_EVIDENT='8000|8080|30000'
+# Ports that identify an engine on their own. 5000 and 8080 are not enough by
+# themselves — they are also the default ports of unrelated apps (Flask; SearXNG,
+# Open WebUI, …) — so a line publishing only those needs EVIDENCE: the container
+# is ours by name, or its image names an engine (engine_kind_from_image).
+CLUB_ENGINE_PORTS_SELF_EVIDENT='8000|30000'
+CLUB_ENGINE_PORTS_NEED_EVIDENCE='8080|5000'
 
-# club_engine_port_lines — filter `name|ports` lines (docker ps --format
-# '{{.Names}}|{{.Ports}}') on stdin down to the ones publishing an engine port.
-# 8000/8080/30000 qualify on the port alone; a line that qualifies ONLY via 5000
-# must also be one of our containers by name (#1360: TabbyAPI listens on 5000,
-# and without it every exl3 server was invisible to endpoint autodetection).
+# club_engine_port_lines — filter `name|ports[|image]` lines (docker ps --format
+# '{{.Names}}|{{.Ports}}|{{.Image}}') on stdin down to the ones publishing an
+# engine port. 8000/30000 qualify on the port alone; 8080/5000 need the evidence
+# above. #1360: TabbyAPI listens on 5000, and without it every exl3 server was
+# invisible to endpoint autodetection. #1584: 8080 used to qualify on the port
+# alone, so with no engine up every serving script on a rig running the stack's
+# own SearXNG (8088→8080) picked it as "the inference container". The image arm
+# keeps a BYO llama.cpp container (any name, a llama.cpp image) visible. Callers
+# that still send two fields get the name arm only.
 club_engine_port_lines() {
-  local line re
+  declare -F engine_kind_from_image >/dev/null 2>&1 \
+    || source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/engine-kind.sh"
+  local line re name rest ports image
   re="$(club_container_re_loose)"
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    if command grep -qE -- "->(${CLUB_ENGINE_PORTS_SELF_EVIDENT})/tcp" <<<"$line"; then
+    name="${line%%|*}"; rest="${line#*|}"; image=""
+    if [[ "$rest" == *"|"* ]]; then ports="${rest%%|*}"; image="${rest#*|}"; else ports="$rest"; fi
+    if command grep -qE -- "->(${CLUB_ENGINE_PORTS_SELF_EVIDENT})/tcp" <<<"$ports"; then
       printf '%s\n' "$line"
-    elif command grep -qE -- "->5000/tcp" <<<"$line" \
-        && command grep -qE -- "$re" <<<"${line%%|*}"; then
+    elif command grep -qE -- "->(${CLUB_ENGINE_PORTS_NEED_EVIDENCE})/tcp" <<<"$ports" \
+        && { command grep -qE -- "$re" <<<"$name" \
+             || [[ -n "$image" && "$(engine_kind_from_image "$image")" != unknown ]]; }; then
       printf '%s\n' "$line"
     fi
   done

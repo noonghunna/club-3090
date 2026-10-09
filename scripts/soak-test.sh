@@ -307,7 +307,9 @@ auto_container() {
   # was never the PREFERRED match — it was only ever picked up by the
   # take-the-first fallback below, i.e. by luck rather than by recognition.
   local lines name
-  lines=$(docker ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null \
+  # The image rides along: an 8080 / 5000 container counts only with evidence it
+  # is an engine (#1584 — SearXNG on 8088→8080 was "the inference container").
+  lines=$(docker ps --format '{{.Names}}|{{.Ports}}|{{.Image}}' 2>/dev/null \
     | club_engine_port_lines || true)
   [[ -z "$lines" ]] && return 0
   name=$(printf '%s\n' "$lines" \

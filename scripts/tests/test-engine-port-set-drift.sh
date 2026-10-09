@@ -82,12 +82,23 @@ out="$(printf '%s\n' \
   "tabbyapi-qwen38-flash-next-exl3-405|0.0.0.0:8181->5000/tcp" \
   "exl3-custom|127.0.0.1:9999->5000/tcp" \
   "some-flask-app|0.0.0.0:5000->5000/tcp" \
-  "qdrant|0.0.0.0:6333->6333/tcp" | club_engine_port_lines)"
+  "qdrant|0.0.0.0:6333->6333/tcp" \
+  "searxng|0.0.0.0:8088->8080/tcp, [::]:8088->8080/tcp|searxng/searxng:latest" \
+  "open-webui|0.0.0.0:8080->8080/tcp|ghcr.io/open-webui/open-webui:main" \
+  "my-llm|0.0.0.0:8099->8080/tcp|ghcr.io/ggml-org/llama.cpp:server-cuda" \
+  "llama-cpp-qwen38|0.0.0.0:8030->8080/tcp|example/custom:1" \
+  "my-tabby|0.0.0.0:8182->5000/tcp|ghcr.io/theroyallab/tabbyapi:latest" | club_engine_port_lines)"
 command grep -q '^tabbyapi-qwen38-flash-next-exl3-405|' <<<"$out" && ok "exl3 container on 5000 admitted" || bad "exl3 container on 5000 NOT admitted"
 command grep -q '^exl3-custom|' <<<"$out" && ok "exl3- prefixed container on 5000 admitted" || bad "exl3- container NOT admitted"
 command grep -q '^vllm-qwen36-27b|' <<<"$out" && ok "vLLM on 8000 still admitted" || bad "vLLM on 8000 dropped"
 ! command grep -q '^some-flask-app|' <<<"$out" && ok "unrelated app on 5000 NOT admitted (negative control)" || bad "unrelated app on 5000 was admitted"
 ! command grep -q '^qdrant|' <<<"$out" && ok "non-engine port never admitted" || bad "qdrant admitted"
+# #1584: 8080 needs the same evidence as 5000 — ours by name, or an engine image.
+! command grep -q '^searxng|' <<<"$out" && ok "SearXNG on 8080 NOT admitted (negative control)" || bad "SearXNG on 8080 was admitted"
+! command grep -q '^open-webui|' <<<"$out" && ok "Open WebUI on 8080 NOT admitted (negative control)" || bad "Open WebUI on 8080 was admitted"
+command grep -q '^my-llm|' <<<"$out" && ok "BYO llama.cpp image on 8080 admitted" || bad "BYO llama.cpp image on 8080 NOT admitted"
+command grep -q '^llama-cpp-qwen38|' <<<"$out" && ok "our llama-cpp- container on 8080 admitted, any image" || bad "our llama-cpp- container on 8080 NOT admitted"
+command grep -q '^my-tabby|' <<<"$out" && ok "BYO TabbyAPI image on 5000 admitted" || bad "BYO TabbyAPI image on 5000 NOT admitted"
 
-if [[ $rc -eq 0 ]]; then echo "PASS: engine port/prefix sets agree and 5000 admits only our containers"; else echo "FAIL: engine port/prefix drift (see above)"; fi
+if [[ $rc -eq 0 ]]; then echo "PASS: engine port/prefix sets agree and 5000/8080 admit only evidenced engines"; else echo "FAIL: engine port/prefix drift (see above)"; fi
 exit $rc

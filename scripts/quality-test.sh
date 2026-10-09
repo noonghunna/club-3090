@@ -297,9 +297,6 @@ EOF
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# #1579: remember whether YOU named the container, before preflight fills it in.
-_CONTAINER_EXPLICIT=0
-[[ -n "${CONTAINER:-}" ]] && _CONTAINER_EXPLICIT=1
 if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
   # shellcheck source=preflight.sh
   source "${ROOT_DIR}/scripts/preflight.sh"
@@ -762,18 +759,6 @@ fi
 source "${ROOT_DIR}/scripts/lib/served-model.sh"   # #1360: TabbyAPI-aware served id
 source "${ROOT_DIR}/scripts/lib/listen-scope.sh"   # #1578: why a container can't reach the endpoint
 
-# #1579: preflight binds the first engine-port container even when URL= points
-# elsewhere. Everything below that reads the container — the server's sampling
-# defaults and the rig (run_context.py), the reasoning-parser check, the restart
-# guard — would then describe a server this run never talked to, and the report
-# would carry them as the run's own. Keep an auto-detected container only when it
-# publishes URL's port on this host; a CONTAINER you set yourself is trusted.
-if [[ "$_CONTAINER_EXPLICIT" == "0" && -n "${CONTAINER:-}" && "${CONTAINER}" != "none" ]] \
-   && ! container_serves_url "$CONTAINER" "$URL"; then
-  echo "[quality-test] auto-detected container '${CONTAINER}' does not serve ${URL} — ignoring it, so the" >&2
-  echo "               report records no server sampling defaults or rig (set CONTAINER=<name> if it does serve it)" >&2
-  CONTAINER=""
-fi
 DETECTED_MODEL="$(club_served_model_id "${URL}")"
 if [[ -n "$DETECTED_MODEL" && "$DETECTED_MODEL" != "$MODEL" ]]; then
   if [[ "$MODEL_EXPLICIT" == "1" ]]; then

@@ -10,12 +10,13 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #        server · explicit overrides · max_tokens-only overrides (NOT explicit —
 #        the negative control for the default 4,096 budget) · extra-body ·
 #        --thinking-sampler · canonical OFF / ON / mixed · pre-2026-05-24 JSON.
-#   2. container_serves_url (scripts/lib/listen-scope.sh) against a fake
-#      `docker port` / `hostname -I`, with a positive leg for every negative.
-#   3. quality-test.sh end to end with a mocked docker: an auto-detected
-#      container that does not publish URL's port is dropped (no --run-meta
-#      reaches benchlocal), and the same container IS used when URL is its own
-#      port (positive control) or when CONTAINER= names it explicitly.
+#   2. quality-test.sh end to end with a mocked docker: a container that does
+#      not publish URL is never read (no --run-meta engine=… reaches benchlocal),
+#      and the same container IS read when URL is its own port (positive
+#      control) or when CONTAINER= names it explicitly. Since #1584 that choice
+#      is made by preflight's endpoint autodetect for every serving script; its
+#      own cases (ports_serve_url, the 8080 evidence rule, each branch) live in
+#      test-preflight-autodetect.sh.
 #      Asserted on run_context's own `--run-meta engine=…`, not on any
 #      --run-meta: the wrapper always records `budgets=` that way too.
 #
@@ -118,58 +119,7 @@ line="$(python3 "$EMIT" "$tmp/r.json" --full)"
 pass "suffix order intact: ${line#*(}"
 
 # ---------------------------------------------------------------------------
-echo "--- 2. container_serves_url ---"
-fake="$tmp/bin"; mkdir -p "$fake"
-cat > "$fake/docker" <<'EOF'
-#!/usr/bin/env bash
-if [[ "$1" == "port" ]]; then
-  case "$2" in
-    srv) printf '8000/tcp -> 0.0.0.0:8020\n8000/tcp -> [::]:8020\n' ;;
-    lo)  printf '8000/tcp -> 127.0.0.1:8031\n' ;;
-  esac
-fi
-exit 0
-EOF
-cat > "$fake/hostname" <<'EOF'
-#!/usr/bin/env bash
-echo "192.168.1.5 172.17.0.1 "
-EOF
-cat > "$fake/getent" <<'EOF'
-#!/usr/bin/env bash
-[[ "$1" == "ahosts" ]] || exit 2
-case "$2" in
-  rig.lan)   printf '192.168.1.5     STREAM rig.lan\n192.168.1.5     DGRAM\n' ;;
-  myrig)     printf '127.0.1.1       STREAM myrig\n' ;;
-  other.lan) printf '10.9.9.9        STREAM other.lan\n' ;;
-  *) exit 2 ;;
-esac
-EOF
-chmod +x "$fake/docker" "$fake/hostname" "$fake/getent"
-
-serves() {
-  PATH="$fake:$PATH" bash -c 'source "$1"; container_serves_url "$2" "$3"' _ "$LIB" "$1" "$2"
-}
-yes_() { serves "$1" "$2" || fail "expected '$1' to serve $2"; pass "serves:  $1 ← $2"; }
-no_()  { if serves "$1" "$2"; then fail "expected '$1' NOT to serve $2"; fi; pass "refuses: $1 ← $2"; }
-
-yes_ srv http://localhost:8020
-no_  srv http://localhost:8021
-yes_ srv http://127.0.0.1:8020/v1
-yes_ srv "http://[::1]:8020"
-yes_ srv http://192.168.1.5:8020        # this host's own LAN address
-no_  srv http://10.9.9.9:8020           # same port, another machine
-yes_ srv http://172.17.0.1:8020         # the bridge gateway is this host too
-no_  srv http://localhost               # no port → 80
-yes_ srv http://rig.lan:8020            # a name resolving to this host's LAN address
-yes_ srv http://myrig:8020              # this host's own name (Debian: 127.0.1.1)
-no_  srv http://other.lan:8020          # a name resolving to another machine
-no_  srv http://unresolvable:8020
-yes_ lo  http://localhost:8031
-no_  nobody http://localhost:8020       # a container that publishes nothing
-no_  "" http://localhost:8020
-
-# ---------------------------------------------------------------------------
-echo "--- 3. quality-test.sh drops an auto-detected container that does not serve URL ---"
+echo "--- 2. quality-test.sh never reads a container that does not serve URL ---"
 wbin="$tmp/wbin"; mkdir -p "$wbin"
 cat > "$wbin/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -218,21 +168,21 @@ wrun() {   # wrun LOG [VAR=value ...] — the wrapper with only the mocks on PAT
 
 # (a) URL= another machine, container auto-detected → dropped.
 wrun "$tmp/a.log" URL=http://10.9.9.9:8020
-command grep -q "auto-detected container 'vllm-mock' does not serve http://10.9.9.9:8020" "$tmp/a.log" \
-  || { cat "$tmp/a.log" >&2; fail "(a) no 'does not serve' notice for a remote URL"; }
+command grep -q "no running container publishes http://10.9.9.9:8020 on an engine port here" "$tmp/a.log" \
+  || { cat "$tmp/a.log" >&2; fail "(a) no host-only notice for a remote URL"; }
 if command grep -q -- "--run-meta engine=" "$tmp/argv"; then fail "(a) the local container's rig reached benchlocal for a remote URL"; fi
 command grep -q "^Quality:   .*sampling=pack:greedy" "$tmp/a.log" || fail "(a) Quality line lost its stamp"
 pass "(a) remote URL: local container ignored, no engine/rig recorded"
 
 # (b) POSITIVE CONTROL: no URL= → the container's own port → kept and read.
 wrun "$tmp/b.log"
-if command grep -q "does not serve" "$tmp/b.log"; then cat "$tmp/b.log" >&2; fail "(b) the serving container was dropped"; fi
+if command grep -q "host-only mode" "$tmp/b.log"; then cat "$tmp/b.log" >&2; fail "(b) the serving container was dropped"; fi
 command grep -q -- "--run-meta engine=vllm" "$tmp/argv" || { cat "$tmp/b.log" "$tmp/argv" >&2; fail "(b) run_context never ran for the serving container — (a) proves nothing"; }
 pass "(b) autodetected URL: container kept, engine/rig recorded"
 
 # (c) CONTAINER= named explicitly → trusted even for a URL it does not publish.
 wrun "$tmp/c.log" URL=http://10.9.9.9:8020 CONTAINER=vllm-mock
-if command grep -q "does not serve" "$tmp/c.log"; then fail "(c) an explicit CONTAINER= was second-guessed"; fi
+if command grep -q "host-only mode" "$tmp/c.log"; then fail "(c) an explicit CONTAINER= was second-guessed"; fi
 command grep -q -- "--run-meta engine=vllm" "$tmp/argv" || fail "(c) explicit CONTAINER= was not read"
 pass "(c) explicit CONTAINER=: trusted"
 

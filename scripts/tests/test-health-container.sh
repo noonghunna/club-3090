@@ -131,6 +131,11 @@ assert_contains "$out" "Endpoint: http://localhost:8142" "autodetect probes the 
 command grep -q 'localhost:8142/v1/models' "$MOCK_CURL_LOG" || note "autodetect: curl was not asked :8142 ($(tr '\n' ' ' < "$MOCK_CURL_LOG"))"
 out="$(PATH="${TMP_DIR}/bin:${PATH}" MOCK_PS_NAMES="sglang-qwen38" MOCK_PS_PORTS="sglang-qwen38|0.0.0.0:8142->30000/tcp" URL=http://localhost:9999 bash "$HEALTH" 2>&1)"
 assert_contains "$out" "Endpoint: http://localhost:9999" "URL= still wins over the autodetect"
+# #1584: a URL no local container publishes must not borrow a local container —
+# before, the first engine container was reported as the remote server's.
+out="$(PATH="${TMP_DIR}/bin:${PATH}" MOCK_PS_NAMES="sglang-qwen38" MOCK_PS_PORTS="sglang-qwen38|0.0.0.0:8142->30000/tcp" URL=http://10.9.9.9:8142 bash "$HEALTH" 2>&1)"
+assert_not_contains "$out" "Container sglang-qwen38" "a remote URL= is not described by the local container"
+assert_contains     "$out" "No matching container running on this host" "a remote URL= reports no local container"
 
 # --- 6. The engine comes from engine-kind.sh (image > container name > owned_by)
 # Before, anything whose owned_by wasn't llamacpp was labelled vLLM, and an SGLang

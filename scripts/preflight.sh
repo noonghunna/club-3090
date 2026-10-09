@@ -35,6 +35,9 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/served-model.sh"
 # carry its own image regex and was blind to our own fork's image name.
 # shellcheck source=scripts/lib/engine-kind.sh
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/engine-kind.sh"
+# #1584: ports_serve_url — does a container's published port serve URL= on this host?
+# shellcheck source=lib/listen-scope.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/listen-scope.sh"
 _PREFLIGHT_LOADED=1
 _PREFLIGHT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -1510,15 +1513,22 @@ preflight_kv_format_hint() {
 # Behaviour:
 #   - If $URL or $CONTAINER is already set in the environment, it WINS — never
 #     overwritten. This preserves explicit override behaviour.
-#   - Otherwise, scan `docker ps` for a club-3090-pattern container and extract
-#     its host port from the port-mapping. Print one [autodetect] line so the
-#     user knows what we picked.
+#   - Neither set: scan `docker ps` for a container publishing an engine port
+#     and take its host port. Print one [autodetect] line so the user knows what
+#     we picked.
+#   - URL= set (#1584): the container is the one that PUBLISHES that URL on this
+#     host (ports_serve_url). None does → CONTAINER=none, the host-only mode the
+#     callers already honour, so no script reads the logs of a server the run
+#     never talked to.
+#   - CONTAINER= set (#1584): the URL is THAT container's own port, not the first
+#     engine container's.
 #   - If nothing is detected (no container running, docker unavailable), the
 #     hardcoded defaults stand — same behaviour as before this helper existed.
 #
 # Outputs (mutates env in caller's scope when sourced):
 #   URL          — http://localhost:<port> if detected
-#   CONTAINER    — running container name if detected
+#   CONTAINER    — running container name if detected; `none` for a URL= that
+#                  no local container publishes
 #
 # Skip via: PREFLIGHT_NO_AUTODETECT=1
 preflight_autodetect_endpoint() {
@@ -1534,31 +1544,61 @@ preflight_autodetect_endpoint() {
   fi
 
   # Detect a running inference container by its ENGINE-INTERNAL port mapping
-  # (vLLM 8000 / llama.cpp 8080 / sglang 30000 / TabbyAPI 5000 — the last only
-  # for a container that is ours by name, see club_engine_port_lines), NOT a hardcoded model-name
-  # allowlist — so any compose is found regardless of model: gemma-4-12b,
-  # qwen-35b-a3b, beellama, a BYO container, etc. (#310: the old allowlist only
-  # knew qwen36-27b / gemma-4-31b, so everything else silently fell back to 8020).
-  # Among matches, prefer a recognised club-3090 engine-family prefix; otherwise
-  # take the first. Users running endpoint-first via `--url` bypass this entirely
-  # (PREFLIGHT_NO_AUTODETECT=1 set there).
+  # (vLLM 8000 / llama.cpp 8080 / sglang 30000 / TabbyAPI 5000 — the last two only
+  # with evidence it is an engine, see club_engine_port_lines), NOT a hardcoded
+  # model-name allowlist — so any compose is found regardless of model:
+  # gemma-4-12b, qwen-35b-a3b, beellama, a BYO container, etc. (#310: the old
+  # allowlist only knew qwen36-27b / gemma-4-31b, so everything else silently fell
+  # back to 8020). Among matches, prefer a recognised club-3090 engine-family
+  # prefix; otherwise take the first. Users running endpoint-first via `--url`
+  # bypass this entirely (PREFLIGHT_NO_AUTODETECT=1 set there).
   #
   # The `|| true` is load-bearing: grep -E returns 1 when nothing matches, which
   # under `set -euo pipefail` in the caller would silently abort rebench-full.sh
   # before its own "endpoint not responding" path. Empty = the no-container case.
-  local engine_lines found_line
-  engine_lines=$(docker ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null \
-    | club_engine_port_lines || true)
-  if [[ -z "$engine_lines" ]]; then
-    return 0   # nothing serving on an engine port; defaults stand
-  fi
-  # Prefer a recognised club-3090 engine-family prefix when several match.
-  found_line=$(printf '%s\n' "$engine_lines" \
-    | command grep -E "$(club_container_re_loose)" | head -1 || true)
-  [[ -z "$found_line" ]] && found_line=$(printf '%s\n' "$engine_lines" | head -1)
-  # Several inference containers up → we picked one; tell the user how to override.
-  if [[ "$(printf '%s\n' "$engine_lines" | command grep -c .)" -gt 1 ]]; then
-    echo "[autodetect] multiple inference containers running; picked '${found_line%%|*}' — set CONTAINER=/URL= to override" >&2
+  local ps_lines engine_lines found_line="" l engine_maps
+  ps_lines=$(docker ps --format '{{.Names}}|{{.Ports}}|{{.Image}}' 2>/dev/null || true)
+  engine_lines=$(club_engine_port_lines <<<"$ps_lines" || true)
+
+  if [[ -n "$explicit_url" ]]; then
+    # #1584: URL= names the server. The container is the one publishing it here
+    # through an engine port — binding "the first engine container" made a run
+    # against another machine (or another local port) read this container's logs
+    # and boot facts as its own. You named the endpoint, so no evidence rule:
+    # whatever publishes it on an engine port IS the server.
+    while IFS= read -r l; do
+      [[ -n "$l" ]] || continue
+      engine_maps=$(cut -d'|' -f2 <<<"$l" | tr ',' '\n' \
+        | command grep -E -- "->(${CLUB_ENGINE_PORTS_ANY})/tcp" | paste -sd, - || true)
+      if [[ -n "$engine_maps" ]] && ports_serve_url "$engine_maps" "$explicit_url"; then
+        found_line="$l"; break
+      fi
+    done <<<"$ps_lines"
+    if [[ -z "$found_line" ]]; then
+      CONTAINER="none"
+      echo "[autodetect] no running container publishes ${explicit_url} on an engine port here — host-only mode (CONTAINER=none; set CONTAINER=<name> if one serves it)" >&2
+      return 0
+    fi
+  elif [[ -n "$explicit_container" ]]; then
+    # #1584: CONTAINER= names the server, so the URL is ITS port — not the first
+    # engine container's. Named by you, so it needs no evidence either.
+    found_line=$(awk -F'|' -v c="$explicit_container" '$1 == c' <<<"$ps_lines" | head -1)
+    if ! command grep -qE -- "->(${CLUB_ENGINE_PORTS_ANY})/tcp" <<<"$found_line"; then
+      echo "[autodetect] container '${explicit_container}' publishes no engine port — URL left at the default (set URL= to choose)" >&2
+      return 0
+    fi
+  else
+    if [[ -z "$engine_lines" ]]; then
+      return 0   # nothing serving on an engine port; defaults stand
+    fi
+    # Prefer a recognised club-3090 engine-family prefix when several match.
+    found_line=$(printf '%s\n' "$engine_lines" \
+      | command grep -E "$(club_container_re_loose)" | head -1 || true)
+    [[ -z "$found_line" ]] && found_line=$(printf '%s\n' "$engine_lines" | head -1)
+    # Several inference containers up → we picked one; tell the user how to override.
+    if [[ "$(printf '%s\n' "$engine_lines" | command grep -c .)" -gt 1 ]]; then
+      echo "[autodetect] multiple inference containers running; picked '${found_line%%|*}' — set CONTAINER=/URL= to override" >&2
+    fi
   fi
 
   local detected_name detected_port
@@ -1567,7 +1607,7 @@ preflight_autodetect_endpoint() {
   # or "127.0.0.1:8011->8000/tcp" forms (BIND_HOST=127.0.0.1 produces the last).
   # llama-cpp container maps to internal 8080, vllm to 8000, sglang to 30000,
   # TabbyAPI (exllamav3) to 5000.
-  detected_port=$(echo "${found_line#*|}" \
+  detected_port=$(cut -d'|' -f2 <<<"$found_line" \
     | command grep -oE "([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(${CLUB_ENGINE_PORTS_ANY})/tcp" \
     | head -1 \
     | sed -E 's|^[^:]+:([0-9]+)->.*|\1|')
@@ -1581,16 +1621,15 @@ preflight_autodetect_endpoint() {
   fi
 
   # One-line surface so the user sees what we chose.
-  if [[ -z "$explicit_url" || -z "$explicit_container" ]]; then
-    local note=""
-    [[ -z "$explicit_container" ]] && note="container=${CONTAINER}"
-    [[ -z "$explicit_url" ]] && note="${note:+$note }url=${URL}"
-    echo "[autodetect] using running ${note}  (override with CONTAINER=/URL=, or PREFLIGHT_NO_AUTODETECT=1 to disable)" >&2
-    # #1330: remember that WE chose this endpoint. preflight_resolve_model_or_fail
-    # refuses the last-resort literal when we know which container is up but cannot
-    # read its model -- a guess is only reasonable when we know nothing.
-    PREFLIGHT_ENDPOINT_AUTODETECTED=1
-  fi
+  local note=""
+  [[ -z "$explicit_container" ]] && note="container=${CONTAINER}"
+  [[ -z "$explicit_url" ]] && note="${note:+$note }url=${URL}"
+  [[ -n "$explicit_url" ]] && note+=" (publishes ${explicit_url})"
+  echo "[autodetect] using running ${note}  (override with CONTAINER=/URL=, or PREFLIGHT_NO_AUTODETECT=1 to disable)" >&2
+  # #1330: remember that WE chose this endpoint. preflight_resolve_model_or_fail
+  # refuses the last-resort literal when we know which container is up but cannot
+  # read its model -- a guess is only reasonable when we know nothing.
+  PREFLIGHT_ENDPOINT_AUTODETECTED=1
   return 0
 }
 

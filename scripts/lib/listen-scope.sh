@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # listen-scope.sh — what a TCP port on THIS host is listening on, and therefore
 # whether a Docker container can reach it through host.docker.internal (#1578).
-# Sourced by quality-test.sh's hermes container-reachability preflight (#960).
+# Sourced by quality-test.sh's hermes container-reachability preflight (#960)
+# and by preflight.sh's endpoint autodetect (#1584).
 #
 # hermesagent-20's sandbox reaches a loopback URL through host.docker.internal,
 # i.e. the Docker bridge gateway (172.17.0.1 by default). A server is reachable
@@ -23,13 +24,17 @@
 #       unknown   — `ss` unavailable
 #   docker_bridge_gateway
 #     the default bridge's gateway address, or nothing.
-#   container_serves_url CONTAINER URL
-#     exit 0 when URL names THIS host (loopback, 0.0.0.0, one of its own
-#     addresses, or a name resolving to either) and CONTAINER publishes URL's
-#     port; 1 otherwise (#1579).
-#     preflight's autodetect binds the first engine-port container even when
-#     URL= points somewhere else, so a remote run would have recorded the local
-#     container's sampling defaults and topology as its own.
+#   ports_serve_url PORTS URL
+#     exit 0 when a mapping in PORTS (a `docker ps` "Ports" string) serves URL on
+#     THIS host: same host port, and the URL's host is an address the mapping is
+#     published on — any of this host's addresses for 0.0.0.0 / ::, loopback for
+#     a 127.x / ::1 publish, that exact address otherwise. A hostname counts by
+#     what it resolves to. 1 otherwise (#1584). Used by preflight's endpoint
+#     autodetect, which bound the first engine-port container even when URL=
+#     pointed somewhere else, so a run against another machine read the local
+#     container's logs, sampling defaults and topology as its own.
+#   url_host_port URL
+#     "host port", the port defaulted from the scheme.
 
 listen_addrs() {
   local port="$1"
@@ -62,25 +67,9 @@ listen_scope() {
   fi
 }
 
-# A name counts when any address it resolves to does — `URL=http://<this rig's
-# hostname>:PORT` must keep its container, or --thinking-budget refuses.
-_host_is_this_machine() {
-  local host="$1" own a
-  case "$host" in localhost|127.*|::1|0.0.0.0) return 0 ;; esac
-  own=" $(hostname -I 2>/dev/null) "
-  [[ "$own" == *" ${host} "* ]] && return 0
-  [[ "$host" =~ ^[0-9.]+$ || "$host" == *:* ]] && return 1   # an address that is not ours
-  while read -r a _; do
-    case "$a" in 127.*|::1) return 0 ;; esac
-    [[ "$own" == *" ${a} "* ]] && return 0
-  done < <(getent ahosts "$host" 2>/dev/null)
-  return 1
-}
-
-container_serves_url() {
-  local container="$1" url="$2" rest hostport host port
-  [[ -n "$container" && -n "$url" ]] || return 1
-  command -v docker >/dev/null 2>&1 || return 1
+# URL → "host port". The port defaults from the scheme (80 / 443).
+url_host_port() {
+  local url="$1" rest hostport host port
   rest="${url#*://}"; hostport="${rest%%/*}"; hostport="${hostport##*@}"
   if [[ "$hostport" == \[* ]]; then
     host="${hostport#[}"; host="${host%%]*}"
@@ -92,7 +81,46 @@ container_serves_url() {
   if [[ -z "$port" ]]; then
     if [[ "$url" == https://* ]]; then port=443; else port=80; fi
   fi
-  _host_is_this_machine "$host" || return 1
-  # `docker port` prints one mapping per line: "8000/tcp -> 0.0.0.0:8020".
-  docker port "$container" 2>/dev/null | sed -nE 's/.*:([0-9]+)[[:space:]]*$/\1/p' | command grep -qx -- "$port"
+  printf '%s %s\n' "$host" "$port"
+}
+
+# HOST → the addresses it names, one per line: a literal is itself, a name is
+# whatever `getent ahosts` resolves it to. `URL=http://<this rig's hostname>:PORT`
+# has to count as this host, or a correct container would be dropped.
+_host_addrs() {
+  local host="$1"
+  case "$host" in
+    localhost|0.0.0.0) printf '127.0.0.1\n::1\n' ;;
+    *:*)               printf '%s\n' "$host" ;;
+    *[!0-9.]*)         getent ahosts "$host" 2>/dev/null | awk '{print $1}' | sort -u ;;
+    *)                 printf '%s\n' "$host" ;;
+  esac
+}
+
+ports_serve_url() {
+  local ports="$1" url="$2" host port addrs own m bind hp lo hi a
+  read -r host port < <(url_host_port "$url")
+  [[ "$port" =~ ^[0-9]+$ ]] || return 1
+  addrs="$(_host_addrs "$host")"
+  [[ -n "$addrs" ]] || return 1
+  own=" $(hostname -I 2>/dev/null) "
+  while IFS= read -r m; do
+    m="${m# }"
+    [[ "$m" == *"->"* ]] || continue          # an exposed-only port, not published
+    m="${m%%->*}"                              # 0.0.0.0:8020 · [::]:8020 · 127.0.0.1:6333-6334
+    bind="${m%:*}"; hp="${m##*:}"
+    bind="${bind#[}"; bind="${bind%]}"
+    lo="${hp%-*}"; hi="${hp#*-}"
+    [[ "$lo" =~ ^[0-9]+$ && "$hi" =~ ^[0-9]+$ ]] || continue
+    (( port >= lo && port <= hi )) || continue
+    while IFS= read -r a; do
+      [[ -n "$a" ]] || continue
+      case "$bind" in
+        0.0.0.0|::|'') [[ "$a" == 127.* || "$a" == ::1 || "$own" == *" ${a} "* ]] && return 0 ;;
+        127.*|::1)      [[ "$a" == 127.* || "$a" == ::1 ]] && return 0 ;;
+        *)              [[ "$a" == "$bind" ]] && return 0 ;;
+      esac
+    done <<<"$addrs"
+  done < <(tr ',' '\n' <<<"$ports")
+  return 1
 }
