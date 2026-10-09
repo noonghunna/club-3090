@@ -106,6 +106,13 @@ expect "--extra-body without sampler keys (the thinking-budget one)" "sampling=p
   "$(stamp '"thinking_mode":"force-on"' run --extra-body '{"thinking_token_budget":8192}')"
 expect "extra_body recorded in the JSON wins over argv" "sampling=pack+extra-body temperature=0.2" \
   "$(stamp '"thinking_mode":"force-off","extra_body":{"temperature":0.2}' run --extra-body '{"temperature":0.9}')"
+# benchlocal-cli#188 records thinking_sampler. A --resume'd run carries it in the
+# JSON while its argv (rebuilt from the journal) does not have the flag.
+expect "thinking_sampler recorded in the JSON, absent from argv (--resume)" \
+  "sampling=pack+thinking-sampler temperature=0.6/top_k=20" \
+  "$(stamp '"thinking_mode":"force-on","thinking_sampler":{"temperature":0.6,"top_k":20}' run --resume x.partial.jsonl)"
+expect "thinking_sampler recorded in the JSON wins over argv" "sampling=pack+thinking-sampler temperature=0.5" \
+  "$(stamp '"thinking_mode":"force-on","thinking_sampler":{"temperature":0.5}' run --thinking-sampler '{"temperature":0.9}')"
 
 # Before 2026-05-24 benchlocal recorded no thinking_mode, and a canonical run is
 # then indistinguishable from an unrecorded one — say nothing rather than guess.

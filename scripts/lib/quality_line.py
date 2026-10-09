@@ -5,8 +5,10 @@
 
 Prints `Quality:   <pack scores> (<provenance suffix>)`. MODE is the wrapper's
 --quick/--medium/--full (or a pack id). The trailing arguments are the argv the
-wrapper handed benchlocal-cli; they are read only for the two sampler flags the
-results JSON does not record (`--thinking-sampler`, `--extra-body`).
+wrapper handed benchlocal-cli; they are read only for `--thinking-sampler` and
+`--extra-body`, and only when the results JSON does not record them. benchlocal
+records both since benchlocal-cli#188; before that a `--resume`d run, whose flags
+come back from the journal rather than the argv, was stamped `pack:*`.
 
 Provenance suffix (#983E): mode, thinking gate, sampler, topology, thinking
 validity, pack versions, date. Each stamp appears only when it is known — a
@@ -122,7 +124,9 @@ def sampling_stamp(d: dict, cli_args: list[str]) -> str | None:
         return "sampling=pack+extra-body " + _sampler_part(extra_sampler)
     tm = d.get("thinking_mode")
     if tm != "force-off":
-        thinking = _json_object(_last_flag(cli_args, "--thinking-sampler"))
+        thinking = d.get("thinking_sampler")
+        if not isinstance(thinking, dict):
+            thinking = _json_object(_last_flag(cli_args, "--thinking-sampler"))
         if thinking:
             return "sampling=pack+thinking-sampler " + _sampler_part(thinking)
     if tm == "force-off":
