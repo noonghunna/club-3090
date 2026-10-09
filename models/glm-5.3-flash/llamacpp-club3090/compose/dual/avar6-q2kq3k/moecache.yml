@@ -10,6 +10,10 @@
 #   ⭐ FAST TIER. MEASURED 2026-10-08 on 2x RTX 5090 (TR PRO 3975WX, PCIe 4, NPS1), ub 1024, admit 32,
 #              DFlash2 n=2, bare compose, 2 boots: narrative/code 40.5 / 45.7 tok/s vs UD-IQ3_XXS 35.6 / 38.0
 #              on the same path (+24% code). DFlash2 acceptance 0.73. MOE_RESERVE_MB=1792: 43.0 / 45.8.
+#              Via switch.sh (what users run; it injects MOE_RESERVE_MB=2048 on 5090s), 2026-10-09:
+#              40.26 / 42.89 vs UD-IQ3_XXS 34.49 / 36.95 (+17% / +16%). report.sh --full PASS (verify-full,
+#              verify-stress fillable 188,017 tok, soak 1 MiB growth 0/25 empty, bench, agentic).
+#              Host RAM: container peaked at 117.9 GiB during the full report.
 #              Quality (same 19-task screen as the IQ3/IQ4 checkpoint): benchlocal 9/12 of 16 (@1/@3) vs
 #              UD-IQ3_XXS 10/10; long-context 6/6. It does NOT reach UD-IQ4_XS's agentic edge (HA-13 0/3).
 #              DevQuasar Q2_K (same expert types, Q2_K/Q3_K attention) lost agentic + long-context quality;
@@ -50,10 +54,9 @@
 #   Max ctx:   204800 default — MEASURED + prefill-validated. 262144 also works;
 #              204800 is chosen for CACHE HEADROOM, see Caveats
 #   Genesis:   N/A — llama.cpp engine
-# CPU-Offload-Host-RAM-GB: 120
-#   ⤷ ESTIMATE, not yet measured on this quant: ~103 GiB of routed experts (same expert types as
-#     devquasar-q2k, whose measured serving RSS was 109.4 GiB) plus margin. Registry `host_ram_gb`
-#     must stay <= this. Re-measure serving RSS and tighten.
+# CPU-Offload-Host-RAM-GB: 127
+#   ⤷ MEASURED 2026-10-09: container memory peaked at 117.9 GiB (= 126.6 GB) across a full
+#     report.sh --full run on 2x 5090 (107 GiB idle after boot). Registry `host_ram_gb` must stay <= this.
 #   Provenance: authored 2026-10-09 by copying dual/devquasar-q2k/moecache.yml (same engine, same
 #              expert types). Only the header, weights path, identity, port and the three tuned
 #              defaults (UBATCH 1024, MOE_ADMIT_AFTER 32, MOE_RESERVE_MB 1792) differ.

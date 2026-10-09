@@ -2264,7 +2264,7 @@ entries:
     act8_capable: false
     offload: tensor-override
     moe_cache: true
-    host_ram_gb: 118
+    host_ram_gb: 127
     kv_offload: null
     chat_template: native
     tp: 2
