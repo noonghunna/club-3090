@@ -202,8 +202,6 @@ CONTAINER="${CONTAINER:-$(URL="$URL" python3 "$PROBE_PY" --container-for-url 2>/
 CONTAINER="${CONTAINER:-$(docker ps --format '{{.Names}}' 2>/dev/null | command grep -m1 -E 'vllm-(qwen|gemma)' || true)}"
 
 _container_cmd() { docker inspect "$CONTAINER" --format '{{join .Config.Cmd " "}}' 2>/dev/null || true; }
-_served_seqs()   { _container_cmd | command grep -oE 'max-num-seqs [0-9]+'  | command grep -oE '[0-9]+' | head -1; }
-_served_np()     { _container_cmd | command grep -oE '\-np +[0-9]+'         | command grep -oE '[0-9]+' | head -1; }
 # The served context: what the ENGINE reports first (SGLang server info, vLLM /v1/models, vLLM's
 # boot line), the container's literal --max-model-len only as the fallback. #1537: the flag grep
 # read "?" for vLLM auto-fit (--max-model-len -1) and for every SGLang compose.
@@ -213,27 +211,11 @@ _served_ctx()    {
   if [[ -n "$n" ]]; then echo "$n"; return; fi
   _container_cmd | command grep -oE 'max-model-len [0-9]+' | command grep -oE '[0-9]+' | head -1
 }
-# SGLang names the same knob --max-running-requests. Without this the detector fell
-# through vLLM's --max-num-seqs, llama.cpp's -np and /props (none of which SGLang has)
-# and hit the #818 FATAL — so concurrency-probe could not run against ANY sgl/ slug.
-_served_max_running() { _container_cmd | command grep -oE 'max-running-requests [0-9]+' | command grep -oE '[0-9]+' | head -1; }
-# llama.cpp-family servers report the slot count as total_slots on /props.
-_props_slots()   { curl -s -m 3 "${URL}/props" 2>/dev/null \
-  | python3 -c 'import json,sys; v=json.load(sys.stdin).get("total_slots",""); print(v if isinstance(v,int) else "")' 2>/dev/null; }
-# SGLang exposes it on /get_server_info (flat, top-level). Used when the compose set
-# it via env rather than a literal flag in the container cmd.
-_sgl_max_running() { curl -s -m 3 "${URL}/get_server_info" 2>/dev/null \
-  | python3 -c 'import json,sys; v=json.load(sys.stdin).get("max_running_requests",""); print(v if isinstance(v,int) else "")' 2>/dev/null; }
-
-_detect_slots() {
-  local n
-  n="$(_served_seqs || true)"; [[ -n "$n" ]] && { echo "$n"; return; }
-  n="$(_served_np || true)";   [[ -n "$n" ]] && { echo "$n"; return; }
-  n="$(_served_max_running || true)"; [[ -n "$n" ]] && { echo "$n"; return; }
-  n="$(_sgl_max_running || true)";    [[ -n "$n" ]] && { echo "$n"; return; }
-  n="$(_props_slots || true)"; [[ -n "$n" ]] && { echo "$n"; return; }
-  echo ""
-}
+# The slot count + its source come from the ONE detector rebench-full.sh also uses
+# (scripts/lib/served-slots.sh, #1577) — same order as before: container
+# --max-num-seqs, -np, --max-running-requests, then SGLang /get_server_info, /props.
+source "${ROOT_DIR}/scripts/lib/served-slots.sh"
+_detect_slots() { local hit; hit="$(served_slots "$URL" "$CONTAINER")"; echo "${hit%%$'\t'*}"; }
 
 # The GPUs the probed container sees, not every GPU on the host (#1502): a container pinned to the one
 # RTX 3060 of a 3090 + 3060 rig was labelled "4× RTX 3090". Falls back to every GPU when unresolvable.
@@ -327,14 +309,12 @@ PY
 if [[ -n "$SWEEP" || "$MATRIX" == "1" ]]; then
   : # per-arm CONCURRENCY comes from the sweep / matrix loop
 elif [[ -z "${CONCURRENCY:-}" ]]; then
-  _conc_src="container max-num-seqs"; CONCURRENCY="$(_served_seqs || true)"
-  if [[ -z "$CONCURRENCY" ]]; then _conc_src="container -np";          CONCURRENCY="$(_served_np || true)"; fi
-  if [[ -z "$CONCURRENCY" ]]; then _conc_src="container max-running-requests"; CONCURRENCY="$(_served_max_running || true)"; fi
-  if [[ -z "$CONCURRENCY" ]]; then _conc_src="server /props total_slots"; CONCURRENCY="$(_props_slots || true)"; fi
-  if [[ -z "$CONCURRENCY" ]]; then _conc_src="server /get_server_info max_running_requests"; CONCURRENCY="$(_sgl_max_running || true)"; fi
-  if [[ -z "$CONCURRENCY" ]]; then
+  _slots_hit="$(served_slots "$URL" "$CONTAINER")"
+  CONCURRENCY="${_slots_hit%%$'\t'*}"; _conc_src="${_slots_hit#*$'\t'}"
+  if [[ -z "$_slots_hit" ]]; then
     echo "[concurrency-probe] FATAL: cannot detect the served slot count" \
-         "(container cmd and ${URL}/props both failed) — pass CONCURRENCY=N explicitly" >&2
+         "(no container flag, no ${URL}/get_server_info or /props slot count — vLLM reports none over HTTP)" \
+         "— pass CONCURRENCY=N explicitly" >&2
     exit 2
   fi
   echo "[concurrency-probe] CONCURRENCY=$CONCURRENCY (detected: $_conc_src)"
@@ -417,14 +397,10 @@ warmup_gate() {
 # --- --sweep: live N×ctx matrix, no reboot ------------------------------------
 if [[ "$MATRIX" == "1" ]]; then
   if [[ "$SWEEP_DRY" != "1" ]]; then warmup_gate || exit 1; fi
-  slots="$(_detect_slots || true)"
-  slots_src="undetected"
-  if [[ -n "$(_served_seqs || true)" ]]; then slots_src="container max-num-seqs"
-  elif [[ -n "$(_served_np || true)" ]]; then slots_src="container -np"
-  elif [[ -n "$(_served_max_running || true)" ]]; then slots_src="container max-running-requests"
-  elif [[ -n "$(_sgl_max_running || true)" ]]; then slots_src="server max_running_requests"
-  elif [[ -n "$(_props_slots || true)" ]]; then slots_src="server /props total_slots"
-  fi
+  _slots_hit="$(served_slots "$URL" "$CONTAINER")"
+  slots="${_slots_hit%%$'\t'*}"
+  slots_src="${_slots_hit#*$'\t'}"
+  [[ -n "$_slots_hit" ]] || { slots=""; slots_src="undetected"; }
   max_len="$(_served_ctx || true)"
   if [[ -z "$KV_TOKENS" || "$KV_TOKENS" == "0" ]]; then
     KV_TOKENS="$(CONTAINER="$CONTAINER" URL="$URL" python3 "$PROBE_PY" --detect-kv || true)"

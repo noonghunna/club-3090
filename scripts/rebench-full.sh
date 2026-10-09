@@ -275,6 +275,7 @@ fi
 # Resolve actual served model id — eliminates MODEL=qwen vs MODEL=gemma
 # typos that produce HTTP 404 from served-model-name mismatch.
 source "${ROOT_DIR}/scripts/lib/served-model.sh"   # #1360: TabbyAPI-aware served id
+source "${ROOT_DIR}/scripts/lib/served-slots.sh"   # #1577: the one slot-count detector
 DETECTED_MODEL="$(club_served_model_id "$URL")"
 if [[ -n "$DETECTED_MODEL" && -z "${MODEL:-}" ]]; then
   MODEL="$DETECTED_MODEL"
@@ -308,7 +309,16 @@ echo "  resume:      $RESUME"
 echo "  skips:       ${SKIP_CSV:-(none)}"
 echo "  8-pack:      ${WITH_8PACK:-(skipped — opt-in via --with-8pack-thinking=off|on|both)}"
 echo "  agentic:     bench-agentic.sh (sessions=${AGENTIC_SESSIONS:-1}, turns=${AGENTIC_TURNS:-12})"
-echo "  concurrency: rungs ${CONCURRENCY_RUNGS:-1 2 4 (capped at served slots)}$([[ "$WITH_CONCURRENCY_DEEP" == "1" ]] && echo " + deep N=4×10K" || echo " (deep rung off — --with-concurrency-deep)")"
+if [[ -n "${CONCURRENCY_RUNGS:-}" ]]; then
+  _conc_plan="rungs ${CONCURRENCY_RUNGS} (CONCURRENCY_RUNGS)"
+elif [[ "${CONTAINER:-}" == "none" ]]; then
+  # #1577: over --url only SGLang / llama.cpp report a slot count; a vLLM endpoint
+  # falls back to the N=1 control, so say it before the run, not only in the step log.
+  _conc_plan="rungs 1 2 4, capped at the served slot count read at step 1c — a vLLM endpoint reports none over --url, so only N=1 runs unless CONCURRENCY_RUNGS is set"
+else
+  _conc_plan="rungs 1 2 4 (capped at served slots)"
+fi
+echo "  concurrency: ${_conc_plan}$([[ "$WITH_CONCURRENCY_DEEP" == "1" ]] && echo " + deep N=4×10K" || echo " (deep rung off — --with-concurrency-deep)")"
 echo "  hermes env:  BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=${BENCHLOCAL_HERMES_RESOLVE_LOCALHOST:-0}"
 echo "  thinking:    ${ENABLE_THINKING:-0}${THINKING_MAX_TOKENS:+ (max_tokens=$THINKING_MAX_TOKENS)}"
 echo "==============================================================="
@@ -440,27 +450,22 @@ URL="$URL" MODEL="$MODEL" \
 # measure QUEUE WAIT and report it as concurrency (the #818 mislabeling), so
 # they are dropped with the reason stated.
 concurrency_rungs() {
-  local slots="" src="" cmd="" rungs=(1) n
-  if [[ "${CONTAINER:-}" != "none" ]] && command -v docker >/dev/null 2>&1 \
-     && [[ -n "${CONTAINER_NAME:-}" ]]; then
-    cmd="$(docker inspect "$CONTAINER_NAME" --format '{{join .Config.Cmd " "}}' 2>/dev/null || true)"
-    slots="$(command grep -oE 'max-num-seqs [0-9]+' <<<"$cmd" | command grep -oE '[0-9]+' | head -1 || true)"
-    [[ -n "$slots" ]] && src="container max-num-seqs"
-    if [[ -z "$slots" ]]; then
-      slots="$(command grep -oE '\-np +[0-9]+' <<<"$cmd" | command grep -oE '[0-9]+' | head -1 || true)"
-      [[ -n "$slots" ]] && src="container -np"
-    fi
-  fi
-  if [[ -z "$slots" ]]; then
-    slots="$(curl -s -m 3 "${URL}/props" 2>/dev/null \
-      | python3 -c 'import json,sys; v=json.load(sys.stdin).get("total_slots",""); print(v if isinstance(v,int) else "")' 2>/dev/null || true)"
-    [[ -n "$slots" ]] && src="server /props total_slots"
+  local slots="" src="" hit="" container="" rungs=(1) n
+  # ONE detector, shared with concurrency-probe.sh (#1577): this used to be a
+  # private, narrower copy with no SGLang sources, so an SGLang endpoint reached
+  # by --url fell back to N=1 while the probe could read its slot count.
+  [[ "${CONTAINER:-}" != "none" ]] && container="${CONTAINER_NAME:-}"
+  hit="$(served_slots "$URL" "$container")"
+  if [[ -n "$hit" ]]; then
+    slots="${hit%%$'\t'*}"; src="${hit#*$'\t'}"
   fi
 
   if [[ -z "$slots" ]]; then
     # Not fatal here (unlike concurrency-probe.sh's own detection, which gates a
     # validation verdict) — but we will not INVENT rungs the server may not have.
-    echo "[concurrency] served slot count undetected (no container cmd, no /props total_slots)."
+    # vLLM reports no slot count over HTTP, so this is the normal outcome for a vLLM
+    # endpoint reached by --url: say so here, in the summary and in REPORT.md (#1577).
+    echo "[concurrency] served slot count undetected (no container flag; no /get_server_info or /props slot count — vLLM exposes none over HTTP)."
     echo "[concurrency] running the N=1 control only — pass CONCURRENCY_RUNGS='1 2 4' to override."
     slots=1; src="undetected"
   else
@@ -473,10 +478,15 @@ concurrency_rungs() {
     fi
   done
   # Explicit override wins over detection, for a server whose slots we can't read.
+  local override=0
   if [[ -n "${CONCURRENCY_RUNGS:-}" ]]; then
     read -ra rungs <<<"$CONCURRENCY_RUNGS"
     echo "[concurrency] rungs overridden: ${rungs[*]}"
+    override=1
   fi
+  # What ran and why — read by the summary below and by rebench-report.py (#1577).
+  concurrency_slots_marker "$OUT_DIR/concurrency-slots.txt" \
+    "$( [[ "$src" == "undetected" ]] && echo undetected || echo "$slots" )" "$src" "${rungs[*]}" "$override"
 
   local rc=0
   for n in "${rungs[@]}"; do
@@ -572,6 +582,8 @@ echo "  artifacts:   $OUT_DIR"
 if [[ -f "$OUT_DIR/REPORT.md" ]]; then
   echo "  report:      $OUT_DIR/REPORT.md"
 fi
+_conc_note="$(concurrency_slots_note "$OUT_DIR/concurrency-slots.txt")"
+[[ -n "$_conc_note" ]] && echo "  ⚠ ${_conc_note}"
 echo
 echo "Headline pulls (grep through the logs):"
 echo "  TPS:           grep -E 'mean=|decode_TPS' $OUT_DIR/bench.log"
