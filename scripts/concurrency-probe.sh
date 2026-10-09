@@ -203,11 +203,16 @@ MODEL="${MODEL:-$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
 # the name heuristic stayed behind as a fallback that bound one whenever nothing matched.
 # shellcheck source=lib/club-containers.sh
 source "${ROOT_DIR}/scripts/lib/club-containers.sh"
-[[ "${CONTAINER:-}" == "none" ]] && CONTAINER=""   # host-only, as the other scripts spell it
-# None found stays empty, silently: the slot detector then names "no container flag", and the
-# card's GPU scope says "rig-wide: no container to scope to" (the first output line is the
-# sweep header, which callers read).
-[[ -n "${CONTAINER:-}" ]] || CONTAINER="$(club_container_for_url "$URL")"
+# An explicit CONTAINER= is trusted, and CONTAINER=none (host-only — rebench-full.sh --url sets
+# it) means no container and no lookup; the Python helpers spell that as empty. Only an unset
+# CONTAINER is resolved. None found stays empty, silently: the slot detector then names "no
+# container flag", and the card's GPU scope says "rig-wide: no container to scope to" (the first
+# output line is the sweep header, which callers read).
+if [[ "${CONTAINER:-}" == "none" ]]; then
+  CONTAINER=""
+elif [[ -z "${CONTAINER:-}" ]]; then
+  CONTAINER="$(club_container_for_url "$URL")"
+fi
 
 _container_cmd() { docker inspect "$CONTAINER" --format '{{join .Config.Cmd " "}}' 2>/dev/null || true; }
 # The served context: what the ENGINE reports first (SGLang server info, vLLM /v1/models, vLLM's

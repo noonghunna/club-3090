@@ -31,7 +31,19 @@ SHIMDIR="$(mktemp -d)"
 # Stub servers are killed explicitly after use AND here: any failure between start and kill under
 # set -e used to leave them running (two orphaned engine stubs were found days later).
 STUB_PIDS=()
-trap 'for p in "${STUB_PIDS[@]+"${STUB_PIDS[@]}"}"; do kill "$p" 2>/dev/null || true; done; rm -rf "$SHIMDIR"' EXIT
+# The --sweep legs below run against a dead URL, and --sweep always writes its card to
+# results/concurrency-<ts>-<model>.{md,json} — a card per run for a run that measured nothing
+# (264 had piled up in one checkout). Remove only the cards this run created.
+CARDS_BEFORE="$SHIMDIR/cards-before"
+find "$ROOT_DIR/results" -maxdepth 1 -name 'concurrency-*' -print 2>/dev/null | sort > "$CARDS_BEFORE" || true
+cleanup() {
+  local p
+  for p in "${STUB_PIDS[@]+"${STUB_PIDS[@]}"}"; do kill "$p" 2>/dev/null || true; done
+  find "$ROOT_DIR/results" -maxdepth 1 -name 'concurrency-*' -print 2>/dev/null | sort \
+    | comm -13 "$CARDS_BEFORE" - | xargs -r rm -f || true
+  rm -rf "$SHIMDIR"
+}
+trap cleanup EXIT
 COMPOSE_UP_LOG="$SHIMDIR/compose-up.log"
 : > "$COMPOSE_UP_LOG"
 cat > "$SHIMDIR/docker" <<SHIM
@@ -344,36 +356,44 @@ command grep -qF -- '--spec-label' "$PROBE" || fail "concurrency-probe.sh's _spe
 rm -rf "$SPEC_STUB"
 echo "  ✓ container found by URL (any engine, this host only); spec label from the engine (vLLM log head, SGLang server info)"
 
-# #1584, end to end: the slot count the probe detects. A local vLLM container publishes :8020 with
-# --max-num-seqs 4. For URL=<another machine>:8020 the old port-only match bound it and the probe
+# #1584, end to end: the slot count the probe detects. A local vLLM container publishes a free port with
+# --max-num-seqs 4. For URL=<another machine>:<that port> the old port-only match bound it and the probe
 # announced "CONCURRENCY=4 (detected: container max-num-seqs)" — the LOCAL server's slots as the
 # remote's. Now no container is bound, nothing answers the endpoint, and detection fails loudly
 # ("no container flag").
 # The same container's own URL is the positive control.
+# The stub publishes a FREE port, not :8020 — the positive leg runs the probe past detection, and
+# :8020 is the reference rig's default serving port (real load must never reach a live server).
+SLOT_PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
 SLOT_STUB="$(mktemp -d)"
-cat > "$SLOT_STUB/docker" <<'DOCK'
+cat > "$SLOT_STUB/docker" <<DOCK
 #!/usr/bin/env bash
-case "$1" in
-  ps)      echo "vllm-local-slots|0.0.0.0:8020->8000/tcp, [::]:8020->8000/tcp" ;;
-  inspect) [[ "$*" == *vllm-local-slots* ]] || exit 1
-           [[ "$*" == *".Config.Cmd"* ]] && echo "--model /m --max-num-seqs 4" ;;
+case "\$1" in
+  ps)      echo "vllm-local-slots|0.0.0.0:${SLOT_PORT}->8000/tcp, [::]:${SLOT_PORT}->8000/tcp" ;;
+  inspect) [[ "\$*" == *vllm-local-slots* ]] || exit 1
+           [[ "\$*" == *".Config.Cmd"* ]] && echo "--model /m --max-num-seqs 4" ;;
   *) exit 0 ;;
 esac
 DOCK
 printf '#!/usr/bin/env bash\nexit 7\n' > "$SLOT_STUB/curl"   # no endpoint answers
 chmod +x "$SLOT_STUB/docker" "$SLOT_STUB/curl"
 slot_run() { PATH="$SLOT_STUB:$PATH" URL="$1" MODEL=m timeout 60 bash "$PROBE" </dev/null 2>&1 || true; }
-out="$(slot_run http://10.9.9.9:8020)"
+out="$(slot_run "http://10.9.9.9:${SLOT_PORT}")"
 if command grep -q "CONCURRENCY=4 (detected: container" <<<"$out"; then
   fail "a remote URL took the LOCAL container's --max-num-seqs as its slot count"
 fi
 command grep -q "FATAL: cannot detect the served slot count" <<<"$out" \
   || { printf '%s\n' "$out" | tail -5 >&2; fail "a remote URL with no readable slots should stop loudly"; }
-out="$(slot_run http://localhost:8020)"
+out="$(slot_run "http://localhost:${SLOT_PORT}")"
 command grep -q "CONCURRENCY=4 (detected: container max-num-seqs)" <<<"$out" \
   || { printf '%s\n' "$out" | tail -5 >&2; fail "the container's own URL should read its --max-num-seqs (positive control)"; }
+# An explicit CONTAINER=none is host-only — no lookup, even for a URL the container publishes.
+out="$(PATH="$SLOT_STUB:$PATH" URL="http://localhost:${SLOT_PORT}" CONTAINER=none MODEL=m timeout 60 bash "$PROBE" </dev/null 2>&1 || true)"
+if command grep -q "detected: container" <<<"$out"; then
+  fail "CONTAINER=none was overridden by a container lookup"
+fi
 rm -rf "$SLOT_STUB"
-echo "  ✓ slot count: a remote URL never borrows a local container's flags; the container's own URL does"
+echo "  ✓ slot count: a remote URL never borrows a local container's flags; the container's own URL does; CONTAINER=none stays host-only"
 
 # #1537 follow-up: the KV pool, the slot count's source and the recommendation's knob names.
 # xtj7's cards read "KV ?" on both engines, the SGLang sweep header said "slots=4 (undetected)"
