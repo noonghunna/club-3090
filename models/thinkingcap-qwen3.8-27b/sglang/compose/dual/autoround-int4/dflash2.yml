@@ -530,9 +530,10 @@ services:
         # SGLANG_MAX_THINK_TOKENS, the default effort's budget (all the Responses API and
         # /generate get). Enforced by --enable-strict-thinking (below), which also blocks the
         # tool-call and end-of-turn tokens while the model thinks; THINKING_BUDGETS=off drops
-        # the budgets, not strict thinking. THINKING_BUDGET_LOW/_MEDIUM/_XHIGH override the
-        # defaults below; a bad value stops the boot. Readback: the `[effort-budget] v1` line.
-        _eb="$$(python3 /etc/club3090/effort_budget.py shell-env --engine sglang --default-effort "$$_reff" --low 32768 --medium 32768 --xhigh 32768)" || exit 1; eval "$$_eb"  # TBD-M1: placeholder budgets until the M1 measurements land
+        # the budgets, not strict thinking. Defaults (maintainer-set 2026-10-09): low 4096,
+        # medium 16384, xhigh 32768 (high/max -> 32768, minimal -> 4096). THINKING_BUDGET_LOW/
+        # _MEDIUM/_XHIGH override them; a bad value stops the boot. Readback: `[effort-budget] v1`.
+        _eb="$$(python3 /etc/club3090/effort_budget.py shell-env --engine sglang --default-effort "$$_reff" --low 4096 --medium 16384 --xhigh 32768)" || exit 1; eval "$$_eb"
         bash /etc/club3090/effort-thinking-budget/install.sh || exit 1
         # ⭐ MAMBA STATE SLOTS vs CONCURRENCY — measured 2026-09-13 (club-3090#1264).
         # `--max-running-requests` is not just a concurrency cap here: each running

@@ -20,6 +20,21 @@ logic.
 | `install.sh` | this dir, run by the compose entrypoint | copies both modules into site-packages, parses the map, runs the patcher |
 | `selftest.sh [image]` | this dir | offline drift guard (the `patches.yml` `drift_guard.check`) |
 
+## Budgets (compose defaults)
+
+| Effort | Budget (thinking tokens) |
+|---|---|
+| `low` (and `minimal`) | 4096 |
+| `medium` | 16384 |
+| `xhigh` (and `high`, `max`) | 32768 |
+
+Maintainer-set 2026-10-09, the same for Qwen3.8-27B and ThinkingCap-Qwen3.8-27B. They are the
+`--low/--medium/--xhigh` arguments of the `effort_budget.py shell-env` line in each compose.
+`THINKING_BUDGET_LOW` / `THINKING_BUDGET_MEDIUM` / `THINKING_BUDGET_XHIGH` override them per
+setting (empty = the default; a non-integer stops the boot), and `THINKING_BUDGETS=off` turns the
+map and the floor off. The floor (`SGLANG_MAX_THINK_TOKENS`) is the budget of the compose's default
+effort (`REASONING_EFFORT`, `low` unless set).
+
 ## Precedence (per request)
 
 1. `custom_params.thinking_budget` — SGLang's own field. Untouched.
