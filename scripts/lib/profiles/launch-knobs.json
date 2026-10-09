@@ -1053,11 +1053,12 @@
   },
   "THINKING_BUDGET_LOW": {
    "status": "first-batch",
-   "description": "Reasoning-token budget for requests at effort low (and minimal) (Qwen3.8 / ThinkingCap vLLM composes).",
+   "description": "Reasoning-token budget for requests at effort low (and minimal) (Qwen3.8 / ThinkingCap vLLM + SGLang composes).",
    "type": "int",
    "unit": "tokens",
    "unset": "the compose default, 4096 (maintainer-set 2026-10-09)",
    "engines": [
+    "sglang",
     "vllm"
    ],
    "variants": [
@@ -1102,6 +1103,51 @@
        ]
       }
      ]
+    },
+    {
+     "match": {
+      "engine": [
+       "sglang"
+      ],
+      "model": [
+       "qwen3.8-27b",
+       "thinkingcap-qwen3.8-27b"
+      ]
+     },
+     "enforced": "boot",
+     "default": "4096",
+     "every_consumer_contains": [
+      "python3 /etc/club3090/effort_budget.py shell-env --engine sglang"
+     ],
+     "source": {
+      "file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+      "what": "entrypoint: `_eb=\"$$(python3 /etc/club3090/effort_budget.py shell-env --engine sglang --default-effort \"$$_reff\" --low 4096 --medium 16384 --xhigh 32768)\" || exit 1; eval \"$$_eb\"`. shell-env reads the knob from the environment (empty = unset, so the --low/--medium/--xhigh default applies), exits 1 on a non-integer or negative value (boot refused), and exports the JSON map patch sglang-effort-thinking-budget reads per request plus SGLANG_MAX_THINK_TOKENS, SGLang's own floor under strict thinking"
+     },
+     "checks": [
+      {
+       "kind": "shell",
+       "compose": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+       "from": "^\\s*_eb=\"\\$\\$\\(python3 /etc/club3090/effort_budget\\.py shell-env",
+       "to": "^\\s*_eb=\"\\$\\$\\(python3 /etc/club3090/effort_budget\\.py shell-env",
+       "mounts": {
+        "/etc/club3090/effort_budget.py": "scripts/lib/effort_budget.py"
+       },
+       "accept": [
+        "0",
+        "1024",
+        "65536"
+       ],
+       "reject": [
+        "-1",
+        "abc",
+        "1.5",
+        "4k"
+       ],
+       "env": {
+        "_reff": "low"
+       }
+      }
+     ]
     }
    ],
    "interacts": [
@@ -1141,11 +1187,12 @@
   },
   "THINKING_BUDGET_MEDIUM": {
    "status": "first-batch",
-   "description": "Reasoning-token budget for requests at effort medium (Qwen3.8 / ThinkingCap vLLM composes).",
+   "description": "Reasoning-token budget for requests at effort medium (Qwen3.8 / ThinkingCap vLLM + SGLang composes).",
    "type": "int",
    "unit": "tokens",
    "unset": "the compose default, 16384 (maintainer-set 2026-10-09)",
    "engines": [
+    "sglang",
     "vllm"
    ],
    "variants": [
@@ -1190,6 +1237,51 @@
        ]
       }
      ]
+    },
+    {
+     "match": {
+      "engine": [
+       "sglang"
+      ],
+      "model": [
+       "qwen3.8-27b",
+       "thinkingcap-qwen3.8-27b"
+      ]
+     },
+     "enforced": "boot",
+     "default": "16384",
+     "every_consumer_contains": [
+      "python3 /etc/club3090/effort_budget.py shell-env --engine sglang"
+     ],
+     "source": {
+      "file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+      "what": "entrypoint: `_eb=\"$$(python3 /etc/club3090/effort_budget.py shell-env --engine sglang --default-effort \"$$_reff\" --low 4096 --medium 16384 --xhigh 32768)\" || exit 1; eval \"$$_eb\"`. shell-env reads the knob from the environment (empty = unset, so the --low/--medium/--xhigh default applies), exits 1 on a non-integer or negative value (boot refused), and exports the JSON map patch sglang-effort-thinking-budget reads per request plus SGLANG_MAX_THINK_TOKENS, SGLang's own floor under strict thinking"
+     },
+     "checks": [
+      {
+       "kind": "shell",
+       "compose": "models/thinkingcap-qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+       "from": "^\\s*_eb=\"\\$\\$\\(python3 /etc/club3090/effort_budget\\.py shell-env",
+       "to": "^\\s*_eb=\"\\$\\$\\(python3 /etc/club3090/effort_budget\\.py shell-env",
+       "mounts": {
+        "/etc/club3090/effort_budget.py": "scripts/lib/effort_budget.py"
+       },
+       "accept": [
+        "0",
+        "1024",
+        "65536"
+       ],
+       "reject": [
+        "-1",
+        "abc",
+        "1.5",
+        "4k"
+       ],
+       "env": {
+        "_reff": "low"
+       }
+      }
+     ]
     }
    ],
    "interacts": [
@@ -1229,11 +1321,12 @@
   },
   "THINKING_BUDGET_XHIGH": {
    "status": "first-batch",
-   "description": "Reasoning-token budget for requests at effort xhigh (and high, max) (Qwen3.8 / ThinkingCap vLLM composes).",
+   "description": "Reasoning-token budget for requests at effort xhigh (and high, max) (Qwen3.8 / ThinkingCap vLLM + SGLang composes).",
    "type": "int",
    "unit": "tokens",
    "unset": "the compose default, 32768 (maintainer-set 2026-10-09)",
    "engines": [
+    "sglang",
     "vllm"
    ],
    "variants": [
@@ -1278,6 +1371,51 @@
        ]
       }
      ]
+    },
+    {
+     "match": {
+      "engine": [
+       "sglang"
+      ],
+      "model": [
+       "qwen3.8-27b",
+       "thinkingcap-qwen3.8-27b"
+      ]
+     },
+     "enforced": "boot",
+     "default": "32768",
+     "every_consumer_contains": [
+      "python3 /etc/club3090/effort_budget.py shell-env --engine sglang"
+     ],
+     "source": {
+      "file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+      "what": "entrypoint: `_eb=\"$$(python3 /etc/club3090/effort_budget.py shell-env --engine sglang --default-effort \"$$_reff\" --low 4096 --medium 16384 --xhigh 32768)\" || exit 1; eval \"$$_eb\"`. shell-env reads the knob from the environment (empty = unset, so the --low/--medium/--xhigh default applies), exits 1 on a non-integer or negative value (boot refused), and exports the JSON map patch sglang-effort-thinking-budget reads per request plus SGLANG_MAX_THINK_TOKENS, SGLang's own floor under strict thinking"
+     },
+     "checks": [
+      {
+       "kind": "shell",
+       "compose": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+       "from": "^\\s*_eb=\"\\$\\$\\(python3 /etc/club3090/effort_budget\\.py shell-env",
+       "to": "^\\s*_eb=\"\\$\\$\\(python3 /etc/club3090/effort_budget\\.py shell-env",
+       "mounts": {
+        "/etc/club3090/effort_budget.py": "scripts/lib/effort_budget.py"
+       },
+       "accept": [
+        "0",
+        "1024",
+        "65536"
+       ],
+       "reject": [
+        "-1",
+        "abc",
+        "1.5",
+        "4k"
+       ],
+       "env": {
+        "_reff": "low"
+       }
+      }
+     ]
     }
    ],
    "interacts": [
@@ -1317,10 +1455,11 @@
   },
   "THINKING_BUDGETS": {
    "status": "first-batch",
-   "description": "Turns the reasoning budget chosen by effort off (off) on the Qwen3.8 / ThinkingCap vLLM composes.",
+   "description": "Turns the reasoning budget chosen by effort off (off) on the Qwen3.8 / ThinkingCap vLLM + SGLang composes.",
    "type": "enum",
    "unset": "on: the map from THINKING_BUDGET_* and the compose defaults (4096 / 16384 / 32768, maintainer-set 2026-10-09)",
    "engines": [
+    "sglang",
     "vllm"
    ],
    "variants": [
@@ -1372,6 +1511,58 @@
        ]
       }
      ]
+    },
+    {
+     "match": {
+      "engine": [
+       "sglang"
+      ],
+      "model": [
+       "qwen3.8-27b",
+       "thinkingcap-qwen3.8-27b"
+      ]
+     },
+     "enforced": "boot",
+     "values": [
+      "off",
+      "on"
+     ],
+     "every_consumer_contains": [
+      "python3 /etc/club3090/effort_budget.py shell-env --engine sglang"
+     ],
+     "source": {
+      "file": "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+      "what": "entrypoint: `_eb=\"$$(python3 /etc/club3090/effort_budget.py shell-env --engine sglang --default-effort \"$$_reff\" --low 4096 --medium 16384 --xhigh 32768)\" || exit 1; eval \"$$_eb\"`. shell-env reads THINKING_BUDGETS (off/0/false/no/none/disabled = off, on/1/true/yes = on, any case; empty = on), exits 1 on anything else (boot refused), and exports the JSON map patch sglang-effort-thinking-budget reads per request plus SGLANG_MAX_THINK_TOKENS, SGLang's own floor under strict thinking"
+     },
+     "checks": [
+      {
+       "kind": "shell",
+       "compose": "models/thinkingcap-qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml",
+       "from": "^\\s*_eb=\"\\$\\$\\(python3 /etc/club3090/effort_budget\\.py shell-env",
+       "to": "^\\s*_eb=\"\\$\\$\\(python3 /etc/club3090/effort_budget\\.py shell-env",
+       "mounts": {
+        "/etc/club3090/effort_budget.py": "scripts/lib/effort_budget.py"
+       },
+       "accept": [
+        "off",
+        "on"
+       ],
+       "reject": [
+        "maybe",
+        "enabled",
+        "of"
+       ],
+       "stricter": [
+        "0",
+        "false",
+        "OFF",
+        "1"
+       ],
+       "env": {
+        "_reff": "low"
+       }
+      }
+     ]
     }
    ],
    "interacts": [
@@ -1386,7 +1577,7 @@
    ],
    "caveats": [
     {
-     "text": "off is stock vLLM: no map and no floor, so a client that sends no budget reasons unbounded.",
+     "text": "off is stock vLLM: no map and no floor, so a client that sends no budget reasons unbounded. On SGLang, off drops the map and the floor too, but strict thinking stays on, so explicit per-request budgets still apply.",
      "source": {
       "file": "scripts/lib/effort_budget.py",
       "what": "shell-env prints `unset` for the map and the floor when off"
