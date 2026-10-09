@@ -463,16 +463,68 @@ check(tr_tol.stage is tr_nodelta.stage
 # 10. REAL on-disk capture(s) under .pull-captures/: promote() does not
 #     crash; the re-derived fingerprint MATCHES the real [E]-minted one.
 #     (A MISMATCH here is a LOUD real-data finding — not papered over.)
+#     #1585: the leg reads ONLY schema==1 bundles, as test-classifier /
+#     test-dedup have since #1009 — test-hwdetect leaves schema==2 gate
+#     bundles in the same shared dir, which the strict reader refuses, so a
+#     run after it went red on nothing this test is about.
 # ---------------------------------------------------------------------------
-real_root = root / ".pull-captures"
-real_dirs: list[Path] = []
-if real_root.is_dir():
-    for slug_dir in sorted(real_root.iterdir()):
+def _select_schema1_bundles(caps_root):
+    """Select the schema==1 bundles under a .pull-captures root (#1009/#1585).
+
+    `.pull-captures/` is SHARED gitignored runtime state: other producers
+    (e.g. the CONTRACT-1.1 gate emitter, which test-hwdetect drives, writes
+    schema==2 gate-only bundles) legitimately leave bundles there that the
+    STRICT schema==1 reader must refuse. Selecting only the bundles this leg
+    can read keeps every real capture on disk for debugging AND makes the leg
+    order-independent. Returns (schema1_dirs, skipped_names).
+    """
+    found: list[Path] = []
+    skipped: list[str] = []
+    if not caps_root.is_dir():
+        return found, skipped
+    for slug_dir in sorted(caps_root.iterdir()):
         if not slug_dir.is_dir() or slug_dir.name.startswith("_"):
             continue
         for ts_dir in sorted(slug_dir.iterdir()):
-            if ts_dir.is_dir() and (ts_dir / "manifest.json").is_file():
-                real_dirs.append(ts_dir)
+            if not (ts_dir.is_dir()
+                    and (ts_dir / "manifest.json").is_file()):
+                continue
+            try:
+                m = json.loads(
+                    (ts_dir / "manifest.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                skipped.append(ts_dir.name)
+                continue
+            if m.get("schema") == 1:
+                found.append(ts_dir)
+            else:
+                skipped.append(ts_dir.name)
+    return found, skipped
+
+
+# Self-check on SYNTHETIC state (never repo-root .pull-captures/): the
+# selector keeps a schema==1 bundle and skips a schema==2 gate leftover —
+# the exact #1585 ordering failure, asserted directly.
+_sel_root = tmp / "sel-real"
+_sel_s1 = _sel_root / "capslug" / "ts-cap"
+_sel_s1.mkdir(parents=True)
+(_sel_s1 / "manifest.json").write_text(json.dumps({"schema": 1}),
+                                       encoding="utf-8")
+_sel_s2 = _sel_root / "fixtures-hwdetect-degrade" / "ts-gate"
+_sel_s2.mkdir(parents=True)
+(_sel_s2 / "manifest.json").write_text(json.dumps({"schema": 2}),
+                                       encoding="utf-8")
+_sel_dirs, _sel_skipped = _select_schema1_bundles(_sel_root)
+check(_sel_dirs == [_sel_s1] and _sel_skipped == ["ts-gate"],
+      "#1585: real-data selector keeps schema==1, skips schema==2 "
+      f"gate leftovers (got {_sel_dirs}, skipped {_sel_skipped})")
+
+real_root = root / ".pull-captures"
+real_dirs, foreign_dirs = _select_schema1_bundles(real_root)
+if foreign_dirs:
+    print(f"real-data: skipped {len(foreign_dirs)} non-schema-1 "
+          f".pull-captures/ bundle(s) {foreign_dirs} (#1585: shared "
+          f"runtime state; left untouched on disk)")
 
 if not real_dirs:
     print("SKIP: no real on-disk .pull-captures/ bundle "
