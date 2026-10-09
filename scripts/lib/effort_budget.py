@@ -255,6 +255,9 @@ def cmd_readback_budget(args: argparse.Namespace) -> int:
         print("off")
         return 0
     effort = _canonical_effort(args.effort) or info["default_effort"]
+    if effort == "none":
+        print("none")  # thinking off: no budget applies
+        return 0
     budget = info["map"].get(effort) if effort else None
     print(budget if budget is not None else info["floor"] if info["floor"] is not None else "none")
     return 0

@@ -159,6 +159,7 @@ log="$(printf '%s\n' "boot 1" \
 [[ "$(python3 "$EB" readback-budget --line "$log" --effort high)" == 300 ]] || fail "readback-budget --effort high must fold to xhigh"
 [[ "$(printf '%s\n' "$log" | python3 "$EB" readback-budget --line - --effort medium)" == 200 ]] || fail "readback-budget must read stdin"
 [[ "$(python3 "$EB" readback-budget --line '[effort-budget] v1 off engine=sglang')" == off ]] || fail "off must read as off"
+[[ "$(python3 "$EB" readback-budget --line "$log" --effort none)" == none ]] || fail "effort none = thinking off: no budget, not the floor"
 set +e; unk="$(python3 "$EB" readback-budget --line "nothing")"; rc=$?; set -e
 [[ "$unk" == unknown && $rc -eq 2 ]] || fail "no readback line must be 'unknown' with rc 2 (got $unk / $rc)"
 pass "last line wins, aliases, stdin, off, unknown"
