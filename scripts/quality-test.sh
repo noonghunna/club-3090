@@ -168,9 +168,10 @@ OPTIONS (extra)
                                 a present-but-unset flag boots -1 = unbounded
                      vLLM       per-request thinking_token_budget; needs the
                                 server booted with --reasoning-parser
-                     SGLang     per-request custom_logit_processor +
-                                custom_params.thinking_budget; needs the
-                                server booted with --enable-custom-logit-processor
+                     SGLang     per-request custom_params.thinking_budget;
+                                needs the server booted with
+                                --enable-strict-thinking + --reasoning-parser
+                                (without it SGLang IGNORES the field, silently)
                    Also derives the matching client cap: --thinking-max-tokens
                    = N + THINKING_BUDGET_HEADROOM (default 4096) unless you set
                    one above N. A reasoning cap alone RELOCATES the overrun
@@ -261,10 +262,6 @@ ENV VARS
                    server is available (no container, no readback). Positive
                    evidence that the budget would not take effect is never
                    bypassed. The run is labelled unverified.
-  THINKING_BUDGET_SGLANG_PROCESSOR
-                   SGLang only: the ThinkingBudgetLogitProcessor subclass to
-                   send when the server's reasoning parser is not one the
-                   wrapper maps (qwen3 / qwen3-thinking / glm45 / deepseek-r1).
 
 EXAMPLES
   bash scripts/quality-test.sh                          # --medium against running compose
@@ -886,12 +883,12 @@ fi
 # Verification IS the feature. llama.cpp's budget is a boot flag the harness
 # cannot set per request — and the shipped composes always emit
 # `--reasoning-budget "${REASONING_BUDGET:--1}"`, so the flag being PRESENT
-# proves nothing; only its resolved VALUE does. vLLM v0.29.0 and SGLang v0.5.20
-# reject the per-request field outright when their prerequisite is missing, so
-# an unverified run would 400 on every scenario. Either way the run is not
-# what it claims to be, so the wrapper reads the evidence first and refuses
-# with the fix when it does not hold. Mechanism, evidence rules and the
-# per-engine request shapes: scripts/lib/thinking-budget.sh.
+# proves nothing; only its resolved VALUE does. vLLM rejects the per-request
+# field outright without a reasoning parser (every scenario would 400); SGLang
+# IGNORES it silently without --enable-strict-thinking (the run would only look
+# bounded). Either way the run is not what it claims to be, so the wrapper reads
+# the evidence first and refuses with the fix when it does not hold. Mechanism,
+# evidence rules and the per-engine request shapes: scripts/lib/thinking-budget.sh.
 THINKING_BUDGET_EXTRA_BODY=""
 THINKING_MAX_TOKENS_DERIVED=0
 if [[ -n "$THINKING_BUDGET" ]]; then
@@ -981,24 +978,14 @@ if [[ -n "$THINKING_BUDGET" ]]; then
     exit 2
   fi
 
-  _tb_proc=""
-  if [[ "$_tb_kind" == "sglang" ]]; then
-    _tb_proc="${THINKING_BUDGET_SGLANG_PROCESSOR:-$(thinking_budget_sglang_processor "$THINKING_BUDGET_REASONING_PARSER")}"
-    if [[ -z "$_tb_proc" ]]; then
-      echo "✗ --thinking-budget on SGLang: no ThinkingBudgetLogitProcessor is known for reasoning_parser='${THINKING_BUDGET_REASONING_PARSER}'" >&2
-      echo "  Mapped: qwen3 / qwen3-thinking / glm45 / deepseek-r1. If this model's think-token ids match one of SGLang's" >&2
-      echo "  subclasses, name it: THINKING_BUDGET_SGLANG_PROCESSOR=<subclass>." >&2
-      exit 2
-    fi
-  fi
   if [[ "$_tb_kind" != "llamacpp" ]]; then
-    THINKING_BUDGET_EXTRA_BODY="$(thinking_budget_extra_body "$_tb_kind" "$THINKING_BUDGET" "$_tb_proc")"
+    THINKING_BUDGET_EXTRA_BODY="$(thinking_budget_extra_body "$_tb_kind" "$THINKING_BUDGET")"
   fi
 
   case "$_tb_kind" in
     llamacpp) _tb_mech="llama.cpp --reasoning-budget (boot flag, server-wide)" ;;
     vllm)     _tb_mech="vLLM per-request thinking_token_budget" ;;
-    sglang)   _tb_mech="SGLang per-request custom_logit_processor=${_tb_proc} + custom_params.thinking_budget" ;;
+    sglang)   _tb_mech="SGLang per-request custom_params.thinking_budget (strict thinking)" ;;
     *)        _tb_mech="$_tb_kind" ;;
   esac
   echo "[quality-test] thinking budget: ${THINKING_BUDGET} reasoning tokens via ${_tb_mech}"

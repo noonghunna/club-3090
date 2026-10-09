@@ -16,21 +16,37 @@
 #   engine      server prerequisite               request shape
 #   llama.cpp   --reasoning-budget N (boot flag)  none — server-wide
 #   vLLM        --reasoning-parser <name>         thinking_token_budget: N
-#   SGLang      --enable-custom-logit-processor   custom_logit_processor +
-#                                                 custom_params.thinking_budget
+#   SGLang      --enable-strict-thinking          custom_params.thinking_budget: N
+#               + --reasoning-parser <name>
 #
-# What each engine does WITHOUT its prerequisite (read from the pinned images):
+# What each engine does WITHOUT its prerequisite (read from the pinned images,
+# vLLM v0.31.0 / SGLang v0.5.21 — scripts/lib/profiles/engines/*-stable.yml):
 #   llama.cpp  nothing to send — the harness cannot set a boot flag per request,
 #              and a compose-shipped `--reasoning-budget "${REASONING_BUDGET:--1}"`
 #              boots UNBOUNDED (-1) with the flag visibly present. Presence of the
 #              flag is therefore NOT evidence; its resolved VALUE is.
-#   vLLM       v0.29.0 raises VLLMValidationError per request
-#              (vllm/v1/engine/input_processor.py) — every scenario 400s.
-#   SGLang     v0.5.20 raises ValueError per request (tokenizer_manager.py) —
-#              every scenario 400s. And the per-request processor is a dill
-#              pickle of a MODEL-SPECIFIC class (Qwen3…/Glm4Moe…/DeepSeekR1…);
-#              the base class has no think-token ids and would fail at sample
-#              time. The class is chosen from the server's reasoning parser.
+#   vLLM       raises VLLMValidationError per request when no reasoning config
+#              is set (vllm/v1/engine/input_processor.py:175) — every scenario 400s.
+#   SGLang     IGNORES custom_params.thinking_budget SILENTLY — no error. The
+#              budget is enforced only by strict thinking's ReasonerGrammarBackend
+#              (constrained/grammar_manager.py:190 builds it only under
+#              --enable-strict-thinking; base_grammar_backend.py:427 only with a
+#              --reasoning-parser). Its think-end ids come from the reasoning
+#              parser through the tokenizer, so they are right for every model.
+#              Two consequences:
+#                * an accepted request proves nothing, so the server's own
+#                  readback is the only evidence that counts;
+#                * the budget is applied by the token filter, which is ON only
+#                  when the parser blocks tokens during thinking OR
+#                  SGLANG_MAX_THINK_TOKENS >= 0 at boot
+#                  (reasoner_grammar_backend.py:288). Parsers that block nothing
+#                  (deepseek-r1, gemma4, gpt-oss, …) need that env var too.
+#              The old route — custom_logit_processor with SGLang's
+#              Qwen3ThinkingBudgetLogitProcessor — is GONE: that class hard-codes
+#              the Qwen3 think ids 151667/151668, while Qwen3.5/3.6/3.8 use
+#              248068/248069, so on those models it was silently inert; and the
+#              processor path is bypassed under NEXTN/EAGLE-v2 spec decode
+#              (sglang#26330).
 #
 # CONTRACT
 # --------
@@ -45,18 +61,17 @@
 #       rc 2  unverifiable — no evidence either way (no container, no docker,
 #                        no server readback). Caller decides; the only
 #                        acceptable bypass is an explicit, loud one.
-#       Sets THINKING_BUDGET_EVIDENCE (one line, human) and, for SGLang,
+#       Sets THINKING_BUDGET_EVIDENCE (one line, human) and, for vLLM/SGLang,
 #       THINKING_BUDGET_REASONING_PARSER. Prints nothing on stdout.
 #   thinking_budget_fix_hint <kind> <N>
 #       Prints the fix instruction for a refused/unverifiable verification.
-#   thinking_budget_extra_body <kind> <N> [sglang_processor_class]
+#   thinking_budget_extra_body <kind> <N>
 #       Prints the JSON object benchlocal-cli --extra-body must carry, or
 #       nothing for llama.cpp (server-wide, nothing to send).
-#   thinking_budget_sglang_processor <reasoning_parser>
-#       Prints the SGLang processor class for that parser, or nothing.
 #
 # Nothing here mutates the server. The only network calls are GETs against
-# $URL (/v1/models, /server_info, /get_server_info).
+# $URL (/v1/models, /server_info, /get_server_info) and reads of the serving
+# container (`docker inspect`, `docker logs`).
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 
 _TB_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -99,7 +114,8 @@ except Exception:
 # line:
 #   llamacpp  BUDGET <int> | BUDGET none | BUDGET unresolvable <why>
 #   vllm      PARSER <value> | PARSER none
-#   sglang    CLP true|false PARSER <value|none>
+#   sglang    STRICT true|false PARSER <value|none> MTT <int|none>
+#             (MTT = SGLANG_MAX_THINK_TOKENS from Config.Env, when set there)
 #
 # Flags are looked for in Config.Entrypoint and Config.Cmd, as array elements
 # (`--flag`, `value` / `--flag=value`) AND inside shell-script strings (the
@@ -218,9 +234,11 @@ elif mode == "vllm":
     vals += [v for v in flag_values("--reasoning-config", ordered) if v]
     print("PARSER %s" % (vals[-1] if vals else "none"))
 elif mode == "sglang":
-    clp = flag_present("--enable-custom-logit-processor", ordered)
+    strict = flag_present("--enable-strict-thinking", ordered)
     vals = [v for v in flag_values("--reasoning-parser", ordered) if v]
-    print("CLP %s PARSER %s" % ("true" if clp else "false", vals[-1] if vals else "none"))
+    mtt = (env.get("SGLANG_MAX_THINK_TOKENS") or "").strip()
+    mtt = mtt if re.fullmatch(r"-?\d+", mtt) else "none"
+    print("STRICT %s PARSER %s MTT %s" % ("true" if strict else "false", vals[-1] if vals else "none", mtt))
 else:
     print("ERROR unknown mode %s" % mode)
 PY
@@ -229,10 +247,12 @@ _thinking_budget_container_facts() {
   python3 -c "$_THINKING_BUDGET_FACTS_PY" "$1"
 }
 
-# SGLang's own readback: /server_info (v0.5.20) dumps the resolved ServerArgs;
-# /get_server_info is the deprecated alias. Walks the whole document so a
-# regrouping of the args (v0.5.20 moved them under sub-groups) cannot hide the
-# key. stdout: `CLP true|false PARSER <v|none>` or nothing when unreachable.
+# SGLang's own readback: /server_info (v0.5.21) dumps the RESOLVED ServerArgs
+# (server_args.resolved_dict()); /get_server_info is the deprecated alias.
+# Walks the whole document so a regrouping of the args (v0.5.20+ groups them)
+# cannot hide the key. stdout: `STRICT true|false PARSER <v|none|unknown>`, or
+# nothing when unreachable or when the readback carries no enable_strict_thinking
+# key at all (no evidence, NOT "off" — the caller falls back to the container).
 _thinking_budget_sglang_server_facts() {
   local ep body
   for ep in /server_info /get_server_info; do
@@ -248,35 +268,58 @@ hits = {}
 def walk(x):
     if isinstance(x, dict):
         for k, v in x.items():
-            if k in ("enable_custom_logit_processor", "reasoning_parser") and k not in hits:
+            if k in ("enable_strict_thinking", "reasoning_parser") and k not in hits:
                 hits[k] = v
             walk(v)
     elif isinstance(x, list):
         for v in x:
             walk(v)
 walk(d)
-if "enable_custom_logit_processor" not in hits:
+if "enable_strict_thinking" not in hits:
     sys.exit(0)
-clp = hits["enable_custom_logit_processor"]
-clp = clp is True or str(clp).lower() in ("1", "true", "yes", "on")
-rp = hits.get("reasoning_parser") or "none"
-print("CLP %s PARSER %s" % ("true" if clp else "false", rp))
+st = hits["enable_strict_thinking"]
+st = st is True or str(st).lower() in ("1", "true", "yes", "on")
+if "reasoning_parser" not in hits:
+    rp = "unknown"
+else:
+    rp = hits["reasoning_parser"] or "none"
+print("STRICT %s PARSER %s" % ("true" if st else "false", rp))
 ' <<<"$body" 2>/dev/null && return 0
   done
   return 0
 }
 
-# SGLang ships model-specific ThinkingBudgetLogitProcessor subclasses
-# (python/sglang/srt/sampling/custom_logit_processor.py, v0.5.20). Only the
-# parsers whose think-token ids are known to match are mapped; anything else
-# is a refusal, overridable with THINKING_BUDGET_SGLANG_PROCESSOR=<ClassName>.
-thinking_budget_sglang_processor() {
-  case "${1:-}" in
-    qwen3|qwen3-thinking) echo "Qwen3ThinkingBudgetLogitProcessor" ;;
-    glm45)                echo "Glm4MoeThinkingBudgetLogitProcessor" ;;
-    deepseek-r1)          echo "DeepSeekR1ThinkingBudgetLogitProcessor" ;;
-    *)                    echo "" ;;
-  esac
+# SGLang reasoning parsers whose detector blocks tokens while thinking
+# (think_excluded_tokens), which by itself switches strict thinking's token
+# filter ON — so a per-request budget is enforced with no further boot setting.
+# Read from lmsysorg/sglang:v0.5.21 (ReasoningParser.DetectorMap, each detector's
+# think_excluded_tokens; reasoner_grammar_backend.py:288). ⚠️ Re-read at every
+# SGLang pin bump. A parser NOT listed here still works, but only when the server
+# booted with SGLANG_MAX_THINK_TOKENS >= 0 — which the club composes export from
+# scripts/lib/effort_budget.py (their `[effort-budget] v1 … engine=sglang` boot line).
+THINKING_BUDGET_SGLANG_FILTER_PARSERS="qwen3 qwen3-thinking mimo glm45 ling3 kimi_k2 kimi_k3 minimax deepseek-v3 deepseek-v4 deepseek-v41 dots interns1 nanbeige poolside_v1"
+
+_thinking_budget_sglang_parser_filters() {
+  local p
+  for p in $THINKING_BUDGET_SGLANG_FILTER_PARSERS; do
+    [[ "$1" == "$p" ]] && return 0
+  done
+  return 1
+}
+
+# SGLANG_MAX_THINK_TOKENS as the server booted with it: the club composes export
+# it inside the entrypoint (invisible to `docker inspect`) as the floor of their
+# `[effort-budget] v1` boot line, which effort_budget.py reads back (the LAST
+# line, since `docker logs` spans restarts); a value in Config.Env counts too.
+# stdout: the value, or nothing when neither says.
+_thinking_budget_sglang_max_think_tokens() {
+  local c="$1" mtt_env="$2" floor
+  if [[ "$mtt_env" =~ ^-?[0-9]+$ ]]; then
+    echo "$mtt_env"; return 0
+  fi
+  [[ -n "$c" && "$c" != "none" ]] || return 0
+  floor="$(docker logs "$c" 2>&1 | python3 "${_TB_LIB_DIR}/effort_budget.py" readback-budget --line - 2>/dev/null || true)"
+  [[ "$floor" =~ ^[0-9]+$ ]] && echo "$floor"
   return 0
 }
 
@@ -343,10 +386,11 @@ thinking_budget_verify() {
             THINKING_BUDGET_REASONING_PARSER="$logged"
             return 0
           fi
-          THINKING_BUDGET_EVIDENCE="container ${c} was booted WITHOUT --reasoning-parser (container argv and vLLM's boot log both lack it) — vLLM v0.29.0 rejects thinking_token_budget per request (VLLMValidationError), so every scenario would fail"
+          THINKING_BUDGET_EVIDENCE="container ${c} was booted WITHOUT --reasoning-parser (container argv and vLLM's boot log both lack it) — vLLM rejects thinking_token_budget per request without a reasoning config (VLLMValidationError), so every scenario would fail"
           return 1 ;;
         "PARSER "*)
           THINKING_BUDGET_EVIDENCE="container ${c} boots vLLM with --reasoning-parser ${facts#PARSER }"
+          THINKING_BUDGET_REASONING_PARSER="${facts#PARSER }"
           return 0 ;;
         *)
           THINKING_BUDGET_EVIDENCE="could not read container ${c}: ${facts:-no output}"
@@ -354,31 +398,55 @@ thinking_budget_verify() {
       esac
       ;;
     sglang)
-      # The server's own readback first — it is the resolved truth and works
-      # for hand-rolled / remote servers too; docker is the fallback.
+      # The server's own readback first — it is the RESOLVED truth and works for
+      # hand-rolled / remote servers too. The container argv is the fallback, and
+      # it only shows the flag is PRESENT on the command line.
+      local mtt_env="none" src="/server_info"
       facts="$(_thinking_budget_sglang_server_facts)"
-      local src="/server_info"
-      if [[ -z "$facts" && "$have_container" == "1" ]]; then
-        facts="$(docker inspect "$c" 2>/dev/null | _thinking_budget_container_facts sglang)"
-        src="container ${c}"
+      if [[ "$have_container" == "1" ]]; then
+        local cfacts
+        cfacts="$(docker inspect "$c" 2>/dev/null | _thinking_budget_container_facts sglang)"
+        [[ "$cfacts" == *" MTT "* ]] && mtt_env="${cfacts##* MTT }"
+        if [[ -z "$facts" ]]; then
+          facts="${cfacts% MTT *}"
+          src="container ${c} (command line)"
+        fi
       fi
       if [[ -z "$facts" ]]; then
-        THINKING_BUDGET_EVIDENCE="SGLang: neither /server_info nor a serving container (CONTAINER='${c:-unset}') is available to check --enable-custom-logit-processor"
+        THINKING_BUDGET_EVIDENCE="SGLang: neither /server_info nor a serving container (CONTAINER='${c:-unset}') is available to check --enable-strict-thinking"
         return 2
       fi
       local parser="${facts##*PARSER }"
       THINKING_BUDGET_REASONING_PARSER="$parser"
       case "$facts" in
-        "CLP true"*)
-          THINKING_BUDGET_EVIDENCE="${src} reports enable_custom_logit_processor=true, reasoning_parser=${parser}"
-          return 0 ;;
-        "CLP false"*)
-          THINKING_BUDGET_EVIDENCE="${src} reports the server was started WITHOUT --enable-custom-logit-processor — SGLang v0.5.20 rejects custom_logit_processor per request (ValueError), so every scenario would fail"
+        "STRICT false"*)
+          THINKING_BUDGET_EVIDENCE="${src} reports the server was started WITHOUT --enable-strict-thinking — SGLang ignores custom_params.thinking_budget without it (no error), so the run would only LOOK bounded"
           return 1 ;;
+        "STRICT true"*) ;;
         *)
           THINKING_BUDGET_EVIDENCE="could not read ${src}: ${facts}"
           return 2 ;;
       esac
+      case "$parser" in
+        none)
+          THINKING_BUDGET_EVIDENCE="${src} reports enable_strict_thinking=true but NO --reasoning-parser — strict thinking applies a budget only through the reasoning parser's think-end tokens, so custom_params.thinking_budget would be ignored"
+          return 1 ;;
+        unknown)
+          THINKING_BUDGET_EVIDENCE="${src} reports enable_strict_thinking=true but not the reasoning parser — cannot tell whether the budget is applied"
+          return 2 ;;
+      esac
+      if _thinking_budget_sglang_parser_filters "$parser"; then
+        THINKING_BUDGET_EVIDENCE="${src} reports enable_strict_thinking=true, reasoning_parser=${parser} (its detector blocks tokens while thinking, so the budget filter is on)"
+        return 0
+      fi
+      local mtt
+      mtt="$(_thinking_budget_sglang_max_think_tokens "$c" "$mtt_env")"
+      if [[ "$mtt" =~ ^[0-9]+$ ]]; then
+        THINKING_BUDGET_EVIDENCE="${src} reports enable_strict_thinking=true, reasoning_parser=${parser}; SGLANG_MAX_THINK_TOKENS=${mtt} at boot turns the budget filter on"
+        return 0
+      fi
+      THINKING_BUDGET_EVIDENCE="${src} reports enable_strict_thinking=true, reasoning_parser=${parser} — but that parser blocks no tokens while thinking, so SGLang applies a per-request budget only when the server booted with SGLANG_MAX_THINK_TOKENS >= 0, and nothing shows it did${mtt:+ (SGLANG_MAX_THINK_TOKENS=${mtt})}"
+      return 2
       ;;
     *)
       THINKING_BUDGET_EVIDENCE="engine family '${kind}' has no known reasoning-budget mechanism"
@@ -406,54 +474,34 @@ EOF
       ;;
     sglang)
       cat <<EOF
-  Fix: add --enable-custom-logit-processor to the SGLang server command and reboot
-       (no shipped SGLang compose sets it — add it to the compose's command block).
-       The per-request processor is chosen from the server's --reasoning-parser
-       (qwen3 / qwen3-thinking / glm45 / deepseek-r1); any other parser needs
-       THINKING_BUDGET_SGLANG_PROCESSOR=<ThinkingBudgetLogitProcessor subclass>.
+  Fix: add --enable-strict-thinking (with a --reasoning-parser) to the SGLang server
+       command and reboot — the shipped qwen3.8 SGLang composes carry it. Without it
+       SGLang ignores custom_params.thinking_budget silently. If the parser blocks no
+       tokens while thinking (anything but qwen3 / qwen3-thinking / glm45 / … — see
+       THINKING_BUDGET_SGLANG_FILTER_PARSERS), also boot with SGLANG_MAX_THINK_TOKENS=<n>
+       (>= 0; it is the default budget for requests that send none).
 EOF
       ;;
     *)
       cat <<EOF
   Fix: serve on llama.cpp (--reasoning-budget), vLLM (--reasoning-parser) or SGLang
-       (--enable-custom-logit-processor); set CONTAINER=<name> if the serving container
+       (--enable-strict-thinking); set CONTAINER=<name> if the serving container
        was not auto-detected.
 EOF
       ;;
   esac
 }
 
-# Serialise a reference to an SGLang-side class the way its
-# CustomLogitProcessor.from_str expects: json {"callable": <hex of a pickle>}.
-# dill pickles an importable class BY REFERENCE (module + qualname); the hand-
-# built GLOBAL opcode below is that same reference and loads with dill.loads on
-# the server, which has sglang importable. Nothing is executed client-side and
-# no sglang install is needed here.
-_thinking_budget_sglang_processor_str() {
-  python3 - "$1" <<'PY'
-import json, sys
-module = "sglang.srt.sampling.custom_logit_processor"
-name = sys.argv[1]
-blob = b"\x80\x04c" + module.encode() + b"\n" + name.encode() + b"\n."
-print(json.dumps({"callable": blob.hex()}))
-PY
-}
-
 thinking_budget_extra_body() {
-  local kind="$1" want="$2" proc="${3:-}"
+  local kind="$1" want="$2"
   case "$kind" in
     vllm)
       printf '{"thinking_token_budget": %d}\n' "$want"
       ;;
     sglang)
-      [[ -n "$proc" ]] || return 1
-      python3 - "$want" "$(_thinking_budget_sglang_processor_str "$proc")" <<'PY'
-import json, sys
-print(json.dumps({
-    "custom_logit_processor": sys.argv[2],
-    "custom_params": {"thinking_budget": int(sys.argv[1])},
-}))
-PY
+      # Strict thinking reads the budget from custom_params (grammar_manager.py
+      # _get_request_thinking_budget) — no processor, no server-side code to load.
+      printf '{"custom_params": {"thinking_budget": %d}}\n' "$want"
       ;;
     *)
       : # llama.cpp: server-wide, nothing to send

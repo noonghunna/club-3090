@@ -574,8 +574,13 @@ all of them.
 | engine | server prerequisite (boot) | what the wrapper sends | how it verifies |
 |---|---|---|---|
 | llama.cpp | `--reasoning-budget N` — the shipped composes read `REASONING_BUDGET=N` | nothing (server-wide) | `docker inspect` of the serving container, resolving the flag's **value** through the container env. The composes always emit `--reasoning-budget "${REASONING_BUDGET:--1}"`, so a *present* flag with the env unset boots **unbounded (-1)** — presence proves nothing, the value must be exactly N. |
-| vLLM v0.29.0 | `--reasoning-parser <name>` | `thinking_token_budget: N` (via benchlocal's `--extra-body`) | the container command carries a parser — or, for an image that starts vLLM through its own launcher (bucko's `qwen38-serve`), vLLM's boot log reports one in `non-default args`. Without one vLLM rejects the field per request, so every scenario would 400 |
-| SGLang v0.5.20 | `--enable-custom-logit-processor` | `custom_logit_processor` (the model-specific `ThinkingBudgetLogitProcessor` subclass, chosen from the server's reasoning parser: qwen3 / qwen3-thinking / glm45 / deepseek-r1) + `custom_params.thinking_budget` | `/server_info` readback first, container command second |
+| vLLM v0.31.0 | `--reasoning-parser <name>` | `thinking_token_budget: N` (via benchlocal's `--extra-body`) | the container command carries a parser — or, for an image that starts vLLM through its own launcher (bucko's `qwen38-serve`), vLLM's boot log reports one in `non-default args`. Without one vLLM rejects the field per request (`VLLMValidationError`), so every scenario would 400 |
+| SGLang v0.5.21 | `--enable-strict-thinking` + `--reasoning-parser <name>` | `custom_params: {"thinking_budget": N}` — nothing else | `/server_info` (the resolved server args) first, container command second. **Without strict thinking SGLang ignores the field silently** (no error), so off = refused. A parser that blocks no tokens while thinking (anything outside `THINKING_BUDGET_SGLANG_FILTER_PARSERS` in `scripts/lib/thinking-budget.sh` — qwen3 / qwen3-thinking / glm45 / … are in it) also needs `SGLANG_MAX_THINK_TOKENS >= 0` at boot, seen in the container env or the compose's `[effort-budget] v1` boot line |
+
+SGLang used to get a `custom_logit_processor` (its `Qwen3ThinkingBudgetLogitProcessor`). That route is gone: the class
+hard-codes Qwen3's think ids 151667/151668 while Qwen3.5/3.6/3.8 use 248068/248069, so it was silently inert on
+those models, and the processor path is bypassed under NEXTN/EAGLE-v2 spec decode (sglang#26330). Strict thinking
+takes the think-end ids from the reasoning parser through the tokenizer, so they are right for every model.
 
 Refusals are loud and carry the fix — a budget that is accepted and ignored is worse than none, because
 success is then indistinguishable from failure. Positive evidence that the budget would *not* take effect is

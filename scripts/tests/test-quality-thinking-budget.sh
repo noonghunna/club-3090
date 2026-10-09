@@ -14,11 +14,16 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #                   shipped composes always emit the flag as
 #                   `--reasoning-budget "${REASONING_BUDGET:--1}"`, so the flag
 #                   being PRESENT proves nothing — only its VALUE does.
-#        vLLM       --reasoning-parser set at boot (v0.29.0 rejects the
+#        vLLM       --reasoning-parser set at boot (v0.31.0 rejects the
 #                   per-request field otherwise — every scenario would 400).
-#        SGLang     --enable-custom-logit-processor set at boot (v0.5.20
-#                   rejects the per-request processor otherwise), read from
-#                   /server_info first, docker second.
+#        SGLang     --enable-strict-thinking + --reasoning-parser at boot, read
+#                   from /server_info first, docker second. v0.5.21 IGNORES
+#                   custom_params.thinking_budget without strict thinking — no
+#                   error, the run only LOOKS bounded — so off is a refusal, and
+#                   the old --enable-custom-logit-processor no longer counts.
+#                   The request carries custom_params ONLY: the old
+#                   Qwen3ThinkingBudgetLogitProcessor hard-codes Qwen3's think
+#                   ids and is inert on Qwen3.5/3.6/3.8.
 #      Positive evidence that it will NOT take effect is a hard refusal with
 #      the fix instruction, and THINKING_BUDGET_UNVERIFIED=1 does NOT bypass
 #      it. Only the no-evidence case (no container, no readback) honours that
@@ -35,9 +40,12 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #
 # NEGATIVE CONTROLS — each of these must be RED for a wrapper that sends the
 # budget without looking: C (llama.cpp flag present, value -1), D (value
-# mismatch), E (flag absent), I (vLLM without parser), L (SGLang flag false),
-# J (agentic pack on a per-request engine), O (no evidence at all). Every one
-# asserts exit 2 AND that benchlocal-cli was never invoked.
+# mismatch), E (flag absent), I (vLLM without parser), L (SGLang strict thinking
+# off / only the old logit-processor flag / readback off while argv has the
+# flag), M (SGLang without a parser, or a non-filtering parser with no
+# SGLANG_MAX_THINK_TOKENS), J (agentic pack on a per-request engine), O (no
+# evidence at all). Every one asserts exit 2 AND that benchlocal-cli was never
+# invoked.
 #
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -222,8 +230,23 @@ mk_inspect "${tmp_work}/vllm-noparser.json" '["vllm","serve"]' '["/models/x","--
 mk_inspect "${tmp_work}/vllm-launcher.json" '["/usr/local/bin/qwen38-serve"]' '["/models/x","/models/draft"]' '[]'
 printf "%s\n" "(APIServer pid=1) INFO 10-07 09:50:52 [api_utils.py:272] non-default args: {'model_tag': '/models/x', 'enable_auto_tool_choice': True, 'tool_call_parser': 'qwen3_coder', 'reasoning_parser': 'qwen3', 'max_model_len': 262144}" > "${tmp_work}/vllm-launcher-parser.log"
 printf "%s\n" "(APIServer pid=1) INFO 10-07 09:50:52 [api_utils.py:272] non-default args: {'model_tag': '/models/x', 'max_model_len': 262144}" > "${tmp_work}/vllm-launcher-noparser.log"
-mk_inspect "${tmp_work}/sgl-flag.json"      '["python3","-m","sglang.launch_server"]' '["--reasoning-parser","qwen3","--enable-custom-logit-processor"]' '[]'
+mk_inspect "${tmp_work}/sgl-flag.json"      '["python3","-m","sglang.launch_server"]' '["--reasoning-parser","qwen3","--enable-strict-thinking"]' '[]'
 mk_inspect "${tmp_work}/sgl-noflag.json"    '["python3","-m","sglang.launch_server"]' '["--reasoning-parser","qwen3"]' '[]'
+# the OLD prerequisite alone: must no longer verify anything
+mk_inspect "${tmp_work}/sgl-clp.json"       '["python3","-m","sglang.launch_server"]' '["--reasoning-parser","qwen3","--enable-custom-logit-processor"]' '[]'
+# the shipped compose shape: flags inside a bash -c script
+SGL_SCRIPT='set -euo pipefail\n# --enable-strict-thinking in a comment must not count\nexec python3 -m sglang.launch_server --model-path /models/x \\\n  --reasoning-parser "${REASONING_PARSER:-qwen3}" \\\n  --enable-strict-thinking \\\n  --port 8000\n'
+SGL_ENTRY="$(python3 -c 'import json,sys; print(json.dumps(["/bin/bash","-c",sys.argv[1].encode().decode("unicode_escape")]))' "$SGL_SCRIPT")"
+mk_inspect "${tmp_work}/sgl-script.json"    "$SGL_ENTRY" '[]' '["REASONING_PARSER"]'
+SGL_SCRIPT_NOFLAG='set -euo pipefail\n# --enable-strict-thinking in a comment must not count\nexec python3 -m sglang.launch_server --model-path /models/x --reasoning-parser qwen3 --port 8000\n'
+SGL_ENTRY_NOFLAG="$(python3 -c 'import json,sys; print(json.dumps(["/bin/bash","-c",sys.argv[1].encode().decode("unicode_escape")]))' "$SGL_SCRIPT_NOFLAG")"
+mk_inspect "${tmp_work}/sgl-script-noflag.json" "$SGL_ENTRY_NOFLAG" '[]' '[]'
+# a parser that blocks no tokens while thinking (deepseek-r1): needs SGLANG_MAX_THINK_TOKENS >= 0 too
+mk_inspect "${tmp_work}/sgl-r1.json"        '["python3","-m","sglang.launch_server"]' '["--reasoning-parser","deepseek-r1","--enable-strict-thinking"]' '[]'
+mk_inspect "${tmp_work}/sgl-r1-mtt.json"    '["python3","-m","sglang.launch_server"]' '["--reasoning-parser","deepseek-r1","--enable-strict-thinking"]' '["SGLANG_MAX_THINK_TOKENS=4096"]'
+mk_inspect "${tmp_work}/sgl-r1-mttneg.json" '["python3","-m","sglang.launch_server"]' '["--reasoning-parser","deepseek-r1","--enable-strict-thinking"]' '["SGLANG_MAX_THINK_TOKENS=-1"]'
+printf '%s\n' 'boot' '[effort-budget] v1 map={"high":16384,"low":4096,"max":16384,"medium":8192,"minimal":4096,"xhigh":16384} default_effort=low floor=4096 engine=sglang' > "${tmp_work}/sgl-eb.log"
+printf '%s\n' 'boot' '[effort-budget] v1 off engine=sglang' > "${tmp_work}/sgl-eb-off.log"
 
 # ---- runner --------------------------------------------------------------------
 # run_wrapper [KEY=VAL ...] -- <wrapper args>
@@ -384,50 +407,97 @@ assert_rc J-cliscn 0 "$RUN_RC"
 run_wrapper CONTAINER=vllm-mock "DOCKER_MOCK_INSPECT=${tmp_work}/vllm-parser.json" -- --reasoning --thinking-budget 8192
 assert_rc J-reasoning 0 "$RUN_RC"
 
-echo "--- K: SGLang via /server_info (no container known) -> processor chosen from the parser ---"
-SGL_INFO_OK='{"enable_custom_logit_processor": true, "reasoning_parser": "qwen3", "version": "0.5.20"}'
+echo "--- K: SGLang via /server_info (no container known) -> custom_params ONLY, strict thinking ---"
+SGL_INFO_OK='{"enable_strict_thinking": true, "reasoning_parser": "qwen3", "version": "0.5.21"}'
 run_wrapper CURL_MOCK_OWNED_BY=sglang "CURL_MOCK_SERVER_INFO=${SGL_INFO_OK}" -- --quick --thinking-budget 8192
 assert_rc K 0 "$RUN_RC"
-assert_contains K "$OUT" "via SGLang per-request custom_logit_processor=Qwen3ThinkingBudgetLogitProcessor + custom_params.thinking_budget"
-assert_contains K "$OUT" "/server_info reports enable_custom_logit_processor=true, reasoning_parser=qwen3"
-K_BODY="$(arg_after --extra-body)"
-assert_contains K "$K_BODY" '"custom_params": {"thinking_budget": 8192}'
-assert_contains K "$K_BODY" '"custom_logit_processor": "{\"callable\": \"'
-# the pickle is a by-reference GLOBAL to sglang's own class: module + qualname, nothing else
-K_HEX="$(python3 -c 'import json,sys; b=json.loads(sys.argv[1]); print(json.loads(b["custom_logit_processor"])["callable"])' "$K_BODY")"
-K_DECODED="$(python3 -c 'import sys; print(bytes.fromhex(sys.argv[1]).decode("latin-1"))' "$K_HEX")"
-assert_contains K "$K_DECODED" $'sglang.srt.sampling.custom_logit_processor\nQwen3ThinkingBudgetLogitProcessor\n.'
-# nested readback shape (v0.5.20 groups args): still found, still verified
-run_wrapper CURL_MOCK_OWNED_BY=sglang 'CURL_MOCK_SERVER_INFO={"exec":{"features":{"enable_custom_logit_processor":true}},"serving":{"reasoning_parser":"glm45"}}' -- --quick --thinking-budget 8192
+assert_contains K "$OUT" "via SGLang per-request custom_params.thinking_budget (strict thinking)"
+assert_contains K "$OUT" "/server_info reports enable_strict_thinking=true, reasoning_parser=qwen3"
+[[ "$(count_arg --extra-body)" == "1" ]] || { echo "ASSERTION FAILED [K]: expected exactly one --extra-body, got $(count_arg --extra-body)" >&2; FAILED=1; }
+[[ "$(arg_after --extra-body)" == '{"custom_params": {"thinking_budget": 8192}}' ]] \
+  || { echo "ASSERTION FAILED [K]: extra-body must be custom_params ONLY, was '$(arg_after --extra-body)'" >&2; FAILED=1; }
+assert_not_contains K "$ARGS" "custom_logit_processor"
+assert_contains K "$ARGS" "--thinking-max-tokens 12288"
+# nested readback shape (v0.5.21 groups the resolved args): still found, still verified
+run_wrapper CURL_MOCK_OWNED_BY=sglang 'CURL_MOCK_SERVER_INFO={"serving":{"enable_strict_thinking":true,"reasoning_parser":"glm45"},"exec":{"features":{"enable_custom_logit_processor":false}}}' -- --quick --thinking-budget 8192
 assert_rc K-nested 0 "$RUN_RC"
-assert_contains K-nested "$OUT" "custom_logit_processor=Glm4MoeThinkingBudgetLogitProcessor"
+assert_contains K-nested "$OUT" "enable_strict_thinking=true, reasoning_parser=glm45"
+# a parser the old processor map never knew (mimo) works: the think-end ids come from the parser
+run_wrapper CURL_MOCK_OWNED_BY=sglang 'CURL_MOCK_SERVER_INFO={"enable_strict_thinking": true, "reasoning_parser": "mimo"}' -- --quick --thinking-budget 8192
+assert_rc K-mimo 0 "$RUN_RC"
+[[ "$(arg_after --extra-body)" == '{"custom_params": {"thinking_budget": 8192}}' ]] || { echo "ASSERTION FAILED [K-mimo]: extra-body was '$(arg_after --extra-body)'" >&2; FAILED=1; }
 
-echo "--- L (NEGATIVE): SGLang readback says the flag is OFF -> refused ---"
-run_wrapper CURL_MOCK_OWNED_BY=sglang 'CURL_MOCK_SERVER_INFO={"enable_custom_logit_processor": false, "reasoning_parser": "qwen3"}' -- --quick --thinking-budget 8192
+echo "--- L (NEGATIVE): SGLang strict thinking OFF -> refused (it would IGNORE the budget silently) ---"
+run_wrapper CURL_MOCK_OWNED_BY=sglang 'CURL_MOCK_SERVER_INFO={"enable_strict_thinking": false, "reasoning_parser": "qwen3"}' -- --quick --thinking-budget 8192
 assert_rc L 2 "$RUN_RC"
 assert_not_invoked L
-assert_contains L "$OUT" "WITHOUT --enable-custom-logit-processor"
-assert_contains L "$OUT" "ValueError"
-assert_contains L "$OUT" "add --enable-custom-logit-processor to the SGLang server command"
+assert_contains L "$OUT" "WITHOUT --enable-strict-thinking"
+assert_contains L "$OUT" "ignores custom_params.thinking_budget without it (no error)"
+assert_contains L "$OUT" "add --enable-strict-thinking (with a --reasoning-parser) to the SGLang server"
+# ...and the unverified acknowledgement does NOT bypass positive evidence
+run_wrapper CURL_MOCK_OWNED_BY=sglang 'CURL_MOCK_SERVER_INFO={"enable_strict_thinking": false, "reasoning_parser": "qwen3"}' THINKING_BUDGET_UNVERIFIED=1 -- --quick --thinking-budget 8192
+assert_rc L-nobypass 2 "$RUN_RC"
+assert_not_invoked L-nobypass
+# the OLD prerequisite alone is not evidence any more: no strict key -> no evidence -> refused
+run_wrapper CURL_MOCK_OWNED_BY=sglang 'CURL_MOCK_SERVER_INFO={"enable_custom_logit_processor": true, "reasoning_parser": "qwen3"}' -- --quick --thinking-budget 8192
+assert_rc L-oldflag 2 "$RUN_RC"
+assert_not_invoked L-oldflag
+assert_contains L-oldflag "$OUT" "cannot verify the budget can take effect on this sglang server"
+run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-clp.json" -- --quick --thinking-budget 8192
+assert_rc L-oldflag-argv 2 "$RUN_RC"
+assert_not_invoked L-oldflag-argv
+assert_contains L-oldflag-argv "$OUT" "WITHOUT --enable-strict-thinking"
+# the resolved readback wins over the command line: argv carries the flag, the server says off
+run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-flag.json" CURL_MOCK_OWNED_BY=sglang 'CURL_MOCK_SERVER_INFO={"enable_strict_thinking": false, "reasoning_parser": "qwen3"}' -- --quick --thinking-budget 8192
+assert_rc L-readback-wins 2 "$RUN_RC"
+assert_not_invoked L-readback-wins
+assert_contains L-readback-wins "$OUT" "/server_info reports the server was started WITHOUT --enable-strict-thinking"
 
-echo "--- M: SGLang parser with no mapped processor -> refused unless named explicitly ---"
-run_wrapper CURL_MOCK_OWNED_BY=sglang 'CURL_MOCK_SERVER_INFO={"enable_custom_logit_processor": true, "reasoning_parser": "mimo"}' -- --quick --thinking-budget 8192
-assert_rc M 2 "$RUN_RC"
-assert_not_invoked M
-assert_contains M "$OUT" "no ThinkingBudgetLogitProcessor is known for reasoning_parser='mimo'"
-assert_contains M "$OUT" "THINKING_BUDGET_SGLANG_PROCESSOR=<subclass>"
-run_wrapper CURL_MOCK_OWNED_BY=sglang 'CURL_MOCK_SERVER_INFO={"enable_custom_logit_processor": true, "reasoning_parser": "mimo"}' THINKING_BUDGET_SGLANG_PROCESSOR=InklingThinkingBudgetLogitProcessor -- --quick --thinking-budget 8192
-assert_rc M-override 0 "$RUN_RC"
-assert_contains M-override "$OUT" "custom_logit_processor=InklingThinkingBudgetLogitProcessor"
+echo "--- M (NEGATIVE): strict thinking without a parser / a parser that filters nothing ---"
+run_wrapper CURL_MOCK_OWNED_BY=sglang 'CURL_MOCK_SERVER_INFO={"enable_strict_thinking": true, "reasoning_parser": null}' -- --quick --thinking-budget 8192
+assert_rc M-noparser 2 "$RUN_RC"
+assert_not_invoked M-noparser
+assert_contains M-noparser "$OUT" "NO --reasoning-parser"
+# deepseek-r1 blocks no tokens while thinking: the budget filter needs SGLANG_MAX_THINK_TOKENS >= 0
+run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-r1.json" -- --quick --thinking-budget 8192
+assert_rc M-r1 2 "$RUN_RC"
+assert_not_invoked M-r1
+assert_contains M-r1 "$OUT" "that parser blocks no tokens while thinking"
+assert_contains M-r1 "$OUT" "SGLANG_MAX_THINK_TOKENS=<n>"
+run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-r1-mttneg.json" -- --quick --thinking-budget 8192
+assert_rc M-r1-neg 2 "$RUN_RC"
+assert_contains M-r1-neg "$OUT" "(SGLANG_MAX_THINK_TOKENS=-1)"
+run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-r1.json" "DOCKER_MOCK_LOGS=${tmp_work}/sgl-eb-off.log" -- --quick --thinking-budget 8192
+assert_rc M-r1-ebOff 2 "$RUN_RC"
+assert_not_invoked M-r1-ebOff
+# ...positive: the env says it, or the compose's [effort-budget] boot line exported a floor
+run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-r1-mtt.json" -- --quick --thinking-budget 8192
+assert_rc M-r1-env 0 "$RUN_RC"
+assert_contains M-r1-env "$OUT" "SGLANG_MAX_THINK_TOKENS=4096 at boot turns the budget filter on"
+run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-r1.json" "DOCKER_MOCK_LOGS=${tmp_work}/sgl-eb.log" -- --quick --thinking-budget 8192
+assert_rc M-r1-eb 0 "$RUN_RC"
+assert_contains M-r1-eb "$OUT" "SGLANG_MAX_THINK_TOKENS=4096 at boot turns the budget filter on"
+# no evidence either way is unverifiable, so the explicit acknowledgement runs it, labelled
+run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-r1.json" THINKING_BUDGET_UNVERIFIED=1 -- --quick --thinking-budget 8192
+assert_rc M-r1-ack 0 "$RUN_RC"
+assert_contains M-r1-ack "$OUT" "THINKING BUDGET UNVERIFIED"
 
 echo "--- N: SGLang docker fallback when there is no readback ---"
 run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-flag.json" -- --quick --thinking-budget 8192
 assert_rc N 0 "$RUN_RC"
-assert_contains N "$OUT" "container sglang-mock reports enable_custom_logit_processor=true, reasoning_parser=qwen3"
+assert_contains N "$OUT" "container sglang-mock (command line) reports enable_strict_thinking=true, reasoning_parser=qwen3"
+[[ "$(arg_after --extra-body)" == '{"custom_params": {"thinking_budget": 8192}}' ]] || { echo "ASSERTION FAILED [N]: extra-body was '$(arg_after --extra-body)'" >&2; FAILED=1; }
+run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-script.json" -- --quick --thinking-budget 8192
+assert_rc N-script 0 "$RUN_RC"
+assert_contains N-script "$OUT" "reports enable_strict_thinking=true, reasoning_parser=qwen3"
 run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-noflag.json" -- --quick --thinking-budget 8192
 assert_rc N-noflag 2 "$RUN_RC"
 assert_not_invoked N-noflag
-assert_contains N-noflag "$OUT" "WITHOUT --enable-custom-logit-processor"
+assert_contains N-noflag "$OUT" "WITHOUT --enable-strict-thinking"
+# a comment line mentioning the flag is not the flag
+run_wrapper CONTAINER=sglang-mock "DOCKER_MOCK_INSPECT=${tmp_work}/sgl-script-noflag.json" -- --quick --thinking-budget 8192
+assert_rc N-comment 2 "$RUN_RC"
+assert_not_invoked N-comment
 
 echo "--- O (NEGATIVE): no evidence at all -> refused; explicit acknowledgement labels the run ---"
 run_wrapper CURL_MOCK_OWNED_BY=llamacpp -- --quick --thinking-budget 8192
@@ -499,6 +569,11 @@ assert_not_invoked S-conflict
 assert_contains S-conflict "$OUT" "two sources of truth"
 run_wrapper CONTAINER=vllm-mock "DOCKER_MOCK_INSPECT=${tmp_work}/vllm-parser.json" -- --quick --thinking-budget 8192 -- --extra-body 'not json'
 assert_rc S-badjson 2 "$RUN_RC"
+# SGLang: a pass-through custom_params is a second source of truth for the budget too
+run_wrapper CURL_MOCK_OWNED_BY=sglang "CURL_MOCK_SERVER_INFO=${SGL_INFO_OK}" -- --quick --thinking-budget 8192 -- --extra-body '{"custom_params": {"thinking_budget": 1}}'
+assert_rc S-sgl-conflict 2 "$RUN_RC"
+assert_not_invoked S-sgl-conflict
+assert_contains S-sgl-conflict "$OUT" "also sets custom_params"
 # without a budget the pass-through --extra-body is forwarded verbatim (unchanged behaviour)
 run_wrapper CONTAINER=vllm-mock "DOCKER_MOCK_INSPECT=${tmp_work}/vllm-parser.json" -- --quick -- --extra-body '{"foo": 1}'
 assert_rc S-plain 0 "$RUN_RC"
