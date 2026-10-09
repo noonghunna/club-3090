@@ -656,6 +656,10 @@ def scan_compose_text(text: str, names) -> dict[str, KnobUse]:
                 m = re.search(re.escape(arg) + r"""\s+(["']?)([^\s"'$]+)\1(?=\s|\)|$)""", ln) if arg else None
                 if m:
                     uses[nm].defaults.append(m.group(2))
+                elif arg is None:
+                    # A switch with no argument on the line (THINKING_BUDGETS): unset is its
+                    # default — "" in compose_default()'s terms, shown as "(unset)".
+                    uses[nm].defaults.append("")
     return uses
 
 

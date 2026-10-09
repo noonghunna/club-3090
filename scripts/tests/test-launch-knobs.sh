@@ -275,8 +275,8 @@ expect(not any("THINKING_BUDGET_LOW:" in e and ("nothing in the compose reads it
        "coverage: forwarding a knob to the mounted reader the compose runs is a read, not a dead forward")
 rf = lk.scan_compose(fx / "reader-forwarded.yml", names)
 expect(rf["THINKING_BUDGET_LOW"].compose_default() == "1" and rf["THINKING_BUDGET_XHIGH"].compose_default() == "3"
-       and rf["THINKING_BUDGETS"].compose_default() is None,
-       "scan: a mounted-reader knob's default is its --low/--xhigh argument; THINKING_BUDGETS has none")
+       and rf["THINKING_BUDGETS"].compose_default() == "",
+       "scan: a mounted-reader knob's default is its --low/--xhigh argument; THINKING_BUDGETS (no argument) defaults to unset")
 cov = ck.check_coverage(cat, [fx_consumer("forward-no-reader.yml")])
 expect(any("THINKING_BUDGET_LOW:" in e and "nothing in the compose reads it" in e for e in cov),
        "coverage (negative control): forwarding the knob with no shell-env run — only a comment and another "
