@@ -72,6 +72,26 @@ _TYPE_PATTERN = {
 
 _NAME_RX = r"[A-Za-z_][A-Za-z0-9_]*"
 
+# Knobs read by a PROGRAM the compose mounts and runs, not by the compose text. The program
+# reads them from its environment, so the compose text never says `$${NAME}`. A compose whose
+# (comment-stripped) code runs `invoke` reads each listed knob there — it must also forward it
+# (environment:), or the value never arrives — and the knob's compose default is the value
+# after its argument on that same line (None = the knob has no default). Narrow on purpose:
+# only the exact invocation counts. `file` is the program's repo source (the guard checks it
+# names each knob). Add a row only for a program the composes really mount and run.
+MOUNTED_READERS = (
+    {
+        "invoke": "python3 /etc/club3090/effort_budget.py shell-env",
+        "file": "scripts/lib/effort_budget.py",
+        "knobs": {
+            "THINKING_BUDGET_LOW": "--low",
+            "THINKING_BUDGET_MEDIUM": "--medium",
+            "THINKING_BUDGET_XHIGH": "--xhigh",
+            "THINKING_BUDGETS": None,
+        },
+    },
+)
+
 
 class CatalogueError(ValueError):
     """The catalogue file is malformed. The message names the knob and the field."""
@@ -140,11 +160,6 @@ def catalogue_errors(data) -> list[str]:
         engines = k.get("engines")
         if not isinstance(engines, list) or not engines or not all(isinstance(e, str) for e in engines):
             errs.append(f"{w}.engines: required non-empty list of engine kinds")
-        rb = k.get("read_by")
-        if rb is not None and not (isinstance(rb, dict) and all(
-                isinstance(rb.get(f), str) and rb[f].strip() for f in ("file", "invoke", "what"))):
-            errs.append(f"{w}.read_by: needs non-empty 'file' (the program, repo-relative), 'invoke' "
-                        "(the literal command every reading compose runs) and 'what'")
         variants = k.get("variants")
         if not isinstance(variants, list) or not variants:
             errs.append(f"{w}.variants: required non-empty list")
@@ -401,6 +416,7 @@ class KnobUse:
     interp: list[int] = field(default_factory=list)   # compose-side ${NAME...} outside its own env entry
     shell: list[int] = field(default_factory=list)    # container-side $${NAME...} / $$NAME
     assigned: list[int] = field(default_factory=list)  # the container script assigns NAME itself
+    mounted: list[int] = field(default_factory=list)   # lines running a MOUNTED_READERS program that reads NAME
     defaults: list[str] = field(default_factory=list)  # the `:-x` / `-x` defaults it is read with
 
     @property
@@ -414,13 +430,14 @@ class KnobUse:
 
     @property
     def dead_read(self) -> bool:
-        """The container reads $${NAME} but the compose never forwards it."""
-        return bool(self.shell) and not self.forwarded and not self.assigned
+        """The container reads $${NAME} (or runs a mounted program that reads it) but the
+        compose never forwards it."""
+        return (bool(self.shell) or bool(self.mounted)) and not self.forwarded and not self.assigned
 
     @property
     def dead_env(self) -> bool:
         """Forwarded into the container but nothing in the compose reads it."""
-        return self.forwarded and not self.shell and not self.interp
+        return self.forwarded and not self.shell and not self.interp and not self.mounted
 
     def env_forms(self) -> list[str]:
         return [form for _, form in self.env]
@@ -626,6 +643,19 @@ def scan_compose_text(text: str, names) -> dict[str, KnobUse]:
                 + re.escape(nm) + r"=", _QUOTED_RX.sub('""', ln)
             ):
                 u.assigned.append(idx + 1)
+
+    # 3. programs the compose mounts and runs that read knobs from their environment.
+    for reader in MOUNTED_READERS:
+        for idx, ln in enumerate(code):
+            if reader["invoke"] not in ln:
+                continue
+            for nm, arg in reader["knobs"].items():
+                if nm not in uses:
+                    continue
+                uses[nm].mounted.append(idx + 1)
+                m = re.search(re.escape(arg) + r"""\s+(["']?)([^\s"'$]+)\1(?=\s|\)|$)""", ln) if arg else None
+                if m:
+                    uses[nm].defaults.append(m.group(2))
     return uses
 
 
@@ -685,12 +715,12 @@ def _main(argv: list[str]) -> int:
             rc = 1
             continue
         for n, u in sorted(uses.items()):
-            if not (u.env or u.interp or u.shell):
+            if not (u.env or u.interp or u.shell or u.mounted):
                 continue
             flags = [f for f, on in (("consumed", u.consumed), ("DEAD-READ", u.dead_read),
                                      ("dead-env", u.dead_env)) if on]
             print(f"{c}\t{n}\tenv={','.join(u.env_forms()) or '-'}\tinterp={len(u.interp)}"
-                  f"\tshell={len(u.shell)}\tdefault={u.compose_default()!r}\t{' '.join(flags)}")
+                  f"\tshell={len(u.shell)}\tmounted={len(u.mounted)}\tdefault={u.compose_default()!r}\t{' '.join(flags)}")
     return rc
 
 

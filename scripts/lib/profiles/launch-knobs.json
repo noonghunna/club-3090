@@ -1060,11 +1060,6 @@
    "engines": [
     "vllm"
    ],
-   "read_by": {
-    "file": "scripts/lib/effort_budget.py",
-    "invoke": "python3 /etc/club3090/effort_budget.py shell-env",
-    "what": "the compose mounts it at /etc/club3090/effort_budget.py and runs its shell-env in the entrypoint; it reads THINKING_BUDGET_LOW/MEDIUM/XHIGH and THINKING_BUDGETS from the environment (LEVEL_KNOBS, OFF_KNOB)"
-   },
    "variants": [
     {
      "match": {
@@ -1077,9 +1072,9 @@
       ]
      },
      "enforced": "boot",
+     "default": "4096",
      "every_consumer_contains": [
-      "python3 /etc/club3090/effort_budget.py shell-env --engine vllm",
-      "--low 4096"
+      "python3 /etc/club3090/effort_budget.py shell-env --engine vllm"
      ],
      "source": {
       "file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml",
@@ -1153,11 +1148,6 @@
    "engines": [
     "vllm"
    ],
-   "read_by": {
-    "file": "scripts/lib/effort_budget.py",
-    "invoke": "python3 /etc/club3090/effort_budget.py shell-env",
-    "what": "the compose mounts it at /etc/club3090/effort_budget.py and runs its shell-env in the entrypoint; it reads THINKING_BUDGET_LOW/MEDIUM/XHIGH and THINKING_BUDGETS from the environment (LEVEL_KNOBS, OFF_KNOB)"
-   },
    "variants": [
     {
      "match": {
@@ -1170,9 +1160,9 @@
       ]
      },
      "enforced": "boot",
+     "default": "16384",
      "every_consumer_contains": [
-      "python3 /etc/club3090/effort_budget.py shell-env --engine vllm",
-      "--medium 16384"
+      "python3 /etc/club3090/effort_budget.py shell-env --engine vllm"
      ],
      "source": {
       "file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml",
@@ -1246,11 +1236,6 @@
    "engines": [
     "vllm"
    ],
-   "read_by": {
-    "file": "scripts/lib/effort_budget.py",
-    "invoke": "python3 /etc/club3090/effort_budget.py shell-env",
-    "what": "the compose mounts it at /etc/club3090/effort_budget.py and runs its shell-env in the entrypoint; it reads THINKING_BUDGET_LOW/MEDIUM/XHIGH and THINKING_BUDGETS from the environment (LEVEL_KNOBS, OFF_KNOB)"
-   },
    "variants": [
     {
      "match": {
@@ -1263,9 +1248,9 @@
       ]
      },
      "enforced": "boot",
+     "default": "32768",
      "every_consumer_contains": [
-      "python3 /etc/club3090/effort_budget.py shell-env --engine vllm",
-      "--xhigh 32768"
+      "python3 /etc/club3090/effort_budget.py shell-env --engine vllm"
      ],
      "source": {
       "file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml",
@@ -1338,11 +1323,6 @@
    "engines": [
     "vllm"
    ],
-   "read_by": {
-    "file": "scripts/lib/effort_budget.py",
-    "invoke": "python3 /etc/club3090/effort_budget.py shell-env",
-    "what": "the compose mounts it at /etc/club3090/effort_budget.py and runs its shell-env in the entrypoint; it reads THINKING_BUDGET_LOW/MEDIUM/XHIGH and THINKING_BUDGETS from the environment (LEVEL_KNOBS, OFF_KNOB)"
-   },
    "variants": [
     {
      "match": {

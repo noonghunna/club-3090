@@ -294,6 +294,7 @@ if MODE == "budgets":
         "/v1/messages without budget_tokens -> the server default", messages({}, 2048), DEFAULT))
 
     def msg_explicit():
+        # 1024 is the floor of thinking.budget_tokens: vLLM validates ge=1024 and SGLang 400s below it.
         r = messages({"thinking": {"type": "enabled", "budget_tokens": 1024}}, 4096)
         lo, hi = int(XHIGH) + SLACK, 1024 + SLACK
         ok = lo < r["n"] <= hi and r["finish"] == "stop" and r["content"].strip()

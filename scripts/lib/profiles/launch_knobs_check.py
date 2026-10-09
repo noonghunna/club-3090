@@ -7,10 +7,9 @@ it a deliberately broken copy and prove each check can fail.
                    variant; the knob's `engines` list, each variant's `default` and
                    `every_consumer_contains` agree with the composes; no compose
                    reads a knob it never receives (dead read), pins it to a
-                   constant, or forwards it to nothing. A knob with `read_by` is
-                   read by a mounted program, not by compose text: forwarding it
-                   counts as read when the compose runs `read_by.invoke`, and a
-                   compose that runs it without forwarding the knob fails.
+                   constant, or forwards it to nothing. A knob a mounted program
+                   reads (launch_knobs.MOUNTED_READERS) is read where the compose
+                   runs that program; running it without forwarding the knob fails.
   check_domains    each variant's value domain is run through the REAL compose
                    code it names (a shell fragment, a JSON splice, or a plain
                    pass-through): accepted values must pass both the catalogue and
@@ -144,20 +143,16 @@ def check_coverage(cat: dict, consumers: list[Consumer]) -> list[str]:
         if c.compose in seen:
             continue
         seen.add(c.compose)
-        code = "\n".join(lk.strip_comment(ln) for ln in c.text.splitlines())
         for name, u in sorted(c.uses.items()):
-            rb = (cat["knobs"].get(name) or {}).get("read_by")
-            runs_reader = bool(rb) and rb["invoke"] in code
-            if runs_reader and not u.forwarded:
-                errs.append(f"{name}: {c.compose} runs {rb['invoke']!r}, which reads {name}, but never forwards "
-                            f"it (no environment: entry) — a saved value would never reach it")
             if u.dead_read:
-                errs.append(f"{name}: {c.compose} reads $${{{name}}} (lines {u.shell[:3]}) but never forwards it "
+                how = (f"reads $${{{name}}} (lines {u.shell[:3]})" if u.shell
+                       else f"runs a mounted program that reads it (lines {u.mounted[:3]})")
+                errs.append(f"{name}: {c.compose} {how} but never forwards it "
                             "(no environment: entry, no ${...} interpolation) — the container never sees the value")
             if "pinned" in u.env_forms():
                 errs.append(f"{name}: {c.compose} pins it to a constant in environment: — a saved value "
                             "would silently do nothing")
-            if u.dead_env and not runs_reader:
+            if u.dead_env:
                 errs.append(f"{name}: {c.compose} forwards it but nothing in the compose reads it")
     return errs
 
@@ -346,13 +341,15 @@ def check_domains(root: Path, cat: dict, consumers: list[Consumer]) -> tuple[lis
         for sec, src in cited:
             if not (root / src["file"]).is_file():
                 errs.append(f"{name}.{sec}: cited source {src['file']} does not exist")
-        rb = knob.get("read_by")
-        if rb:
+        for reader in lk.MOUNTED_READERS:
+            if name not in reader["knobs"]:
+                continue
             try:
-                if name not in (root / rb["file"]).read_text(encoding="utf-8"):
-                    errs.append(f"{name}.read_by: {rb['file']} does not mention {name} — it cannot be the reader")
+                if name not in (root / reader["file"]).read_text(encoding="utf-8"):
+                    errs.append(f"{name}: MOUNTED_READERS says {reader['file']} reads it, but the file never "
+                                "mentions it — it cannot be the reader")
             except OSError as exc:
-                errs.append(f"{name}.read_by: {rb['file']}: {exc}")
+                errs.append(f"{name}: MOUNTED_READERS reader {reader['file']}: {exc}")
         for vi, v in enumerate(knob["variants"]):
             w = f"{name}.variants[{vi}]"
             for ev in v.get("evidence", []) or []:
