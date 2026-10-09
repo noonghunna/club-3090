@@ -35,6 +35,10 @@
 #     container's logs, sampling defaults and topology as its own.
 #   url_host_port URL
 #     "host port", the port defaulted from the scheme.
+#   url_on_this_host URL
+#     exit 0 when URL's host is this machine — loopback, 0.0.0.0, one of its own
+#     addresses, or a name resolving to one. concurrency-probe.sh uses it to tell
+#     a host-process server (measure this rig's GPUs) from a remote one (don't).
 
 listen_addrs() {
   local port="$1"
@@ -95,6 +99,17 @@ _host_addrs() {
     *[!0-9.]*)         getent ahosts "$host" 2>/dev/null | awk '{print $1}' | sort -u ;;
     *)                 printf '%s\n' "$host" ;;
   esac
+}
+
+url_on_this_host() {
+  local host port own a
+  read -r host port < <(url_host_port "$1")
+  own=" $(hostname -I 2>/dev/null) "
+  while IFS= read -r a; do
+    [[ -n "$a" ]] || continue
+    [[ "$a" == 127.* || "$a" == ::1 || "$own" == *" ${a} "* ]] && return 0
+  done < <(_host_addrs "$host")
+  return 1
 }
 
 ports_serve_url() {

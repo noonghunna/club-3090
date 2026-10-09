@@ -86,6 +86,19 @@ no_  "$S" http://localhost:8040
 yes_ "0.0.0.0:6333-6334->6333-6334/tcp" http://localhost:6334   # a published range
 no_  "8000/tcp" http://localhost:8000          # exposed, not published
 
+# url_on_this_host — concurrency-probe's "is the server on this machine at all?"
+local_() { bash -c 'source scripts/lib/listen-scope.sh; url_on_this_host "$1"' _ "$1" || fail "expected $1 to be this host"; pass "this host: $1"; }
+away_()  { if bash -c 'source scripts/lib/listen-scope.sh; url_on_this_host "$1"' _ "$1"; then fail "expected $1 NOT to be this host"; fi; pass "remote:    $1"; }
+local_ http://localhost:8020
+local_ http://0.0.0.0:8020
+local_ "http://[::1]:8020"
+local_ http://192.168.1.5:8020
+local_ http://rig.lan:8020
+local_ http://myrig:8020
+away_  http://10.9.9.9:8020
+away_  http://other.lan:8020
+away_  http://unresolvable:8020
+
 # ---------------------------------------------------------------------------
 echo "--- 2. preflight_autodetect_endpoint ---"
 SEARXNG="searxng|0.0.0.0:8088->8080/tcp, [::]:8088->8080/tcp|searxng/searxng:latest"

@@ -213,6 +213,15 @@ if [[ "${CONTAINER:-}" == "none" ]]; then
 elif [[ -z "${CONTAINER:-}" ]]; then
   CONTAINER="$(club_container_for_url "$URL")"
 fi
+# A remote endpoint: no local container AND the URL is not this machine. This rig's GPUs are then
+# not the server's, so their VRAM and names must not land on its card — they used to, as
+# "2× GeForce RTX 3090" and a VRAM curve of whatever this host happened to be doing. A host-process
+# server (CONTAINER=none, localhost URL) is still measured rig-wide: its GPUs ARE these.
+# shellcheck source=lib/listen-scope.sh
+source "${ROOT_DIR}/scripts/lib/listen-scope.sh"
+CP_REMOTE=0
+if [[ -z "$CONTAINER" ]] && ! url_on_this_host "$URL"; then CP_REMOTE=1; fi
+export CP_REMOTE
 
 _container_cmd() { docker inspect "$CONTAINER" --format '{{join .Config.Cmd " "}}' 2>/dev/null || true; }
 # The served context: what the ENGINE reports first (SGLang server info, vLLM /v1/models, vLLM's
@@ -233,6 +242,7 @@ _detect_slots() { local hit; hit="$(served_slots "$URL" "$CONTAINER")"; echo "${
 # The GPUs the probed container sees, not every GPU on the host (#1502): a container pinned to the one
 # RTX 3060 of a 3090 + 3060 rig was labelled "4× RTX 3090". Falls back to every GPU when unresolvable.
 _gpu_fp() {
+  if [[ "$CP_REMOTE" == "1" ]]; then echo "remote GPUs n/a"; return; fi
   CONTAINER="$CONTAINER" python3 "$PROBE_PY" --gpu-label 2>/dev/null || echo "? GPU"
 }
 

@@ -793,7 +793,12 @@ def run_probe():
         f"{'agg_t/s':>8} {'per-strm':>9} {'ttft_ms':>8} {'pf_t/s':>7}"
         f" {'ttft_p95':>9} {'tps_p05':>8} {'run/wait':>10} {'pfxhit':>6}"
     )
-    gpu_sel, gpu_scope = container_gpus(CONTAINER)
+    if os.environ.get("CP_REMOTE") == "1":
+        # An empty selection, not None (= every GPU): nothing local is the server's, so VRAM is
+        # unmeasured (-1) — the same path as a host without nvidia-smi, which the verdict skips.
+        gpu_sel, gpu_scope = [], "none — remote endpoint; VRAM is not measured from this host"
+    else:
+        gpu_sel, gpu_scope = container_gpus(CONTAINER)
     print(f"[probe] VRAM measured on: {gpu_scope}")
     vram0 = vram_used_mb(gpu_sel)
     peak_by_gpu = {}
@@ -910,11 +915,14 @@ def run_probe():
     PASS = clean_fit and floor_ok and (retention_ok if VALIDATE else True)
 
     print(f"\n=== verdict (N={N}) ===")
-    print(
-        f"  VRAM: cold {vram0} -> warm {warm} MB (pool fill {pool_fill} MB, expected) "
-        f"-> final {vram_by_round[-1]} MB (post-warm growth {leak} MB / {GROWTH})  "
-        f"peak {vram_peak} MB"
-    )
+    if vram0 < 0:
+        print(f"  VRAM: not measured ({gpu_scope})")
+    else:
+        print(
+            f"  VRAM: cold {vram0} -> warm {warm} MB (pool fill {pool_fill} MB, expected) "
+            f"-> final {vram_by_round[-1]} MB (post-warm growth {leak} MB / {GROWTH})  "
+            f"peak {vram_peak} MB"
+        )
     if peak_by_gpu:
         print("  VRAM peak per GPU: " + " · ".join(f"GPU {g} {mb} MB" for g, mb in peak_by_gpu.items())
               + f"  ({gpu_scope})")
@@ -992,7 +1000,7 @@ def run_probe():
         "leak": leak,
         "vram_peak": vram_peak,
         # #1502: which GPUs vram_peak covers ("all" = every GPU on the host) and each one's peak
-        "vram_gpus": ",".join(gpu_sel) if gpu_sel is not None else "all",
+        "vram_gpus": ("all" if gpu_sel is None else ",".join(gpu_sel) or "none"),
         "vram_peak_gpus": ",".join(f"{g}:{mb}" for g, mb in peak_by_gpu.items()) or "-",
         "floor_ok": int(floor_ok),
         "ttft_ms": f"{steady_ttft * 1000:.0f}",

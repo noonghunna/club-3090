@@ -395,6 +395,21 @@ fi
 rm -rf "$SLOT_STUB"
 echo "  ✓ slot count: a remote URL never borrows a local container's flags; the container's own URL does; CONTAINER=none stays host-only"
 
+# A remote endpoint's card must not carry THIS rig's GPUs: no local container and a URL that is not
+# this machine → GPU field "remote GPUs n/a", VRAM unmeasured (vram_gpus=none). `.invalid` never
+# resolves (RFC 6761), so every request fails at once and the sweep finishes in seconds. The same
+# sweep against a free LOCAL port (a host-process server) is still measured rig-wide (positive control).
+out="$(URL=http://remote.invalid:8020 MODEL=m CTX_SWEEP=1k ROUNDS=1 timeout 120 bash "$PROBE" --sweep --n 1 </dev/null 2>&1 || true)"
+command grep -q "remote GPUs n/a" <<<"$out" || { printf '%s\n' "$out" | tail -8 >&2; fail "a remote endpoint's card should say 'remote GPUs n/a'"; }
+command grep -q "VRAM: not measured (none — remote endpoint" <<<"$out" || fail "a remote endpoint's VRAM should read 'not measured'"
+command grep -q "vram_gpus=none" <<<"$out" || fail "a remote endpoint's RESULT should record vram_gpus=none"
+LOCAL_PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
+out="$(URL="http://127.0.0.1:${LOCAL_PORT}" MODEL=m CTX_SWEEP=1k ROUNDS=1 timeout 120 bash "$PROBE" --sweep --n 1 </dev/null 2>&1 || true)"
+if command grep -q "remote GPUs n/a" <<<"$out"; then fail "a local host-process endpoint was labelled remote"; fi
+command grep -q "VRAM measured on: every GPU on the host" <<<"$out" \
+  || { printf '%s\n' "$out" | tail -8 >&2; fail "a local host-process endpoint should be measured rig-wide (positive control)"; }
+echo "  ✓ remote endpoint: card says 'remote GPUs n/a', VRAM not measured; a local host process is still measured rig-wide"
+
 # #1537 follow-up: the KV pool, the slot count's source and the recommendation's knob names.
 # xtj7's cards read "KV ?" on both engines, the SGLang sweep header said "slots=4 (undetected)"
 # with the count right, and the SGLang recommendation said MAX_NUM_SEQS (a vLLM knob).
