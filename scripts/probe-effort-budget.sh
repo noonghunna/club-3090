@@ -290,6 +290,18 @@ if MODE == "budgets":
                                          f"finish={r['finish']}, content={r['content'].strip()[:40]!r}")
     safe("thinking off", thinking_off)
 
+    def topk_off():
+        # vllm#58231: under spec decode, a row with top_p < 1 and NO active top-k turns the forced
+        # reasoning end into token 0 (Qwen's "!") repeated to max_tokens. Every thinking request now
+        # gets a budget (the map or the floor), so a client that disables top_k must still get an
+        # answer when its budget is hit. Effort low = the tiny budget, so the forced close happens.
+        r = chat({"reasoning_effort": "low", "top_k": -1, "top_p": 0.95, "temperature": 1.0}, max_tokens=1024)
+        garbage = "!!!!!!!!" in r["content"] or "!!!!!!!!" in r["text"][-64:]
+        ok = r["finish"] == "stop" and r["content"].strip() and not garbage
+        report("top_k off + top_p<1 (vllm#58231)", bool(ok),
+               f"reasoning {r['n']} tok, finish={r['finish']}, token-0 run: {garbage}, content={r['content'].strip()[:40]!r}")
+    safe("top_k off + top_p<1 (vllm#58231)", topk_off)
+
     safe("/v1/messages without budget_tokens", lambda: about(
         "/v1/messages without budget_tokens -> the server default", messages({}, 2048), DEFAULT))
 
