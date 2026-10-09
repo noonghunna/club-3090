@@ -31,6 +31,12 @@ can deliver the host value into the container. There are two ways:
 A container-side read (`$${NAME}`, an even run of `$`) does not count on its own: the
 container sees the value only if the knob is also forwarded. A compose that reads
 `$${NAME}` without forwarding it has a dead setting, and the guard fails on it.
+
+Some knobs are read by a **program the compose mounts and runs**, not by the compose
+text: `THINKING_BUDGET_*` / `THINKING_BUDGETS` are read by `scripts/lib/effort_budget.py`
+(`/etc/club3090/effort_budget.py shell-env` in the entrypoint). Such a knob declares
+`read_by`; a compose that forwards it **and** runs `read_by.invoke` reads it, and a compose
+that runs the program without forwarding the knob is a dead setting the guard fails on.
 Comments are ignored, whether YAML comments or shell comments inside a `|` block;
 many composes mention knobs only in comments. Flow-style `environment:`, YAML
 aliases and merge keys are refused rather than guessed at. No shipped compose uses
@@ -59,6 +65,7 @@ Knob (`knobs.<ENV_NAME>`):
 | `requires` | `{when, knob, then, why, source}`. `when`/`then` is `"set"` or `{"equals": v}`. Example: `KV_OFFLOAD_DISK` `{"equals":"1"}` requires `KV_OFFLOAD_GB` `"set"`. |
 | `interacts` | `{knob, effect, source}`: other settings that change or override this one |
 | `caveats` | `{text, source}` |
+| `read_by` | optional `{file, invoke, what}`: the knob is read by a mounted program, not by compose text. `file` (repo-relative) must mention the knob; `invoke` is the literal command every reading compose runs. Forwarding the knob counts as a read only where the compose runs `invoke` |
 
 Variant:
 
@@ -82,7 +89,9 @@ the compose's own code:
   `to_plus` lines), with `$$` → `$`, under the script's own `set -e…` line, in a
   clean `env -i` shell. File-touching commands (`rm`, `curl`, …) are stubbed. The
   compose accepts a value when the fragment exits 0; with `emit` + `json`, the emitted
-  text must also parse as JSON.
+  text must also parse as JSON. `mounts` (`{container path: repo-relative file}`) rewrites
+  those paths in the fragment so a program the compose mounts runs from its repo source —
+  the domain is then proven by the real reader (`effort_budget.py` for `THINKING_BUDGET_*`).
 - `json_line`: interpolates the matched line (e.g. the `--default-chat-template-kwargs`
   item) and requires valid JSON; `strip_prefix` removes `NAME=` from an env entry.
 - `passthrough`: the compose interpolates the value into that line unchecked.

@@ -140,6 +140,11 @@ def catalogue_errors(data) -> list[str]:
         engines = k.get("engines")
         if not isinstance(engines, list) or not engines or not all(isinstance(e, str) for e in engines):
             errs.append(f"{w}.engines: required non-empty list of engine kinds")
+        rb = k.get("read_by")
+        if rb is not None and not (isinstance(rb, dict) and all(
+                isinstance(rb.get(f), str) and rb[f].strip() for f in ("file", "invoke", "what"))):
+            errs.append(f"{w}.read_by: needs non-empty 'file' (the program, repo-relative), 'invoke' "
+                        "(the literal command every reading compose runs) and 'what'")
         variants = k.get("variants")
         if not isinstance(variants, list) or not variants:
             errs.append(f"{w}.variants: required non-empty list")
@@ -249,6 +254,10 @@ def _variant_errors(w: str, knob: dict, v) -> list[str]:
                     errs.append(f"{cw}.{fld}: a shell check needs '{fld}' (line regex)")
             if "to_plus" in chk and not isinstance(chk["to_plus"], int):
                 errs.append(f"{cw}.to_plus: must be an integer")
+        if "mounts" in chk and not (chk.get("kind") == "shell" and isinstance(chk["mounts"], dict) and chk["mounts"]
+                                    and all(isinstance(c, str) and c.startswith("/") and isinstance(h, str) and h
+                                            for c, h in chk["mounts"].items())):
+            errs.append(f"{cw}.mounts: a shell check's map of absolute container path -> repo-relative file")
         if chk.get("kind") in ("json_line", "passthrough") and not isinstance(chk.get("line"), str):
             errs.append(f"{cw}.line: a {chk.get('kind')} check needs 'line' (line regex)")
         if "env" in chk and not (isinstance(chk["env"], dict)
