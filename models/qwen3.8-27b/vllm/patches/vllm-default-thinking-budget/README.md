@@ -8,7 +8,8 @@ request set none, so **every** entrypoint is bounded — including the ones patc
 [`vllm-effort-budget`](../vllm-effort-budget/README.md) (B) does not hook: the Responses API,
 `/v1/completions`, `/v1/chat/completions/batch`, and anything that builds `SamplingParams`
 itself. The compose's `effort_budget.py shell-env` exports the floor as the budget of the
-compose's default effort (`REASONING_EFFORT`), so a client that sends nothing gets the same
+compose's default effort (`REASONING_EFFORT`, default `low` → **4096** with the maintainer-set
+2026-10-09 map low 4096 / medium 16384 / xhigh 32768), so a client that sends nothing gets the same
 budget through B or through D. An explicit request budget always wins; B's map budget is set on
 the request before `SamplingParams` exists, so D never overrides it.
 

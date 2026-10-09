@@ -6,6 +6,8 @@ OpenAI API lets most coding agents send — reasons unbounded. This patch gives 
 request without its own budget the budget the compose maps to its effort:
 `THINKING_BUDGET_LOW` / `THINKING_BUDGET_MEDIUM` / `THINKING_BUDGET_XHIGH`
 (`high`/`max` → xhigh, `minimal` → low).
+Compose defaults, the same on Qwen3.8-27B and ThinkingCap: **low 4096 / medium 16384 / xhigh 32768**
+tokens (maintainer-set 2026-10-09); the knobs override them, `THINKING_BUDGETS=off` turns it off.
 
 **Why it is vendored (exception class, `patches.yml` `upstream.status: ours`).** Runaway
 reasoning is a measured defect, not a tuning preference (Flash-Next 2026-10-07: cap cut-offs on

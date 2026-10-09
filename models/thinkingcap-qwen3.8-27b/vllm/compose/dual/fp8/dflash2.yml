@@ -57,6 +57,11 @@ services:
       - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton:/root/.triton/cache
       - fa2-kernels:/opt/club3090/fa2-artifacts:ro
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      # Reasoning budget chosen by effort: the engine-neutral module + patches B and D
+      # (see the entrypoint block; READMEs in models/qwen3.8-27b/vllm/patches/).
+      - ../../../../../../scripts/lib/effort_budget.py:/etc/club3090/effort_budget.py:ro
+      - ../../../../../qwen3.8-27b/vllm/patches/vllm-effort-budget:/etc/club3090/effort-budget:ro
+      - ../../../../../qwen3.8-27b/vllm/patches/vllm-default-thinking-budget:/etc/club3090/default-thinking-budget:ro
       - ../../../../../qwen3.8-27b/vllm/patches/fa2-fp8kv-sm86:/etc/club3090/fa2:ro
       - ../../../../../qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja:/root/.cache/huggingface/thinkingcap-qwen3.8-27b-fp8/chat_template.jinja:ro
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
@@ -71,6 +76,12 @@ services:
       # unset keeps the compose default instead of arriving EMPTY.
       - DRAFT_SAMPLE_METHOD
       - ENABLE_THINKING=${ENABLE_THINKING:-true}
+      # Reasoning budget chosen by effort (entrypoint block). Bare on purpose: unset
+      # stays unset, where `- X=${X:-}` would arrive as an EMPTY value.
+      - THINKING_BUDGET_LOW
+      - THINKING_BUDGET_MEDIUM
+      - THINKING_BUDGET_XHIGH
+      - THINKING_BUDGETS
       - TEMP=${TEMP:-}
       - TEMPERATURE=${TEMPERATURE:-}
       - TOP_P=${TOP_P:-}
@@ -110,6 +121,18 @@ services:
         umask 0002
         _alloc_conf="$${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
         source /etc/club3090/detect_nvlink.sh
+        # -- Reasoning budget chosen by effort -------------------------------------------
+        #   THINKING_BUDGET_LOW / _MEDIUM / _XHIGH  reasoning tokens per effort; unset = 4096 / 16384 /
+        #                                           32768 (maintainer-set 2026-10-09; high/max use xhigh's, minimal low's)
+        #   THINKING_BUDGETS=off                    no budgets at all (stock vLLM)
+        #   A request's own thinking_token_budget (/v1/messages: thinking.budget_tokens) wins. No
+        #   effort in the request -> REASONING_EFFORT's budget; the endpoints the hook does not see
+        #   (Responses, completions, batch) get that same budget as a floor. A bad value refuses the
+        #   boot; the boot log carries one [effort-budget] v1 readback line. How and the limits:
+        #   models/qwen3.8-27b/vllm/patches/vllm-effort-budget/README.md (+ vllm-default-thinking-budget/)
+        _eb="$$(python3 /etc/club3090/effort_budget.py shell-env --engine vllm --default-effort "${REASONING_EFFORT:-low}" --low 4096 --medium 16384 --xhigh 32768)" || exit 1; eval "$$_eb"
+        bash /etc/club3090/effort-budget/install.sh || exit 1
+        bash /etc/club3090/default-thinking-budget/install.sh || exit 1
         AR_ARGS=()
         # The detector also enables PCIe P2P. Custom all-reduce in this profile
         # requires NVLink; NCCL peer access remains available on PCIe.

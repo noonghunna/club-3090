@@ -185,6 +185,11 @@ services:
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
       - ../../../../../qwen3.8-27b/vllm/patches/vllm-flashinfer-decode-pin:/etc/club3090/flashinfer-decode-pin:ro
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      # Reasoning budget chosen by effort: the engine-neutral module + patches B and D
+      # (see the entrypoint block; READMEs in models/qwen3.8-27b/vllm/patches/).
+      - ../../../../../../scripts/lib/effort_budget.py:/etc/club3090/effort_budget.py:ro
+      - ../../../../../qwen3.8-27b/vllm/patches/vllm-effort-budget:/etc/club3090/effort-budget:ro
+      - ../../../../../qwen3.8-27b/vllm/patches/vllm-default-thinking-budget:/etc/club3090/default-thinking-budget:ro
       # Chat template: the model's OWN, plus seven lines mapping the standard
       # OpenAI/Anthropic rung `high` onto `xhigh`. Qwen3.8's ladder is
       # low/medium/xhigh with NO `high`, and the stock template
@@ -232,6 +237,12 @@ services:
       # container. Absent -> empty -> the entrypoint's `:=` row default applies;
       # an explicit value crosses unchanged and still wins over both rows.
       - ENABLE_THINKING=${ENABLE_THINKING:-true}
+      # Reasoning budget chosen by effort (entrypoint block). Bare on purpose: unset
+      # stays unset, where `- X=${X:-}` would arrive as an EMPTY value.
+      - THINKING_BUDGET_LOW
+      - THINKING_BUDGET_MEDIUM
+      - THINKING_BUDGET_XHIGH
+      - THINKING_BUDGETS
       - TEMP=${TEMP:-}
       - TOP_P=${TOP_P:-}
       - TOP_K=${TOP_K:-}
@@ -279,6 +290,18 @@ services:
         umask 0002
         set -e
         source /etc/club3090/detect_nvlink.sh
+        # -- Reasoning budget chosen by effort -------------------------------------------
+        #   THINKING_BUDGET_LOW / _MEDIUM / _XHIGH  reasoning tokens per effort; unset = 4096 / 16384 /
+        #                                           32768 (maintainer-set 2026-10-09; high/max use xhigh's, minimal low's)
+        #   THINKING_BUDGETS=off                    no budgets at all (stock vLLM)
+        #   A request's own thinking_token_budget (/v1/messages: thinking.budget_tokens) wins. No
+        #   effort in the request -> REASONING_EFFORT's budget; the endpoints the hook does not see
+        #   (Responses, completions, batch) get that same budget as a floor. A bad value refuses the
+        #   boot; the boot log carries one [effort-budget] v1 readback line. How and the limits:
+        #   models/qwen3.8-27b/vllm/patches/vllm-effort-budget/README.md (+ vllm-default-thinking-budget/)
+        _eb="$$(python3 /etc/club3090/effort_budget.py shell-env --engine vllm --default-effort "${REASONING_EFFORT:-low}" --low 4096 --medium 16384 --xhigh 32768)" || exit 1; eval "$$_eb"
+        bash /etc/club3090/effort-budget/install.sh || exit 1
+        bash /etc/club3090/default-thinking-budget/install.sh || exit 1
         # ⚠️ THIS MUST RUN BEFORE install.sh, NOT AFTER. install.sh only hard-FAILS
         # on a patch-apply error when VLLM_MARLIN_INPUT_DTYPE is already set; if we
         # exported it afterwards, a failed patch would downgrade to a WARNING and we

@@ -626,6 +626,155 @@ patches:
       ref: "vllm-project/vllm#40756 (FlashInfer GDN/MTP illegal memory access; the 2026-08-17 thread comments identify the stale-plan async-copy race — this vendors the decode.py unpin)"
       status: open
       drop_when: "flashinfer lands a fix for the pinned-buffer plan reuse (pin_memory=False on the decode wrapper, or an explicit sync guard on the async copy-out) AND the pin moves past it -> remove the compose mount + entrypoint call + this patch dir; retire this row."
+  - id: vllm-effort-budget
+    # Patch B of the reasoning budget chosen by effort (2026-10-09). The engine-neutral half is
+    # scripts/lib/effort_budget.py, mounted at /etc/club3090/effort_budget.py like
+    # scripts/detect_nvlink.sh — a repo script, not a patches/ artifact, so it has no entry here.
+    model: [qwen3.8-27b, thinkingcap-qwen3.8-27b]
+    files:
+      - models/qwen3.8-27b/vllm/patches/vllm-effort-budget
+    load_bearing_when:
+      - composes:
+          - vllm/qwen38-27b-dual-fast
+          - vllm/qwen38-27b-dual-max
+          - vllm/qwen38-27b-dual-nvfp4
+          - vllm/qwen38-27b-dual-superfast
+          - vllm/qwen38-27b-dual-supermax
+          - vllm/qwen38-27b-dual-ultrafast
+          - vllm/qwen38-27b-dual-ultramax
+          - vllm/qwen38-27b-multi4-fast
+          - vllm/qwen38-27b-multi4-max
+          - vllm/qwen38-27b-multi4-superfast
+          - vllm/qwen38-27b-multi4-supermax
+          - vllm/qwen38-27b-multi4-ultrafast
+          - vllm/qwen38-27b-multi4-ultramax
+          - vllm/qwen38-27b-multi8-fast
+          - vllm/qwen38-27b-multi8-max
+          - vllm/qwen38-27b-multi8-superfast
+          - vllm/qwen38-27b-multi8-supermax
+          - vllm/qwen38-27b-multi8-ultrafast
+          - vllm/qwen38-27b-multi8-ultramax
+          - vllm/qwen38-27b-single-fast
+          - vllm/qwen38-27b-single-nvfp4
+          - vllm/thinkingcap38-27b-dual-fast
+          - vllm/thinkingcap38-27b-dual-max
+          - vllm/thinkingcap38-27b-dual-superfast
+          - vllm/thinkingcap38-27b-dual-supermax
+          - vllm/thinkingcap38-27b-dual-ultrafast
+          - vllm/thinkingcap38-27b-dual-ultramax
+          - vllm/thinkingcap38-27b-multi4-fast
+          - vllm/thinkingcap38-27b-multi4-max
+          - vllm/thinkingcap38-27b-multi4-superfast
+          - vllm/thinkingcap38-27b-multi4-supermax
+          - vllm/thinkingcap38-27b-multi4-ultrafast
+          - vllm/thinkingcap38-27b-multi4-ultramax
+          - vllm/thinkingcap38-27b-multi8-fast
+          - vllm/thinkingcap38-27b-multi8-max
+          - vllm/thinkingcap38-27b-multi8-superfast
+          - vllm/thinkingcap38-27b-multi8-supermax
+          - vllm/thinkingcap38-27b-multi8-ultrafast
+          - vllm/thinkingcap38-27b-multi8-ultramax
+        reason: "vLLM enforces thinking_token_budget per request but never picks one from reasoning_effort, so a client that can only send an effort (the OpenAI API's only reasoning control, i.e. most coding agents) reasons unbounded. The hook — ONE call before `request.to_sampling_params(` in OpenAIServingChat._create_chat_completion — sets the budget the compose maps to the effort in use (top-level reasoning_effort > chat_template_kwargs > the server default; high/max -> xhigh, minimal -> low; thinking off -> none) when the request set none. Covers /v1/chat/completions and /v1/messages (AnthropicServingMessages funnels through the same function and sets thinking.budget_tokens first, so an explicit budget wins). Reads vLLM's merged chat-template kwargs (_effective_chat_template_kwargs), so a top-level effort on an ENABLE_THINKING=false server — which vLLM turns into thinking ON — gets its budget. Compose defaults low 4096 / medium 16384 / xhigh 32768 (maintainer-set 2026-10-09), THINKING_BUDGET_* override, THINKING_BUDGETS=off disables. /v1/chat/completions/batch, Responses and completions are NOT hooked — they get the floor from vllm-default-thinking-budget."
+        evidence: "models/qwen3.8-27b/vllm/patches/vllm-effort-budget/README.md; selftest.sh (glue vs vLLM's real ChatCompletionRequest / _effective_chat_template_kwargs / to_sampling_params and the Anthropic converter); /opt/ai/docs/thinking-budget-by-effort/PLAN.md D8"
+    delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/vllm/patches/vllm-effort-budget/install.sh
+      mounted_at: /etc/club3090/effort-budget
+      invoke: "bash /etc/club3090/effort-budget/install.sh"
+      invoked_before: vllm-serve
+      wired_at: [volumes, entrypoint]
+      note: "Runs right after the entrypoint's `_eb=\"$$(python3 /etc/club3090/effort_budget.py shell-env --engine vllm ...)\" || exit 1; eval \"$$_eb\"` line (which exports CLUB3090_REASONING_EFFORT_BUDGETS and prints the `[effort-budget] v1` readback). Copies the module + glue next to the vllm package on EVERY boot (a restarted container keeps site-packages), validates the map (malformed -> boot refused), then inserts the call: marker present -> AST-verified no-op; anchor missing / not unique, or _effective_chat_template_kwargs gone -> boot REFUSED naming the anchor and the README's re-anchor steps. No fuzzy matching. Boot log: one `[vllm-effort-budget] applied: ...` or `[vllm-effort-budget] already applied ...` line."
+    drift_guard:
+      kind: boot
+      check: "bash models/qwen3.8-27b/vllm/patches/vllm-effort-budget/selftest.sh vllm/vllm-openai:v0.31.0 — offline, no GPU: install twice (2nd byte-identical no-op), AST placement + moved-hook positive control, the glue against vLLM's real request classes, the module's test-effort-budget.sh, and the negative controls (malformed map / duplicated anchor / removed anchor each refuse). Live: scripts/probe-effort-budget.sh <url> on a boot with THINKING_BUDGET_LOW=64 THINKING_BUDGET_MEDIUM=128 THINKING_BUDGET_XHIGH=256, with --expect-off (THINKING_BUDGETS=off) and --positive controls."
+      on_fail: boot-refused
+    status: verified
+    capability: reasoning-budget-by-effort
+    foundational: false
+    upstream:
+      ref: "vllm-project/vllm#55432 (Map reasoning effort to thinking budget; OPEN, needs-rebase) — the upstream equivalent for a TOP-LEVEL reasoning_effort only; not vendored"
+      status: ours
+      criticality: "EXCEPTION CLASS (AGENTS.md upstream-first; maintainer decision D8, 2026-10-09). Criticality: runaway reasoning is a measured defect, not a tuning preference -- Flash-Next 2026-10-07: cap cut-offs on cli-40, -30% retry tokens recovered by a budget. No upstream PR maps kwargs-only or server-default effort to a budget."
+      drop_when: "upstream merges an equivalent in the pinned release that ALSO resolves chat_template_kwargs-only and server-default effort (vllm#55432 as filed covers the top-level field only) -> pass the map through the native flag, remove the 39 compose mounts + install calls, retire this row. Re-run scripts/probe-effort-budget.sh on the new pin first."
+  - id: vllm-default-thinking-budget
+    # Patch D of the reasoning budget chosen by effort (2026-10-09): the floor. Ported from the
+    # bucko local layer's default-thinking-budget/apply.py (same anchor).
+    model: [qwen3.8-27b, thinkingcap-qwen3.8-27b]
+    files:
+      - models/qwen3.8-27b/vllm/patches/vllm-default-thinking-budget
+    load_bearing_when:
+      - composes:
+          - vllm/qwen38-27b-dual-fast
+          - vllm/qwen38-27b-dual-max
+          - vllm/qwen38-27b-dual-nvfp4
+          - vllm/qwen38-27b-dual-superfast
+          - vllm/qwen38-27b-dual-supermax
+          - vllm/qwen38-27b-dual-ultrafast
+          - vllm/qwen38-27b-dual-ultramax
+          - vllm/qwen38-27b-multi4-fast
+          - vllm/qwen38-27b-multi4-max
+          - vllm/qwen38-27b-multi4-superfast
+          - vllm/qwen38-27b-multi4-supermax
+          - vllm/qwen38-27b-multi4-ultrafast
+          - vllm/qwen38-27b-multi4-ultramax
+          - vllm/qwen38-27b-multi8-fast
+          - vllm/qwen38-27b-multi8-max
+          - vllm/qwen38-27b-multi8-superfast
+          - vllm/qwen38-27b-multi8-supermax
+          - vllm/qwen38-27b-multi8-ultrafast
+          - vllm/qwen38-27b-multi8-ultramax
+          - vllm/qwen38-27b-single-fast
+          - vllm/qwen38-27b-single-nvfp4
+          - vllm/thinkingcap38-27b-dual-fast
+          - vllm/thinkingcap38-27b-dual-max
+          - vllm/thinkingcap38-27b-dual-superfast
+          - vllm/thinkingcap38-27b-dual-supermax
+          - vllm/thinkingcap38-27b-dual-ultrafast
+          - vllm/thinkingcap38-27b-dual-ultramax
+          - vllm/thinkingcap38-27b-multi4-fast
+          - vllm/thinkingcap38-27b-multi4-max
+          - vllm/thinkingcap38-27b-multi4-superfast
+          - vllm/thinkingcap38-27b-multi4-supermax
+          - vllm/thinkingcap38-27b-multi4-ultrafast
+          - vllm/thinkingcap38-27b-multi4-ultramax
+          - vllm/thinkingcap38-27b-multi8-fast
+          - vllm/thinkingcap38-27b-multi8-max
+          - vllm/thinkingcap38-27b-multi8-superfast
+          - vllm/thinkingcap38-27b-multi8-supermax
+          - vllm/thinkingcap38-27b-multi8-ultrafast
+          - vllm/thinkingcap38-27b-multi8-ultramax
+        reason: "--override-generation-config cannot set thinking_token_budget (get_diff_sampling_param's allowlist drops it — vllm#54469), so every endpoint patch B does not hook — Responses API (whose budget field the gateway drops), /v1/completions, /v1/chat/completions/batch — reasons unbounded. SamplingParams.__post_init__ now falls back to $CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET, which the compose's effort_budget.py shell-env exports as the budget of its default effort (REASONING_EFFORT, default low -> 4096, maintainer-set 2026-10-09). An explicit request budget (and B's map budget, set on the request first) wins; trace-replay requests get none. It also budgets thinking-OFF requests: inert there (the Qwen3.8 thinking-off prompt holds a closed think block; V2 _thinking_budget_kernel returns when last_start <= last_end) — proven offline on the real V2 kernel under the Triton interpreter. Costs: both V2 budget kernels now run on every decode step (unmeasured); #58231 exposure widens to any request that overrides top_k to 0/-1 with top_p<1 under spec decode."
+        evidence: "models/qwen3.8-27b/vllm/patches/vllm-default-thinking-budget/README.md; selftest.sh; scripts/lib/profiles-local/.../bucko-vllm/patches/default-thinking-budget (validated local original)"
+    delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/vllm/patches/vllm-default-thinking-budget/install.sh
+      mounted_at: /etc/club3090/default-thinking-budget
+      invoke: "bash /etc/club3090/default-thinking-budget/install.sh"
+      invoked_before: vllm-serve
+      wired_at: [volumes, entrypoint]
+      note: "Runs after the shell-env line (which exports or, with THINKING_BUDGETS=off, unsets CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET). Validates the env first (non-integer -> boot refused before anything is patched; empty -> patched but inert), then inserts the floor after the 3-line `self.thinking_token_budget = validate_thinking_token_budget(` statement: marker present -> AST-verified no-op; anchor missing / not unique -> boot REFUSED naming the anchor and the README's re-anchor steps. Requires --reasoning-parser (a budget without one is refused per request); all 39 wired composes pass qwen3. Boot log: one `[vllm-default-thinking-budget] applied: ... floor=N` or `already applied` line."
+    drift_guard:
+      kind: boot
+      check: "bash models/qwen3.8-27b/vllm/patches/vllm-default-thinking-budget/selftest.sh vllm/vllm-openai:v0.31.0 — offline, no GPU: the compose's shell-env line exports the floor, install twice (2nd byte-identical no-op), AST placement + positive control, the floor on real SamplingParams / Responses / completions / an unhooked chat request / msgpack round trip, thinking-off inertness on the real V2 kernel (Triton CPU interpreter) with thinking-on positive controls, and the negative controls (non-integer floor / duplicated anchor / removed anchor each refuse). Live: scripts/probe-effort-budget.sh (Responses -> floor; thinking off -> no reasoning, no stray </think>)."
+      on_fail: boot-refused
+    status: verified
+    capability: reasoning-budget-floor
+    foundational: false
+    upstream:
+      ref: "vllm-project/vllm#54469 (Honor server-default thinking_token_budget; OPEN, needs-rebase) — not vendored; D covers it"
+      status: ours
+      criticality: "EXCEPTION CLASS (AGENTS.md upstream-first; maintainer decision D8, 2026-10-09). Criticality: runaway reasoning is a measured defect, not a tuning preference -- Flash-Next 2026-10-07: cap cut-offs on cli-40, -30% retry tokens recovered by a budget. The Responses API cannot carry a budget through the gateway at all, so without a server-side floor it is unbounded."
+      drop_when: "upstream ships a server-default budget in the pinned release that reaches EVERY entrypoint we budget, the Responses API included (vllm#54469 as filed covers chat + completions only) -> set the floor through it, remove the 39 compose mounts + install calls, retire this row."
   - id: qwen-w4a8-int8-act
     model: [qwen3.6-27b, thinkingcap-27b]
     files:
