@@ -72,13 +72,17 @@ nothing; the positive controls (an open think block past the budget, also with d
 - **Every request now carries a budget.** V2's `ThinkingBudgetState.apply` (line 113) returns
   early only when no request in the batch has one (`np.any(self.use_thinking_budget[...])`, line
   115); with the floor, both Triton kernels launch on every decode step. V1 takes the
-  tracked-request sampling path (`has_tracked_requests()`). **The decode cost is UNMEASURED** —
-  the plan's speed row covers SGLang only. Bench before claiming "free".
-- **#58231 exposure widens.** With speculative decoding, a row that has `top_p < 1` and **no
-  active top-k** goes through the split top-p kernel, which masks every token once the budget's
-  `1e9` forcing logit is present → token 0 until `max_tokens`. Before D a client had to send a
-  budget to reach it; now any request that overrides `top_k` to 0/−1 (with `top_p < 1`) can. The
-  composes' server default keeps `top_k=20`; do not drop it while #58231 is open.
+  tracked-request sampling path (`has_tracked_requests()`). **Measured 2026-10-09: no decode cost.** `vllm/qwen38-27b-dual-fast` (MTP n=4, W4A8), A-B-A-B,
+  one boot per bench: `THINKING_BUDGETS=off` 89.5 / 124.0 and 81.6 / 113.6 vs real budgets 83.8 / 115.6 and
+  89.5 / 122.2 (narrative / code tok/s) — the sign flips between pairs and the means are within ~1%.
+  Prefill followed run order (the first boot after idle was fastest), not the budget.
+- **#58231 — guarded.** With speculative decoding, a row that has `top_p < 1` and **no active
+  top-k** goes through the split top-p kernel, which masks every token once the budget's `1e9`
+  forcing logit is present → token 0 until `max_tokens` (reproduced live 2026-10-09 on v0.31.0
+  dual-fast). So the floor skips exactly those requests: sampled (`temperature >= 1e-5`), `top_p < 1`
+  and `top_k <= 0` get no default budget — they reason unbounded, as on stock vLLM. Greedy, `top_k > 0`
+  and `top_p = 1` keep the floor (selftest: five `#58231 guard` cases; probe leg `top_k off +
+  top_p<1`). Drop the guard when the fix is in the pinned image. The composes also keep `top_k=20`.
 - **#44676.** Qwen3.5+ opens tool calls inside `<think>`; the budget keeps counting those tokens
   and can force `</think>` into the arguments. With production-size budgets this needs a very long
   in-think tool call; with the probe's tiny budgets it is easy to reach.

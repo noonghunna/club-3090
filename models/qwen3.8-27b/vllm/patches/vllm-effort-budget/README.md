@@ -119,5 +119,6 @@ removed anchor each refuse).
 | [vllm#55432](https://github.com/vllm-project/vllm/pull/55432) "Map reasoning effort to thinking budget" (open, `needs-rebase`) | the upstream equivalent for a **top-level** `reasoning_effort` only (`--reasoning-effort-budgets`, chat + batch chat). Not vendored: 5 files, already behind `main`, and our precedence would have had to patch exactly the code it changes | it merges in a pinned release **and** also resolves kwargs-only effort and the server-default effort. Then drop this hook and pass the map as that flag |
 
 Tracked in `docs/UPSTREAM.md`. Related watch rows there: #58231 (budget + spec decode + top-p with
-no top-k → token 0; the composes keep `top_k=20`), #58402 / #54467 (custom forced end strings;
+no top-k → token 0; reproduced live, so `topk_off_sampled()` gives such requests no map budget —
+drop that guard when the fix is in the pinned image), #58402 / #54467 (custom forced end strings;
 we keep the plain `</think>`), #44676 (a tool call opened inside `<think>` counts against the budget).
