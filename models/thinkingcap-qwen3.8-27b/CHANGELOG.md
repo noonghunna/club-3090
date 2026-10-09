@@ -2,6 +2,13 @@
 
 Dated history for ThinkingCap-Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-10-09 — reasoning budget chosen by effort (vLLM + SGLang)
+
+Same as Qwen3.8-27B (see its CHANGELOG): low 4,096 · medium 16,384 · xhigh 32,768
+reasoning tokens by effort, knobs `THINKING_BUDGET_*` / `THINKING_BUDGETS=off`, SGLang
+slugs on `--enable-strict-thinking`. The ThinkingCap composes mount the Qwen3.8 patches.
+Probed live on `vllm/` and `sgl/thinkingcap38-27b-dual-fast`.
+
 ## 2026-09-27 — SGLang slugs: `--sleep-on-idle` (idle CPU ~2 cores → under half a core)
 
 Every SGLang ThinkingCap-Qwen3.8 compose now passes `--sleep-on-idle`. Without it each scheduler
