@@ -2251,6 +2251,41 @@ entries:
     serve_aliases: []
     required_sm: 8.6
     category: frontier
+  llamacpp-club3090/glm53-flash-dual-avar6-moecache:
+    origin: core
+    model: glm-5.3-flash
+    weights_variant: avar6-q2kq3k
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 118
+    kv_offload: null
+    chat_template: native
+    tp: 2
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/dual/avar6-q2kq3k/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8188
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL - fast tier. avar6 Q2_K-Q3_K-3.20bpw (routed up/gate Q2_K, down Q3_K, everything else Q8_0), converted from mainline `glm5-next` to `glm5next` by setup's post_download step (scripts/glm53-convert-mainline-gguf.py; tensors byte-identical). MEASURED 2026-10-08 on 2x 5090 (ub 1024, admit 32): narrative/code 40.5/45.7 tok/s vs UD-IQ3_XXS 35.0/36.9 same path; quality on the IQ3_XXS level (benchlocal 9/12 of 16 vs 10/10, long-context 6/6), below UD-IQ4_XS on agentic HA-13. verify-stress PASS at MOE_RESERVE_MB=1792. ⚠️ NOT run on 2x 3090; host_ram_gb is an estimate (re-measure). Needs ~178 GB disk (download + converted shard 1)."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
   llamacpp-club3090/glm53-flash-multi4-q2k-moecache:
     origin: core
     model: glm-5.3-flash
