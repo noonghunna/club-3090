@@ -79,6 +79,10 @@ pass "explicit sampler flags after -- → no server sampling forced on them"
 qt -- --quick -- --retry-failed 2
 if has "--sampling-from-server"; then fail "--retry-failed got --sampling-from-server (it restores its baseline's)"; fi
 pass "--retry-failed → its baseline's sampler"
+qt -- --quick -- --previous-result x.json --exit-on-regression
+if has "--sampling-from-server"; then fail "--exit-on-regression got --sampling-from-server (benchlocal refuses the gate on it)"; fi
+[[ "$out" == *"gates on the reproducible baseline"* ]] || fail "--exit-on-regression should say why it uses the packs' sampler"
+pass "--exit-on-regression → the packs' fixed sampler, said so"
 : > "$tmp/run.partial.jsonl"
 rc=0; qt -- --resume "$tmp/run.partial.jsonl"
 if has "--sampling-from-server"; then fail "--resume got a sampling flag (it restores the original's)"; fi
@@ -126,6 +130,8 @@ pass "server / pack / explicit-override originals each re-run under their own sa
 
 # ---------------------------------------------------------------------------
 echo "--- 5. rebench-full.sh ---"
+command grep -q 'RUN_8PACK_OFF\$RUN_8PACK_ON" == "11" && "\${SAMPLING_FROM_SERVER:-1}" == "1"' scripts/rebench-full.sh \
+  || fail "rebench-full.sh should warn when =both runs both legs on one boot under server sampling"
 n="$(command grep -c 'SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-1}"' scripts/rebench-full.sh)"
 [[ "$n" == "2" ]] || fail "rebench-full.sh: both 8-pack legs should default SAMPLING_FROM_SERVER to 1 (found $n)"
 if command grep -q 'SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}"' scripts/rebench-full.sh; then

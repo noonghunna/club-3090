@@ -523,6 +523,16 @@ URL="$URL" MODEL="$MODEL" \
 # --- step 3: 8-pack quality, reasoning OFF (opt-in: --with-8pack-thinking=off|both) --
 # Forces --no-thinking (all 8 packs think-OFF) for a clean with/without-reasoning
 # A/B against step 4 — NOT the pack-default mixed mode. Skipped unless opted in. #338.
+# Both legs run against THIS one boot. Under the server's sampler (the default since #1579) each
+# leg gets the sampler the compose booted with — and where that follows the thinking switch
+# (Qwen3.8: ENABLE_THINKING picks the card's row at boot), one leg runs on the other mode's row.
+# The packs' fixed sampler did not have this problem, so say so instead of measuring it silently.
+if [[ "$RUN_8PACK_OFF$RUN_8PACK_ON" == "11" && "${SAMPLING_FROM_SERVER:-1}" == "1" ]]; then
+  echo "[rebench] ⚠ --with-8pack-thinking=both runs both legs on this one boot, on the server's sampler." >&2
+  echo "[rebench]   Where the compose's sampler follows the thinking switch (Qwen3.8: ENABLE_THINKING," >&2
+  echo "[rebench]   chosen at boot), one leg runs on the other mode's card row. For those, run =off and" >&2
+  echo "[rebench]   =on on separate boots — or SAMPLING_FROM_SERVER=0 for the packs' fixed sampler on both." >&2
+fi
 if [[ "$RUN_8PACK_OFF" == "1" ]]; then
   URL="$URL" MODEL="$MODEL" \
     SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-1}" \

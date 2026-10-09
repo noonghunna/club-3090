@@ -496,6 +496,7 @@ Use it where reproducibility is the point: regression gates (`quality-baseline.s
 | `-- --temperature N` (+ `--top-p` / `--top-k` / `--min-p` / `--repeat-penalty`) | your values (`sampling=explicit …`) — server sampling is switched off for you, since benchlocal refuses explicit values alongside it |
 | `--resume` | the resumed run's (benchlocal restores it; an explicit sampling flag with `--resume` is refused) |
 | `-- --retry-failed` | its baseline run's |
+| `-- --exit-on-regression` | the packs' fixed one — a regression gate needs reproducible runs, and benchlocal refuses it on server sampling |
 
 ```bash
 # the default: the served sampler
@@ -536,7 +537,7 @@ Every `Quality:` line carries a `sampling=` stamp. Before #1579 only `sampling=s
 | *(no stamp)* | A results JSON from before 2026-05-24, when benchlocal didn't record its sampler yet. |
 
 - `max_tokens` is a length budget, not a sampler. The wrapper's default 4,096 rides in `sampling_overrides` on every run, and it never turns a run into `explicit`.
-- **Both "both legs" entry points use the server's sampler** — `quality-test.sh --both-modes` and `rebench-full.sh --with-8pack-thinking=both` — since 2026-10-09 (until then rebench ran the pack sampler unless `SAMPLING_FROM_SERVER=1`). `--pack-sampling` / `SAMPLING_FROM_SERVER=0` move either to the reproducible baseline.
+- **Both "both legs" entry points use the server's sampler** — `quality-test.sh --both-modes` and `rebench-full.sh --with-8pack-thinking=both` — since 2026-10-09 (until then rebench ran the pack sampler unless `SAMPLING_FROM_SERVER=1`). `--pack-sampling` / `SAMPLING_FROM_SERVER=0` move either to the reproducible baseline. ⚠️ Both run their two legs against **one boot**, so each leg gets the sampler the compose booted with. Where that follows the thinking switch (Qwen3.8: `ENABLE_THINKING` picks the card's row at boot), run each leg on its own boot, as [the two-leg run](#-the-canonical-two-leg-run) does; rebench warns when `=both` meets server sampling.
 - **`URL=` another machine.** The server's sampling defaults and the rig are read only from a container that publishes `URL` on this host through an engine port. When none does, `CONTAINER=none` (host-only), with a notice — since [#1584](https://github.com/noonghunna/club-3090/issues/1584) for every script that uses the shared endpoint autodetect (verify, bench, health, rebench-full, quality-test, power-cap-sweep) and for soak-test.sh; for this wrapper since #1579. Before that, a remote run could carry the local container's defaults and `tp` as its own. Set `CONTAINER=<name>` when the URL is served by a container the check can't see (e.g. through a proxy): an explicit `CONTAINER=` is trusted.
 
 ### Reasoning-on evals
@@ -701,7 +702,7 @@ bash scripts/quality-baseline.sh --slug vllm/qwen-35b-a3b-dual
 bash scripts/quality-baseline.sh --slug vllm/qwen-35b-a3b-dual --mode enable-thinking
 ```
 
-`no-thinking` is canonical (temp-0, reproducible — diff against this for a CI-style gate);
+`no-thinking` is the gate mode — greedy under `--pack-sampling`, which the baseline uses, so it is reproducible (diff against this for a CI-style gate);
 `enable-thinking` is the reasoning-on companion. It's a thin wrapper over `quality-test.sh --full`
 (`--repeat` → `--save-json`/`--previous-result`); extra args pass through (e.g.
 `--exit-on-regression` for a hard CI gate). `--dry-run` prints the resolved command.

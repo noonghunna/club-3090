@@ -1323,7 +1323,9 @@ fi
 #   --resume       benchlocal restores the original run's sampling itself;
 #   --retry-failed restores its baseline's sampling (passing ours would override it);
 #   --temperature / --top-p / --top-k / --min-p / --repeat-penalty after `--` are an
-#                  explicit sampler, which benchlocal refuses alongside server sampling.
+#                  explicit sampler, which benchlocal refuses alongside server sampling;
+#   --exit-on-regression is a regression gate, which benchlocal refuses on server sampling
+#                  (sampled runs are not deterministic) — it gets the packs' fixed sampler.
 if [[ "$SAMPLING_EXPLICIT" == "0" && "$SAMPLING_FROM_SERVER" == "1" ]]; then
   for _sa in "${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}"; do
     case "$_sa" in
@@ -1333,6 +1335,9 @@ if [[ "$SAMPLING_EXPLICIT" == "0" && "$SAMPLING_FROM_SERVER" == "1" ]]; then
       --retry-failed|--retry-failed=*)
         SAMPLING_FROM_SERVER=0
         echo "[quality-test] sampling: --retry-failed re-runs under its baseline's sampling" ;;
+      --exit-on-regression)
+        SAMPLING_FROM_SERVER=0
+        echo "[quality-test] sampling: --exit-on-regression gates on the reproducible baseline — each pack's own fixed sampler (benchlocal refuses the gate on server sampling)" ;;
     esac
     [[ "$SAMPLING_FROM_SERVER" == "0" ]] && break
   done
