@@ -35,6 +35,7 @@ SOURCED_OK = {
     "scripts/lib/p2p-state.sh",             # sourced by preflight.sh
     "scripts/lib/report_calib.sh",          # sourced by test-report-calib.sh
     "scripts/lib/served-model.sh",          # sourced by preflight/quality-test/rebench/switch/bench-agentic
+    "scripts/lib/served-slots.sh",          # sourced by rebench-full / concurrency-probe (#1577)
     "scripts/lib/profiles/weights.py",      # imported by the profile loaders
     "scripts/tests/fixtures/report-harness/report-env.sh",  # test fixture, sourced
     "scripts/tests/fixtures/soak-harness/soak-env.sh",      # test fixture, sourced

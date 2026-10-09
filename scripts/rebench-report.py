@@ -135,6 +135,25 @@ def parse_vllm_boot(boot_log: str) -> dict:
     return out
 
 
+# --- section: concurrency rungs (#1577) --------------------------------------
+
+def parse_concurrency_slots(text: str) -> dict:
+    """Read rebench-full.sh's concurrency-slots.txt: what the concurrency step ran
+    and why. slots is an integer string or "undetected"; override is "1" when the
+    rungs came from CONCURRENCY_RUNGS."""
+    out = {}
+    for line in text.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def concurrency_n1_only(cs: dict) -> bool:
+    """True when the N>1 rungs were skipped because the slot count was unreadable."""
+    return cs.get("slots") == "undetected" and cs.get("override", "0") != "1"
+
+
 # --- section: bench.sh ------------------------------------------------------
 
 def parse_bench(log: str) -> dict:
@@ -465,6 +484,20 @@ def render(report: dict) -> str:
     boot = report.get("vllm_boot", {})
     lines.append("## Concurrency + VRAM")
     lines.append("")
+    cs = report.get("concurrency_slots", {})
+    if concurrency_n1_only(cs):
+        lines.append(
+            "> ⚠ **Concurrency rungs: N=1 only.** The served slot count could not be read "
+            "(a vLLM endpoint reached by `--url` reports none), so the N=2/4 rungs did not run. "
+            "Re-run with `CONCURRENCY_RUNGS='1 2 4'` — rungs above the server's real slot count "
+            "measure queue wait, not concurrency."
+        )
+        lines.append("")
+    elif cs.get("rungs"):
+        how = ("set by `CONCURRENCY_RUNGS`" if cs.get("override") == "1"
+               else f"served slots {cs.get('slots', '?')}, from {cs.get('source', '?')}")
+        lines.append(f"Concurrency rungs run: **N={cs['rungs'].replace(' ', '/')}** ({how}).")
+        lines.append("")
     if boot:
         kv_tokens = boot.get("kv_cache_tokens")
         max_conc = boot.get("max_concurrency")
@@ -716,6 +749,11 @@ def compute_tldr(report: dict) -> list[str]:
             f"KV pool **{boot['kv_cache_tokens']:,} tokens** — "
             f"**{boot['max_concurrency']:.2f}×** concurrency @ {boot.get('max_concurrency_request_size', 0):,} tokens/req."
         )
+    if concurrency_n1_only(report.get("concurrency_slots", {})):
+        bullets.append(
+            "⚠ Concurrency: **N=1 only** — the served slot count was unreadable over `--url`; "
+            "re-run with `CONCURRENCY_RUNGS='1 2 4'` for the N>1 rungs."
+        )
     stress = report.get("verify_stress", {})
     if stress.get("checks"):
         passed = sum(1 for c in stress["checks"] if c["verdict"] == "PASS")
@@ -925,6 +963,7 @@ def main(argv=None):
             "rig": parse_rig(rig_txt),
         },
         "vllm_boot": parse_vllm_boot(boot_log),
+        "concurrency_slots": parse_concurrency_slots(read_file(tag_dir / "concurrency-slots.txt")),
         "bench": parse_bench(bench_log),
         "verify_stress": parse_verify_stress(stress_log),
         "quality": quality,
