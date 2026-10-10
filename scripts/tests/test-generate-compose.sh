@@ -295,6 +295,78 @@ try:
 finally:
     os.environ.pop("CLUB3090_FORCE_GUARD_FAIL", None)
 
+# An omitted chat template loses exactly its own wiring. Its strip used substring markers:
+# the bare `--chat-template` (a prefix of llama.cpp's `--chat-template-kwargs`), the generic
+# name `chat_template.jinja` and qwen38's suffix `/chat_template.jinja`, which all match
+# another template's lines too.
+os.environ["CLUB3090_FORCE_GUARD_FAIL"] = "qwen-froggeric-chat-template"
+try:
+    ftext, fmeta = gc.generate(root, "vllm/minimal", accept_degraded=True)
+    check("qwen-froggeric-chat-template" in fmeta["degraded_omitted"],
+          "vllm/minimal forced-fail: froggeric template must be in degraded_omitted")
+    fship = pa.service_body((root / fmeta["source"]).read_text(encoding="utf-8")).splitlines()
+    fgen = pa.service_body(ftext).splitlines()
+    fgone = sorted({l.strip() for l in fship} - {l.strip() for l in fgen} - {"- --trust-remote-code"})
+    fwant = sorted(["- ../../../patches/froggeric-chat-template/chat_template.jinja:"
+                    "/etc/qwen-froggeric-chat-template.jinja:ro",
+                    "- --chat-template", "- /etc/qwen-froggeric-chat-template.jinja"])
+    check(fgone == fwant, f"vllm/minimal forced-fail: omitting the froggeric template removed {fgone}, "
+                          f"expected only its mount + --chat-template pair")
+    check(not pa._chat_template_wired(pmap["qwen-froggeric-chat-template"], ftext),
+          "vllm/minimal forced-fail: the omitted froggeric template is still wired")
+finally:
+    os.environ.pop("CLUB3090_FORCE_GUARD_FAIL", None)
+
+# Two templates in one body, plus the lines a substring strip used to catch: stripping one
+# template must leave the other's mount and flag, `--chat-template-kwargs` and its value, and
+# an unrelated model-dir `chat_template.jinja` path untouched.
+_ct_fixture = (
+    "services:\n"
+    "  svc:\n"
+    "    volumes:\n"
+    "      - ../../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro\n"
+    "      - ../../../patches/google-canonical-chat-template/chat_template.jinja:/etc/club3090/gemma-canonical-template.jinja:ro\n"
+    "      - ../../../patches/qwen38-reasoning-effort-template/chat_template.jinja:/root/.cache/huggingface/m/chat_template.jinja:ro\n"
+    "      - ../../../patches/apex-qwen-chat-template.jinja:/etc/apex-qwen-chat-template.jinja:ro\n"
+    "    command:\n"
+    "      - --chat-template\n"
+    "      - /etc/qwen-froggeric-chat-template.jinja\n"
+    "      - --chat-template\n"
+    "      - /etc/club3090/gemma-canonical-template.jinja\n"
+    "      - '--chat-template-kwargs'\n"
+    "      - '{\"enable_thinking\": false}'\n"
+    "      - --chat-template=/root/.cache/huggingface/m/chat_template.jinja\n"
+    "      - --served-model-name\n"
+    "      - m\n"
+    "    entrypoint:\n"
+    "      - /bin/bash\n"
+    "      - -c\n"
+    "      - |\n"
+    "        exec llama-server --model /m.gguf \\\n"
+    "          --chat-template-file /etc/apex-qwen-chat-template.jinja \\\n"
+    "          --jinja\n"
+)
+_ct_cases = {
+    "qwen-froggeric-chat-template": [
+        "- ../../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro",
+        "- --chat-template", "- /etc/qwen-froggeric-chat-template.jinja"],
+    "qwen38-reasoning-effort-template": [
+        "- ../../../patches/qwen38-reasoning-effort-template/chat_template.jinja:/root/.cache/huggingface/m/chat_template.jinja:ro",
+        "- --chat-template=/root/.cache/huggingface/m/chat_template.jinja"],
+    "apex-qwen-chat-template": [
+        "- ../../../patches/apex-qwen-chat-template.jinja:/etc/apex-qwen-chat-template.jinja:ro",
+        "--chat-template-file /etc/apex-qwen-chat-template.jinja \\"],
+}
+import collections as _collections
+_fixture_lines = _collections.Counter(l.strip() for l in _ct_fixture.splitlines())
+for _pid, _want in _ct_cases.items():
+    _out = _collections.Counter(l.strip() for l in gc._strip_chat_template(_ct_fixture, pmap[_pid]).splitlines())
+    _gone = list((_fixture_lines - _out).elements())  # counted: `- --chat-template` appears twice
+    check(sorted(_gone) == sorted(_want),
+          f"_strip_chat_template({_pid}) removed {_gone}, expected only {_want}")
+    check(not pa._chat_template_wired(pmap[_pid], gc._strip_chat_template(_ct_fixture, pmap[_pid])),
+          f"_strip_chat_template({_pid}) left the template wired")
+
 
 # --------------------------------------------------------------------------
 # 3. Convenience tuple is NOT authoritative — prints matches, non-zero.
