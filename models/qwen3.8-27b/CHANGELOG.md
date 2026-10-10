@@ -2,6 +2,21 @@
 
 Dated history for Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-10-09 — reasoning budget chosen by effort (vLLM + SGLang)
+
+Every vLLM and SGLang Qwen3.8 compose now caps reasoning with a budget picked from the
+request's effort: **low 4,096 · medium 16,384 · xhigh 32,768 tokens** (`high`/`max` count
+as xhigh, `minimal` as low). The budget closes the reasoning and the model answers,
+instead of `max_tokens` cutting the answer off. An explicit per-request budget wins
+(`thinking_token_budget`, `/v1/messages` `budget_tokens`, SGLang `custom_params`); a
+request that sends no effort gets the compose default's (low → 4,096); thinking-off
+requests are untouched. Knobs: `THINKING_BUDGET_LOW` / `_MEDIUM` / `_XHIGH`,
+`THINKING_BUDGETS=off`. SGLang slugs now run `--enable-strict-thinking` (the budget's
+enforcement; no measurable decode cost). On vLLM, a sampled request with `top_p < 1` and
+top-k disabled gets no default budget (vllm#58231 would emit token 0 at the cut). Patches:
+`vllm/patches/vllm-effort-budget`, `vllm/patches/vllm-default-thinking-budget`,
+`sglang/patches/sglang-effort-thinking-budget`; live check: `scripts/probe-effort-budget.sh`.
+
 ## 2026-09-27 — SGLang slugs: `--sleep-on-idle` (idle CPU ~2 cores → under half a core)
 
 Every SGLang Qwen3.8 compose now passes `--sleep-on-idle`. Without it each scheduler

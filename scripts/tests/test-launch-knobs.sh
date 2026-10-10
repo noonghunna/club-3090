@@ -159,6 +159,41 @@ services:
       - KV_OFFLOAD_GB=${KV_OFFLOAD_GB:-}
     command: ["sh", "-c", "echo $${KV_OFFLOAD_GB-unset}"]
 YML
+cat > "$TMP/fx/reader-unforwarded.yml" <<'YML'
+services:
+  probe:
+    image: busybox
+    entrypoint:
+      - bash
+      - -c
+      - |
+        _eb="$$(python3 /etc/club3090/effort_budget.py shell-env --engine vllm --default-effort low --low 1 --medium 2 --xhigh 3)" || exit 1; eval "$$_eb"
+YML
+cat > "$TMP/fx/reader-forwarded.yml" <<'YML'
+services:
+  probe:
+    image: busybox
+    environment:
+      - THINKING_BUDGET_LOW
+    entrypoint:
+      - bash
+      - -c
+      - |
+        _eb="$$(python3 /etc/club3090/effort_budget.py shell-env --engine vllm --default-effort low --low 1 --medium 2 --xhigh 3)" || exit 1; eval "$$_eb"
+YML
+cat > "$TMP/fx/forward-no-reader.yml" <<'YML'
+services:
+  probe:
+    image: busybox
+    environment:
+      - THINKING_BUDGET_LOW
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # python3 /etc/club3090/effort_budget.py shell-env --low 7   (a comment is not a run)
+        python3 /etc/club3090/effort_budget.py readback-budget --line - --effort low
+YML
 cat > "$TMP/fx/merge-key.yml" <<'YML'
 x-knobs: &knobs
   SPEC_N:
@@ -228,6 +263,24 @@ def fx_consumer(f):
 cov = ck.check_coverage(cat, [fx_consumer("dead-read.yml"), fx_consumer("pinned.yml")])
 expect(any("dead-read.yml reads $${KV_OFFLOAD_GB}" in e for e in cov), "coverage: flags the dead read")
 expect(any("pinned.yml pins it to a constant" in e for e in cov), "coverage: flags the pinned knob")
+# Knobs a mounted program reads (lk.MOUNTED_READERS: effort_budget.py shell-env): the compose
+# text never says $${NAME}, so forwarding one counts as read only where the compose RUNS that
+# exact invocation, its default comes from the invocation's --low/--medium/--xhigh, and running
+# the program without forwarding the knob is the dead setting.
+cov = ck.check_coverage(cat, [fx_consumer("reader-unforwarded.yml")])
+expect(any("THINKING_BUDGET_LOW:" in e and "runs a mounted program that reads it" in e and "never forwards" in e
+           for e in cov), "coverage: a compose that runs the mounted reader without forwarding the knob fails")
+cov = ck.check_coverage(cat, [fx_consumer("reader-forwarded.yml")])
+expect(not any("THINKING_BUDGET_LOW:" in e and ("nothing in the compose reads it" in e or "never forwards" in e) for e in cov),
+       "coverage: forwarding a knob to the mounted reader the compose runs is a read, not a dead forward")
+rf = lk.scan_compose(fx / "reader-forwarded.yml", names)
+expect(rf["THINKING_BUDGET_LOW"].compose_default() == "1" and rf["THINKING_BUDGET_XHIGH"].compose_default() == "3"
+       and rf["THINKING_BUDGETS"].compose_default() == "",
+       "scan: a mounted-reader knob's default is its --low/--xhigh argument; THINKING_BUDGETS (no argument) defaults to unset")
+cov = ck.check_coverage(cat, [fx_consumer("forward-no-reader.yml")])
+expect(any("THINKING_BUDGET_LOW:" in e and "nothing in the compose reads it" in e for e in cov),
+       "coverage (negative control): forwarding the knob with no shell-env run — only a comment and another "
+       "subcommand — is still a dead forward")
 efe, _ = ck.check_empty_forwards([fx_consumer("empty-forward.yml")])
 expect(any("empty-forward.yml forwards it as KV_OFFLOAD_GB=${KV_OFFLOAD_GB:-}" in e for e in efe),
        "empty forwards: a colon-less read of an empty-forwarded knob fails")
@@ -299,6 +352,22 @@ MUTATIONS = [  # (check, label, knobs kept, mutate, the error text that must app
      lambda c: var(c, "SPEC_N", "vllm")["every_consumer_contains"].append("NOT-IN-ANY-COMPOSE"), "lacks 'NOT-IN-ANY-COMPOSE'"),
 ]
 for check, label, keep, mutate, needle in MUTATIONS:
+    c = only(copy.deepcopy(cat), *keep)
+    mutate(c)
+    errs = ck.check_domains(root, c, consumers)[0] if check == "domains" else ck.check_coverage(c, consumers)
+    expect(any(needle in e for e in errs), f"mutation caught ({check}): {label}")
+for check, label, keep, mutate, needle in [
+    ("coverage", "THINKING_BUDGET_LOW's catalogue default drifts from the compose's --low argument",
+     ("THINKING_BUDGET_LOW",), lambda c: var(c, "THINKING_BUDGET_LOW", "vllm").update(default="4097"),
+     "the catalogue says '4097'"),
+    ("domains", "the effort-budget shell check loses its mounts (the /etc/club3090 path is not on the host)",
+     ("THINKING_BUDGET_LOW",), lambda c: var(c, "THINKING_BUDGET_LOW", "vllm")["checks"][0].pop("mounts"),
+     "the compose refuses it"),
+    ("domains", "THINKING_BUDGET_XHIGH accepts negative budgets", ("THINKING_BUDGET_XHIGH",),
+     lambda c: var(c, "THINKING_BUDGET_XHIGH", "vllm").update(pattern="-?[0-9]+"), "reject '-1': the catalogue accepts it"),
+    ("domains", "THINKING_BUDGETS accepts 'maybe' (shell-env refuses it at boot)", ("THINKING_BUDGETS",),
+     lambda c: var(c, "THINKING_BUDGETS", "vllm")["values"].append("maybe"), "reject 'maybe': the catalogue accepts it"),
+]:
     c = only(copy.deepcopy(cat), *keep)
     mutate(c)
     errs = ck.check_domains(root, c, consumers)[0] if check == "domains" else ck.check_coverage(c, consumers)

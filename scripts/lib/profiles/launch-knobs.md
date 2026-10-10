@@ -31,6 +31,17 @@ can deliver the host value into the container. There are two ways:
 A container-side read (`$${NAME}`, an even run of `$`) does not count on its own: the
 container sees the value only if the knob is also forwarded. A compose that reads
 `$${NAME}` without forwarding it has a dead setting, and the guard fails on it.
+
+Some knobs are read by a **program the compose mounts and runs**, not by the compose
+text: `THINKING_BUDGET_LOW/_MEDIUM/_XHIGH` and `THINKING_BUDGETS` are read from the
+environment by `scripts/lib/effort_budget.py`, which every Qwen3.8 / ThinkingCap vLLM and
+SGLang compose runs as `python3 /etc/club3090/effort_budget.py shell-env … --low N --medium N
+--xhigh N`. `MOUNTED_READERS` in `launch_knobs.py` declares such programs: a compose whose
+code runs that **exact** invocation reads each listed knob there (a comment or another
+subcommand does not count), the knob's compose default is the value after its argument on
+that line (`THINKING_BUDGETS` has none: unset = on), and a compose that runs the program
+without forwarding the knob is a dead setting the guard fails on — the same rule as a
+`$${NAME}` read.
 Comments are ignored, whether YAML comments or shell comments inside a `|` block;
 many composes mention knobs only in comments. Flow-style `environment:`, YAML
 aliases and merge keys are refused rather than guessed at. No shipped compose uses
@@ -82,7 +93,9 @@ the compose's own code:
   `to_plus` lines), with `$$` → `$`, under the script's own `set -e…` line, in a
   clean `env -i` shell. File-touching commands (`rm`, `curl`, …) are stubbed. The
   compose accepts a value when the fragment exits 0; with `emit` + `json`, the emitted
-  text must also parse as JSON.
+  text must also parse as JSON. `mounts` (`{container path: repo-relative file}`) rewrites
+  those paths in the fragment so a program the compose mounts runs from its repo source —
+  the domain is then proven by the real reader (`effort_budget.py` for `THINKING_BUDGET_*`).
 - `json_line`: interpolates the matched line (e.g. the `--default-chat-template-kwargs`
   item) and requires valid JSON; `strip_prefix` removes `NAME=` from an env entry.
 - `passthrough`: the compose interpolates the value into that line unchecked.

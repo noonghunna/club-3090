@@ -2,7 +2,10 @@
 # Profile (at-a-glance):
 #   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
 #              Frozenlock AutoRound INT4 W4A16 g128 — the collapse-free checkpoint.
-#   Engine:    SGLang STOCK v0.5.21 (`lmsysorg/sglang:v0.5.21`) — NO PATCHES.
+#   Engine:    SGLang stock v0.5.21 (`lmsysorg/sglang:v0.5.21`) + vendored patches:
+#              `sglang-effort-thinking-budget` (per-effort reasoning budgets; THINKING_BUDGETS=off
+#              drops the budgets, strict thinking stays on) and the AutoRound W4A8 patch (ON by
+#              default; W4A8=0 reverts).
 #   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
 #   Drafter:   DFlash2 EXTERNAL block-drafter, 5 layers, `DFlash2DraftModel`
 #              — NOT the in-checkpoint MTP head. DEFAULT is the z-lab BF16
@@ -94,11 +97,11 @@
 #     MEASURED here. If bf16 buys nothing on SGLang, ultrafast should be
 #     retired rather than kept for symmetry with vLLM.
 #
-#   ⚠️ AND THESE ARE NOT ACTIVATION-EQUIVALENT TO THEIR vLLM NAMESAKES. The vLLM
+#   ⚠️ ACTIVATION-EQUIVALENT TO THEIR vLLM NAMESAKES ONLY AT THE DEFAULT. The vLLM
 #   superfast tier serves W4A8 (int8 activations) through vendored Marlin
-#   patches. We run STOCK SGLang with NO patches, so both tiers here are W4A16.
-#   Do not compare a number from these against a vLLM W4A8 number and call the
-#   delta an engine difference.
+#   patches; W4A8 is ON by default here too (W4A8=1, since 2026-09-19 — see below).
+#   With W4A8=0 both tiers here are W4A16: then do not compare a number from these
+#   against a vLLM W4A8 number and call the delta an engine difference.
 # ---------------------------------------------------------------------------
 #   ⭐⭐ DFLASH WIRING — four things that are NOT obvious, all verified against
 #   the v0.5.19 image on 2026-09-10:
@@ -193,6 +196,10 @@ services:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8144}}:30000"
     volumes:
       - ../../../../../../scripts/lib/cuda-ordinals.sh:/etc/club3090/cuda-ordinals.sh:ro
+      # Reasoning budget chosen by effort: the engine-neutral module + the SGLang hooks
+      # (patches.yml qwen38-sglang-effort-thinking-budget). Wired in the entrypoint below.
+      - ../../../../../../scripts/lib/effort_budget.py:/etc/club3090/effort_budget.py:ro
+      - ../../../patches/sglang-effort-thinking-budget:/etc/club3090/effort-thinking-budget:ro
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
       # Patched template (default_reasoning_effort + high -> xhigh), mounted over the
       # checkpoint's own; SGLang loads it from the model dir. See the SAMPLER note
@@ -228,6 +235,11 @@ services:
       - PRESENCE_PENALTY
       - REPEAT_PENALTY
       - REASONING_EFFORT
+      # Reasoning budget by effort (see the entrypoint) — bare, so unset stays unset.
+      - THINKING_BUDGET_LOW
+      - THINKING_BUDGET_MEDIUM
+      - THINKING_BUDGET_XHIGH
+      - THINKING_BUDGETS
       - CHUNKED_PREFILL_SIZE
       - DRAFTER_DIR
       - DRAFT_QUANT
@@ -472,6 +484,17 @@ services:
         SAMPLER=(--default-chat-template-kwargs "{\"enable_thinking\": $$_think, \"default_reasoning_effort\": \"$$_reff\"}"
                  --sampling-defaults model
                  --preferred-sampling-params "{\"temperature\": $$_temp, \"top_p\": $${TOP_P}, \"top_k\": $${TOP_K:-20}, \"min_p\": $${MIN_P:-0.0}, \"presence_penalty\": $${PRESENCE_PENALTY}, \"repetition_penalty\": $${REPEAT_PENALTY:-1.0}}")
+        # --- Reasoning budget chosen by effort (patches.yml qwen38-sglang-effort-thinking-budget) ---
+        # A request's own budget wins (custom_params.thinking_budget, thinking_token_budget,
+        # /v1/messages thinking.budget_tokens); else the budget for the effort it runs at; else
+        # SGLANG_MAX_THINK_TOKENS, the default effort's budget (all the Responses API and
+        # /generate get). Enforced by --enable-strict-thinking (below), which also blocks the
+        # tool-call and end-of-turn tokens while the model thinks; THINKING_BUDGETS=off drops
+        # the budgets, not strict thinking. Defaults (maintainer-set 2026-10-09): low 4096,
+        # medium 16384, xhigh 32768 (high/max -> 32768, minimal -> 4096). THINKING_BUDGET_LOW/
+        # _MEDIUM/_XHIGH override them; a bad value stops the boot. Readback: `[effort-budget] v1`.
+        _eb="$$(python3 /etc/club3090/effort_budget.py shell-env --engine sglang --default-effort "$$_reff" --low 4096 --medium 16384 --xhigh 32768)" || exit 1; eval "$$_eb"
+        bash /etc/club3090/effort-thinking-budget/install.sh || exit 1
         # ⭐ MAMBA STATE SLOTS vs CONCURRENCY — measured 2026-09-13 (club-3090#1264).
         # `--max-running-requests` is not just a concurrency cap here: each running
         # request LOCKS 3 GDN state slots (1 active + 2 radix checkpoints — SGLang
@@ -580,6 +603,7 @@ services:
           --sleep-on-idle \
           --enable-cache-report \
           "$${SAMPLER[@]}" \
+          --enable-strict-thinking \
           --reasoning-parser "${REASONING_PARSER:-qwen3}" \
           --tool-call-parser "${TOOL_CALL_PARSER:-qwen3_coder}" \
           --host 0.0.0.0 --port 30000 \

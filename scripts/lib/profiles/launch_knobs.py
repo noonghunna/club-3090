@@ -72,6 +72,26 @@ _TYPE_PATTERN = {
 
 _NAME_RX = r"[A-Za-z_][A-Za-z0-9_]*"
 
+# Knobs read by a PROGRAM the compose mounts and runs, not by the compose text. The program
+# reads them from its environment, so the compose text never says `$${NAME}`. A compose whose
+# (comment-stripped) code runs `invoke` reads each listed knob there — it must also forward it
+# (environment:), or the value never arrives — and the knob's compose default is the value
+# after its argument on that same line (None = the knob has no default). Narrow on purpose:
+# only the exact invocation counts. `file` is the program's repo source (the guard checks it
+# names each knob). Add a row only for a program the composes really mount and run.
+MOUNTED_READERS = (
+    {
+        "invoke": "python3 /etc/club3090/effort_budget.py shell-env",
+        "file": "scripts/lib/effort_budget.py",
+        "knobs": {
+            "THINKING_BUDGET_LOW": "--low",
+            "THINKING_BUDGET_MEDIUM": "--medium",
+            "THINKING_BUDGET_XHIGH": "--xhigh",
+            "THINKING_BUDGETS": None,
+        },
+    },
+)
+
 
 class CatalogueError(ValueError):
     """The catalogue file is malformed. The message names the knob and the field."""
@@ -249,6 +269,10 @@ def _variant_errors(w: str, knob: dict, v) -> list[str]:
                     errs.append(f"{cw}.{fld}: a shell check needs '{fld}' (line regex)")
             if "to_plus" in chk and not isinstance(chk["to_plus"], int):
                 errs.append(f"{cw}.to_plus: must be an integer")
+        if "mounts" in chk and not (chk.get("kind") == "shell" and isinstance(chk["mounts"], dict) and chk["mounts"]
+                                    and all(isinstance(c, str) and c.startswith("/") and isinstance(h, str) and h
+                                            for c, h in chk["mounts"].items())):
+            errs.append(f"{cw}.mounts: a shell check's map of absolute container path -> repo-relative file")
         if chk.get("kind") in ("json_line", "passthrough") and not isinstance(chk.get("line"), str):
             errs.append(f"{cw}.line: a {chk.get('kind')} check needs 'line' (line regex)")
         if "env" in chk and not (isinstance(chk["env"], dict)
@@ -392,6 +416,7 @@ class KnobUse:
     interp: list[int] = field(default_factory=list)   # compose-side ${NAME...} outside its own env entry
     shell: list[int] = field(default_factory=list)    # container-side $${NAME...} / $$NAME
     assigned: list[int] = field(default_factory=list)  # the container script assigns NAME itself
+    mounted: list[int] = field(default_factory=list)   # lines running a MOUNTED_READERS program that reads NAME
     defaults: list[str] = field(default_factory=list)  # the `:-x` / `-x` defaults it is read with
 
     @property
@@ -405,13 +430,14 @@ class KnobUse:
 
     @property
     def dead_read(self) -> bool:
-        """The container reads $${NAME} but the compose never forwards it."""
-        return bool(self.shell) and not self.forwarded and not self.assigned
+        """The container reads $${NAME} (or runs a mounted program that reads it) but the
+        compose never forwards it."""
+        return (bool(self.shell) or bool(self.mounted)) and not self.forwarded and not self.assigned
 
     @property
     def dead_env(self) -> bool:
         """Forwarded into the container but nothing in the compose reads it."""
-        return self.forwarded and not self.shell and not self.interp
+        return self.forwarded and not self.shell and not self.interp and not self.mounted
 
     def env_forms(self) -> list[str]:
         return [form for _, form in self.env]
@@ -617,6 +643,23 @@ def scan_compose_text(text: str, names) -> dict[str, KnobUse]:
                 + re.escape(nm) + r"=", _QUOTED_RX.sub('""', ln)
             ):
                 u.assigned.append(idx + 1)
+
+    # 3. programs the compose mounts and runs that read knobs from their environment.
+    for reader in MOUNTED_READERS:
+        for idx, ln in enumerate(code):
+            if reader["invoke"] not in ln:
+                continue
+            for nm, arg in reader["knobs"].items():
+                if nm not in uses:
+                    continue
+                uses[nm].mounted.append(idx + 1)
+                m = re.search(re.escape(arg) + r"""\s+(["']?)([^\s"'$]+)\1(?=\s|\)|$)""", ln) if arg else None
+                if m:
+                    uses[nm].defaults.append(m.group(2))
+                elif arg is None:
+                    # A switch with no argument on the line (THINKING_BUDGETS): unset is its
+                    # default — "" in compose_default()'s terms, shown as "(unset)".
+                    uses[nm].defaults.append("")
     return uses
 
 
@@ -676,12 +719,12 @@ def _main(argv: list[str]) -> int:
             rc = 1
             continue
         for n, u in sorted(uses.items()):
-            if not (u.env or u.interp or u.shell):
+            if not (u.env or u.interp or u.shell or u.mounted):
                 continue
             flags = [f for f, on in (("consumed", u.consumed), ("DEAD-READ", u.dead_read),
                                      ("dead-env", u.dead_env)) if on]
             print(f"{c}\t{n}\tenv={','.join(u.env_forms()) or '-'}\tinterp={len(u.interp)}"
-                  f"\tshell={len(u.shell)}\tdefault={u.compose_default()!r}\t{' '.join(flags)}")
+                  f"\tshell={len(u.shell)}\tmounted={len(u.mounted)}\tdefault={u.compose_default()!r}\t{' '.join(flags)}")
     return rc
 
 

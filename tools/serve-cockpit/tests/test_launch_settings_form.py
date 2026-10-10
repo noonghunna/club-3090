@@ -34,7 +34,8 @@ NONE = "vllm/minimal"                     # reads no catalogued knob
 SGL_COMPOSE = "models/qwen3.8-27b/sglang/compose/dual/autoround-int4/mtp.yml"
 PIN = "CLUB3090_THINKING_QWEN3_8_27B"
 KNOBS = ("KV_OFFLOAD_GB", "KV_OFFLOAD_DISK", "KV_OFFLOAD_DISK_GB", "ENABLE_THINKING",
-         "REASONING_EFFORT", "SPEC_N")
+         "REASONING_EFFORT", "SPEC_N", "THINKING_BUDGET_LOW", "THINKING_BUDGET_MEDIUM",
+         "THINKING_BUDGET_XHIGH", "THINKING_BUDGETS")
 
 
 @pytest.fixture(autouse=True)
@@ -129,6 +130,10 @@ class TestRows:
             "KV_OFFLOAD_GB": ("64", "this slug"),
             "REASONING_EFFORT": ("medium", "club3090.env"),
             "SPEC_N": ("<set, hidden>", "secrets.env"),
+            "THINKING_BUDGETS": ("(unset)", "compose default"),
+            "THINKING_BUDGET_LOW": ("4096", "compose default"),
+            "THINKING_BUDGET_MEDIUM": ("16384", "compose default"),
+            "THINKING_BUDGET_XHIGH": ("32768", "compose default"),
         }
         gb = v.knob("KV_OFFLOAD_GB")
         assert gb.overrides == [("club3090.env", "32")]

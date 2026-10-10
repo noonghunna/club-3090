@@ -120,6 +120,11 @@ for name, enabled, level, disabled in (("pcie", 0, "", True), ("pcie-p2p", 1, "P
         for sub in set(re.findall(r"/etc/club3090/([\w.-]+)/install\.sh", body)):
             (etc / sub).mkdir()
             (etc / sub / "install.sh").write_text("exit 0\n", encoding="utf-8")
+        # The effort-budget module is RUN by the entrypoint (shell-env), not an
+        # installer — ship the real one, as the compose mounts it.
+        if "/etc/club3090/effort_budget.py" in body:
+            (etc / "effort_budget.py").write_text(
+                (Path(sys.argv[1]) / "scripts/lib/effort_budget.py").read_text(encoding="utf-8"), encoding="utf-8")
         # #1358: the envelope helper is sourced, not stubbed — run the real one.
         if "/etc/club3090/fa2/envelope.sh" in body:
             (etc / "fa2").mkdir(exist_ok=True)

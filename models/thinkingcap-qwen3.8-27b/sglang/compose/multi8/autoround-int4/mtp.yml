@@ -9,8 +9,10 @@
 #              name (thinkingcap38-27b), service/container name and port. Everything
 #              else in this header is the SIBLING's text — its numbers are for BASE
 #              Qwen3.8 (Frozenlock INT4 / official FP8), NOT for ThinkingCap.
-#   Engine:    SGLang STOCK v0.5.21 (`lmsysorg/sglang:v0.5.21`) — engine profile
-#              `sglang-stable`. ⚠️ NO PATCHES. That is the POINT of this compose.
+#   Engine:    SGLang stock v0.5.21 (`lmsysorg/sglang:v0.5.21`) — engine profile
+#              `sglang-stable` + vendored patches: `sglang-effort-thinking-budget` (per-effort
+#              reasoning budgets; THINKING_BUDGETS=off drops the budgets, strict thinking stays on)
+#              and the AutoRound W4A8 patch (ON by default; W4A8=0 reverts).
 #   Topology:  8x GPU (TP=8) — NOT the reference rig
 #   Drafter:   native MTP head, in-checkpoint (29 `mtp.*` tensors,
 #              text_config.mtp_num_hidden_layers=1) — NOT an external drafter.
@@ -23,7 +25,7 @@
 #              LICENSE: PolyForm Small Business 1.0.0 + BottleCap's personal-use grant — commercial
 #              use by an organization that is not a small business needs a BottleCap license.
 #
-#   Best for:  ⭐ long-context chat on the zero-patch SGLang reference — the widest pool in the sgl/ matrix
+#   Best for:  ⭐ long-context chat on the near-stock SGLang reference — the widest pool in the sgl/ matrix
 # ---------------------------------------------------------------------------
 # ⭐⭐ WHY THIS COMPOSE EXISTS: to find out what STOCK v0.5.19 does.
 #
@@ -308,6 +310,10 @@ services:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8184}}:30000"
     volumes:
       - ../../../../../../scripts/lib/cuda-ordinals.sh:/etc/club3090/cuda-ordinals.sh:ro
+      # Reasoning budget chosen by effort: the engine-neutral module + the SGLang hooks
+      # (patches.yml qwen38-sglang-effort-thinking-budget). Wired in the entrypoint below.
+      - ../../../../../../scripts/lib/effort_budget.py:/etc/club3090/effort_budget.py:ro
+      - ../../../../../qwen3.8-27b/sglang/patches/sglang-effort-thinking-budget:/etc/club3090/effort-thinking-budget:ro
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
       # Patched template (default_reasoning_effort + high -> xhigh), mounted over the
       # checkpoint's own; SGLang loads it from the model dir. See the SAMPLER note
@@ -343,6 +349,11 @@ services:
       - PRESENCE_PENALTY
       - REPEAT_PENALTY
       - REASONING_EFFORT
+      # Reasoning budget by effort (see the entrypoint) — bare, so unset stays unset.
+      - THINKING_BUDGET_LOW
+      - THINKING_BUDGET_MEDIUM
+      - THINKING_BUDGET_XHIGH
+      - THINKING_BUDGETS
       - CHUNKED_PREFILL_SIZE
     deploy:
       resources:
@@ -563,6 +574,17 @@ services:
         SAMPLER=(--default-chat-template-kwargs "{\"enable_thinking\": $$_think, \"default_reasoning_effort\": \"$$_reff\"}"
                  --sampling-defaults model
                  --preferred-sampling-params "{\"temperature\": $$_temp, \"top_p\": $${TOP_P}, \"top_k\": $${TOP_K:-20}, \"min_p\": $${MIN_P:-0.0}, \"presence_penalty\": $${PRESENCE_PENALTY}, \"repetition_penalty\": $${REPEAT_PENALTY:-1.0}}")
+        # --- Reasoning budget chosen by effort (patches.yml qwen38-sglang-effort-thinking-budget) ---
+        # A request's own budget wins (custom_params.thinking_budget, thinking_token_budget,
+        # /v1/messages thinking.budget_tokens); else the budget for the effort it runs at; else
+        # SGLANG_MAX_THINK_TOKENS, the default effort's budget (all the Responses API and
+        # /generate get). Enforced by --enable-strict-thinking (below), which also blocks the
+        # tool-call and end-of-turn tokens while the model thinks; THINKING_BUDGETS=off drops
+        # the budgets, not strict thinking. Defaults (maintainer-set 2026-10-09): low 4096,
+        # medium 16384, xhigh 32768 (high/max -> 32768, minimal -> 4096). THINKING_BUDGET_LOW/
+        # _MEDIUM/_XHIGH override them; a bad value stops the boot. Readback: `[effort-budget] v1`.
+        _eb="$$(python3 /etc/club3090/effort_budget.py shell-env --engine sglang --default-effort "$$_reff" --low 4096 --medium 16384 --xhigh 32768)" || exit 1; eval "$$_eb"
+        bash /etc/club3090/effort-thinking-budget/install.sh || exit 1
         # ⭐ --enable-cache-report (club-3090#1297). Without it SGLang sets
         # usage.prompt_tokens_details to NULL on every response, streaming and
         # non-streaming alike — entrypoints/openai/usage_processor.py gates the
@@ -616,6 +638,7 @@ services:
           --sleep-on-idle \
           --enable-cache-report \
           "$${SAMPLER[@]}" \
+          --enable-strict-thinking \
           --reasoning-parser "${REASONING_PARSER:-qwen3}" \
           --tool-call-parser "${TOOL_CALL_PARSER:-qwen3_coder}" \
           --host 0.0.0.0 --port 30000 \

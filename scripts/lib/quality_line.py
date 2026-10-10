@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """quality_line.py — the compose `Quality:` one-liner from a benchlocal results JSON.
 
-    quality_line.py RESULTS_JSON MODE [BENCHLOCAL_ARG ...]
+    quality_line.py [--server-budget N|off [--server-effort E]] RESULTS_JSON MODE [BENCHLOCAL_ARG ...]
 
 Prints `Quality:   <pack scores> (<provenance suffix>)`. MODE is the wrapper's
 --quick/--medium/--full (or a pack id). The trailing arguments are the argv the
@@ -10,9 +10,21 @@ wrapper handed benchlocal-cli; they are read only for `--thinking-sampler` and
 records both since benchlocal-cli#188; before that a `--resume`d run, whose flags
 come back from the journal rather than the argv, was stamped `pack:*`.
 
-Provenance suffix (#983E): mode, thinking gate, sampler, topology, thinking
-validity, pack versions, date. Each stamp appears only when it is known — a
-missing field stays missing instead of lying.
+Provenance suffix (#983E): mode, thinking gate, sampler, server reasoning
+budget, topology, thinking validity, pack versions, date. Each stamp appears
+only when it is known — a missing field stays missing instead of lying.
+
+THE SERVER BUDGET STAMP
+    A club vLLM / SGLang compose can cap reasoning server-side with a budget
+    chosen by effort (scripts/lib/effort_budget.py). The wrapper reads it from
+    the serving container's boot log and passes it here as --server-budget, for
+    THIS run only (an argument, not an environment variable, so a stale export
+    cannot stamp a budget the run never had); benchlocal-cli records the same
+    number as `server_thinking_budget` when it supports --server-thinking-budget,
+    and that recorded value wins (a --resume'd run carries it, the argv does not).
+      budget=server 16384 (effort xhigh)   the budget for the run's effort
+      budget=server off                    the compose booted with THINKING_BUDGETS=off
+    No stamp when unknown — the line is then byte-identical to before.
 
 THE SAMPLER STAMP (#1579)
     Until #1579 only `sampling=server` was stamped, so a run with explicit
@@ -136,7 +148,29 @@ def sampling_stamp(d: dict, cli_args: list[str]) -> str | None:
     return "sampling=pack"
 
 
-def quality_line(d: dict, mode: str, cli_args: list[str], date: str) -> str:
+def budget_stamp(d: dict, server_budget: str | None = None,
+                 server_effort: str | None = None) -> str | None:
+    """`budget=server N (effort E)` / `budget=server off`, or None when unknown."""
+    recorded = d.get("server_thinking_budget")
+    if isinstance(recorded, bool) or not isinstance(recorded, int):
+        recorded = None
+    passed = (server_budget or "").strip().lower() or None
+    if recorded is not None:
+        budget = str(recorded)
+        effort = server_effort if passed == budget else None
+    elif passed == "off" or (passed or "").isdigit():
+        budget = passed
+        effort = server_effort if passed != "off" else None
+    else:
+        return None
+    if budget == "off":
+        return "budget=server off"
+    effort = (effort or "").strip()
+    return f"budget=server {budget}" + (f" (effort {effort})" if effort else "")
+
+
+def quality_line(d: dict, mode: str, cli_args: list[str], date: str,
+                 server_budget: str | None = None, server_effort: str | None = None) -> str:
     parts = []
     versions = []
     for p in d.get("packs", []):
@@ -168,6 +202,9 @@ def quality_line(d: dict, mode: str, cli_args: list[str], date: str) -> str:
     stamp = sampling_stamp(d, cli_args)
     if stamp:
         suffix_parts.append(stamp)
+    budget = budget_stamp(d, server_budget, server_effort)
+    if budget:
+        suffix_parts.append(budget)
     # #1396: the topology the scores were measured on (run_meta, from run_context.py).
     tp = (d.get("run_meta") or {}).get("tp")
     if tp:
@@ -183,12 +220,23 @@ def quality_line(d: dict, mode: str, cli_args: list[str], date: str) -> str:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 3:
+    # Wrapper options come BEFORE the results path; everything after MODE is the
+    # benchlocal argv, which may itself carry --flags.
+    args = list(argv[1:])
+    opts = {"--server-budget": None, "--server-effort": None}
+    while args and args[0] in opts:
+        if len(args) < 2:
+            print(f"{args[0]} needs a value", file=sys.stderr)
+            return 2
+        opts[args[0]] = args[1]
+        args = args[2:]
+    if len(args) < 2:
         print(__doc__.split("\n\n", 2)[1], file=sys.stderr)
         return 2
-    with open(argv[1], encoding="utf-8") as fh:
+    with open(args[0], encoding="utf-8") as fh:
         d = json.load(fh)
-    print(quality_line(d, argv[2], argv[3:], datetime.date.today().isoformat()))
+    print(quality_line(d, args[1], args[2:], datetime.date.today().isoformat(),
+                       opts["--server-budget"], opts["--server-effort"]))
     return 0
 
 

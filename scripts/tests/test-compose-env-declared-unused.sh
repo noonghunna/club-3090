@@ -27,7 +27,10 @@
 #   declared in `environment:`  AND
 #   not read at runtime as `$${VAR}` (entrypoint/command, evaluated IN-container) AND
 #   not substituted host-side as `${VAR}` (compose render time) AND
-#   not matched by ENGINE_PREFIXES / ENGINE_EXACT
+#   not matched by ENGINE_PREFIXES / ENGINE_EXACT AND
+#   not read by a mounted program the compose's CODE runs (launch_knobs.MOUNTED_READERS —
+#     e.g. `python3 /etc/club3090/effort_budget.py shell-env` reads THINKING_BUDGET_*;
+#     the same table the launch-knobs scan uses, so the two can't disagree)
 #   ⇒ FAIL — it is a knob that does nothing.
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -63,6 +66,25 @@ KNOWN = {
 def engine_owned(name: str) -> bool:
     return name in ENGINE_EXACT or name.startswith(ENGINE_PREFIXES)
 
+# A mounted program reads knobs from the environment, so no `$${VAR}` appears in the
+# YAML. Only a line of CODE that runs it counts — a comment mentioning it does not.
+sys.path.insert(0, "scripts/lib/profiles")
+from launch_knobs import MOUNTED_READERS
+
+def mounted_reads(raw: str) -> set:
+    code = [ln for ln in raw.splitlines() if not ln.lstrip().startswith("#")]
+    names = set()
+    for reader in MOUNTED_READERS:
+        if any(reader["invoke"] in ln for ln in code):
+            names.update(reader["knobs"])
+    return names
+
+# Negative controls: the rule must not excuse a forward with no (or only a commented) invoke.
+_inv = MOUNTED_READERS[0]["invoke"]
+assert mounted_reads("x:\n  - |\n    " + _inv + " --engine vllm\n") >= set(MOUNTED_READERS[0]["knobs"])
+assert not mounted_reads("x:\n  - |\n    # " + _inv + " --engine vllm\n"), "a commented invoke must not count"
+assert not mounted_reads("x:\n  - |\n    exec vllm serve\n"), "no invoke must not count"
+
 bad = []
 checked = 0
 for path in sorted(glob.glob("models/*/*/compose/*/*/*.yml")):
@@ -73,7 +95,7 @@ for path in sorted(glob.glob("models/*/*/compose/*/*/*.yml")):
     except Exception:
         continue
     # $${VAR} — evaluated INSIDE the container at runtime (needs a declaration)
-    runtime = set(re.findall(r'\$\$\{?([A-Z_][A-Z0-9_]*)', raw))
+    runtime = set(re.findall(r'\$\$\{?([A-Z_][A-Z0-9_]*)', raw)) | mounted_reads(raw)
     # ${VAR}  — substituted by compose on the HOST at render time (no declaration needed)
     hostsub = set(re.findall(r'(?<!\$)\$\{([A-Z_][A-Z0-9_]*)', raw))
     for svc in (doc.get("services") or {}).values():

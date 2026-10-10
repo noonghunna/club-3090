@@ -240,6 +240,11 @@ def argv_under(text, env):
         for sub in set(re.findall(r"/etc/club3090/([\w.-]+)/install\.sh", body)):
             (etc / sub).mkdir(parents=True, exist_ok=True)
             (etc / sub / "install.sh").write_text("#!/bin/bash\nexit 0\n")
+        # The effort-budget module is RUN by the entrypoint (shell-env), not an
+        # installer — ship the real one, as the compose mounts it.
+        if "/etc/club3090/effort_budget.py" in body:
+            (etc / "effort_budget.py").write_text(pathlib.Path(
+                "scripts/lib/effort_budget.py").read_text(encoding="utf-8"), encoding="utf-8")
         # #1358: the fa2 envelope helper is sourced, not an installer — ship the
         # REAL one, so the entrypoint runs it exactly as the container would.
         if "/etc/club3090/fa2/envelope.sh" in body:
