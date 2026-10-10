@@ -110,7 +110,7 @@ Serves an OpenAI-compatible API on **`:<port>`** (model `<served-name>`). Point 
 ⭐ **Link [`docs/RUN_EVALS.md`](RUN_EVALS.md) instead of restating the full recipe**, and add only what is specific to these slugs (an extra download, a non-default thinking switch, a port). Copied recipes go stale: #1076's instruct-default / four-variable leg did after the #1014 and 2026-09-01 changes.
 
 Two **non-overlapping** passes — behavioral quality (the 8-pack) + operational health (verify / stress / soak / bench / agentic):
-- **One-time:** `pip install git+https://github.com/noonghunna/benchlocal-cli.git`, then `git clone` it + `bash benchlocal-cli/tools/build-sandboxes.sh` (~30 GB; builds the 3 Docker sandbox packs — bugfind, cli-40, hermesagent).
+- **One-time:** `pip install git+https://github.com/noonghunna/benchlocal-cli.git` (Python 3.11+; on an older system Python, `uv tool install --python 3.12 git+https://github.com/noonghunna/benchlocal-cli.git`), then `git clone` it + `bash benchlocal-cli/tools/build-sandboxes.sh` (~30 GB; builds the 3 Docker sandbox packs — bugfind, cli-40, hermesagent).
 - **Quality (both modes):** `bash scripts/quality-test.sh --full --no-thinking` then `--enable-thinking`. ⚠️ Thinking model → boot the compose with reasoning parsing on (`REASONING=on` for llama.cpp, `--reasoning-parser` for vLLM) for the reasoning-ON leg, so `<think>` lands in reasoning_content not the graded answer.
 - **Operational:** `bash scripts/report.sh --full` (redacted, paste-ready bundle).
 Non-overlapping by design — `quality-test.sh` is behavioral-only, `report.sh --full` is operational-only. Ask contributors to paste the `report.sh` bundle + their 8-pack totals in a comment or the `numbers-from-your-rig` template.

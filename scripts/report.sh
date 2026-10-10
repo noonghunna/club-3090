@@ -976,7 +976,7 @@ section "Quality tooling (benchlocal-cli + sandboxes)"
 {
   bl_bin=$(command -v benchlocal-cli 2>/dev/null || true)
   if [[ -z "$bl_bin" ]]; then
-    echo "- **benchlocal-cli:** not installed (quality-test.sh needs it — \`pip install git+https://github.com/noonghunna/benchlocal-cli.git\`)"
+    echo "- **benchlocal-cli:** not installed (quality-test.sh needs it — \`pip install git+https://github.com/noonghunna/benchlocal-cli.git\`, Python 3.11+)"
   else
     bl_mtime=$(stat -c %Y "$bl_bin" 2>/dev/null || echo 0)
     bl_when=$([[ "$bl_mtime" -gt 0 ]] && date -d "@${bl_mtime}" +%F 2>/dev/null || echo "unknown")
