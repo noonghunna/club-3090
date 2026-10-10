@@ -12,26 +12,26 @@
 #   Vision:    no (base is VL-capable; mmproj NOT fetched, NOT mounted — text-only ship)
 #   Template:  native (GGUF-embedded) via --jinja
 #   Max ctx:   262144 — the ARCHITECTURAL ceiling (config.json
-#              max_position_embeddings); COMPUTED to fit, never measured
+#              max_position_embeddings); allocation MEASURED (22.5 GB/card), never filled
 #   Genesis:   N/A — llama.cpp engine; Genesis is vLLM/Qwen3-Next-specific
 #   Status:    🧪 Experimental
-#   Caveats:   NOTHING HAS BOOTED. Authored 2026-08-14 while the weights were still
-#              downloading; zero runtime evidence exists for any claim below.
-#              Specifically unvalidated:
-#                - never launched — no boot, no `docker logs`, no served token
-#                - no verify-full (0/8), no verify-stress, no NIAH, no soak
-#                - no bench: NO TPS / TTFT / prefill number is claimed anywhere
-#                - no quality run (8-pack not executed in either reasoning mode)
-#                - Max ctx 262144 is DERIVED FROM ARITHMETIC (docs/KV_MATH.md
-#                  formula + the qwen3.6-27b single-card anchor), never filled.
+#   Caveats:   VALIDATED SO FAR: boots and allocates the full 262144 window at
+#              22,504 / 22,574 MiB with verify-full EXIT=0 (2026-08-15, b10236);
+#              re-booted on the b11429 pin 2026-10-06 with bench.sh + verify-full
+#              PASS, and again 2026-10-10. (This line said NOTHING HAS BOOTED until
+#              2026-10-10 — it had been stale since 2026-08-15.)
+#              Still unvalidated:
+#                - no verify-stress, no NIAH fill, no soak
+#                - no clean quality run: the 2026-08-14/15 bench + 8-pack ran with
+#                  `-ts 1,1` (pipeline parallelism silently disabled — see TOPOLOGY),
+#                  so both are withheld; no TPS / quality number is claimed here
+#                - Max ctx 262144 is ALLOCATED (measured), never filled.
 #                  Allocating a context is NOT filling it — the Tess-4-27B dual
 #                  (identical growing-attention geometry) allocates 262144 and
 #                  NIAH-fills to ~240K, i.e. ~91%. Expect a similar or worse gap
 #                  here until a ladder proves otherwise.
-#                - ENGINE COMPATIBILITY UNPROVEN: the b10236 pin predates this
-#                  model. The `qwen35` arch it should convert to is served here
-#                  (Tess-4-27B, Deckard-40B), but that this specific GGUF loads on
-#                  this specific build is an inference, not an observation.
+#                - ✅ RESOLVED: the GGUF loads and serves on the b10236 pin
+#                  (2026-08-15) and on b11429 (2026-10-06, 2026-10-10).
 #                - the hybrid 16/64 growing-layer split (which the whole KV budget
 #                  rests on) is read from config.json, not back-solved from a boot log
 #                - ✅ RESOLVED 2026-08-15: the layer-split balance WAS checked against
@@ -39,8 +39,8 @@
 #                  (see TOPOLOGY). Now ships 0.55,0.45 — measured 22504/22574 MiB.
 #                - sampler now follows the MODEL CARD (instruct row: temp 0.7,
 #                  top_p 0.80, presence_penalty 1.5) — corrected 2026-08-14
-#              Promote to 🧪 only after a clean boot + verify-full; to ⚠️/✅ only
-#              after the full gate (verify-stress + bench + soak + quality).
+#              Promote to ⚠️/✅ only after the rest of the gate: verify-stress +
+#              soak + a clean 8-pack (and a bench on the shipped split in BENCHMARKS).
 #   Engine-profile: llama-cpp-local
 #   Best for:  max-context + max-weight-fidelity Qwen3.8-27B on both 3090s.
 #              NOT yet recommendable for anything; see Caveats.
