@@ -646,7 +646,10 @@ else
   } | redact
 
   subsection "NVLink"
-  if nvidia-smi nvlink --status -i 0 2>/dev/null | command grep -qE 'Link [0-9]+:'; then
+  # Captured, then matched: piped into grep -q under this script's pipefail,
+  # nvidia-smi can SIGPIPE and a present bridge reads as absent (#1574).
+  _nvl_status="$(nvidia-smi nvlink --status -i 0 2>/dev/null)" || true
+  if command grep -qE 'Link [0-9]+:' <<<"$_nvl_status"; then
     nvidia-smi nvlink --status 2>&1 | redact | details "NVLink link status"
   else
     echo "_No NVLink detected (PCIe-only)_"

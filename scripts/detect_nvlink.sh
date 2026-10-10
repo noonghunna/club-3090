@@ -220,7 +220,10 @@ case "$NVLINK_MODE" in
     GPU_COUNT="$_GPU_COUNT"
     if [ "$GPU_COUNT" -gt 2 ]; then
       # Check topology matrix for any NVLink connections (e.g. 2 bridges on 4 cards).
-      if nvidia-smi topo -m 2>/dev/null | command grep -qP '\bNV[0-9]+\b'; then
+      # Captured, then matched: piped into grep -q, nvidia-smi SIGPIPEs and a
+      # host-side caller under pipefail (launch.sh) reads the bridge as absent (#1574).
+      _TOPO_M="$(nvidia-smi topo -m 2>/dev/null)" || true
+      if command grep -qP '\bNV[0-9]+\b' <<<"$_TOPO_M"; then
         _NVLINK_ENABLED=1
         _NVLINK_FOUND=1   # a real NVLink finding (or force_on), not a PCIe peer path
         if _nvlink_full_mesh; then

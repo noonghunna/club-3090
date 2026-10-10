@@ -196,6 +196,38 @@ mk_smi 'GPU 0: RTX 3090\n' "$TOPO_PHB" "$P2P_OK"
 r="$(PATH="$TMP:$PATH" bash -c 'source scripts/lib/p2p-state.sh; p2p_host_capability')"
 [[ "$r" == "none" ]] || fail "single GPU -> none even with p2p OK (got $r)"
 
+# ── 3b. a probe must not lose its match under `pipefail` (#1574) ──────────────
+# `nvidia-smi … | grep -q` exits on the first match, nvidia-smi takes a SIGPIPE
+# on its next write, and under `pipefail` the pipeline returns 141 — a FOUND
+# match read as a miss. bench.sh, report.sh and launch.sh all run with pipefail,
+# so a 4× 3090 rig with its NVLink bridge in use was reported as "driver P2P
+# grant: REFUSED" in 7 of 8 bench reports. The stubs above print everything in
+# one write, which never SIGPIPEs, so they could not see it: this stub pauses
+# after the line that matches, the way the real nvidia-smi writes in pieces.
+mk_smi_slow() { cat > "$TMP/nvidia-smi" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  -L) printf '%b' "$1" ;;
+  "topo -m") printf '%b' "$2"; sleep 0.3; printf 'Legend:\n\n  X    = Self\n' ;;
+  "topo -p2p r") printf '%b' "$3"; sleep 0.3; printf 'Legend:\n\n  X    = Self\n' ;;
+esac
+EOF
+chmod +x "$TMP/nvidia-smi"; }
+# His topology: 4 cards, one bridge on GPU0↔GPU3 and one on GPU1↔GPU2.
+TOPO_NV4_HIS='\tGPU0\tGPU1\tGPU2\tGPU3\nGPU0\t X \tNODE\tNODE\tNV4\nGPU1\tNODE\t X \tNV4\tNODE\nGPU2\tNODE\tNV4\t X \tNODE\nGPU3\tNV4\tNODE\tNODE\t X \n'
+P2P_GNS4=' \tGPU0\tGPU1\tGPU2\tGPU3\nGPU0\tX\tGNS\tGNS\tOK\nGPU1\tGNS\tX\tOK\tGNS\nGPU2\tGNS\tOK\tX\tGNS\nGPU3\tOK\tGNS\tGNS\tX\n'
+L4='GPU 0: RTX 3090\nGPU 1: RTX 3090\nGPU 2: RTX 3090\nGPU 3: RTX 3090\n'
+mk_smi_slow "$L4" "$TOPO_NV4_HIS" "$P2P_GNS4"
+r="$(PATH="$TMP:$PATH" bash -o pipefail -c 'source scripts/lib/p2p-state.sh; p2p_host_capability')"
+[[ "$r" == "nvlink" ]] || fail "pipefail: bridged 4-GPU rig -> nvlink (got $r)"
+# detect_nvlink.sh is sourced host-side by launch.sh, which runs under pipefail.
+d="$(PATH="$TMP:$PATH" NVLINK_MODE=auto bash -o pipefail scripts/detect_nvlink.sh -- --tensor-parallel-size 2 2>/dev/null || true)"
+assert_contains "$d" "NVLink found on GPU pairs"
+mk_smi_slow "$L2" "$TOPO_PHB" "$P2P_CNS"
+PATH="$TMP:$PATH" bash -o pipefail -c 'source scripts/lib/p2p-state.sh; p2p_reports_cns' \
+  || fail "pipefail: CNS in topo -p2p -> p2p_reports_cns true"
+echo "  ✓ #1574: NVLink and CNS probes keep their match under pipefail (slow-writing nvidia-smi)"
+
 # ── 4. decider↔auditor consistency: detect_nvlink.sh on the same fixtures ────
 # ⚠️ Passes a TP width. The decider derives `gate=` (its prediction that vLLM will
 # veto its own kernel) from the TP world size, read from the entrypoint argv —

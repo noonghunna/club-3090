@@ -41,13 +41,19 @@ p2p_gpu_count() {
 
 # Host capability: "nvlink" | "pcie_p2p" | "none".
 # NVLink probe matches detect_nvlink.sh's auto path (topo -m, \bNV<n>\b).
+#
+# ⚠️ Capture nvidia-smi's output, THEN match it. Never `nvidia-smi … | grep -q`:
+# grep -q exits on the first match, nvidia-smi takes a SIGPIPE on its next
+# write, and under a caller's `pipefail` (bench.sh, report.sh, launch.sh) the
+# pipeline returns 141, so a found bridge reads as none (#1574).
 p2p_host_capability() {
-  local count="${1:-$(p2p_gpu_count)}"
+  local count="${1:-$(p2p_gpu_count)}" topo
   if [[ "${count:-0}" -lt 2 ]]; then
     echo none
     return 0
   fi
-  if nvidia-smi topo -m 2>/dev/null | command grep -qP '\bNV[0-9]+\b'; then
+  topo="$(nvidia-smi topo -m 2>/dev/null)" || true
+  if command grep -qP '\bNV[0-9]+\b' <<<"$topo"; then
     echo nvlink
     return 0
   fi
@@ -432,8 +438,11 @@ p2p_bar1_min() {
 
 # True (0) when `topo -p2p r` reports CNS on any pair — the stock GeForce
 # driver's software refusal, the one gate a patched module actually lifts.
+# (Captured before matching, not piped into grep -q: see p2p_host_capability.)
 p2p_reports_cns() {
-  nvidia-smi topo -p2p r 2>/dev/null | command grep -qE '(^|[[:space:]])CNS([[:space:]]|$)'
+  local p2p
+  p2p="$(nvidia-smi topo -p2p r 2>/dev/null)" || true
+  command grep -qE '(^|[[:space:]])CNS([[:space:]]|$)' <<<"$p2p"
 }
 
 # p2p_opportunity_hint <gpu_count> <host_capability>
