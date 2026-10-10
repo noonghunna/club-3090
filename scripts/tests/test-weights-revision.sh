@@ -56,10 +56,16 @@ weights:
 
 failures = []
 with tempfile.TemporaryDirectory() as tmp:
-    models = Path(tmp) / "models"
-    models.mkdir()
+    # The fixture sits at the real depth, <repo>/scripts/lib/profiles: weights.py takes the
+    # repo root as PROFILE_ROOT.parents[2] to find local extensions (#1562). A shallow
+    # PROFILE_ROOT has no parents[2] (#1604), and a deep TMPDIR would point the extension
+    # scan at an unrelated directory above the fixture. Here it scans <tmp>, which has none.
+    profile_root = Path(tmp) / "scripts" / "lib" / "profiles"
+    models = profile_root / "models"
+    models.mkdir(parents=True)
     (models / "revfixture.yml").write_text(FIXTURE, encoding="utf-8")
-    weights.PROFILE_ROOT = Path(tmp)
+    weights.PROFILE_ROOT = profile_root
+    assert weights.PROFILE_ROOT.parents[2] == Path(tmp)
 
     pinned = weights._recipe("revfixture", "pinned")
     if pinned.get("WEIGHT_REVISION") != "65f69c7abc1234":
