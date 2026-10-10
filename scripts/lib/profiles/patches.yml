@@ -957,7 +957,9 @@ patches:
     delivery_mechanism: install_script
     delivery_spec:
       script: models/gemma-4-31b/vllm/patches/vllm-pr42006-v0.22.0/install.sh
-      invoke: "boot-time: applies the #42006 single-file diff to stock v0.22.0's gemma4_tool_parser.py (idempotent; fail-loud)"
+      mounted_at: /etc/club3090/pr42006
+      invoke: bash /etc/club3090/pr42006/install.sh
+      note: "boot-time: applies the #42006 single-file diff to stock v0.22.0's gemma4_tool_parser.py (idempotent; fail-loud)"
       invoked_before: vllm-import
       wired_at: [volumes, entrypoint]
     drift_guard:
@@ -1041,7 +1043,9 @@ patches:
     delivery_mechanism: install_script
     delivery_spec:
       script: models/gemma-4-31b/vllm/patches/vllm-pr40391-v0.22.0/install.sh
-      invoke: "boot-time: copies kv_cache_shape_utils.py + applies the ~240-line #40391 diff onto stock v0.22.0 (idempotent; fail-loud if the diff does not apply cleanly)"
+      mounted_at: /etc/club3090/pr40391
+      invoke: bash /etc/club3090/pr40391/install.sh
+      note: "boot-time: copies kv_cache_shape_utils.py + applies the ~240-line #40391 diff onto stock v0.22.0 (idempotent; fail-loud if the diff does not apply cleanly)"
       invoked_before: vllm-import
       wired_at: [volumes, entrypoint]
     drift_guard:
@@ -1109,7 +1113,9 @@ patches:
     delivery_mechanism: install_script
     delivery_spec:
       script: models/gemma-4-26b-a4b/vllm/patches/vllm-pr40886-awq-moe-keys/install.sh
-      invoke: "boot-time anchor-based Python patcher remaps compressed-tensors AWQ MoE expert keys"
+      mounted_at: /etc/club3090/install-pr40886.sh
+      invoke: bash /etc/club3090/install-pr40886.sh
+      note: "boot-time anchor-based Python patcher remaps compressed-tensors AWQ MoE expert keys"
       invoked_before: vllm-import
       wired_at: entrypoint
     drift_guard:

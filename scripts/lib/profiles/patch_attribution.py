@@ -401,6 +401,25 @@ def service_body(text: str) -> str:
 # invoke artifacts (as declared in patches.yml / Phase-A-prime
 # delivery_spec) are present in the service body.
 # --------------------------------------------------------------------------
+# Script names that many patches share. In the legacy fallback a bare one matched every compose
+# that runs ANY such script, so a patch "reached" composes that never mount it (#1597).
+_GENERIC_SCRIPT_NAMES = frozenset({"install.sh", "apply.py", "patch.py", "selftest.sh", "run.sh"})
+
+
+def _install_sources(patch: dict) -> list[str]:
+    """Host-side names that identify an install_script patch on its mount line: the
+    basenames of its `files` (its own directory or script), minus generic script names."""
+    if patch.get("delivery_mechanism") != "install_script":
+        return []
+    names: set[str] = set()
+    for rel in patch.get("files") or []:
+        path = Path(rel)
+        names.add(path.name)
+        if path.suffix:                   # a file entry: its own patch directory identifies it too
+            names.add(path.parent.name)   # (composes usually mount the whole directory)
+    return sorted(n for n in names if n and n not in _GENERIC_SCRIPT_NAMES and n != "patches")
+
+
 def _spec_wiring_markers(patch: dict) -> tuple[list[str], list[str]]:
     """Derive (volume_markers, invoke_markers) from ``delivery_spec``.
 
@@ -482,18 +501,32 @@ def _spec_wiring_present(patch: dict, body: str) -> bool:
     vol_markers, inv_markers = _spec_wiring_markers(patch)
 
     vol_ok = (not vol_markers) or any(m in body for m in vol_markers)
+    sources = _install_sources(patch)
+    if vol_markers and sources:
+        # The container target alone is not this patch's: two patches can mount at the same
+        # path (the vLLM and SGLang W4A8 patches both use /etc/club3090/w4a8), so require the
+        # patch's own source on the SAME line as the target (#1597).
+        vol_ok = any(any(m in ln for m in vol_markers) and any(src in ln for src in sources)
+                     for ln in body.splitlines())
     inv_ok = (not inv_markers) or any(m in body for m in inv_markers)
+
+    # Where the invoke decides on its own (entrypoint-only, or wired_at unknown), a generic
+    # script name such as "install.sh" matches every compose that runs ANY installer, so it
+    # counts only when the spec offers nothing more specific (#1597). With both points
+    # declared, the source-aware volume check above already pins the patch.
+    specific_inv = [m for m in inv_markers if m not in _GENERIC_SCRIPT_NAMES] or inv_markers
+    specific_inv_ok = (not specific_inv) or any(m in body for m in specific_inv)
 
     if wired_at == {"volumes"}:
         return bool(vol_markers) and vol_ok
     if wired_at == {"entrypoint"}:
-        return bool(inv_markers) and inv_ok
+        return bool(specific_inv) and specific_inv_ok
     if "volumes" in wired_at and "entrypoint" in wired_at:
         # Declared at both points — require the volume mount (the
         # load-bearing artifact); the invoke line is corroborating.
         return bool(vol_markers) and vol_ok and inv_ok
     # Unknown / empty wired_at: fall back to "any declared marker present".
-    return (bool(vol_markers) and vol_ok) or (bool(inv_markers) and inv_ok)
+    return (bool(vol_markers) and vol_ok) or (bool(specific_inv) and specific_inv_ok)
 
 
 # --------------------------------------------------------------------------
@@ -541,15 +574,17 @@ def reaches(root: Path, patch: dict, name_or_path: str) -> bool:
         return True
 
     # Legacy fallback (read-only `delivery:` block) — operates on the
-    # service body, so header/comment ID mentions never match.
+    # service body, so header/comment ID mentions never match. Only for entries
+    # WITHOUT a delivery_spec: when one exists, its sound check above has the final
+    # say (#1597 — the fallback used to say "wired" for 911 pairs it could not see).
+    # Markers are the patch's own file/dir names; a directory entry no longer adds
+    # its parent ("patches", in every compose that mounts any patch) and generic
+    # script names ("install.sh") are skipped.
     delivery = patch.get("delivery") or {}
-    if delivery.get("entrypoint_invoke"):
+    if delivery.get("entrypoint_invoke") and not patch.get("delivery_spec"):
         for rel in patch.get("files") or []:
-            target = root / rel
-            markers = [Path(rel).name]
-            if target.is_dir():
-                markers.append(Path(rel).parent.name)
-            if any(marker in body for marker in markers):
+            name = Path(rel).name
+            if name not in _GENERIC_SCRIPT_NAMES and name in body:
                 return True
         if patch["id"] in body:
             return True

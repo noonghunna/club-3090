@@ -125,6 +125,53 @@ for patch in patches:
                 errors.append(msg)
 
 # ---------------------------------------------------------------------------
+# #1597 — an unwired install-script patch must NOT reach its compose.
+# ---------------------------------------------------------------------------
+# The coverage loop above is a positive control only. The legacy `delivery:` fallback used
+# to treat a directory's parent ("patches") and generic script names ("install.sh") as
+# markers, so a compose that mounted ANY patch "reached" every install-script patch: 911
+# (patch, compose) pairs passed that way, and stripping a patch's mount + invoke from its own
+# compose still passed. Strip each patch's own lines from a copy of a compose it is
+# load-bearing on, and require reaches() to say no.
+import tempfile as _tf
+_NEG = [
+    ("vllm-flashinfer-decode-pin", "vllm/qwen38-27b-dual-fast", ("flashinfer-decode-pin",)),
+    ("qwen38-sglang-autoround-w4a8-v0519", "sgl/qwen38-27b-dual-fast", ("/etc/club3090/w4a8",)),
+    ("gemma-vllm-pr40391-rebased", "vllm/gemma-int8-mtp", ("pr40391",)),
+]
+_pmap = {p["id"]: p for p in patches}
+for _pid, _slug, _needles in _NEG:
+    _patch = _pmap.get(_pid)
+    _src = COMPOSE_REGISTRY.get(_slug)
+    if _patch is None or _src is None:
+        errors.append(f"#1597 negative control: {_pid} / {_slug} no longer exist — pick another load-bearing pair")
+        continue
+    _path = root / (_src["compose_path"] if isinstance(_src, dict) else _src)
+    if not reaches(_patch, str(_path)):
+        errors.append(f"#1597 positive control: {_pid} does not reach its own load-bearing {_slug}")
+        continue
+    _kept = [ln for ln in _path.read_text(encoding="utf-8").splitlines(keepends=True)
+             if not any(n in ln for n in _needles)]
+    with _tf.TemporaryDirectory() as _d:
+        _neg = Path(_d) / _path.name
+        _neg.write_text("".join(_kept), encoding="utf-8")
+        if pa.reaches(root, _patch, str(_neg)):
+            errors.append(f"#1597: {_pid} still 'reaches' {_slug} with its mount + invoke removed "
+                          "(a fallback marker is matching something generic)")
+
+# Two patches can share a container mount target (the vLLM and SGLang W4A8 patches both use
+# /etc/club3090/w4a8): neither may "reach" the other's composes on the target alone (#1597).
+for _pid, _slug in (("qwen-w4a8-int8-act", "sgl/qwen38-27b-dual-fast"),
+                    ("qwen38-sglang-autoround-w4a8-v0519", "vllm/qwen38-27b-dual-fast")):
+    _src = COMPOSE_REGISTRY.get(_slug)
+    if _pmap.get(_pid) is None or _src is None:
+        errors.append(f"#1597 cross-patch control: {_pid} / {_slug} no longer exist — pick another pair")
+        continue
+    _path = root / (_src["compose_path"] if isinstance(_src, dict) else _src)
+    if reaches(_pmap[_pid], str(_path)):
+        errors.append(f"#1597: {_pid} 'reaches' {_slug}, which mounts a DIFFERENT patch at the same target")
+
+# ---------------------------------------------------------------------------
 # CONTRACT-2b-i — chat_template delivery class + REAL extends merge.
 # ---------------------------------------------------------------------------
 # (1) Every patch's delivery_mechanism is in the v0.8.2 valid set (the
