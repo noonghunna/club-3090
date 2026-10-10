@@ -82,7 +82,7 @@ services:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
     # The engine profile (engines/llama-cpp-prism.yml) is authoritative.
     # Image = upstream's linux-cuda-12.8 release tarball + libgomp1, nothing else.
-    image: ${LLAMACPP_PRISM_IMAGE:-ghcr.io/noonghunna/llamacpp-prism@sha256:906e7bf2e07445c717444eac0bcede9f19b9ce7c105130a377e052a68b2e4b77}
+    image: ${LLAMACPP_PRISM_IMAGE:-ghcr.io/noonghunna/llamacpp-prism@sha256:8dbbd2a6a78193ada3c1e73aa674bb9db3c63425e01aab3c19c633c3cddf90ef}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-prism-qwen38-27b-ternary}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # Reap orphaned children — a wedged server otherwise becomes a <defunct>

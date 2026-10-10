@@ -12,6 +12,12 @@ install:
   # Built by WRAPPING upstream's own release tarball — NOT from source. Recipe:
   # models/qwen3.8-27b/llama-cpp-prism/image/Dockerfile (checked in 2026-09-24;
   # the b10685 image's recipe existed only in its layers).
+  #   2026-10-10  prism-b10770-6684606  `llama-prism-b10770-6684606-bin-linux-cuda-12.8-x64.tar.gz`
+  #               sha256 98410e52…1d5651 (= the release asset's published digest).
+  #               Image tag b10770-6684606, registry digest sha256:8dbbd2a6…cddf90ef.
+  #               Ships PrismML #318 (GDN state gather). Both slugs boot on it (pq2,
+  #               MTP n=4 drafting); its server takes a per-request
+  #               `reasoning_budget_tokens` over --reasoning-budget in either direction.
   #   2026-10-06  prism-b10754-2459f68  `llama-prism-b10754-2459f68-bin-linux-cuda-12.8-x64.tar.gz`
   #               sha256 f2c74401…2db9af (= the release asset's published digest).
   #               SASS sm_86/89/120a. Image tag b10754-2459f68. Not in it: PrismML #318
@@ -36,7 +42,7 @@ install:
   # ⚠️ `libgomp1` is INSTALLED BY THE IMAGE and is REQUIRED. The CUDA runtime
   # base does not carry it, and without it EVERY binary in the tarball fails at
   # exec with `libgomp.so.1: cannot open shared object file`. Found by booting.
-  spec: ghcr.io/noonghunna/llamacpp-prism@sha256:906e7bf2e07445c717444eac0bcede9f19b9ce7c105130a377e052a68b2e4b77
+  spec: ghcr.io/noonghunna/llamacpp-prism@sha256:8dbbd2a6a78193ada3c1e73aa674bb9db3c63425e01aab3c19c633c3cddf90ef
 
 # ---------------------------------------------------------------------------
 # WHY A SEPARATE ENGINE RATHER THAN A FLAG ON AN EXISTING ONE
