@@ -88,6 +88,10 @@ weights:
     format: gguf
     status: experimental
     hf_repo: unsloth/GLM-5.3-Flash-GGUF
+    # ⚠️ PINNED to the last `glm5next`-format commit (2026-08-29). unsloth re-uploaded every file in
+    # mainline format (arch `glm5-next`, mmproj projector `glm5v`) at a38483c on 2026-10-05; `main`
+    # no longer loads in llamacpp-club3090 ("unknown projector type: glm5v").
+    revision: 2975ab414d30340466d8c51533c6e91f0cca64c1
     shards: 5
     # ⚠️ `--local-dir` preserves repo folder structure, so `local_subdir` is the
     # BUCKET and `files:`/`verify_glob` carry the quant-folder prefix — pointing
@@ -116,6 +120,10 @@ weights:
     format: gguf
     status: experimental
     hf_repo: unsloth/GLM-5.3-Flash-GGUF
+    # ⚠️ PINNED to the last `glm5next`-format commit (2026-08-29). unsloth re-uploaded every file in
+    # mainline format (arch `glm5-next`, mmproj projector `glm5v`) at a38483c on 2026-10-05; `main`
+    # no longer loads in llamacpp-club3090 ("unknown projector type: glm5v").
+    revision: 2975ab414d30340466d8c51533c6e91f0cca64c1
     shards: 4
     files:
       - UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00001-of-00004.gguf
@@ -179,6 +187,27 @@ weights:
       - Q3_K_M/zai-org.GLM-5.3-Flash.f16.gguf.Q3_K_M.gguf-00012-of-00012.gguf
     verify_glob: "Q3_K_M/*.gguf"
     manual_note: "🧪 EXPERIMENTAL — TRUE K-quant, one tier above devquasar-q2k. ⭐ 0.0% i-quant (Q3_K x84 3,520 KiB + Q4_K x42 4,608 KiB, 134.37 GiB experts), gated from the tensor table. Non-expert side 4.78 GiB — between Q2_K's 3.90 and UD-IQ3_XXS's 7.33 — so its pool lands nearer the served config and it is the LESS confounded K-quant arm, and the plausible serving candidate. MEASURED 2026-09-10 dual: narrative 23.53 (CV 8.0%) / code 27.50 / prefill@10K 310.7, 5,829 slots, marginal hit 43.9/45.8%. ⭐ vs devquasar-q2k: +31% expert bytes gave a decode ratio of 0.768/0.790 against a byte-proportional prediction of 0.764, while prefill fell only to 0.901 — decode tracks bytes, prefill is compute-bound. ⚠️ NO MTP head (block_count=45). ⚠️ ~142 GiB host RSS under --no-mmap (vs Q2_K's ~109) — fits 196 GiB with ~48 GiB spare. ⚠️ QUALITY UNMEASURED. ⚠️⚠️ The K-quant-vs-served-i-quant comparison is NOT established: those arms ran at reasoning_effort=high (effectively thinking-OFF) while every prior BENCHMARKS row ran thinking-MAX. See learnings/glm-5.3-flash.md 2026-09-10."
+  avar6-q2kq3k:
+    # Served path = the CONVERTED dir. avar6's GGUFs are mainline-format (arch `glm5-next`, ggml-org#27773);
+    # the llamacpp-club3090 engine reads `glm5next` (#27754). setup.sh runs `post_download` after the sha256
+    # check: it writes a converted shard 1 into <bucket>/Q2_K-Q3_K-3.20bpw-glm5next/ and links shards 2-3.
+    # The published files stay byte-identical, so a re-run of setup still verifies them.
+    path: glm-5.3-flash-gguf/avar6-q2kq3k/Q2_K-Q3_K-3.20bpw-glm5next
+    local_subdir: glm-5.3-flash-gguf/avar6-q2kq3k
+    # 128.3 GB download + 49.3 GB converted shard-1 copy (shard 1 carries tensors).
+    size_gb: 178
+    format: gguf
+    status: experimental
+    hf_repo: avar6/GLM-5.3-Flash-BF16-gguf
+    revision: 7083b2085efa3e30b3ea408f37d494b72d3839ef
+    shards: 3
+    files:
+      - Q2_K-Q3_K-3.20bpw/GLM-5.3-Flash-Q2_K-Q3_K-3.20bpw-00001-of-00003.gguf
+      - Q2_K-Q3_K-3.20bpw/GLM-5.3-Flash-Q2_K-Q3_K-3.20bpw-00002-of-00003.gguf
+      - Q2_K-Q3_K-3.20bpw/GLM-5.3-Flash-Q2_K-Q3_K-3.20bpw-00003-of-00003.gguf
+    verify_glob: "Q2_K-Q3_K-3.20bpw/*.gguf"
+    post_download: "scripts/glm53-convert-mainline-gguf.py {dir}/Q2_K-Q3_K-3.20bpw {dir}/Q2_K-Q3_K-3.20bpw-glm5next"
+    manual_note: "🧪 EXPERIMENTAL — fast-tier K-quant. avar6's AesSedai-style mix: routed up/gate Q2_K, routed down Q3_K, everything else Q8_0 (non-expert precision is what DevQuasar's Q2_K lacks). MEASURED 2026-10-08 on 2x 5090 (ub1024, admit32): narrative/code 40.5/45.7 tok/s (2 boots) vs UD-IQ3_XXS 35.6/38.0 same path; quality on the IQ3_XXS level (benchlocal 9/12 @1/@3 of 16 vs 10/10; long-context 6/6). Needs the post_download conversion; see scripts/glm53-convert-mainline-gguf.py."
   dflash2-q4km:
     path: glm-5.3-flash-gguf/dflash2
     # ⚠️ REPO-ROOT artifact (the Anbeeld repo has no subfolder), so it lands FLAT and
@@ -209,6 +238,10 @@ weights:
     format: gguf
     status: experimental
     hf_repo: unsloth/GLM-5.3-Flash-GGUF
+    # ⚠️ PINNED to the last `glm5next`-format commit (2026-08-29). unsloth re-uploaded every file in
+    # mainline format (arch `glm5-next`, mmproj projector `glm5v`) at a38483c on 2026-10-05; `main`
+    # no longer loads in llamacpp-club3090 ("unknown projector type: glm5v").
+    revision: 2975ab414d30340466d8c51533c6e91f0cca64c1
     kind: mmproj
     files:
       - mmproj-F16.gguf

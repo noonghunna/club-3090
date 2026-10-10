@@ -428,6 +428,8 @@ WEIGHTS_VARIANT_KEYS = {
     "setup_env",
     "act8_capable",
     "quant_label",
+    # repo script setup.sh runs after the variant's download verifies (e.g. a format conversion)
+    "post_download",
 }
 
 # Keys allowed inside a model's `setup:` dispatch-policy dict (consumed by

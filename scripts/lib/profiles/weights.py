@@ -190,6 +190,9 @@ def _recipe(model_id: str, variant: str) -> dict[str, str]:
         "WEIGHT_SETUP_MODEL": model_id,
         "WEIGHT_SETUP_ENV": setup_env,
         "WEIGHT_MANUAL_NOTE": str(meta.get("manual_note") or ""),
+        # Optional repo script run by setup.sh after the download verifies, e.g. a format
+        # conversion the engine needs. `{dir}` expands to the variant's download dir.
+        "WEIGHT_POST_DOWNLOAD": str(meta.get("post_download") or ""),
     }
 
 

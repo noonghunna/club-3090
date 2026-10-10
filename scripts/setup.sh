@@ -576,6 +576,7 @@ if [[ "${SETUP_DUMP_KEYS:-0}" == "1" ]]; then
 fi
 
 load_weight_recipe "${PRIMARY_WEIGHT_KEY}"
+PRIMARY_POST_DOWNLOAD="${WEIGHT_POST_DOWNLOAD:-}"
 
 # Companions were queued above, before the SETUP_DUMP_KEYS surface.
 [[ -n "${_COMPANION_KEYS[*]:-}" ]] && echo "[model]   + companion(s): ${_COMPANION_KEYS[*]}"
@@ -1153,12 +1154,31 @@ _verify_downloaded_files() {
   fi
 }
 
+# Run a variant's `post_download` step (weights.py WEIGHT_POST_DOWNLOAD) after its files verify.
+# Only a script inside this repo's scripts/ dir is accepted; `{dir}` -> ${MODEL_DIR}/<local_subdir>.
+_run_post_download() {
+  local spec="$1" subdir="$2"
+  [[ -n "$spec" ]] || return 0
+  local -a cmd
+  read -r -a cmd <<< "${spec//\{dir\}/${MODEL_DIR}/${subdir}}"
+  if [[ ! "${cmd[0]}" =~ ^scripts/[A-Za-z0-9._/-]+$ || ! -f "${ROOT_DIR}/${cmd[0]}" ]]; then
+    echo "ERROR: post_download must name a script under scripts/ in this repo (got '${cmd[0]}')." >&2
+    exit 1
+  fi
+  echo "[model]   Post-download step: ${cmd[*]}"
+  case "${cmd[0]}" in
+    *.py) python3 "${ROOT_DIR}/${cmd[0]}" "${cmd[@]:1}" ;;
+    *)    bash "${ROOT_DIR}/${cmd[0]}" "${cmd[@]:1}" ;;
+  esac || { echo "ERROR: post-download step failed: ${cmd[*]}" >&2; exit 1; }
+}
+
 download_weight_key() {
   local key="$1"
   load_weight_recipe "$key"
   echo "[model]   Downloading ${WEIGHT_LABEL:-$key} ..."
   _hf_download_repo "$WEIGHT_REPO" "$WEIGHT_SUBDIR" "$WEIGHT_FILES" "${WEIGHT_REVISION:-}"
   _verify_downloaded_files "$WEIGHT_REPO" "$WEIGHT_SUBDIR" "$WEIGHT_VERIFY_GLOB" "${WEIGHT_REVISION:-main}"
+  _run_post_download "${WEIGHT_POST_DOWNLOAD:-}" "$WEIGHT_SUBDIR"
 }
 
 # #634 — honour the PRIMARY recipe's verify_glob (set by load_weight_recipe →
@@ -1168,6 +1188,7 @@ download_weight_key() {
 VERIFY_GLOB="${VERIFY_GLOB_OVERRIDE:-${VERIFY_GLOB}}"
 _hf_download_repo "${MODEL_REPO}" "${MODEL_SUBDIR}" "${GGUF_FILES}" "${MODEL_REVISION:-}"
 _verify_downloaded_files "${MODEL_REPO}" "${MODEL_SUBDIR}" "${VERIFY_GLOB}" "${MODEL_REVISION:-main}"
+_run_post_download "${PRIMARY_POST_DOWNLOAD:-}" "${MODEL_SUBDIR}"
 
 for extra_key in "${EXTRA_WEIGHT_KEYS[@]}"; do
   download_weight_key "$extra_key"
@@ -1259,10 +1280,10 @@ _reg_tmp="$(mktemp)"
 # SAMPLE_* block to generic hints (documented above), never a wrong hint.
 bash "${ROOT_DIR}/scripts/lib/registry-emit.sh" --json >"${_reg_tmp}" 2>/dev/null || true
 if [[ -s "${_reg_tmp}" ]]; then
-  eval "$(python3 - "${MODEL_NAME}" "${ROOT_DIR}" "${_reg_tmp}" <<'PY'
+  eval "$(python3 - "${MODEL_NAME}" "${ROOT_DIR}" "${_reg_tmp}" "${SETUP_SLUG}" <<'PY'
 import json, os, re, shlex, sys
 
-model, root, reg_path = sys.argv[1], sys.argv[2], sys.argv[3]
+model, root, reg_path, setup_slug = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with open(reg_path, encoding="utf-8") as _fh:
     data = json.load(_fh)
 
@@ -1286,7 +1307,11 @@ def q(v):
 
 
 pick = None
-for slug in defaults:
+# `setup.sh <slug>` hints the slug that was asked for, whatever its status.
+asked = [v for v in variants if setup_slug and v.get("slug") == setup_slug]
+if asked:
+    pick = asked[0]
+for slug in defaults if pick is None else []:
     c = [v for v in variants if v.get("slug") == slug]
     if c and c[0].get("status") in FUNCTIONAL:
         pick = c[0]
