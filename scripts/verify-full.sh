@@ -839,7 +839,9 @@ check_vision() {
   # when an mmproj is loaded but the image path does not work.
   local intended=0
   if container_is_real && command -v docker >/dev/null 2>&1; then
-    if docker logs "${CONTAINER}" 2>&1 | command grep -qiE "loaded multimodal model|clip_ctx:|mmproj"; then
+    # grep -c reads to the end; grep -q would stop at the first match and SIGPIPE
+    # `docker logs`, which this script's pipefail turns into "not intended" (#1574).
+    if [[ "$(docker logs "${CONTAINER}" 2>&1 | command grep -ciE "loaded multimodal model|clip_ctx:|mmproj")" -gt 0 ]]; then
       intended=1
     fi
   fi
