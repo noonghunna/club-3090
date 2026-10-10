@@ -67,12 +67,16 @@ gpu_select_export() {
 #   but only RUNS on the CUDA-masked set, so the compute-apps view is what
 #   reflects the real pinning. Echoes a sorted, unique UUID csv (empty if no
 #   compute apps yet / nvidia-smi unavailable in the container).
+#   ⚠️ Strip spaces, tabs and CRs but KEEP the newlines: nvidia-smi prints one
+#   UUID per line, and `tr -d '[:space:]'` glued a multi-GPU container's list
+#   into one token, so every TP>=2 launch with --gpus warned a false
+#   PLACEMENT MISMATCH (#1620).
 gpu_select_container_uuids() {
   local container="$1"
   [[ -z "$container" ]] && return 0
   docker exec "$container" nvidia-smi \
       --query-compute-apps=gpu_uuid --format=csv,noheader 2>/dev/null \
-    | tr -d '[:space:]' | command grep '^GPU-' | sort -u | paste -sd, -
+    | tr -d ' \t\r' | command grep '^GPU-' | sort -u | paste -sd, -
 }
 
 # gpu_select_assert_placement "<container>" "<requested_uuid_csv>" ["<log_prefix>"]

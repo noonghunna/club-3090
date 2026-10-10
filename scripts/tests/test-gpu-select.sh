@@ -56,6 +56,47 @@ PY
     || { echo "masks disagree: cuda=${CUDA_VISIBLE_DEVICES} nvidia=${NVIDIA_VISIBLE_DEVICES}" >&2; exit 1; }
 ) || fail "gpu_select_export contract"
 
+# (5) post-boot placement check (#1620): the container's compute apps come back
+# one UUID per LINE. A multi-GPU container must list them comma-separated, so a
+# TP=2 request reads as placed. Stripping all whitespace (newlines included)
+# glued them into one token, and every multi-GPU launch with --gpus printed a
+# false "PLACEMENT MISMATCH". Stub docker so this runs without a container.
+STUB="$(mktemp -d)"; trap 'rm -rf "$STUB"' EXIT
+cat > "$STUB/docker" <<'EOS'
+#!/usr/bin/env bash
+# `docker exec <c> nvidia-smi --query-compute-apps=gpu_uuid …` — one line per
+# compute process per GPU, in the shape nvidia-smi prints (repeats included).
+printf '%s\n' "${STUB_APPS:-}" | tr '|' '\n'
+EOS
+chmod +x "$STUB/docker"
+U0=GPU-11111111-aaaa-bbbb-cccc-000000000000
+U3=GPU-33333333-aaaa-bbbb-cccc-000000000003
+U9=GPU-99999999-aaaa-bbbb-cccc-000000000009
+apps2="${U0}|${U3} |${U0}"   # two cards, a trailing space, a repeat
+got="$(PATH="$STUB:$PATH" STUB_APPS="$apps2" gpu_select_container_uuids c)"
+[[ "$got" == "${U0},${U3}" ]] \
+  || fail "two-GPU container: expected '${U0},${U3}', got '$got'"
+out="$(PATH="$STUB:$PATH" STUB_APPS="$apps2" gpu_select_assert_placement c "${U0},${U3}" t 2>&1)"
+[[ "$out" == *"placement verified"* && "$out" != *"MISMATCH"* ]] \
+  || fail "TP=2 on the requested pair must verify, got: $out"
+# positive control: a card the model is NOT on must still be called out
+out="$(PATH="$STUB:$PATH" STUB_APPS="$apps2" gpu_select_assert_placement c "${U0},${U9}" t 2>&1)"
+[[ "$out" == *"PLACEMENT MISMATCH"*"${U9}"* ]] \
+  || fail "a requested card the model isn't on must be a MISMATCH, got: $out"
+got="$(PATH="$STUB:$PATH" STUB_APPS="${U3}" gpu_select_container_uuids c)"
+[[ "$got" == "${U3}" ]] || fail "one-GPU container: expected '${U3}', got '$got'"
+# parity: the estate boot path reads placement with its own python twin
+# (container_placement_uuids), which split by line all along — the two must agree.
+py_got="$(PATH="$STUB:$PATH" STUB_APPS="$apps2" python3 - <<'PY'
+import sys
+sys.path.insert(0, ".")
+from scripts.lib.profiles.estate_cli import container_placement_uuids
+print(container_placement_uuids("c"))
+PY
+)"
+[[ "$py_got" == "${U0},${U3}" ]] \
+  || fail "bash/python placement readers disagree: python='$py_got' bash='${U0},${U3}'"
+
 # (1) real-hardware parity: only when nvidia-smi is present with >=1 GPU.
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
   n="$(nvidia-smi -L | grep -c '^GPU ' || echo 0)"
@@ -76,4 +117,4 @@ PY
   fi
 fi
 
-echo "PASS: gpu-select.sh + estate_cli resolver agree; launcher sources the lib; export sets both masks"
+echo "PASS: gpu-select.sh + estate_cli resolver agree; launcher sources the lib; export sets both masks; multi-GPU placement verifies"
