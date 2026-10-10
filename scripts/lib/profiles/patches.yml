@@ -39,8 +39,8 @@ patches:
     capability: fa2-fp8kv-sm86
     foundational: false
     upstream:
-      ref: AntonProkopyev/fa2-fp8kv-sm86@0fa02cbb760fbcc4a94ba1ee376e89825f8f43f4
-      status: experimental
+      ref: AntonProkopyev/fa2-fp8kv-sm86@7646a2d8a8d903847d81f506c6a0d26bc212c97f
+      status: merged
       drop_when: "Stock vLLM provides a validated SM86 FA2 FP8 KV path."
     status: verified
   - id: qwen-sglang-autoround-fused-bf16

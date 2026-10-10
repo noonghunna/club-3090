@@ -1,5 +1,68 @@
 # ULTRAMAX review validation — September 13, 2026
 
+## Artifact update — October 4, 2026
+
+This section records the mixed-prefill fix. The September results below
+remain the record for the previous artifact.
+
+- Source: `7646a2d8a8d903847d81f506c6a0d26bc212c97f`, included in upstream
+  v0.1.0; the PR and release are tracked in `docs/UPSTREAM.md`.
+- Image: `ghcr.io/antonprokopyev/fa2-fp8kv-sm86@sha256:ec26059d1c7a7eb4b4d916ddac495a0b937eae8e4594297f7ed625368c30cd7e`.
+- Artifact ID: `b0ce0370c7ca5c0d0e688e744f3665f3a099407fc2a38a4102d81eaaf5707a2d`.
+- Build ABI: Linux x86-64, CPython 3.12, PyTorch 2.13.0+cu130, CUDA 13.0,
+  C++11 ABI enabled. Anonymous digest pull and checksum-verified export pass.
+
+The installed wheel and CUDA libraries passed the entire upstream GPU suite
+on each RTX 3090 with vLLM 0.29.0: six numerical shapes, eighteen decode graph
+replays, twelve window cases, fifteen full-kernel cases, six prefill shapes
+plus all finite E4M3 encodings, nine mixed-prefill regressions, and three
+backend cases. The prefill check reported 3040.05 MiB peak PyTorch allocation
+on each card. The old artifact failed six of the same nine mixed-prefill GPU
+cases with the sequence-envelope error; the new artifact passed all nine.
+All nine mixed-prefill regressions and backend tests also passed with stock
+vLLM 0.30.0 (`sha256:8a69ffad015f138d7170c4ddc429e230a3bc1c1719f67e14324749df200a4b90`).
+
+The actual `dual/fp8/dflash2.yml` compose booted Qwen3.8-27B FP8 on both
+cards with the new artifact and vLLM 0.30.0. The test used `SPEC_N=0`,
+`MAX_MODEL_LEN=98304`, and `KV_CACHE_MEMORY_BYTES=4000000000` per card.
+`verify-full.sh` passed, including vision 4/4. `verify-stress.sh` also passed:
+5/5 boundary checks and 2/2 recall ladder groups at approximately 10K, 30K,
+60K and 90K tokens. The extra ceiling ladder was skipped because 92% of
+98304 is below its 95000-token starting rung. The canonical `bench.sh`
+invocation completed with exit 0, but its final stdout table was not retained
+in the capture; no TPS numbers are claimed from that run.
+
+A separate mixed-request run used the same compose and artifact with TP=2,
+SPEC_N=0, eager execution, context 32768, 3 GB KV/card, two sequences, an
+8192-token batch budget and a 4096-token long-prefill threshold. A local
+validation override bypassed `fa2_envelope`; the shipped guard was unchanged.
+Three trials started a 1500-token streaming decode, then submitted a fresh
+5000-token prompt after the first decode chunk. All six responses were HTTP
+200, every decode produced 1500 tokens, and every long prompt reported 5000
+uncached input tokens. Prefill requests completed in 4.444, 4.494 and 4.499 s;
+the concurrent decode requests completed in 126.795, 126.560 and 126.765 s.
+The server log confirmed two running requests, with no envelope errors or
+HTTP 500s, and RestartCount stayed zero. Peak serving VRAM was 18970 MiB on
+each card at 500 ms sampling; brief peaks can be missed. These are functional
+overlap checks, not a canonical throughput benchmark.
+
+The host's loaded NVIDIA
+module was 595.71.05 while its userspace libraries were 595.91.07; isolated
+test containers used SHA256-verified official NVIDIA 595.71.05 libraries
+and explicit GPU device mounts. No system driver files were changed.
+
+The compose status remains experimental. These results do not validate
+the shipped 262144-context DFlash2 configuration, TP=4/8, SM89/SM120,
+complete quality or soak. The scheduler envelope guard remains enabled
+for conservative rollout and older artifact overrides. No throughput
+improvement is claimed.
+
+Offline guards pass: `test-fa2-artifact`, `test-fa2-envelope`,
+`test-patch-attribution`, `test-compose-status-drift`,
+`test-compose-registry-disk`, `test-profiles-compat`, and `test-launch-compat`.
+
+## Previous artifact validation
+
 The revised configuration uses a native `FLASH_ATTN` plugin for target and
 DFlash2. It does not replace the FlashInfer registry entry. The profile stays
 experimental. SM86 has runtime measurements; SM89 and SM120 have compiled
