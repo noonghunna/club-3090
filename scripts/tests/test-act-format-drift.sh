@@ -26,6 +26,11 @@ import json, os, re, sys
 STALE = ("W4A8 (int8 activations) — OPT-IN",
          "It is OFF by default because it is a PREFILL",
          "# --- W4A8 opt-in (patch from club-3090#1226")
+# The W4A8 default is written ${W4A8:-N} (use-default) or, in auto-sizing entrypoints such as
+# single-fast, : "$${W4A8:=N}" (assign-default, #1598). Both set the default; read both.
+GATE = re.compile(r"\{W4A8:[-=]([01])\}")
+assert GATE.findall("$${W4A8:-1}") == ["1"] and GATE.findall(": $${W4A8:=1} $${SPEC_N:=0}") == ["1"], "gate regex lost a form"
+assert GATE.findall("$${W4A8:=0}") == ["0"] and not GATE.findall("$${W4A8}"), "gate regex reads a default that is not there"
 fails, n_gate, n = [], 0, 0
 for v in json.load(sys.stdin)["variants"]:
     p, slug, act = v["compose_path"], v["slug"], v.get("act_format")
@@ -34,7 +39,7 @@ for v in json.load(sys.stdin)["variants"]:
     n += 1
     s = open(p, encoding="utf-8").read()
     code = "\n".join(l for l in s.splitlines() if not l.lstrip().startswith("#"))
-    gate = set(re.findall(r"\{W4A8:-([01])\}", code))
+    gate = set(GATE.findall(code))
     if len(gate) > 1:
         fails.append(f"{slug}: W4A8 default disagrees with itself inside {p} ({sorted(gate)})"); continue
     if gate:
