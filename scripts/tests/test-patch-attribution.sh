@@ -561,7 +561,10 @@ for patch in patches:
     if patch.get("delivery_mechanism") != "chat_template":
         continue
     _listed = {s for lb in patch.get("load_bearing_when") or [] for s in (lb.get("composes") or [])}
-    _needles = ["/".join(Path(f).parts[-2:]) for f in patch.get("files") or []
+    # The spec's `jinja` too: a `files` entry can be the template's directory (glm53), which
+    # yields no needle, so its 18 GLM slugs went unlisted without this guard noticing.
+    _jinja = (patch.get("delivery_spec") or {}).get("jinja")
+    _needles = ["/".join(Path(f).parts[-2:]) for f in [*(patch.get("files") or []), *([_jinja] if _jinja else [])]
                 if Path(f).suffix in pa.CHAT_TEMPLATE_ARTIFACT_SUFFIXES]
     _unlisted = sorted(s for s, b in _compose_bodies.items() if any(n in b for n in _needles) and s not in _listed)
     if _unlisted:

@@ -1364,7 +1364,25 @@ patches:
     files:
       - models/glm-5.3-flash/llamacpp-club3090/patches/glm53-minja-numeric-index
     load_bearing_when:
-      - composes: null
+      - composes:
+          - llamacpp-club3090/glm53-flash-dual-iq3xxs-moecache
+          - llamacpp-club3090/glm53-flash-dual-iq4xs-moecache
+          - llamacpp-club3090/glm53-flash-dual-q2k-moecache
+          - llamacpp-club3090/glm53-flash-dual-q2k-offload
+          - llamacpp-club3090/glm53-flash-dual-q3km-moecache
+          - llamacpp-club3090/glm53-flash-dual-q3km-offload
+          - llamacpp-club3090/glm53-flash-multi4-iq3xxs-moecache
+          - llamacpp-club3090/glm53-flash-multi4-iq4xs-moecache
+          - llamacpp-club3090/glm53-flash-multi4-q2k-moecache
+          - llamacpp-club3090/glm53-flash-multi4-q2k-offload
+          - llamacpp-club3090/glm53-flash-multi4-q3km-moecache
+          - llamacpp-club3090/glm53-flash-multi4-q3km-offload
+          - llamacpp-club3090/glm53-flash-multi8-iq3xxs-moecache
+          - llamacpp-club3090/glm53-flash-multi8-iq4xs-moecache
+          - llamacpp-club3090/glm53-flash-multi8-q2k-moecache
+          - llamacpp-club3090/glm53-flash-multi8-q2k-offload
+          - llamacpp-club3090/glm53-flash-multi8-q3km-moecache
+          - llamacpp-club3090/glm53-flash-multi8-q3km-offload
         reason: >-
           Without it EVERY request carrying `tools` returns HTTP 400 ("Unable to generate
           parser for this template") and /props reports supports_tools:false — so the tool
