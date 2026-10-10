@@ -88,6 +88,10 @@ weights:
     format: gguf
     status: experimental
     hf_repo: unsloth/GLM-5.3-Flash-GGUF
+    # ⚠️ PINNED to the last `glm5next`-format commit (2026-08-29). unsloth re-uploaded every file in
+    # mainline format (arch `glm5-next`, mmproj projector `glm5v`) at a38483c on 2026-10-05; `main`
+    # no longer loads in llamacpp-club3090 ("unknown projector type: glm5v").
+    revision: 2975ab414d30340466d8c51533c6e91f0cca64c1
     shards: 5
     # ⚠️ `--local-dir` preserves repo folder structure, so `local_subdir` is the
     # BUCKET and `files:`/`verify_glob` carry the quant-folder prefix — pointing
@@ -116,6 +120,10 @@ weights:
     format: gguf
     status: experimental
     hf_repo: unsloth/GLM-5.3-Flash-GGUF
+    # ⚠️ PINNED to the last `glm5next`-format commit (2026-08-29). unsloth re-uploaded every file in
+    # mainline format (arch `glm5-next`, mmproj projector `glm5v`) at a38483c on 2026-10-05; `main`
+    # no longer loads in llamacpp-club3090 ("unknown projector type: glm5v").
+    revision: 2975ab414d30340466d8c51533c6e91f0cca64c1
     shards: 4
     files:
       - UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00001-of-00004.gguf
@@ -209,6 +217,10 @@ weights:
     format: gguf
     status: experimental
     hf_repo: unsloth/GLM-5.3-Flash-GGUF
+    # ⚠️ PINNED to the last `glm5next`-format commit (2026-08-29). unsloth re-uploaded every file in
+    # mainline format (arch `glm5-next`, mmproj projector `glm5v`) at a38483c on 2026-10-05; `main`
+    # no longer loads in llamacpp-club3090 ("unknown projector type: glm5v").
+    revision: 2975ab414d30340466d8c51533c6e91f0cca64c1
     kind: mmproj
     files:
       - mmproj-F16.gguf
