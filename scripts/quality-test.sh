@@ -147,8 +147,10 @@ OPTIONS (extra)
                    (pack default or --enable-thinking). Default 16384, sent
                    explicitly: benchlocal-cli would otherwise give thinking packs
                    the --max-tokens value. Also settable via THINKING_MAX_TOKENS.
-                   When the serving compose caps reasoning server-side (its
-                   `[effort-budget] v1` boot line, read from `docker logs`), the
+                   When the server caps reasoning itself (a vLLM / SGLang
+                   compose's `[effort-budget] v1` boot line, read from `docker
+                   logs`; on llama.cpp the --reasoning-budget the container
+                   boots with, read from `docker inspect`), the
                    default grows to that budget + THINKING_BUDGET_HEADROOM (4096)
                    if that is larger, so the answer after the server's forced
                    close is not cut off. Not on a --no-thinking leg, --resume,
@@ -1217,6 +1219,8 @@ fi
 #   --thinking-max-tokens / THINKING_MAX_TOKENS, or --pack-budgets.
 # Engine-neutral by design: the readback line is the same on every engine, and
 # effort_budget.py owns its parsing (the LAST line wins: `docker logs` spans restarts).
+# llama.cpp prints no such line; its budget is the --reasoning-budget it boots with
+# (one value for every effort), read from `docker inspect` below.
 SERVER_THINKING_BUDGET=""          # N | off | empty = unknown / not in effect
 SERVER_THINKING_EFFORT=""          # the effort that budget was read for
 THINKING_MAX_TOKENS_FROM_SERVER="" # "server-budget+H" when the cap was raised from it
@@ -1231,10 +1235,32 @@ if [[ -z "$RESUME" && "$NO_THINKING" != "1" && -n "${CONTAINER:-}" && "${CONTAIN
     if [[ -n "$_sb_effort" ]]; then _sb_args+=(--effort "$_sb_effort"); fi
     _sb_rc=0
     _sb_out="$(printf '%s\n' "$_sb_lines" | python3 "${ROOT_DIR}/scripts/lib/effort_budget.py" "${_sb_args[@]}" 2>&1)" || _sb_rc=$?
+    # llama.cpp prints no [effort-budget] line (rc 2): its budget is the --reasoning-budget
+    # the server booted with, ONE value for every effort. Read it the way --thinking-budget
+    # verifies it — `docker inspect`, with ${REASONING_BUDGET:-N} resolved like the shell —
+    # so a raw `docker run`, an override and a compose default all read alike. -1 or no
+    # flag means unrestricted (`off`). A request's own reasoning_budget_tokens would win
+    # over it on current builds, but the harness sends none unless --thinking-budget.
+    _sb_llamacpp=""
+    if [[ "$_sb_rc" == "2" ]]; then
+      if ! declare -F _thinking_budget_container_facts >/dev/null; then
+        # shellcheck source=lib/thinking-budget.sh
+        source "${ROOT_DIR}/scripts/lib/thinking-budget.sh"
+      fi
+      if [[ "$(thinking_budget_engine_kind)" == "llamacpp" ]]; then
+        _sb_llamacpp="$(docker inspect "$CONTAINER" 2>/dev/null | _thinking_budget_container_facts llamacpp || true)"
+        case "$_sb_llamacpp" in
+          "BUDGET none"|"BUDGET -1") _sb_rc=0; _sb_out="off" ;;
+          BUDGET\ [0-9]*)          _sb_rc=0; _sb_out="${_sb_llamacpp#BUDGET }" ;;
+        esac
+      fi
+    fi
     if [[ "$_sb_rc" == "0" && "$_sb_out" =~ ^[0-9]+$ ]]; then
       SERVER_THINKING_BUDGET="$_sb_out"
       SERVER_THINKING_EFFORT="$_sb_effort"
-      if [[ -z "$SERVER_THINKING_EFFORT" ]]; then
+      if [[ -n "$_sb_llamacpp" ]]; then
+        SERVER_THINKING_EFFORT=""   # llama.cpp's budget does not depend on the effort
+      elif [[ -z "$SERVER_THINKING_EFFORT" ]]; then
         # No effort sent: the server's default effort applies — name it from the same line.
         SERVER_THINKING_EFFORT="$(printf '%s\n' "$_sb_lines" | python3 -c '
 import importlib.util, sys
@@ -1245,13 +1271,21 @@ info = m.parse_readback(sys.stdin.read()) or {}
 print(info.get("default_effort") or "")' "${ROOT_DIR}/scripts/lib/effort_budget.py" 2>/dev/null || true)"
       fi
       _sb_eff_note=""
-      if [[ -n "$_sb_effort" ]]; then
-        _sb_eff_note=" (effort ${_sb_effort})"
-      elif [[ -n "$SERVER_THINKING_EFFORT" ]]; then
-        _sb_eff_note=" (the server's default effort, ${SERVER_THINKING_EFFORT})"
+      if [[ -n "$_sb_llamacpp" ]]; then
+        _sb_what="server budget ${SERVER_THINKING_BUDGET} reasoning tokens (llama.cpp --reasoning-budget, the same for every effort), read from ${CONTAINER}'s boot command"
+      else
+        if [[ -n "$_sb_effort" ]]; then
+          _sb_eff_note=" (effort ${_sb_effort})"
+        elif [[ -n "$SERVER_THINKING_EFFORT" ]]; then
+          _sb_eff_note=" (the server's default effort, ${SERVER_THINKING_EFFORT})"
+        fi
+        _sb_what="server budget ${SERVER_THINKING_BUDGET} reasoning tokens${_sb_eff_note}, read from ${CONTAINER}'s boot log"
       fi
-      _sb_what="server budget ${SERVER_THINKING_BUDGET} reasoning tokens${_sb_eff_note}, read from ${CONTAINER}'s boot log"
-      if [[ -n "$THINKING_BUDGET" ]]; then
+      if [[ -n "$THINKING_BUDGET" && -n "$_sb_llamacpp" ]]; then
+        # --thinking-budget on llama.cpp was verified above to EQUAL this boot value.
+        echo "[quality-test] ${_sb_what} — the --thinking-budget ${THINKING_BUDGET} this run verified; cap from --thinking-budget"
+        SERVER_THINKING_BUDGET=""; SERVER_THINKING_EFFORT=""
+      elif [[ -n "$THINKING_BUDGET" ]]; then
         echo "[quality-test] ${_sb_what} — --thinking-budget ${THINKING_BUDGET} is sent per request and wins over it; cap from --thinking-budget"
         SERVER_THINKING_BUDGET=""; SERVER_THINKING_EFFORT=""
       elif [[ "$THINKING_MAX_TOKENS_EXPLICIT" == "1" ]]; then
@@ -1278,7 +1312,13 @@ print(info.get("default_effort") or "")' "${ROOT_DIR}/scripts/lib/effort_budget.
       fi
     elif [[ "$_sb_rc" == "0" && "$_sb_out" == "off" ]]; then
       SERVER_THINKING_BUDGET="off"
-      echo "[quality-test] server budget: off (${CONTAINER} booted with THINKING_BUDGETS=off) — thinking cap unchanged"
+      if [[ -n "$_sb_llamacpp" ]]; then
+        echo "[quality-test] server budget: off (${CONTAINER} boots llama.cpp with --reasoning-budget -1 or none: unrestricted) — thinking cap unchanged"
+      else
+        echo "[quality-test] server budget: off (${CONTAINER} booted with THINKING_BUDGETS=off) — thinking cap unchanged"
+      fi
+    elif [[ -n "$_sb_llamacpp" ]]; then
+      echo "[quality-test] server budget: unknown (llama.cpp --reasoning-budget ${_sb_llamacpp#BUDGET } in ${CONTAINER}'s boot command) — thinking cap unchanged"
     elif [[ "$_sb_rc" == "0" || "$_sb_rc" == "2" ]]; then
       echo "[quality-test] server budget: unknown (no [effort-budget] v1 line in ${CONTAINER}'s boot log) — thinking cap unchanged"
     else

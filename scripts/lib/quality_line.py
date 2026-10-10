@@ -23,7 +23,9 @@ THE SERVER BUDGET STAMP
     number as `server_thinking_budget` when it supports --server-thinking-budget,
     and that recorded value wins (a --resume'd run carries it, the argv does not).
       budget=server 16384 (effort xhigh)   the budget for the run's effort
-      budget=server off                    the compose booted with THINKING_BUDGETS=off
+      budget=server 32768                  llama.cpp's --reasoning-budget (one value for every effort)
+      budget=server off                    the compose booted with THINKING_BUDGETS=off, or a
+                                           llama.cpp server with --reasoning-budget -1 / none
     No stamp when unknown — the line is then byte-identical to before.
 
 THE SAMPLER STAMP (#1579)
