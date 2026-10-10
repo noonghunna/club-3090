@@ -405,14 +405,21 @@ services:
         fi
         ROW=(--reasoning "$$_r" --temp "$$_t" --top-p "$$_p" --presence-penalty "$$_pp")
         # -- Reasoning knobs: all six --reasoning-* flags reachable ------------
-        # Defaults PRESERVE today's behaviour. budget -1 is llama.cpp's own default
-        # (unrestricted), and preserve is emitted ONLY when explicitly set, so unset
-        # keeps the chat template's default instead of silently overriding it.
-        # ⚠️ The budget MESSAGE is inert while budget is -1. It exists so that if a
-        # budget IS set, exhaustion is VISIBLE: upstream's default is empty, which
-        # makes a truncated trace indistinguishable from a short answer. That
-        # misattribution (blaming the model for a budget) has bitten this stack.
-        ROW+=(--reasoning-budget "$${REASONING_BUDGET:--1}")
+        # ⭐ BUDGET 32768 by default (2026-10-10; was -1 = unrestricted, so a runaway
+        # trace had no guard). It is the SERVER DEFAULT, NOT A CEILING: a request's own
+        # `reasoning_budget_tokens` (or `thinking_budget_tokens`) wins in either
+        # direction. Measured on this engine's build 11429 with REASONING_BUDGET=64:
+        # no field -> 70 reasoning tokens + the marker; 512 -> 490 (raised past the
+        # default, finished naturally); 16 -> 22 + the marker. 32768 matches the prism
+        # sibling's measured default (its `medium` traces reach ~19K tokens on one
+        # prompt, so 16384 would truncate nondeterministically). Set
+        # REASONING_BUDGET=-1 to restore unrestricted. preserve is emitted ONLY when
+        # explicitly set, so unset keeps the chat template's default.
+        # ⚠️ The budget MESSAGE makes exhaustion VISIBLE: upstream's default is empty,
+        # which makes a truncated trace indistinguishable from a short answer. That
+        # misattribution (blaming the model for a budget) has bitten this stack, so
+        # budget and message ship together.
+        ROW+=(--reasoning-budget "$${REASONING_BUDGET:-32768}")
         ROW+=(--reasoning-budget-message "$${REASONING_BUDGET_MESSAGE:-[reasoning budget exhausted]}")
         case "$${REASONING_PRESERVE:-}" in
           1|on|true|yes)   ROW+=(--reasoning-preserve) ;;
@@ -420,7 +427,7 @@ services:
           "")              : ;;
           *) echo "[reasoning] REASONING_PRESERVE='$${REASONING_PRESERVE}' must be on/off/true/false/yes/no, or unset for the template default" >&2; exit 1 ;;
         esac
-        echo "[reasoning] budget=$${REASONING_BUDGET:--1} preserve=$${REASONING_PRESERVE:-<template default>}" >&2
+        echo "[reasoning] budget=$${REASONING_BUDGET:-32768} preserve=$${REASONING_PRESERVE:-<template default>}" >&2
         # -- Drafter toggle: the same contract on every club-3090 compose --------
         #   SPEC_N=<n>  drafter depth; SPEC_N=0 disables
         #   SPEC=off    back-compat alias for SPEC_N=0

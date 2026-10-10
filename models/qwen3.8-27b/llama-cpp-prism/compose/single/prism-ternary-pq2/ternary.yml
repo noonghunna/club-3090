@@ -217,6 +217,12 @@ services:
         # ⚠️ Does NOT guarantee no truncation at xhigh: a user report in #1027 cites a
         # 170k-token trace on this model. The budget MESSAGE below is what keeps any such
         # truncation visible rather than silent — ship them together, always.
+        # ⭐ 32768 is the SERVER DEFAULT, NOT A CEILING (measured 2026-10-10 on
+        # prism-b10770 with REASONING_BUDGET=64): a request's own
+        # `reasoning_budget_tokens` (or `thinking_budget_tokens`) wins in either
+        # direction — no field -> 68 reasoning tokens + the marker; 512 -> 446
+        # (raised past the default); 16 -> 21 + the marker. So xhigh work can ask for
+        # more per request, and the default only bounds requests that set nothing.
         ROW+=(--reasoning-budget "$${REASONING_BUDGET:-32768}")
         ROW+=(--reasoning-budget-message "$${REASONING_BUDGET_MESSAGE:-[reasoning budget exhausted]}")
         case "$${REASONING_PRESERVE:-}" in
