@@ -82,7 +82,7 @@ services:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
     # The engine profile (engines/llama-cpp-prism.yml) is authoritative.
     # Image = upstream's linux-cuda-12.8 release tarball + libgomp1, nothing else.
-    image: ${LLAMACPP_PRISM_IMAGE:-ghcr.io/noonghunna/llamacpp-prism@sha256:906e7bf2e07445c717444eac0bcede9f19b9ce7c105130a377e052a68b2e4b77}
+    image: ${LLAMACPP_PRISM_IMAGE:-ghcr.io/noonghunna/llamacpp-prism@sha256:8dbbd2a6a78193ada3c1e73aa674bb9db3c63425e01aab3c19c633c3cddf90ef}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-prism-qwen38-27b-ternary}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # Reap orphaned children — a wedged server otherwise becomes a <defunct>
@@ -217,6 +217,12 @@ services:
         # ⚠️ Does NOT guarantee no truncation at xhigh: a user report in #1027 cites a
         # 170k-token trace on this model. The budget MESSAGE below is what keeps any such
         # truncation visible rather than silent — ship them together, always.
+        # ⭐ 32768 is the SERVER DEFAULT, NOT A CEILING (measured 2026-10-10 on
+        # prism-b10770 with REASONING_BUDGET=64): a request's own
+        # `reasoning_budget_tokens` (or `thinking_budget_tokens`) wins in either
+        # direction — no field -> 68 reasoning tokens + the marker; 512 -> 446
+        # (raised past the default); 16 -> 21 + the marker. So xhigh work can ask for
+        # more per request, and the default only bounds requests that set nothing.
         ROW+=(--reasoning-budget "$${REASONING_BUDGET:-32768}")
         ROW+=(--reasoning-budget-message "$${REASONING_BUDGET_MESSAGE:-[reasoning budget exhausted]}")
         case "$${REASONING_PRESERVE:-}" in
