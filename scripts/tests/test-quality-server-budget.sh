@@ -24,6 +24,10 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #      benchlocal's caps but still records the budget.
 #   6. --server-thinking-budget only when `benchlocal-cli run --help` lists it.
 #   7. a malformed readback warns and leaves the cap alone (never aborts a run).
+#   8. llama.cpp prints no readback line: its budget is the --reasoning-budget the
+#      container boots with, read from `docker inspect` (the compose default, an
+#      override, -1 / no flag = off, unresolvable = unknown). One value for every
+#      effort, so no effort is stamped; --thinking-budget there must equal it.
 #
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -75,6 +79,18 @@ cat > "${tmp_bin}/docker" <<'MOCK_DOCKER'
 #!/usr/bin/env bash
 case "${1:-}" in
   inspect)
+    if [[ "${2:-}" == "llama-cpp-mock" ]]; then
+      if [[ "${3:-}" == "--format" ]]; then
+        case "${4:-}" in
+          *RestartCount*) echo 0 ;;
+          *Config.Image*) echo "ghcr.io/ggml-org/llama.cpp@sha256:abc" ;;
+          *) echo "" ;;
+        esac
+        exit 0
+      fi
+      cat "${LLAMA_MOCK_INSPECT}"
+      exit 0
+    fi
     [[ "${2:-}" == "vllm-mock" ]] || exit 1
     if [[ "${3:-}" == "--format" ]]; then
       case "${4:-}" in
@@ -87,6 +103,7 @@ case "${1:-}" in
     printf '[{"Name":"/vllm-mock","Config":{"Image":"vllm/vllm-openai:v0.31.0","Entrypoint":["vllm","serve"],"Cmd":["/m","--reasoning-parser","qwen3"],"Env":[]},"State":{"RestartCount":0},"HostConfig":{}}]\n'
     exit 0 ;;
   logs)
+    if [[ "${2:-}" == "llama-cpp-mock" ]]; then echo "main: server is listening"; exit 0; fi
     [[ "${2:-}" == "vllm-mock" ]] || exit 1
     if [[ -n "${DOCKER_MOCK_LOGS:-}" && -f "${DOCKER_MOCK_LOGS}" ]]; then
       if [[ "${DOCKER_MOCK_LOGS_STDERR:-0}" == "1" ]]; then cat "${DOCKER_MOCK_LOGS}" >&2; else cat "${DOCKER_MOCK_LOGS}"; fi
@@ -149,6 +166,23 @@ printf '%s\n' "$L_OFF" > "${tmp_work}/off.log"
 printf '%s\n' "INFO no budget line in this boot" > "${tmp_work}/none.log"
 printf '%s\n' '[effort-budget] v1 map={"low":"lots"} default_effort=low floor=1 engine=vllm' > "${tmp_work}/bad.log"
 printf '{}' > "${tmp_work}/prior.json"
+# llama.cpp `docker inspect` the way the shipped composes boot it: a bash -c script
+# that appends --reasoning-budget "${REASONING_BUDGET:-32768}" after "$@".
+llama_inspect() {  # llama_inspect ENV_JSON_ARRAY [SCRIPT] → docker inspect JSON
+  python3 - "$1" "${2:-}" <<'PY'
+import json, sys
+script = sys.argv[2] or 'ROW=(--reasoning-budget "${REASONING_BUDGET:-32768}")\nexec /app/llama-server "$@" "${ROW[@]}"'
+print(json.dumps([{"Name": "/llama-cpp-mock",
+                   "Config": {"Image": "ghcr.io/ggml-org/llama.cpp@sha256:abc", "Entrypoint": ["/bin/bash", "-c"],
+                              "Cmd": [script, "bash", "-m", "/m"], "Env": json.loads(sys.argv[1])},
+                   "State": {"RestartCount": 0}, "HostConfig": {}}]))
+PY
+}
+llama_inspect '[]'                          > "${tmp_work}/ll-default.json"
+llama_inspect '["REASONING_BUDGET=8192"]'   > "${tmp_work}/ll-8192.json"
+llama_inspect '["REASONING_BUDGET=-1"]'     > "${tmp_work}/ll-unrestricted.json"
+llama_inspect '[]' 'exec /app/llama-server "$@"' > "${tmp_work}/ll-noflag.json"
+llama_inspect '[]' 'exec /app/llama-server --reasoning-budget "$NOPE"' > "${tmp_work}/ll-bad.json"
 
 # ---- runner --------------------------------------------------------------------
 # run_wrapper [KEY=VAL ...] -- <wrapper args>
@@ -281,6 +315,42 @@ run_wrapper "DOCKER_MOCK_LOGS=${tmp_work}/bad.log" -- --quick --enable-thinking
 expect_cap 7 16384
 assert_contains 7 "$OUT" "WARN: could not read the server budget from vllm-mock's boot log"
 assert_not_contains 7 "$QLINE" "budget="
+
+echo "--- 8. llama.cpp: the --reasoning-budget the container booted with ---"
+LL=(CONTAINER=llama-cpp-mock)
+run_wrapper "${LL[@]}" "LLAMA_MOCK_INSPECT=${tmp_work}/ll-default.json" BL_MOCK_SERVER_BUDGET=1 -- --quick --enable-thinking
+expect_cap 8-default 36864
+assert_contains 8-default "$OUT" "server budget 32768 reasoning tokens (llama.cpp --reasoning-budget, the same for every effort), read from llama-cpp-mock's boot command — thinking cap raised to 36864"
+[[ "$(arg_after --server-thinking-budget)" == "32768" ]] || fail_case 8-default "--server-thinking-budget was '$(arg_after --server-thinking-budget)'"
+assert_contains 8-default "$QLINE" ", budget=server 32768, "
+# the budget does not depend on the effort, so none is stamped even when one is set
+run_wrapper "${LL[@]}" "LLAMA_MOCK_INSPECT=${tmp_work}/ll-default.json" REASONING_EFFORT=high -- --quick --enable-thinking
+expect_cap 8-effort 36864
+assert_contains 8-effort "$QLINE" ", budget=server 32768, "
+assert_not_contains 8-effort "$QLINE" "(effort"
+# an override reaches the container env and wins over the compose default
+run_wrapper "${LL[@]}" "LLAMA_MOCK_INSPECT=${tmp_work}/ll-8192.json" BL_MOCK_SERVER_BUDGET=1 -- --quick --enable-thinking
+expect_cap 8-8192 16384
+assert_contains 8-8192 "$OUT" "server budget 8192 reasoning tokens (llama.cpp --reasoning-budget, the same for every effort)"
+[[ "$(arg_after --server-thinking-budget)" == "8192" ]] || fail_case 8-8192 "--server-thinking-budget was '$(arg_after --server-thinking-budget)'"
+# -1 and no flag at all are unrestricted: off, nothing recorded as a number
+for f in ll-unrestricted ll-noflag; do
+  run_wrapper "${LL[@]}" "LLAMA_MOCK_INSPECT=${tmp_work}/${f}.json" BL_MOCK_SERVER_BUDGET=1 -- --quick --enable-thinking
+  expect_cap "8-${f}" 16384
+  assert_contains "8-${f}" "$OUT" "server budget: off (llama-cpp-mock boots llama.cpp with --reasoning-budget -1 or none: unrestricted)"
+  [[ "$(count_arg --server-thinking-budget)" == "0" ]] || fail_case "8-${f}" "a number was recorded for an unrestricted server"
+  assert_contains "8-${f}" "$QLINE" "budget=server off"
+done
+# an unresolvable value is unknown, not a guess
+run_wrapper "${LL[@]}" "LLAMA_MOCK_INSPECT=${tmp_work}/ll-bad.json" -- --quick --enable-thinking
+expect_cap 8-bad 16384
+assert_contains 8-bad "$OUT" "server budget: unknown (llama.cpp --reasoning-budget unresolvable"
+assert_not_contains 8-bad "$QLINE" "budget="
+# --thinking-budget on llama.cpp is verified to EQUAL the boot value; its own cap wins
+run_wrapper "${LL[@]}" "LLAMA_MOCK_INSPECT=${tmp_work}/ll-8192.json" BL_MOCK_SERVER_BUDGET=1 -- --quick --enable-thinking --thinking-budget 8192
+expect_cap 8-tb 12288
+assert_contains 8-tb "$OUT" "the --thinking-budget 8192 this run verified; cap from --thinking-budget"
+[[ "$(count_arg --server-thinking-budget)" == "0" ]] || fail_case 8-tb "the server budget was recorded beside --thinking-budget"
 
 if [[ "$FAILED" != "0" ]]; then
   echo "FAIL: test-quality-server-budget" >&2
