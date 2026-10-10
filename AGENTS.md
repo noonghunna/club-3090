@@ -335,7 +335,7 @@ The pipeline is layered: each script has a different question it answers ("does 
 **One-time setup (quality):** the suite wraps `benchlocal-cli`; three of the eight packs (bugfind-15, cli-40, hermesagent-20) run inside Docker sandboxes that build once:
 
 ```bash
-pip install git+https://github.com/noonghunna/benchlocal-cli.git
+pip install git+https://github.com/noonghunna/benchlocal-cli.git   # Python 3.11+; older system python3 → uv tool install --python 3.12 git+…
 git clone https://github.com/noonghunna/benchlocal-cli
 bash benchlocal-cli/tools/build-sandboxes.sh   # ~30 GB free; `docker system prune` if tight
 ```

@@ -286,8 +286,10 @@ EXAMPLES
                                        # bounded thinking-on 8-pack: verifies the
                                        # server carries 8192, caps at 12288 total
 
-INSTALL benchlocal-cli (one-time)
+INSTALL benchlocal-cli (one-time; needs Python 3.11+)
   pip install git+https://github.com/noonghunna/benchlocal-cli.git
+  # system python3 older than 3.11 (Ubuntu 22.04 ships 3.10)? use uv instead:
+  uv tool install --python 3.12 git+https://github.com/noonghunna/benchlocal-cli.git
   # OR for development from source:
   pip install -e /path/to/benchlocal-cli
 
@@ -697,8 +699,11 @@ if ! command -v benchlocal-cli >/dev/null 2>&1; then
   cat >&2 <<EOF
 ✗ benchlocal-cli not found on \$PATH
 
-Install it (one-time):
+Install it (one-time; benchlocal-cli needs Python 3.11+):
   pip install git+https://github.com/noonghunna/benchlocal-cli.git
+
+If your system python3 is older (Ubuntu 22.04 ships 3.10), use uv instead:
+  uv tool install --python 3.12 git+https://github.com/noonghunna/benchlocal-cli.git
 
 Or from a local checkout:
   pip install -e /path/to/benchlocal-cli

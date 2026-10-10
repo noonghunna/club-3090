@@ -68,8 +68,17 @@ The **reasoning suite** is also separate from `--full`; run it with `--reasoning
 
 ## Install (one-time)
 
+benchlocal-cli needs **Python 3.11 or newer** (benchlocal-cli #200: its StructOutput SO-04 scorer parses TOML with the standard library's `tomllib`, so an older Python would score that scenario differently).
+
 ```bash
 pip install git+https://github.com/noonghunna/benchlocal-cli.git
+```
+
+If your system `python3` is older (Ubuntu 22.04 ships 3.10), `pip` refuses with `requires a different Python`. Install it with uv instead, which brings its own interpreter and puts `benchlocal-cli` on your `PATH` (`~/.local/bin`):
+
+```bash
+uv tool install --python 3.12 git+https://github.com/noonghunna/benchlocal-cli.git
+uv tool upgrade benchlocal-cli      # later, to update
 ```
 
 Or for development from a local clone of benchlocal-cli:
