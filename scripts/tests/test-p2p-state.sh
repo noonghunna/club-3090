@@ -228,6 +228,22 @@ PATH="$TMP:$PATH" bash -o pipefail -c 'source scripts/lib/p2p-state.sh; p2p_repo
   || fail "pipefail: CNS in topo -p2p -> p2p_reports_cns true"
 echo "  ✓ #1574: NVLink and CNS probes keep their match under pipefail (slow-writing nvidia-smi)"
 
+# ── 3c. CNS is read from the matrix, never from the legend ────────────────────
+# The real `topo -p2p r` prints a legend under the matrix that always contains
+# "CNS  = Chipset not supported", so a whole-output match was true on every rig.
+# The fixtures above carry no legend, which is why that never showed.
+P2P_LEGEND='\nLegend:\n\n  X    = Self\n  OK   = Status Ok\n  CNS  = Chipset not supported\n  GNS  = GPU not supported\n  TNS  = Topology not supported\n  NS   = Not supported\n'
+mk_smi "$L2" "$TOPO_PHB" "${P2P_OK}${P2P_LEGEND}"
+! PATH="$TMP:$PATH" bash -c 'source scripts/lib/p2p-state.sh; p2p_reports_cns' \
+  || fail "legend only: all-OK matrix + legend -> p2p_reports_cns false"
+mk_smi "$L2" "$TOPO_PHB" ' \tGPU0\tGPU1\nGPU0\tX\tGNS\nGPU1\tGNS\tX\n'"${P2P_LEGEND}"
+! PATH="$TMP:$PATH" bash -c 'source scripts/lib/p2p-state.sh; p2p_reports_cns' \
+  || fail "legend only: GNS matrix + legend -> p2p_reports_cns false"
+mk_smi "$L2" "$TOPO_PHB" "${P2P_CNS}${P2P_LEGEND}"
+PATH="$TMP:$PATH" bash -c 'source scripts/lib/p2p-state.sh; p2p_reports_cns' \
+  || fail "CNS matrix + legend -> p2p_reports_cns true"
+echo "  ✓ p2p_reports_cns reads the matrix cells, not the legend's 'CNS = Chipset not supported'"
+
 # ── 4. decider↔auditor consistency: detect_nvlink.sh on the same fixtures ────
 # ⚠️ Passes a TP width. The decider derives `gate=` (its prediction that vLLM will
 # veto its own kernel) from the TP world size, read from the entrypoint argv —

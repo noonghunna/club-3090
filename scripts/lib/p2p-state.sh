@@ -439,10 +439,14 @@ p2p_bar1_min() {
 # True (0) when `topo -p2p r` reports CNS on any pair — the stock GeForce
 # driver's software refusal, the one gate a patched module actually lifts.
 # (Captured before matching, not piped into grep -q: see p2p_host_capability.)
+# Matrix rows only: the legend nvidia-smi prints under the matrix always reads
+# "CNS  = Chipset not supported", so matching the whole output was true on
+# every rig, P2P granted or not.
 p2p_reports_cns() {
   local p2p
   p2p="$(nvidia-smi topo -p2p r 2>/dev/null)" || true
-  command grep -qE '(^|[[:space:]])CNS([[:space:]]|$)' <<<"$p2p"
+  awk '$1 ~ /^GPU[0-9]+$/ { for (i = 2; i <= NF; i++) if ($i == "CNS") found = 1 }
+       END { exit !found }' <<<"$p2p"
 }
 
 # p2p_opportunity_hint <gpu_count> <host_capability>
