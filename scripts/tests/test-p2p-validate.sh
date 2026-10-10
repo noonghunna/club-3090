@@ -127,5 +127,47 @@ PY
 [[ "$out" == "ok" ]] && pass "peer bandwidth wakes both GPUs first and syncs both devices (#1507)" \
   || bad "peer bandwidth is timed with an idle destination GPU or a one-device sync (#1507): $out"
 
+# --- #1620: the sizing line must measure the pair the user asked for ---------
+# `--gpus 0,3` reached the two collective arms (each runs under
+# CUDA_VISIBLE_DEVICES=$GPUS) but not the bandwidth probe, which ran in the parent
+# on cuda:0 -> cuda:1, so on a 4-card rig it always measured GPU0<->GPU1 and printed
+# that number under a 0,3 run. Drive main() with fakes and record the CUDA mask in
+# force wherever the bandwidth is actually measured, in-process or in a child.
+out="$(python3 - "$PAYLOAD" <<'PY' 2>&1
+import contextlib, importlib.util, io, os, sys
+os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+spec = importlib.util.spec_from_file_location("p2p", sys.argv[1]); m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+m.GPUS = "0,3"
+m._sh = lambda cmd: ("0, RTX 3090\n1, RTX 3090\n2, RTX 3090\n3, RTX 3090"
+                     if "--query-gpu=index,name" in cmd else "")
+m._arm = lambda name, extra_env, port: "PASS"
+measured = []
+def fake_bw(*a, **k):                                   # measured in THIS process
+    measured.append(os.environ.get("CUDA_VISIBLE_DEVICES")); return (12.5, 6.25)
+m.peer_bandwidth = fake_bw
+class Done:                                             # measured in a child process
+    returncode, stderr = 0, ""
+    stdout = "BW=12.5,6.25\n"
+def fake_run(cmd, **kw):
+    env = kw.get("env") or os.environ
+    measured.append(env.get("CUDA_VISIBLE_DEVICES")); return Done()
+m.subprocess.run = fake_run
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    rc = m.main()
+out = buf.getvalue()
+assert rc == m.EXIT_HEALTHY, f"main() returned {rc}"
+assert measured, "the bandwidth probe never ran"
+assert all(v == "0,3" for v in measured), \
+    f"bandwidth measured under CUDA_VISIBLE_DEVICES={measured!r}, not the requested pair 0,3"
+line = next((l for l in out.splitlines() if "bandwidth" in l), "")
+assert "12.50" in line and "0,3" in line, f"sizing line missing the numbers or the pair: {line!r}"
+print("ok")
+PY
+)"
+[[ "$out" == "ok" ]] && pass "bandwidth probe runs on the --gpus pair, not cuda:0<->cuda:1 (#1620)" \
+  || bad "bandwidth probe ignores --gpus (#1620): $out"
+
 [[ $fail -eq 0 ]] && echo "== PASS ==" || echo "== FAIL =="
 exit $fail

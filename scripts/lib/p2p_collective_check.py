@@ -207,6 +207,38 @@ def peer_bandwidth(gpu_a=0, gpu_b=1, mib=256, reps=5, warm_s=0.5):
         return None                                               # never break the verdict
 
 
+def _bandwidth_on_pair():
+    """peer_bandwidth() on the GPUS pair: a child process under the SAME
+    CUDA_VISIBLE_DEVICES=GPUS mask the arms use, so its cuda:0 / cuda:1 are the cards
+    the user asked for. Called in this process instead, the probe always measured
+    physical GPU0<->GPU1 whatever --gpus said (#1620). The child also puts the copy
+    under TIMEOUT_S like the arms. Returns (direct, staged) or None."""
+    env = dict(os.environ)
+    env["CUDA_VISIBLE_DEVICES"] = GPUS
+    env["P2PCHECK_BW"] = "1"
+    try:
+        proc = subprocess.run(
+            [sys.executable, os.path.abspath(__file__)],
+            env=env, capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    for line in proc.stdout.splitlines():
+        if line.startswith("BW="):
+            try:
+                direct, staged = (float(v) for v in line[3:].split(","))
+            except ValueError:
+                return None
+            return direct, staged
+    return None
+
+
+def _bandwidth_child():
+    bw = peer_bandwidth()
+    if bw:
+        print("BW=%.6f,%.6f" % bw, flush=True)
+
+
 def _sh(cmd):
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout.strip()
@@ -252,12 +284,12 @@ def main():
         print("  transfer, so it can ride completion-time flushing. NCCL's producer and consumer")
         print("  kernels stay resident and must observe each other's writes mid-flight. Any")
         print("  copy-then-sync test therefore passes on a mapping where NCCL cannot work.")
-    bw = peer_bandwidth()
+    bw = _bandwidth_on_pair()
     if bw:
         direct, staged = bw
         ratio = direct / staged if staged > 0 else 0
         print()
-        print(f"  bandwidth (256 MiB D2D, GPUs woken, best of 5) : peer {direct:.2f} GB/s   "
+        print(f"  bandwidth, GPUs {GPUS} (256 MiB D2D, both woken, best of 5) : peer {direct:.2f} GB/s   "
               f"host-staged {staged:.2f} GB/s   ({ratio:.2f}x)")
         if ratio >= 1.5:
             print("    → the peer path is materially faster here; P2P is worth having")
@@ -275,5 +307,7 @@ def main():
 if __name__ == "__main__":
     if os.environ.get("P2PCHECK_WORKER"):
         _run_worker()
+    elif os.environ.get("P2PCHECK_BW"):
+        _bandwidth_child()
     else:
         sys.exit(main())
