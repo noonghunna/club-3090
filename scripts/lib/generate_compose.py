@@ -43,6 +43,7 @@ nil — the golden-parity invariant the STEP-4 test asserts.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -347,7 +348,9 @@ def _patch_wiring_markers(patch: dict) -> list[str]:
     """All concrete body strings (mount targets + invoke command) the patch
     contributes at the two insertion points. Derived from delivery_spec —
     the same source STEP-2 reaches() validates against, so emit and
-    reachability stay in lock-step.
+    reachability stay in lock-step. A chat_template patch returns only its
+    mount-source needle: its flag can't be told apart from another
+    template's by substring, so :func:`_strip_chat_template` removes it.
 
     Shipped composes mount overlays via the compose-relative path
     (``../../patches/<patch-dir>/...``) while delivery_spec records the
@@ -384,18 +387,13 @@ def _patch_wiring_markers(patch: dict) -> list[str]:
     if spec.get("script"):
         markers.append(_dir_token(spec["script"]))
         markers.append(Path(spec["script"]).name)
-    # chat_template: the vendored `.jinja` is mounted via the
-    # compose-relative `patches/<name>/...jinja` path; `mounted_at` (added
-    # above) is the container side. For the explicit `--chat-template`
-    # wiring style add both serving tokens so a strip of an omitted/
-    # undelivered chat_template patch removes the --chat-template arg too
-    # (emit stays in lock-step with reaches()).
+    # chat_template: the bare `--chat-template` flag, the generic
+    # `chat_template.jinja` name and qwen38's suffix `mounted_at` all match
+    # other templates' lines (and `--chat-template` is a prefix of
+    # llama.cpp's `--chat-template-kwargs`), so substring markers can't strip
+    # one template safely. Return the patch's own mount-source needle only.
     if patch.get("delivery_mechanism") == "chat_template":
-        if spec.get("jinja"):
-            markers.append(_dir_token(spec["jinja"]))
-            markers.append(Path(spec["jinja"]).name)
-        if "--chat-template" in (spec.get("invoke") or "") and spec.get("mounted_at"):
-            markers.append("--chat-template")
+        return [pa._chat_template_needle(patch)]
     inv = spec.get("invoke")
     if inv and "/" in inv and not inv.endswith((".", "serving", "import")):
         markers.append(inv)
@@ -414,6 +412,51 @@ def _strip_unwired_lines(body_text: str, drop_markers: list[str]) -> str:
         if any(m in line for m in drop_markers):
             continue
         kept.append(line)
+    return "\n".join(kept) + ("\n" if body_text.endswith("\n") else "")
+
+
+_CHAT_TEMPLATE_FLAGS = ("--chat-template", "--chat-template-file")
+
+
+def _list_item(line: str) -> str | None:
+    """The unquoted value of a YAML block-list item line (`- x`), else None."""
+    m = re.match(r"^\s*-\s+(.*?)\s*$", line)
+    return m.group(1).strip("'\"") if m else None
+
+
+def _strip_chat_template(body_text: str, patch: dict) -> str:
+    """Remove one chat_template patch's wiring and nothing else — the same
+    wiring patch_attribution._chat_template_wired() looks for:
+
+    * the mount line whose source is the patch's own template;
+    * the flag naming that mount's target: `- <flag>` followed by
+      `- <target>`, `- <flag>=<target>`, or a line holding just
+      `<flag> <target>` (the llama.cpp folded-command style).
+
+    Another template's mount and flag, `--chat-template-kwargs`, and any
+    other line mentioning `chat_template.jinja` are left alone."""
+    needle = pa._chat_template_needle(patch)
+    lines = body_text.splitlines()
+    drop: set[int] = set()
+    targets: set[str] = set()
+    for idx, line in enumerate(lines):
+        if needle and needle in line:
+            drop.add(idx)
+            parts = pa._split_short_volume(_list_item(line) or "")
+            if len(parts) >= 2:
+                targets.add(parts[1])
+    for idx, line in enumerate(lines):
+        item = _list_item(line)
+        bare = " ".join(line.replace("\\", " ").split())
+        for flag in _CHAT_TEMPLATE_FLAGS:
+            for tgt in targets:
+                if item == f"{flag}={tgt}" or bare == f"{flag} {tgt}":
+                    drop.add(idx)
+                elif item == flag and idx + 1 < len(lines) and _list_item(lines[idx + 1]) == tgt:
+                    drop.update((idx, idx + 1))
+    if not drop:
+        return body_text
+    kept = [line for idx, line in enumerate(lines) if idx not in drop]
     return "\n".join(kept) + ("\n" if body_text.endswith("\n") else "")
 
 
@@ -566,7 +609,10 @@ def generate(
 
     drop_markers: list[str] = []
     for d in undelivered + degraded_omitted:
-        drop_markers.extend(_patch_wiring_markers(d["patch"]))
+        if d["patch"].get("delivery_mechanism") == "chat_template":
+            body = _strip_chat_template(body, d["patch"])
+        else:
+            drop_markers.extend(_patch_wiring_markers(d["patch"]))
     body = _strip_unwired_lines(body, drop_markers)
 
     # Defensive scope assertion: the governed trc slot must never reach the
