@@ -83,7 +83,9 @@ for p in sorted(pathlib.Path("models").rglob("*.yml")):
             refs += 1
             asg = [j for j, l in enumerate(lines) if re.match(rf'^\s*{arr}=\(', l)]
             if not asg:
-                problems.append(f"{p}: exec uses ${{{arr}[@]}} but it is never assigned"); continue
+                problems.append(f"{p}: exec uses ${{{arr}[@]}} but it is never assigned at the start of a line "
+                                f"(an assignment inside a case arm, `pat) {arr}=(…) ;;`, is not seen) -- "
+                                f"initialise it before any branch: {arr}=()"); continue
             # an assignment dominates the exec iff it comes first AND its branch
             # path is a prefix of the exec's (same scope, or an enclosing one)
             ok = any(j < i and paths[i][:len(paths[j])] == paths[j] for j in asg)

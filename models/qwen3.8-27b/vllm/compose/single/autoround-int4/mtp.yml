@@ -275,6 +275,7 @@ services:
         _gmu="$${GPU_MEMORY_UTILIZATION:-$$_gmu_tier}"; _seqs="$${MAX_NUM_SEQS:-$$_seqs_tier}"
         _mnbt="$${MAX_NUM_BATCHED_TOKENS:-$$_mnbt_tier}"; _lptt="$${LONG_PREFILL_TOKEN_THRESHOLD:-$$_lptt_tier}"
         _mml="$${MAX_MODEL_LEN:-$$_mml_tier}"
+        LM_ONLY_ARGS=()   # assigned before the case, so every path to the exec has it (#1599)
         case "$$VISION" in
           on) LM_ONLY_ARGS=() ;;
           off) LM_ONLY_ARGS=(--language-model-only) ;;
