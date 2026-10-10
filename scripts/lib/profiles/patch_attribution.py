@@ -465,19 +465,8 @@ def _spec_wiring_markers(patch: dict) -> tuple[list[str], list[str]]:
     if invoke and not invoke.endswith((".", "serving", "import")) and "/" in invoke:
         inv.append(invoke)
 
-    # chat_template → the vendored `.jinja` is bind-mounted at `mounted_at`
-    # (already added as a volume marker above via `mounted_at`). Two
-    # in-tree wiring styles:
-    #   * explicit `--chat-template <mounted_at>` arg (froggeric): require
-    #     BOTH tokens in the merged body (rendered as adjacent list items,
-    #     so the joined string never appears — match them separately);
-    #   * mount-only (carnice mounts over the model dir's chat_template.jinja
-    #     and vLLM auto-loads it; `wired_at: [volumes]`): the mount target
-    #     alone is the load-bearing artifact, no `--chat-template` arg.
-    if patch.get("delivery_mechanism") == "chat_template" and mounted_at:
-        if "--chat-template" in (spec.get("invoke") or ""):
-            inv.append("--chat-template")
-            inv.append(mounted_at)
+    # chat_template patches are not checked with these markers: reaches() hands them to
+    # _chat_template_wired(), which reads the merged service's structure (#1611).
 
     return vol, inv
 
@@ -530,6 +519,128 @@ def _spec_wiring_present(patch: dict, body: str) -> bool:
 
 
 # --------------------------------------------------------------------------
+# chat_template wiring (#1611). The marker check above over-reported here: the
+# bare `--chat-template` flag is in every vLLM compose that passes ANY template
+# (and is a prefix of llama.cpp's `--chat-template-file`), and qwen38's
+# `mounted_at` is the suffix `/chat_template.jinja`, which any template mounted
+# over a model dir ends with. So the check reads the merged service instead:
+# docker renders volumes in long form (source and target on separate keys) and
+# the offline merge keeps `src:target:ro` strings; both parse to the same pairs.
+# --------------------------------------------------------------------------
+def _chat_template_needle(patch: dict) -> str:
+    """The host-side tail that identifies this patch's template on a mount source: the
+    template's directory plus filename (`froggeric-chat-template/chat_template.jinja`,
+    `patches/apex-qwen-chat-template.jinja`). The load_bearing_when listing check in
+    test-patch-attribution builds the same needle."""
+    jinja = (patch.get("delivery_spec") or {}).get("jinja") or ""
+    return "/".join(Path(jinja).parts[-2:])
+
+
+def _split_short_volume(entry: str) -> list[str]:
+    """Split a short-syntax volume `src:target[:mode]` on the colons outside `${...}`."""
+    parts, cur, depth = [], "", 0
+    for idx, ch in enumerate(entry):
+        if ch == "$" and entry[idx + 1:idx + 2] == "{":
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+        elif ch == ":" and not depth:
+            parts.append(cur)
+            cur = ""
+            continue
+        cur += ch
+    parts.append(cur)
+    return parts
+
+
+def _service_mounts(svc: dict) -> list[tuple[str, str]]:
+    """(source, target) of every volume of a merged service, long or short syntax."""
+    out: list[tuple[str, str]] = []
+    for vol in svc.get("volumes") or []:
+        if isinstance(vol, dict):
+            out.append((str(vol.get("source") or ""), str(vol.get("target") or "")))
+        elif isinstance(vol, str):
+            parts = _split_short_volume(vol)
+            if len(parts) >= 2:
+                out.append((parts[0], parts[1]))
+    return out
+
+
+def _launch_tokens(svc: dict) -> list[str]:
+    """The service's entrypoint + command as one argument stream. An item that is a whole
+    shell script (`bash -c "…"`) is split on whitespace after its `#` comments are dropped,
+    so a flag the script passes counts and one a comment mentions does not."""
+    tokens: list[str] = []
+    for key in ("entrypoint", "command"):
+        val = svc.get(key)
+        for item in [val] if isinstance(val, str) else (val or []):
+            for line in str(item).splitlines():
+                for tok in _strip_yaml_comment(line).split():
+                    tok = tok.strip("\"'\\,;")
+                    if tok:
+                        tokens.append(tok)
+    return tokens
+
+
+def _passes_flag(tokens: list[str], flag: str, target: str) -> bool:
+    """`flag target` as adjacent arguments, or `flag=target`."""
+    for idx, tok in enumerate(tokens):
+        if tok == f"{flag}={target}":
+            return True
+        if tok == flag and idx + 1 < len(tokens) and tokens[idx + 1] == target:
+            return True
+    return False
+
+
+def _chat_template_wired(patch: dict, text: str) -> bool:
+    """True iff one service of the merged compose ``text`` mounts THIS patch's template and
+    selects it:
+
+    * mount — a volume whose source ends with the patch's own template path and whose
+      target is ``mounted_at``;
+    * selection — the flag (`--chat-template-file` when `invoke` names it, else
+      `--chat-template`) followed by that mount target, in the same service.
+
+    No flag is needed when `wired_at` is `[volumes]` (carnice, mounted over the model dir
+    and auto-loaded), or when ``mounted_at`` is a single component (qwen38's
+    `/chat_template.jinja`): that template is mounted over the model dir's own file, whose
+    path differs per weights variant and engine, so the target only has to end with it and
+    SGLang loads it with no flag. `command` and `entrypoint` in `wired_at` are the same
+    launch line here (apex and glm53 declare `command`).
+    """
+    spec = patch.get("delivery_spec") or {}
+    mounted_at = spec.get("mounted_at") or ""
+    needle = _chat_template_needle(patch)
+    if not mounted_at or not needle:
+        return False
+    wired_at = spec.get("wired_at")
+    wired_at = {wired_at} if isinstance(wired_at, str) else set(wired_at or [])
+    model_dir_mount = mounted_at.count("/") == 1
+    flag = None
+    if wired_at != {"volumes"} and not model_dir_mount:
+        flag = "--chat-template-file" if "--chat-template-file" in (spec.get("invoke") or "") \
+            else "--chat-template"
+
+    doc = _compose_yaml_load(text) or {}
+    for svc in (doc.get("services") or {}).values():
+        if not isinstance(svc, dict):
+            continue
+        targets = [
+            tgt for src, tgt in _service_mounts(svc)
+            if src == needle or src.endswith("/" + needle)
+            and (tgt.endswith(mounted_at) if model_dir_mount else tgt == mounted_at)
+        ]
+        if not targets:
+            continue
+        if flag is None:
+            return True
+        tokens = _launch_tokens(svc)
+        if any(_passes_flag(tokens, flag, tgt) for tgt in targets):
+            return True
+    return False
+
+
+# --------------------------------------------------------------------------
 # gap_declared / reaches.
 # --------------------------------------------------------------------------
 def gap_declared(patch: dict, compose_name: str) -> bool:
@@ -563,8 +674,7 @@ def reaches(root: Path, patch: dict, name_or_path: str) -> bool:
     # dangerous direction). Every other mechanism keeps the byte-identical
     # legacy substrate so shipped attribution is unchanged.
     if patch.get("delivery_mechanism") == "chat_template":
-        body = service_body(compose_effective_text(root, name_or_path))
-        return _spec_wiring_present(patch, body)
+        return _chat_template_wired(patch, compose_effective_text(root, name_or_path))
 
     body = service_body(compose_text(root, name_or_path))
 

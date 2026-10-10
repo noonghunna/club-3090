@@ -172,6 +172,94 @@ for _pid, _slug in (("qwen-w4a8-int8-act", "sgl/qwen38-27b-dual-fast"),
         errors.append(f"#1597: {_pid} 'reaches' {_slug}, which mounts a DIFFERENT patch at the same target")
 
 # ---------------------------------------------------------------------------
+# #1611 — a chat template reaches only a compose that mounts AND selects it.
+# ---------------------------------------------------------------------------
+# The chat-template check used to accept the bare `--chat-template` flag (in every vLLM
+# compose that passes ANY template, and a prefix of `--chat-template-file`) and qwen38's
+# suffix `mounted_at` (`/chat_template.jinja`, the end of every template mounted over a model
+# dir). So each template "reached" composes running a different one: the Qwen3.8 template
+# reached Gemma composes, and apex / glm53 reached every vLLM compose passing the flag.
+import re as _re
+_ct = [p for p in patches if p.get("delivery_mechanism") == "chat_template"]
+_ct_listed = {p["id"]: {s for lb in p.get("load_bearing_when") or [] for s in (lb.get("composes") or [])}
+              for p in _ct}
+
+
+def _ct_compose(slug):
+    _src = COMPOSE_REGISTRY.get(slug)
+    return None if _src is None else root / (_src["compose_path"] if isinstance(_src, dict) else _src)
+
+
+# (a) No template reaches the home compose of another: one load-bearing compose per template
+#     that has any, plus the Qwen3.8 SGLang compose (mount-only, no flag).
+_ct_homes = {
+    "gemma-google-canonical-chat-template": "vllm/gemma-31b-dual",
+    "qwen-froggeric-chat-template": "vllm/minimal",
+    "qwen38-reasoning-effort-template": "vllm/qwen38-27b-dual-max",
+    "apex-qwen-chat-template": "ik-llama/apex-mtp-compact",
+}
+_ct_targets = list(_ct_homes.items()) + [("qwen38-reasoning-effort-template", "sgl/qwen38-27b-dual-fast")]
+for _owner, _slug in _ct_targets:
+    _path = _ct_compose(_slug)
+    if _owner not in _ct_listed or _path is None or _slug not in _ct_listed[_owner]:
+        errors.append(f"#1611 control: {_owner} / {_slug} is no longer a load-bearing pair — pick another")
+        continue
+    for _p in _ct:
+        _wired = reaches(_p, str(_path))
+        if _p["id"] == _owner and not _wired:
+            errors.append(f"#1611 positive control: {_owner} does not reach its own {_slug}")
+        elif _p["id"] != _owner and _slug not in _ct_listed[_p["id"]] and _wired:
+            errors.append(f"#1611: {_p['id']} 'reaches' {_slug}, which runs {_owner}'s template")
+
+
+# (b) Break one compose's wiring on a copy: the copy must stop reaching, and the unmodified copy
+#     beside it must still reach (so a relocated copy cannot pass vacuously). `edit` rewrites
+#     the template's mount line when on_mount, every other line otherwise.
+def _ct_edit(patch, slug, path, label, edit, on_mount=False):
+    _needle = "/".join(Path((patch.get("delivery_spec") or {}).get("jinja") or "").parts[-2:])
+    _orig = path.read_text(encoding="utf-8")
+    _broken = "".join(edit(ln) if (_needle in ln) == on_mount else ln
+                      for ln in _orig.splitlines(keepends=True))
+    if _broken == _orig:
+        errors.append(f"#1611 control {patch['id']} {label}: the edit changed nothing in {slug}")
+        return
+    with _tf.TemporaryDirectory() as _d:
+        _d = Path(_d) / "a" / "b" / "c"
+        _d.mkdir(parents=True)
+        (_d / "orig.yml").write_text(_orig, encoding="utf-8")
+        (_d / "broken.yml").write_text(_broken, encoding="utf-8")
+        if not pa.reaches(root, patch, str(_d / "orig.yml")):
+            errors.append(f"#1611 positive control {patch['id']} {label}: an unmodified copy of "
+                          f"{slug} no longer reaches, so the negative proves nothing")
+        elif pa.reaches(root, patch, str(_d / "broken.yml")):
+            errors.append(f"#1611: {patch['id']} still 'reaches' a copy of {slug} with {label}")
+
+
+def _ct_drop_flag(flag):
+    _flag_re = _re.compile(r"(?<![\w-])" + _re.escape(flag) + r"(?![\w-])")
+
+    def _edit(ln):
+        _new = _flag_re.sub("", ln)
+        return "" if _new != ln and _new.strip() in ("", "-") else _new
+    return _edit
+
+
+for _owner, _slug in _ct_targets:
+    _patch = next(p for p in _ct if p["id"] == _owner)
+    _spec = _patch.get("delivery_spec") or {}
+    _mounted = _spec.get("mounted_at") or ""
+    _path = _ct_compose(_slug)
+    if _path is None:
+        continue  # reported by (a)
+    _ct_edit(_patch, _slug, _path, "its template mount removed", lambda ln: "", on_mount=True)
+    if _mounted.count("/") == 1:
+        continue  # mounted over the model dir's own template: the mount is the whole wiring
+    _flag = "--chat-template-file" if "--chat-template-file" in (_spec.get("invoke") or "") else "--chat-template"
+    _ct_edit(_patch, _slug, _path, f"the mount kept but {_flag} removed", _ct_drop_flag(_flag))
+    _ct_edit(_patch, _slug, _path, f"the mount kept but {_flag} naming another file",
+             lambda ln, m=_mounted: ln.replace(m, "/etc/club3090/not-this-template.jinja"))
+
+# ---------------------------------------------------------------------------
 # CONTRACT-2b-i — chat_template delivery class + REAL extends merge.
 # ---------------------------------------------------------------------------
 # (1) Every patch's delivery_mechanism is in the v0.8.2 valid set (the
@@ -241,7 +329,13 @@ if chat_template_patches:
     ctp = chat_template_patches[0]
     with tempfile.TemporaryDirectory() as _td:
         _tdp = Path(_td)
-        mounted = (ctp.get("delivery_spec") or {}).get("mounted_at")
+        ctspec = ctp.get("delivery_spec") or {}
+        mounted = ctspec.get("mounted_at")
+        # The patch's OWN template and flag: reaches() matches the mount source to the
+        # patch (#1611), so a fixture mounting another template would not count.
+        ctsrc = "/".join(Path(ctspec.get("jinja") or "").parts[-2:])
+        ctflag = "--chat-template-file" if "--chat-template-file" in (ctspec.get("invoke") or "") \
+            else "--chat-template"
         base = _tdp / "base.yml"
         keep_child = _tdp / "keep.yml"
         reset_child = _tdp / "reset.yml"
@@ -250,10 +344,10 @@ if chat_template_patches:
             "services:\n"
             "  base-svc:\n"
             "    image: scratch\n"
-            "    command: [--model, m, --chat-template, %s]\n"
+            "    command: [--model, m, %s, %s]\n"
             "    volumes:\n"
-            "      - ../../patches/froggeric-chat-template/chat_template.jinja:%s:ro\n"
-            % (mounted, mounted),
+            "      - ../../%s:%s:ro\n"
+            % (ctflag, mounted, ctsrc, mounted),
             encoding="utf-8",
         )
         # (a) Child that KEEPS inheritance (only overrides an env) -> still
