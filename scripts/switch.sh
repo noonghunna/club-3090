@@ -1189,9 +1189,11 @@ gpu_preflight() {
 # switch.sh, which exports again into the inherited env) -- and that is safe:
 # resolve-variant-pin OMITS any key whose env var is already set (the user-env
 # rule at launch_compat.py:217/311/355/401/506), so pass 2 receives an empty or
-# image-only result and re-exports nothing. Pass 1's values stand, and the
-# per-key "keeping your value" branches below stay silent instead of reporting
-# the launcher's own first-pass export as a user override. Guarded by the
+# image-only result and re-exports nothing. The image key is the exception: the
+# resolver always emits it, and pass 2 finds pass 1's export equal to the pin and
+# re-exports it silently (#1632). Pass 1's values stand, and the per-key
+# "keeping your value" branches below stay silent instead of reporting the
+# launcher's own first-pass export as a user override. Guarded by the
 # double-invocation section of test-launch-compat.sh -- if the resolver ever
 # stops suppressing, that test reds before a user sees a doubled message.
 export_variant_engine_pin() {
@@ -1216,18 +1218,31 @@ export_variant_engine_pin() {
   while IFS='=' read -r key value; do
     [[ -n "$key" ]] || continue
     case "$key" in
-      VLLM_NIGHTLY_SHA) export VLLM_NIGHTLY_SHA="$value" ;;
-      VLLM_IMAGE) export VLLM_IMAGE="$value" ;;
-      BEELLAMA_IMAGE) export BEELLAMA_IMAGE="$value" ;;
-      # #1365: the remaining engines' image pins. resolve_engine_pin used to RAISE
-      # for these, so the launchers gated the whole call behind a vllm/beellama
-      # prefix test and 73 of 138 slugs got no hardware injection at all. Now that
-      # it returns the engine profile's own image_env, each var needs an arm here
-      # or the `*)` below turns it into exit 2. Caught by the #1363 matrix guard.
-      EXLLAMAV3_IMAGE) export EXLLAMAV3_IMAGE="$value" ;;
-      SGLANG_IMAGE) export SGLANG_IMAGE="$value" ;;
-      LLAMACPP_CLUB3090_IMAGE) export LLAMACPP_CLUB3090_IMAGE="$value" ;;
-      LLAMACPP_PRISM_IMAGE) export LLAMACPP_PRISM_IMAGE="$value" ;;
+      # The engine's image pin, one arm for every engine's image var. #1365: the
+      # non-vLLM ones used to RAISE in resolve_engine_pin, so the launchers gated the
+      # whole call behind a vllm/beellama prefix test and 73 of 138 slugs got no
+      # hardware injection at all; each var needs a name here or the `*)` below
+      # turns it into exit 2. Caught by the #1363 matrix guard.
+      # #1632: a value YOU exported in the shell wins for this launch (AGENTS.md
+      # precedence: the shell first; docs/UPSTREAM.md documents VLLM_IMAGE as the
+      # full-image override). This arm used to re-export the pin over it silently.
+      # A SAVED value (club3090.env, secrets.env, repo .env) does not win: one var
+      # serves several engines (nine vLLM engine profiles declare VLLM_IMAGE), so
+      # a saved image would repoint all of them and outlive every pin bump. The loader
+      # records the keys it exported in CLUB3090_CONFIG_SOURCE; any other value
+      # is the shell's. Empty counts as unset, so the pin applies.
+      # Lines go to STDOUT: check_variant dry-runs this function with stdout
+      # discarded, so a stderr line would print twice.
+      VLLM_NIGHTLY_SHA|VLLM_IMAGE|BEELLAMA_IMAGE|EXLLAMAV3_IMAGE|SGLANG_IMAGE|LLAMACPP_CLUB3090_IMAGE|LLAMACPP_PRISM_IMAGE)
+        if [[ -z "${!key:-}" || "${!key}" == "$value" ]]; then
+          export "${key}=${value}"
+        elif [[ "$(declare -p CLUB3090_CONFIG_SOURCE 2>/dev/null)" == "declare -A"* \
+              && -n "${CLUB3090_CONFIG_SOURCE[$key]+x}" ]]; then
+          echo "[switch] ${key}: ignoring the saved value from ${CLUB3090_CONFIG_SOURCE[$key]}, which would repoint every engine that reads ${key}; using the engine profile's pin ${value}. For a one-off image, export ${key} in the shell."
+          export "${key}=${value}"
+        else
+          echo "[switch] ${key}: keeping your value ${!key} (the engine profile pins ${value}; this slug's patches are validated against the pin only)"
+        fi ;;
       # #246 arch-aware env (pilot slugs; hardware-profile balanced default)
       # KV_CACHE_DTYPE) — arm REMOVED 2026-09-21 (#1371) along with the #246
       # Phase 1 injector that emitted it. Nothing resolves it any more, so an arm

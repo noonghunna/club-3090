@@ -440,4 +440,65 @@ for _L in "${DBL_LAUNCHERS[@]}"; do
     || { echo "ASSERTION FAILED ($_L): user MOE_RESERVE_MB=999 did not survive" >&2; printf '%s\n' "$_ov" >&2; exit 1; }
 done
 echo "  ✓ #1365: double invocation is idempotent in both launchers (inject-once · no re-announce · no false 'user override' · user value survives)"
+
+# --- #1632: a shell image wins; a saved one does not ---------------------------
+# The image key is the one the resolver ALWAYS emits (it does not consult the
+# environment), so the launcher decides. Three cases, both launchers, both passes:
+#   no value  -> the pin, silently, both passes
+#   shell     -> your value survives both passes; switch.sh announces it, launch.sh
+#                stays quiet (it always hands off to switch.sh, which announces once)
+#   saved     -> the pin wins, pass 1 says why, pass 2 is silent
+# The override is a value that differs from the pin: one equal to it could not
+# tell "kept" from "re-exported".
+img_harness() { # img_harness <launcher> <slug> [shell|saved] [value]
+  local body; body="$(sed -n '/^export_variant_engine_pin() {/,/^}/p' "$1")"
+  LAUNCH_PROFILE="$HELPER" SLUG="$2" MODE="${3:-}" VAL="${4:-}" bash -c '
+    set -uo pipefail
+    switch_gpu_profile_spec()   { printf ""; }
+    selected_gpu_profile_spec() { printf ""; }
+    '"$body"'
+    case "$MODE" in
+      shell) export VLLM_IMAGE="$VAL" ;;
+      saved) declare -gA CLUB3090_CONFIG_SOURCE=([VLLM_IMAGE]=club3090.env); export VLLM_IMAGE="$VAL" ;;
+    esac
+    echo "@@PASS1"; export_variant_engine_pin "$SLUG"
+    echo "@@PASS2"; export_variant_engine_pin "$SLUG"
+    echo "@@FINAL VLLM_IMAGE=${VLLM_IMAGE:-<unset>}"
+  ' 2>&1
+}
+IMG_SLUG="vllm/qwen38-27b-dual-superfast"
+IMG_PIN="$(python3 "$HELPER" resolve-variant-pin --variant "$IMG_SLUG" --format value)"
+[[ "$IMG_PIN" == vllm/vllm-openai:* ]] \
+  || { echo "ASSERTION FAILED: could not resolve ${IMG_SLUG}'s image pin (got '${IMG_PIN}')" >&2; exit 1; }
+IMG_OVR="vllm/vllm-openai:club3090-test-override"
+for _L in "${DBL_LAUNCHERS[@]}"; do
+  _out="$(img_harness "$_L" "$IMG_SLUG")"
+  grep -q "@@FINAL VLLM_IMAGE=${IMG_PIN}\$" <<<"$_out" \
+    || { echo "ASSERTION FAILED ($_L): no user value, but the pin was not exported" >&2; printf '%s\n' "$_out" >&2; exit 1; }
+  grep -q -E "keeping your value|ignoring the saved" <<<"$_out" \
+    && { echo "ASSERTION FAILED ($_L): no user value, but an override was reported" >&2; printf '%s\n' "$_out" >&2; exit 1; }
+
+  _out="$(img_harness "$_L" "$IMG_SLUG" shell "$IMG_OVR")"
+  grep -q "@@FINAL VLLM_IMAGE=${IMG_OVR}\$" <<<"$_out" \
+    || { echo "ASSERTION FAILED ($_L): a shell VLLM_IMAGE was overwritten by the pin (#1632)" >&2; printf '%s\n' "$_out" >&2; exit 1; }
+  _n="$(grep -c "VLLM_IMAGE: keeping your value ${IMG_OVR}" <<<"$_out" || true)"
+  if [[ "$_L" == scripts/switch.sh ]]; then
+    [[ "$_n" -eq 2 ]] \
+      || { echo "ASSERTION FAILED ($_L): the shell override was not announced once per pass (got ${_n})" >&2; printf '%s\n' "$_out" >&2; exit 1; }
+  else
+    [[ "$_n" -eq 0 ]] \
+      || { echo "ASSERTION FAILED ($_L): launch.sh announced the override; switch.sh does that, so it would print twice" >&2; printf '%s\n' "$_out" >&2; exit 1; }
+  fi
+
+  _out="$(img_harness "$_L" "$IMG_SLUG" saved "$IMG_OVR")"
+  grep -q "@@FINAL VLLM_IMAGE=${IMG_PIN}\$" <<<"$_out" \
+    || { echo "ASSERTION FAILED ($_L): a SAVED VLLM_IMAGE beat the engine pin" >&2; printf '%s\n' "$_out" >&2; exit 1; }
+  _p1="$(printf '%s' "$_out" | sed -n '/@@PASS1/,/@@PASS2/p')"
+  _p2="$(printf '%s' "$_out" | sed -n '/@@PASS2/,/@@FINAL/{/@@FINAL/!p;}')"
+  grep -q "VLLM_IMAGE: ignoring the saved value from club3090.env" <<<"$_p1" \
+    || { echo "ASSERTION FAILED ($_L): the saved VLLM_IMAGE was dropped without saying so" >&2; printf '%s\n' "$_out" >&2; exit 1; }
+  grep -q -E "ignoring the saved|keeping your value" <<<"$_p2" \
+    && { echo "ASSERTION FAILED ($_L): pass 2 re-announced the saved image" >&2; printf '%s\n' "$_out" >&2; exit 1; }
+done
+echo "  ✓ #1632: image pins — a shell value wins (announced once, by switch.sh), a saved value does not (said once), no value takes the pin silently"
 echo "test-launch-compat: ok"
