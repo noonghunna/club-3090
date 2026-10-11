@@ -707,11 +707,14 @@ if baseline_idx is not None and contiguous[-1] != baseline_idx:
         print(f"    ⚠  TTFT grew near-linearly — O(n)-like accumulated-context cost for this cell.")
     print(f"    (Full-context O(n) growth would approach {token_growth:.1f}× with context)")
     print(f"")
-    print(f"  Note — DeltaNet/SSM state is NOT prefix-cacheable on vLLM Qwen3-Next cells.")
-    print(f"  Attention KV caching can still work, but recurrent-state recomputation scales")
-    print(f"  O(n) with sequence length. Prior single-card 24 GB vLLM Qwen3-Next observations")
-    print(f"  saw degradation above ~35K tokens and timeouts around ~74K; treat those as")
-    print(f"  informational per-arch_class guideposts. llama.cpp is not affected.")
+    print(f"  Note — on vLLM, Qwen3-Next-family (DeltaNet/SSM hybrid) prefix hits are block-")
+    print(f"  granular: with prefix caching on, vLLM runs these models in mamba-cache 'align'")
+    print(f"  mode and saves the recurrent state only at block boundaries, so the uncached tail")
+    print(f"  of each prompt is recomputed. Session 2 replays session 1 only as far as the")
+    print(f"  model's earlier replies came out token-identical. Prior single-card 24 GB vLLM")
+    print(f"  Qwen3-Next observations saw degradation above ~35K tokens and timeouts around")
+    print(f"  ~74K; treat those as informational per-arch_class guideposts. llama.cpp is not")
+    print(f"  affected.")
 
 # --- #249 record seam: drop a compact per-turn TTFT/decode curve to the path the
 # shell handed us (AGENTIC_CURVE_JSON), for the measurement-record emit at the end
