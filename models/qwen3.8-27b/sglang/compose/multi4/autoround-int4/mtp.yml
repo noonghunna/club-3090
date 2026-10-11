@@ -608,6 +608,7 @@ services:
         # With it rank 0 blocks in zmq poll until a request arrives (the other ranks
         # wait on its broadcast): 42 % at idle, TTFT after idle 84 vs 80 ms and decode
         # 63.4 vs 66.3 tok/s — within run noise. Upstream default is off.
+        # SERVED_NAME renames the model the API serves (default: qwen3.8-27b).
         exec python3 -m sglang.launch_server \
           --model-path "$$M" \
           --tp-size 4 \
@@ -631,7 +632,7 @@ services:
           --reasoning-parser "${REASONING_PARSER:-qwen3}" \
           --tool-call-parser "${TOOL_CALL_PARSER:-qwen3_coder}" \
           --host 0.0.0.0 --port 30000 \
-          --served-model-name qwen3.8-27b \
+          --served-model-name ${SERVED_NAME:-qwen3.8-27b} \
           "$${SPEC[@]}"
     healthcheck:
       # ⚠️ club-3090#1295 — probe the container's ROUTABLE address, NEVER

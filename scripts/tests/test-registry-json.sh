@@ -165,6 +165,9 @@ need(by_slug.get("vllm/qwen38-27b-dual-fast", {}).get("served_name") == "qwen3.8
      "vllm/qwen38-27b-dual-fast: served_name != qwen3.8-27b")
 need(by_slug.get("vllm/gemma-12b-dual-bf16-mtp", {}).get("served_name") == "gemma-4-12b",
      "vllm/gemma-12b-dual-bf16-mtp: ${SERVED_NAME:-...} did not unwrap to gemma-4-12b")
+# The same fallback inside an SGLang shell command (`--served-model-name ${SERVED_NAME:-…} \`).
+need(by_slug.get("sgl/qwen38-27b-dual-fast", {}).get("served_name") == "qwen3.8-27b",
+     "sgl/qwen38-27b-dual-fast: shell-form ${SERVED_NAME:-...} did not unwrap to qwen3.8-27b")
 # Null-safe: composes with no --served-model-name (llama.cpp family) emit None,
 # never "" / "None" / a braced literal.
 nulls = [v for v in d["variants"] if v["served_name"] is None]

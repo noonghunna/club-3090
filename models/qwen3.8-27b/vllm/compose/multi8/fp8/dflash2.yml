@@ -339,8 +339,9 @@ services:
       # each turn. vllm#58754 fixes the check — see docs/UPSTREAM.md.
       - --chat-template
       - /root/.cache/huggingface/qwen3.8-27b-fp8/chat_template.jinja
+      # SERVED_NAME renames the model the API serves (default: qwen3.8-27b).
       - --served-model-name
-      - qwen3.8-27b
+      - ${SERVED_NAME:-qwen3.8-27b}
       - qwen3.8-27b-fp8
       - --quantization
       - fp8
