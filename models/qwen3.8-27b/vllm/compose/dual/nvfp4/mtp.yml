@@ -431,8 +431,12 @@ services:
       # makes the DeltaNet/SSM state prefix-cacheable → cuts BETWEEN-TURN TTFT
       # 15-38% on agent traffic (bench-agentic), flatter TTFT-vs-ctx growth
       # (6.8x vs 9.7x); decode-neutral, soak PASS (0 leak). ⚠️ align mode is
-      # upstream-EXPERIMENTAL + adds ~100ms cold-start TTFT (precopy JIT). Disable
-      # with MAMBA_CACHE_MODE=none.
+      # upstream-EXPERIMENTAL + adds ~100ms cold-start TTFT (precopy JIT).
+      # ⚠️ CORRECTED 2026-10-11: with prefix caching on, vLLM puts this model in align
+      # by itself, and an explicit MAMBA_CACHE_MODE=none reads as that default, so it
+      # does NOT turn align off. PREFIX_CACHE_ARG=--no-enable-prefix-caching does (it
+      # drops prefix caching too). The A/B above therefore ran align in both arms; its
+      # win is most likely --prefix-match-unit 16. See docs/UPSTREAM.md, mamba-align row.
       # ⚠️ CORRECTED 2026-09-11 (club-3090#1246): pmu is inert unless align is
       # active — AND inert whenever the MTP drafter is on, which is the default
       # on this compose. Measured on vllm/qwen38-27b-dual-max (v0.27.1; 7 prompt
