@@ -1292,17 +1292,17 @@ ensure_engine_alive() {
     return 0
   fi
 
-  echo "    \033[33m⚠\033[0m ${probe_label} crashed the engine — attempting restart…"
+  printf "    \033[33m⚠\033[0m %s crashed the engine — attempting restart…\n" "$probe_label"
 
   if [[ "${CONTAINER:-}" == "none" ]] || ! command -v docker >/dev/null 2>&1; then
-    echo "    \033[31m✗\033[0m Cannot restart (CONTAINER=none or docker unavailable)."
+    printf "    \033[31m✗\033[0m Cannot restart (CONTAINER=none or docker unavailable).\n"
     echo "      Subsequent pipeline steps will fail against a dead engine."
     echo "      Restart manually before running soak-test / quality-test."
     return 1
   fi
 
   if ! docker inspect "${CONTAINER}" >/dev/null 2>&1; then
-    echo "    \033[31m✗\033[0m Container '${CONTAINER}' not found. Cannot restart."
+    printf "    \033[31m✗\033[0m Container '%s' not found. Cannot restart.\n" "$CONTAINER"
     return 1
   fi
 
@@ -1313,14 +1313,14 @@ ensure_engine_alive() {
   local waited=0 max_wait=120
   while [[ $waited -lt $max_wait ]]; do
     if engine_healthy; then
-      echo "    \033[32m✓\033[0m Engine recovered after ${waited}s"
+      printf "    \033[32m✓\033[0m Engine recovered after %ss\n" "$waited"
       return 0
     fi
     sleep 5
     waited=$((waited + 5))
   done
 
-  echo "    \033[31m✗\033[0m Engine did not recover after ${max_wait}s"
+  printf "    \033[31m✗\033[0m Engine did not recover after %ss\n" "$max_wait"
   echo "      Check: ${LOG_CMD}"
   return 1
 }
@@ -1808,7 +1808,7 @@ with open('${cal_req}', 'w') as f:
     fi
     # VRAM margin check on the deepest successful rung
     if [[ "$vram_after_all" -gt 0 && "$vram_after_all" -lt "$vram_margin_mb" ]]; then
-      echo "    \033[33m⚠\033[0m VRAM margin thin at ceiling: ${vram_after_all} MB free < ${vram_margin_mb} MB threshold"
+      printf "    \033[33m⚠\033[0m VRAM margin thin at ceiling: %s MB free < %s MB threshold\n" "$vram_after_all" "$vram_margin_mb"
       echo "      Recall succeeded at ${last_pass_pct}% fill, but sustained agent load also carries"
       echo "      prompt-cache + context-checkpoint overhead (~292 MiB, see #197)."
       echo "      Agent users should target a CTX_SIZE where margin ≥ ${vram_margin_mb} MB at this depth."

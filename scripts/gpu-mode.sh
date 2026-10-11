@@ -853,12 +853,12 @@ mode_prune() {
     echo "Removes images not referenced by any container (running OR stopped)."
     echo "Does NOT touch build cache or volumes — use 'prune-all' for those."
     echo ""
-    echo "${CYAN}── Before ──${NC}"
+    echo -e "${CYAN}── Before ──${NC}"
     sudo docker system df 2>/dev/null | head -5
     echo ""
     sudo docker image prune -a -f 2>&1 | tail -10
     echo ""
-    echo "${CYAN}── After ──${NC}"
+    echo -e "${CYAN}── After ──${NC}"
     sudo docker system df 2>/dev/null | head -5
 }
 
@@ -870,19 +870,19 @@ mode_prune_all() {
     echo "  - dangling networks"
     echo "Does NOT remove volumes (qdrant-data, openwebui-data are safe)."
     echo ""
-    echo "${CYAN}── Before ──${NC}"
+    echo -e "${CYAN}── Before ──${NC}"
     sudo docker system df 2>/dev/null | head -5
     echo ""
-    echo "${YELLOW}Pruning images...${NC}"
+    echo -e "${YELLOW}Pruning images...${NC}"
     sudo docker image prune -a -f 2>&1 | tail -3
     echo ""
-    echo "${YELLOW}Pruning networks...${NC}"
+    echo -e "${YELLOW}Pruning networks...${NC}"
     sudo docker network prune -f 2>&1 | tail -3
     echo ""
-    echo "${YELLOW}Pruning build cache (keeping 5 GB)...${NC}"
+    echo -e "${YELLOW}Pruning build cache (keeping 5 GB)...${NC}"
     sudo docker buildx prune -f --keep-storage 5GB 2>&1 | tail -3
     echo ""
-    echo "${CYAN}── After ──${NC}"
+    echo -e "${CYAN}── After ──${NC}"
     sudo docker system df 2>/dev/null | head -5
 }
 
