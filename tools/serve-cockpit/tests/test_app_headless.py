@@ -4927,6 +4927,9 @@ class TestCrossRigBenchmarksViaExplain:
         # (the exact regression the family-canon fix addresses).
         assert _bench_row_matches(row("llamacpp"), m, "llama-cpp-local") is True
         assert _bench_row_matches(row("ik-llama"), m, "llama-cpp-local") is True
+        # ik-llama/* slugs carry their own registry label since 2026-10-12.
+        assert _bench_row_matches(row("ik-llama"), m, "ik-llama-local") is True
+        assert _bench_row_matches(row("llamacpp"), m, "ik-llama-local") is True
         # beellama family.
         assert _bench_row_matches(row("beellama"), m, "beellama-local") is True
         # cross-family must NOT match.

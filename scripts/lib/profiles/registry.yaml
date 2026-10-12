@@ -464,7 +464,7 @@ entries:
     model: qwen3.6-27b
     weights_variant: ubergarm-iq4ks
     workload: fast-chat
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q4_0
@@ -495,7 +495,7 @@ entries:
     model: qwen3.6-27b
     weights_variant: ubergarm-iq4ks
     workload: vision-coding
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q4_0
@@ -527,7 +527,7 @@ entries:
     model: qwen3.6-27b
     weights_variant: ubergarm-iq4ks
     workload: fast-chat
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q4_0
@@ -716,7 +716,7 @@ entries:
     model: qwen3.6-27b
     weights_variant: ex0bit-prism-pro-dq
     workload: fast-chat
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q4_0
@@ -747,7 +747,7 @@ entries:
     model: qwen3.6-27b
     weights_variant: ex0bit-prism-pro-dq
     workload: long-ctx-single
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q4_0
@@ -778,7 +778,7 @@ entries:
     model: qwen3.6-27b
     weights_variant: ex0bit-prism-pro-dq
     workload: tool-heavy
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q4_0
@@ -809,7 +809,7 @@ entries:
     model: qwen3.6-27b
     weights_variant: ex0bit-prism-pro-dq
     workload: tool-heavy
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q4_0
@@ -840,7 +840,7 @@ entries:
     model: qwen3.6-27b
     weights_variant: ex0bit-prism-pro-dq
     workload: vision-coding
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q8_0
@@ -872,7 +872,7 @@ entries:
     model: qwen3.6-35b-a3b
     weights_variant: mudler-apex-compact
     workload: fast-chat
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q4_0
@@ -903,7 +903,7 @@ entries:
     model: qwen3.6-35b-a3b
     weights_variant: byteshape-iq4xs
     workload: fast-chat
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q4_0
@@ -934,7 +934,7 @@ entries:
     model: qwen3.6-35b-a3b
     weights_variant: mudler-apex-compact
     workload: long-ctx-single
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q8_0
@@ -965,7 +965,7 @@ entries:
     model: qwen3.6-35b-a3b
     weights_variant: mudler-apex-compact
     workload: fast-chat
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q8_0
@@ -996,7 +996,7 @@ entries:
     model: qwen3.6-35b-a3b
     weights_variant: mudler-apex-quality
     workload: long-ctx-single
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: qwen-mtp-builtin
     spec_method: null
     kv_format: q8_0
@@ -3335,7 +3335,7 @@ entries:
     model: ornith-1.0-9b
     weights_variant: deepreinforce-q4km
     workload: fast-chat
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: null
     spec_method: null
     kv_format: q8_0
@@ -3366,7 +3366,7 @@ entries:
     model: ornith-1.0-35b
     weights_variant: deepreinforce-q8
     workload: fast-chat
-    engine: llama-cpp-local
+    engine: ik-llama-local
     drafter: null
     spec_method: null
     kv_format: q8_0

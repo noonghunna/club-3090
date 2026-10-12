@@ -420,8 +420,8 @@ def resolve_engine_pin(profiles, engine_id: str) -> dict[str, str]:
     spec = str(engine.install.get("spec", ""))
 
     # #1365: NOT AN IMAGE PIN -> {} , never a raise. An engine with no image env
-    # is a normal, expected state (pip installs; llama-cpp-local, whose two
-    # binaries read different vars), and raising here made the whole slug
+    # is a normal, expected state (pip installs; llama-cpp-local and ik-llama-local,
+    # whose composes keep their own image defaults), and raising here made the whole slug
     # unresolvable -- which is why both launchers gated the entire call behind a
     # `vllm/* || beellama/*` prefix test and 73 of 138 slugs got no hardware
     # injection at all. The image pin and hardware-keyed env injection are

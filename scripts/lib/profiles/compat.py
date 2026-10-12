@@ -276,9 +276,9 @@ class EngineProfile:
     notes: Optional[str] = None
     # #1365: the compose env var this engine's image is injected as. None means
     # the engine has no single image env -- either it is not an image pin at all
-    # (pip engines, local builds), or one profile serves two binaries under
-    # different vars (llama-cpp-local: LLAMACPP_IMAGE vs IK_LLAMA_IMAGE). The
-    # resolver returns {} for those rather than raising, so a slug is still
+    # (pip engines, local builds), or naming one would change what the launchers
+    # inject (llama-cpp-local and ik-llama-local, whose composes keep their own
+    # defaults). The resolver returns {} for those rather than raising, so a slug is still
     # resolvable for hardware injection even when its image cannot be pinned.
     image_env: Optional[str] = None
     # Where the engine comes from (docs/ADDING_ENGINES.md, "CONTRACT — engine

@@ -108,6 +108,7 @@ Pin engine images when **either** trigger holds: (1) we vendor patches into the 
 | SGLang (`sglang-stable`) | none today | **release tag** of `lmsysorg/sglang` |
 | llama.cpp mainline (`llama-cpp-local`) | none | **digest** of ggml-org's official image — trigger (2): stability-pinned after the #187 rolling-tag crash-loop; zero patches, so bumps are cheap (`engine-pin-bump.sh llama-cpp-local ghcr.io/ggml-org/llama.cpp@sha256:<digest>`) |
 | moe-cache llama.cpp (`llamacpp-club3090-*`) | none (our fork *is* the delta; one profile per release) | **digest** of our own `ghcr.io/noonghunna/llamacpp-club3090` |
+| ik_llama.cpp (`ik-llama-local`) | none | **digest** of ikawrakow's official `ghcr.io/ikawrakow/ik-llama-cpp`. Not injected (`image_env: null`): each compose keeps its own default, and `preflight_ik_llama_image` swaps in a CUDA 12 build on older drivers |
 | PrismML llama.cpp (`llama-cpp-prism`) | none | **digest** of `ghcr.io/noonghunna/llamacpp-prism`, a wrapper we build around PrismML's release (an image-provenance exception, `docs/ADDING_ENGINES.md`) |
 | ExLlamaV3 / TabbyAPI (`exllamav3`) | none | **digest** of `ghcr.io/noonghunna/tabbyapi-club3090`, which we build (same exception) |
 | vLLM + LMCache (`vllm-lmcache`, a third-party derivative) | none | **digest** of `lmcache/vllm-openai` (its tag was re-pushed) |

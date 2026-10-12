@@ -2057,8 +2057,9 @@ def _canon_engine_family(label: str) -> str:
     """Collapse an engine label to a coarse FAMILY key so the registry's
     slug-engine space and the BENCHMARKS.md scrape space compare equal.
 
-    The registry emits e.g. ``llama-cpp-local`` (for BOTH llamacpp/* and
-    ik-llama/* slugs), ``vllm-stable``, ``vllm-gemma-stable``, ``beellama-local``;
+    The registry emits e.g. ``llama-cpp-local`` (llamacpp/* slugs),
+    ``ik-llama-local`` (ik-llama/* slugs), ``vllm-stable``, ``vllm-gemma-stable``,
+    ``beellama-local``;
     the BENCHMARKS.md scrape derives ``llamacpp`` / ``ik-llama`` / ``vllm`` /
     ``beellama`` from the compose-cell prefix.  A raw substring test misses the
     llama.cpp family entirely (``"llama-cpp-local" in "llamacpp"`` is False in

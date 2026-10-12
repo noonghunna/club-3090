@@ -65,14 +65,9 @@ SKIP_STATUS = {"deprecated"}
 # Live slugs whose label is known to be wrong. SHRINK ONLY: the fix is an engine
 # profile for what they run, not a longer list, and an entry that matches again
 # (or no longer exists) fails until it's removed.
-_NO_IK_PROFILE = ("runs ik_llama.cpp, but there is no ik-llama engine profile, so every "
-                  "ik-llama/ slug is labelled llama-cpp-local. Serving is unaffected: that "
-                  "profile's image_env is null, nothing is injected, and the compose's own "
-                  "image runs")
-KNOWN_MISLABELLED = {
-    "ik-llama/ornith35b-dual": _NO_IK_PROFILE,
-    "ik-llama/ornith9b-single": _NO_IK_PROFILE,
-}
+# Emptied 2026-10-12: the two ik-llama/ornith slugs moved to their own engine
+# profile, ik-llama-local.
+KNOWN_MISLABELLED: dict[str, str] = {}
 known_seen = set()
 
 failures = []

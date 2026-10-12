@@ -2,32 +2,22 @@ schema_version: 1
 id: llama-cpp-local
 display_name: llama.cpp local CUDA server (MTP-enabled)
 type: llama.cpp
-# #1365: the compose env var this engine's image is injected as.
-# null, and ⚠️ NOT because this profile is ambiguous — it is the MAINLINE engine
-# (ggml-org), used correctly by 15 llamacpp/* slugs that all read LLAMACPP_IMAGE
-# and whose compose defaults match install.spec byte for byte.
+# #1365: the compose env var this engine's image is injected as. Null.
 #
-# It is null because 15 ik-llama/* slugs ALSO register against this profile and
-# read IK_LLAMA_IMAGE instead. ik_llama is a SEPARATE ENGINE -- its builds take
-# --merge-qkv / --fit / --fit-margin / --cache-ram, none of which exist here, and
-# the two forks disagree on --no-mmap vs --load-mode in opposite directions. Those
-# slugs are registered here only because ik-llama HAS NO ENGINE PROFILE. The fix
-# is to add one (two, in fact: the ik slugs pin two different digests), NOT to
-# split this profile -- an earlier version of this comment said 'split', which
-# misnamed the cause.
+# History: 15 ik-llama/* slugs used to be registered against this MAINLINE
+# profile too, reading IK_LLAMA_IMAGE where the 15 llamacpp/* slugs read
+# LLAMACPP_IMAGE, so no single var could be named here. ik_llama is a separate
+# engine (--merge-qkv / --fit / --cache-ram don't exist here, and the two forks
+# disagree on --no-mmap vs --load-mode), and since 2026-10-12 it has its own
+# profile, engines/ik-llama-local.yml. Only mainline slugs are left here.
 #
-# Until then a single image var cannot be named here, and keying it off the slug
-# prefix would reintroduce exactly the fragility #1365 removed from the launchers.
-# Cost of leaving it: these 30 slugs keep their compose default (identical to
-# install.spec for all 15 mainline ones, so no behaviour is lost), ik slugs are
-# judged against MAINLINE's supported_kv_formats/supported_drafters, and the ik
-# pin logic lives as a bash special case (preflight_ik_llama_image, #633).
-# 13 of the 15 ik slugs are already deprecated, which is why this is not urgent.
+# Still null because naming LLAMACPP_IMAGE needs an arm in both launchers'
+# export_variant_engine_pin allowlist, and it would start injecting this pin into
+# the llamacpp/* slugs. Their compose defaults equal install.spec byte for byte,
+# so nothing is lost meanwhile. That is a separate change.
 image_env: null
 
 stability: stable
-# The ik-llama slugs also register against this profile but run ikawrakow's own
-# image (IK_LLAMA_IMAGE), so this lineage describes the mainline slugs only.
 lineage:
   relation: "stock"
   base: "llama.cpp"

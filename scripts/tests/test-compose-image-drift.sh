@@ -86,11 +86,12 @@ for slug, entry in COMPOSE_REGISTRY.items():
         continue  # templated (e.g. nightly-${VLLM_NIGHTLY_SHA}) — self-syncs
     # Compare only within the SAME repository. A literal from a DIFFERENT repo is a
     # deliberately different engine image, not a stale tag of this engine's image --
-    # e.g. the ik-llama/ornith* slugs carry ghcr.io/ikawrakow/ik-llama-cpp while their
-    # registry entry says engine=llama-cpp-local, because no ik-llama engine profile
-    # exists yet. Flagging those would be a false positive whose only "fix" is to point
-    # an ik-llama compose at ggml-org/llama.cpp. Reported below as a NOTE instead, so the
-    # registry oddity stays visible rather than silently passing. (Precedent: the docs
+    # e.g. the ik-llama/ornith* slugs, which until 2026-10-12 carried
+    # ghcr.io/ikawrakow/ik-llama-cpp under engine=llama-cpp-local because ik_llama had
+    # no engine profile (it has one now, ik-llama-local). Flagging those would have been
+    # a false positive whose only "fix" was to point an ik-llama compose at
+    # ggml-org/llama.cpp. Reported below as a NOTE instead, so a registry oddity stays
+    # visible rather than silently passing. (Precedent: the docs
     # slug gate had to be narrowed after a wider scope produced ~200 false positives.)
     def _repo(ref):
         base = ref.split("@", 1)[0]

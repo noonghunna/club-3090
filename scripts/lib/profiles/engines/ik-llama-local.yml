@@ -1,0 +1,45 @@
+schema_version: 1
+id: ik-llama-local
+display_name: ik_llama.cpp CUDA server (ikawrakow's fork)
+type: llama.cpp
+# Null on purpose: nothing is injected, so each ik-llama/ compose runs its own
+# ${IK_LLAMA_IMAGE:-…} default, exactly as before this profile existed. The image
+# is picked at launch by preflight_ik_llama_image (scripts/preflight.sh, #633): on
+# a driver older than CUDA 13.2 it exports IK_LLAMA_CU12_FALLBACK instead of the
+# cu13 default. Injecting install.spec here would have to be reconciled with that
+# choice, and IK_LLAMA_IMAGE has no arm in the launchers' allowlist.
+image_env: null
+
+stability: experimental
+lineage:
+  relation: "fork"
+  base: "llama.cpp"
+  base_version: null
+  source: "https://github.com/ikawrakow/ik_llama.cpp"
+  source_ref: "f5e5753c325d00d4869dd668a0a82a9c5bd757ab"
+  chain: []
+  delta: "ikawrakow's llama.cpp fork: IQ*_K/KS quants, fused MoE and MLA kernels, its own MTP and self-speculation paths, and flags mainline doesn't have (--merge-qkv, --fit, --cache-ram)"
+install:
+  method: docker_image
+  # ikawrakow's own CI image (ik_llama.cpp's build-container.yml), tag cu13-server-4630.
+  spec: ghcr.io/ikawrakow/ik-llama-cpp@sha256:b35e062cf032f1435b90387cfd9e9679006dd628d0999d86b6e7db2d4a43964d
+# The pinned image is a CUDA 13 build, and CUDA 13 dropped targets older than
+# Turing. No shipped hardware class is below 8.0, so this gates nothing today.
+min_sm: 7.5
+supported_model_families:
+  - qwen3-next-hybrid     # Qwen3.6-27B (deprecated slugs), Ornith-1.0-9B
+  - qwen3-next-moe        # Qwen3.6-35B-A3B (deprecated slugs), Ornith-1.0-35B
+features: {}
+# What the registered slugs use. ik_llama supports more KV types; add them here
+# when a slug that uses one is validated.
+supported_kv_formats:
+  - q4_0
+  - q8_0
+supported_drafters:
+  - mtp                   # embedded nextn head (the deprecated qwen3.6 MTP slugs)
+supported_weight_formats:
+  - gguf
+required_overlays: []
+vendored_overlays: []
+required_genesis: false
+notes: "ikawrakow's ik_llama.cpp, pinned BY DIGEST to his own GHCR image `@sha256:b35e062c…` = tag `cu13-server-4630` = build 4630 = commit `f5e5753c` (\"Fix Qwen35 mtp warmup\", #1987), image built 2026-06-18. HOW THAT WAS ESTABLISHED (the image carries no revision label): the tag whose manifest digest equals the pin is cu13-server-4630; ik_llama.cpp's CI sets BUILD_NUMBER=$(git rev-list --count HEAD) over full history; and f5e5753c is the commit whose history count is exactly 4630 (GitHub GraphQL `history.totalCount`; the next commit counts 4631). The 2 live slugs (ik-llama/ornith9b-single, ik-llama/ornith35b-dual) run this build. The 13 deprecated ik-llama/ slugs pin the older `@sha256:5f914f1c…` = cu13-server-4574, so this profile names their engine correctly but not their build; the drift and label guards skip deprecated entries. On a driver older than CUDA 13.2, preflight_ik_llama_image swaps in IK_LLAMA_CU12_FALLBACK = `cu12-server-4574`, the cu12 build of the DEPRECATED slugs' build, so the ornith slugs run build 4574 there, not 4630 (`cu12-server-4630` exists: `@sha256:c36e3af8…`). Until 2026-10-12 these slugs were registered against llama-cpp-local, the mainline profile, whose KV formats, drafters and image did not describe them."
