@@ -1,0 +1,63 @@
+Qwen3.8-Flash-Next MTP drafter under pipeline parallelism (PP > 1).
+The mtp.py hunks of Minachist's flash-next-mtp-01-enable.patch (Apache-2.0),
+huggingface.co/Minachist/Qwen3.8-Flash-Next-INT4-Mixed-AutoRound, vllm-patch/3x24GB+MTP/.
+Co-authored-by: Minachist <84688797+aiueonicked@users.noreply.github.com>
+Applies unchanged to stock vLLM v0.31.0 and v0.32.0rc3.
+
+diff -ruN base/vllm/models/qwen4_exp/nvidia/mtp.py mtp/vllm/models/qwen4_exp/nvidia/mtp.py
+--- a/vllm/models/qwen4_exp/nvidia/mtp.py	2026-09-23 02:43:10.818964043 +0900
++++ b/vllm/models/qwen4_exp/nvidia/mtp.py	2026-09-23 02:43:10.842275131 +0900
+@@ -182,11 +182,21 @@
+         self.hidden_size = config.hidden_size
+         self.hc_count = config.hc_count
+ 
+-        self.embed_tokens = VocabParallelEmbedding(self.vocab_size, self.hidden_size)
+         draft_vllm_config = _make_draft_vllm_config(
+             vllm_config,
+             self.mtp_start_layer_idx,
+         )
++        # Under PP > 1 the drafter always keeps an input embedding of its own.
++        # The target's copy sits on the first rank, and maybe_share_target_embed
++        # in v1/worker/gpu/spec_decode/eagle/utils.py returns early instead of
++        # sharing across ranks. Build it with the checkpoint's quantization, or
++        # a quantized embed_tokens cannot be loaded into it at all.
++        self.embed_tokens = VocabParallelEmbedding(
++            self.vocab_size,
++            self.hidden_size,
++            quant_config=draft_vllm_config.quant_config,
++            prefix=maybe_prefix(prefix, "embed_tokens"),
++        )
+         with set_current_vllm_config(draft_vllm_config, prefix=prefix):
+             # residual_linear_shared fusion: fc_embedding projects the token
+             # embedding, fc_hidden (shared across HC branches) projects the
+@@ -290,8 +300,13 @@
+         hidden_size = self.hidden_size
+         prev_block_output: torch.Tensor | None = None
+ 
+-        if get_pp_group().is_first_rank:
+-            assert hidden_states is not None
++        # The drafter exists on the last PP rank only, and the speculator hands
++        # it the target's hidden states directly. Branching on the global PP
++        # rank therefore sends every PP > 1 run down the intermediate-tensors
++        # path, which the speculator never fills, and the assert below fires.
++        # The draft is never split across ranks, so the problem is
++        # whether a caller supplied hidden states.
++        if hidden_states is not None:
+             if inputs_embeds is None:
+                 assert input_ids is not None
+                 inputs_embeds = self.embed_input_ids(input_ids)
+@@ -399,9 +414,14 @@
+             if config.tie_word_embeddings:
+                 self.lm_head = self.model.embed_tokens
+             else:
++                # Quantized like the target's head, because checkpoint holds
++                # that. It is replaced by the target's own head
++                # right after loading (maybe_share_target_lm_head), so this
++                # copy only need to survive the load.
+                 self.lm_head = ParallelLMHead(
+                     config.vocab_size,
+                     config.hidden_size,
++                    quant_config=self.quant_config,
+                     prefix=maybe_prefix(prefix, "lm_head"),
+                 )
+         else:
