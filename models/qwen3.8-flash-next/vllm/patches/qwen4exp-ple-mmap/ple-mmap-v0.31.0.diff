@@ -1,0 +1,861 @@
+Qwen3.8-Flash-Next: PLE table memory-mapped from a file on NVMe, with host-side gather,
+page prefetch and gather-advise. Ported to stock vLLM v0.31.0 by club-3090 from
+Minachist's vllm-patch (Apache-2.0), huggingface.co/Minachist/Qwen3.8-Flash-Next-INT4-Mixed-AutoRound:
+flash-next-vllm.patch (ngram_embedding hunks), decode-01-ple-host-gather,
+decode-02-model-state-hook, ttft-01-ple-page-prefetch, decode-06-ple-gather-advise.
+Co-authored-by: Minachist <84688797+aiueonicked@users.noreply.github.com>
+
+Apply from the directory that contains the `vllm` package: patch -p1 < this-file
+diff --git a/vllm/models/qwen4_exp/nvidia/model_state.py b/vllm/models/qwen4_exp/nvidia/model_state.py
+index 2461685..1b03411 100644
+--- a/vllm/models/qwen4_exp/nvidia/model_state.py
++++ b/vllm/models/qwen4_exp/nvidia/model_state.py
+@@ -27,6 +27,7 @@ class Qwen4ExpModelState(MambaHybridModelState):
+         super().__init__(vllm_config, model, encoder_cache, device)
+         config = self.model_config.hf_text_config
+         self.uses_ngram_embedding = bool(config.ple_layer_ids)
++        self._ple_ngram: nn.Module | None = None
+         if not self.uses_ngram_embedding:
+             self.ngram_context_len = 0
+             self.ngram_eos_token_id = 0
+@@ -64,6 +65,46 @@ class Qwen4ExpModelState(MambaHybridModelState):
+             device=self.device,
+         )
+ 
++        # The mmap PLE backend gathers from prepare_inputs instead of the
++        # forward (see Qwen4ExpPLEMmapHostEmbedding). The PLE layer is on the
++        # first pipeline rank, so other ranks find nothing.
++        for _, module in model.named_modules():
++            embedding = getattr(module, "ngram_embedding", None)
++            if embedding is not None and getattr(
++                embedding, "prefetch_from_model_state", False
++            ):
++                self._ple_ngram = module
++                break
++        if self._ple_ngram is not None:
++            # prepare_dummy_inputs() gets token counts, not tokens. Profiling
++            # and capture only need the buffer written, so gather zero ids.
++            self._ple_dummy_input_ids = torch.zeros(
++                self.max_num_tokens,
++                dtype=torch.int32,
++                device=self.device,
++            )
++
++    def add_request(self, req_index: int, new_req_data) -> None:
++        super().add_request(req_index, new_req_data)
++        if self._ple_ngram is None:
++            return
++        # Start the PLE page prefetch for the prompt (see _PLEPagePrefetcher).
++        # A resumed request starts at num_computed_tokens.
++        prefetch = getattr(self._ple_ngram, "prefetch_request", None)
++        if prefetch is not None:
++            prefetch(
++                new_req_data.req_id,
++                new_req_data.prefill_token_ids,
++                new_req_data.num_computed_tokens,
++            )
++
++    def remove_request(self, req_id: str) -> None:
++        super().remove_request(req_id)
++        if self._ple_ngram is not None:
++            cancel = getattr(self._ple_ngram, "cancel_prefetch", None)
++            if cancel is not None:
++                cancel(req_id)
++
+     def _prepare_ngram_context(
+         self,
+         input_batch: InputBatch,
+@@ -106,10 +147,19 @@ class Qwen4ExpModelState(MambaHybridModelState):
+         query_start_loc[: num_reqs_padded + 1].copy_(input_batch.query_start_loc)
+         # Represent unused capacity as trailing zero-length requests.
+         query_start_loc[num_reqs_padded + 1 :].copy_(input_batch.query_start_loc[-1])
++        ngram_context = self._prepare_ngram_context(input_batch, req_states)
+         model_inputs.update(
+             query_start_loc=query_start_loc,
+-            ngram_context=self._prepare_ngram_context(input_batch, req_states),
++            ngram_context=ngram_context,
+         )
++        if self._ple_ngram is not None:
++            # input_ids is padded to the row count of the forward, so every
++            # row the graph reads is filled.
++            self._ple_ngram.host_gather(
++                input_batch.input_ids,
++                query_start_loc,
++                ngram_context,
++            )
+         return model_inputs
+ 
+     def prepare_dummy_inputs(
+@@ -141,6 +191,14 @@ class Qwen4ExpModelState(MambaHybridModelState):
+             query_start_loc=query_start_loc,
+             ngram_context=ngram_context,
+         )
++        if self._ple_ngram is not None:
++            # Graph capture reads the buffer too. cudagraph_utils calls this
++            # before torch.cuda.graph(), so the gather is not captured.
++            self._ple_ngram.host_gather(
++                self._ple_dummy_input_ids[:num_tokens],
++                query_start_loc,
++                ngram_context,
++            )
+         return model_inputs
+ 
+ 
+diff --git a/vllm/models/qwen4_exp/nvidia/ngram_embedding.py b/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
+index 0b6fd65..f75d105 100644
+--- a/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
++++ b/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
+@@ -2,8 +2,14 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ """Qwen4Exp n-gram embeddings with device and pinned-host storage."""
+ 
++import ctypes
++import mmap
++import os
++import queue
++import threading
+ from collections.abc import Iterable
+ 
++import numpy as np
+ import torch
+ from torch import nn
+ 
+@@ -13,6 +19,7 @@ from vllm.model_executor.layers.quantization.base_config import (
+     QuantizationConfig,
+ )
+ from vllm.model_executor.models.utils import AutoWeightsLoader
++from vllm.triton_utils import triton
+ from vllm.transformers_utils.configs.qwen4_exp import (
+     Qwen4ExpTextConfig,
+ )
+@@ -40,6 +47,610 @@ __all__ = [
+ ]
+ 
+ 
++_PLE_MMAP_PATH_ENV = "VLLM_PLE_MMAP_PATH"
++_PLE_MMAP_REBUILD_ENV = "VLLM_PLE_MMAP_REBUILD"
++_PLE_HOST_GATHER_ENV = "VLLM_PLE_HOST_GATHER"
++
++# numpy has no bfloat16, so rows are gathered through a same-width int view.
++_PLE_STORAGE_NUMPY_DTYPES = {1: np.int8, 2: np.int16, 4: np.int32}
++_PLE_STORAGE_TORCH_DTYPES = {1: torch.int8, 2: torch.int16, 4: torch.int32}
++
++# Look-ahead page prefetch for the mmap PLE table.
++#
++# Qwen4ExpPLEMmapHostEmbedding._lookup gathers rows with np.take over the
++# mmap. Each page not in the page cache is a synchronous 4 KiB read at queue
++# depth 1, ~232 us on a DRAM-less QLC drive. A 512-token chunk touches ~8.7k
++# pages and takes ~1.9 s cold. Prefill runs at ~270 tok/s cold and 4-5k tok/s
++# warm. A cold 42k-token prompt took ~100 s to the first token (README, "Time
++# to first token").
++#
++# The drive reads ~40k random pages/s with a deep queue. The n-gram rows
++# depend only on the prompt, so they are known at admission. A background
++# thread computes them and passes their pages to process_madvise(MADV_WILLNEED)
++# in position order, ahead of the gather. Advising a cached page costs ~1 us.
++#
++# process_madvise takes up to 1024 ranges per call. Podman's default seccomp
++# profile allows it only with CAP_SYS_PTRACE, which the compose files add.
++# Without it the thread calls madvise once per range, with the same NVMe
++# throughput and ~20x the CPU time.
++#
++# VLLM_PLE_PREFETCH=0 disables the prefetch.
++
++_PLE_PREFETCH_ENV = "VLLM_PLE_PREFETCH"
++# Gathers up to this many rows (decode batches) advise their pages first.
++_PLE_GATHER_ADVISE_MAX_ROWS = 256
++_PLE_PREFETCH_BATCH_ENV = "VLLM_PLE_PREFETCH_BATCH"  # tokens per advise batch
++
++
++def _ple_ngram_rows_numpy(
++    tokens,
++    multipliers: np.ndarray,
++    sizes: np.ndarray,
++    offsets: np.ndarray,
++    eos_token_id: int,
++    heads_per_ngram: int,
++) -> np.ndarray:
++    """NumPy version of ops.ple._ple_ngram_ids_kernel for a whole request.
++
++    Returns the ``[num_tokens, num_heads]`` int64 table rows for ``tokens``,
++    with an all-EOS context before position 0. The kernel computes the same
++    rows chunk by chunk for a new request.
++
++    The result must match the kernel bit for bit. int64 products wrap, the
++    remainder follows torch.remainder (numpy's % does the same), and context
++    tokens before the most recent EOS are treated as EOS. A wrong row only
++    prefetches the wrong page. The forward does not read these rows.
++    """
++    tokens = np.asarray(tokens, dtype=np.int64).reshape(-1)
++    num_tokens = tokens.size
++    context_len = multipliers.size - 1
++    num_heads = sizes.size
++    order = np.arange(num_heads, dtype=np.int64) // heads_per_ngram + 2
++    with np.errstate(over="ignore"):
++        mixed = np.repeat((tokens * multipliers[0])[:, None], num_heads, axis=1)
++        crossed = np.zeros(num_tokens, dtype=bool)
++        for shift in range(1, context_len + 1):
++            candidate = np.full(num_tokens, eos_token_id, dtype=np.int64)
++            candidate[shift:] = tokens[:-shift]
++            candidate[crossed] = eos_token_id
++            crossed |= candidate == eos_token_id
++            term = candidate * multipliers[shift]
++            mixed[:, order > shift] ^= term[:, None]
++        return mixed % sizes + offsets
++
++
++class _PLEPagePrefetcher:
++    """Background thread that loads a request's PLE pages into the page cache.
++
++    submit() takes a callable that returns the request's rows in position
++    order. The thread advises the kernel ``batch_rows`` rows at a time.
++    cancel() stops a finished or preempted request between batches. The
++    thread does not access the mapped data. It only passes address ranges to
++    the kernel.
++    """
++
++    _SYS_PIDFD_OPEN = 434
++    _SYS_PROCESS_MADVISE = 440
++    _MADV_WILLNEED = 3
++    _IOV_MAX = 1024
++    _PAGE_SHIFT = 12
++
++    def __init__(
++        self,
++        base_address: int,
++        nbytes: int,
++        row_bytes: int,
++        batch_rows: int,
++    ) -> None:
++        self._base = int(base_address)
++        self._num_pages = (nbytes + (1 << self._PAGE_SHIFT) - 1) >> self._PAGE_SHIFT
++        self._row_bytes = int(row_bytes)
++        self._batch_rows = max(int(batch_rows), 1)
++        self._libc = ctypes.CDLL(None, use_errno=True)
++        self._libc.syscall.restype = ctypes.c_long
++        self._libc.madvise.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
++        self._libc.madvise.restype = ctypes.c_int
++        self._pidfd = -1
++        self._iov_now: "np.ndarray | None" = None
++        self._batched = self._probe_process_madvise()
++        self._lock = threading.Lock()
++        self._inflight: dict[str, int] = {}     # req_id -> job token
++        self._next_token = 0
++        self._queue: "queue.SimpleQueue" = queue.SimpleQueue()
++        self._thread = threading.Thread(
++            target=self._run, name="ple-page-prefetch", daemon=True
++        )
++        self._thread.start()
++
++    @property
++    def batched(self) -> bool:
++        return self._batched
++
++    def submit(self, req_id: str, rows_fn) -> None:
++        with self._lock:
++            self._next_token += 1
++            token = self._next_token
++            self._inflight[req_id] = token
++        self._queue.put((req_id, token, rows_fn))
++
++    def cancel(self, req_id: str) -> None:
++        with self._lock:
++            self._inflight.pop(req_id, None)
++
++    def _live(self, req_id: str, token: int) -> bool:
++        with self._lock:
++            return self._inflight.get(req_id) == token
++
++    def _run(self) -> None:
++        while True:
++            req_id, token, rows_fn = self._queue.get()
++            try:
++                if not self._live(req_id, token):
++                    continue
++                rows = np.asarray(rows_fn(), dtype=np.int64).reshape(-1)
++                for start in range(0, rows.size, self._batch_rows):
++                    if not self._live(req_id, token):
++                        break
++                    self._advise(rows[start : start + self._batch_rows])
++            except Exception:
++                logger.exception("PLE page prefetch failed for request %s", req_id)
++            finally:
++                with self._lock:
++                    if self._inflight.get(req_id) == token:
++                        del self._inflight[req_id]
++
++    def advise_now(self, rows: np.ndarray) -> None:
++        """Advise the pages of a few ``rows`` from the calling thread.
++
++        The decode-path variant of ``_advise``: one process_madvise call over
++        the first and last page of every row, duplicates included (the kernel
++        skips resident pages quickly), with a preallocated iovec array.
++        """
++        n = rows.size
++        if not self._batched or 2 * n > self._IOV_MAX:
++            self._advise(np.asarray(rows, dtype=np.int64))
++            return
++        iov = self._iov_now
++        if iov is None:
++            iov = self._iov_now = np.empty((self._IOV_MAX, 2), dtype=np.uint64)
++            iov[:, 1] = 1 << self._PAGE_SHIFT
++        offs = rows.astype(np.uint64, copy=False) * np.uint64(self._row_bytes)
++        mask = np.uint64(~((1 << self._PAGE_SHIFT) - 1) & 0xFFFFFFFFFFFFFFFF)
++        base = np.uint64(self._base)
++        iov[:n, 0] = (offs & mask) + base
++        iov[n : 2 * n, 0] = ((offs + np.uint64(self._row_bytes - 1)) & mask) + base
++        rc = self._libc.syscall(
++            self._SYS_PROCESS_MADVISE, self._pidfd,
++            ctypes.c_void_p(iov.ctypes.data), 2 * n, self._MADV_WILLNEED, 0,
++        )
++        if rc < 0:
++            self._batched = False
++
++    def _advise(self, rows: np.ndarray) -> None:
++        shift = self._PAGE_SHIFT
++        offsets = rows * self._row_bytes
++        pages = np.unique(
++            np.concatenate((offsets >> shift, (offsets + self._row_bytes - 1) >> shift))
++        )
++        pages = pages[(pages >= 0) & (pages < self._num_pages)]
++        if not pages.size:
++            return
++        # Merge adjacent pages into ranges (rare for random rows).
++        breaks = np.flatnonzero(np.diff(pages) != 1) + 1
++        starts = np.concatenate((pages[:1], pages[breaks]))
++        ends = np.concatenate((pages[breaks - 1], pages[-1:])) + 1
++        if self._batched and self._advise_batched(starts, ends):
++            return
++        base = self._base
++        madvise = self._libc.madvise
++        for s, e in zip(starts.tolist(), ends.tolist()):
++            madvise(base + (s << shift), (e - s) << shift, self._MADV_WILLNEED)
++
++    def _advise_batched(self, starts: np.ndarray, ends: np.ndarray) -> bool:
++        """Call process_madvise with iovec arrays. Returns False if it fails."""
++        shift = self._PAGE_SHIFT
++        for i in range(0, starts.size, self._IOV_MAX):
++            s = starts[i : i + self._IOV_MAX]
++            e = ends[i : i + self._IOV_MAX]
++            # struct iovec (iov_base, iov_len) is two uint64 on x86_64.
++            iov = np.empty((s.size, 2), dtype=np.uint64)
++            iov[:, 0] = (self._base + (s << shift)).astype(np.uint64)
++            iov[:, 1] = ((e - s) << shift).astype(np.uint64)
++            rc = self._libc.syscall(
++                self._SYS_PROCESS_MADVISE,
++                self._pidfd,
++                ctypes.c_void_p(iov.ctypes.data),
++                int(s.size),
++                self._MADV_WILLNEED,
++                0,
++            )
++            if rc < 0:
++                err = ctypes.get_errno()
++                logger.warning(
++                    "process_madvise(MADV_WILLNEED) failed (%s); PLE page "
++                    "prefetch falls back to per-range madvise",
++                    os.strerror(err),
++                )
++                self._batched = False
++                return False
++        return True
++
++    def _probe_process_madvise(self) -> bool:
++        pidfd = self._libc.syscall(self._SYS_PIDFD_OPEN, os.getpid(), 0)
++        if pidfd < 0:
++            logger.info(
++                "pidfd_open unavailable (%s); PLE page prefetch uses madvise",
++                os.strerror(ctypes.get_errno()),
++            )
++            return False
++        self._pidfd = pidfd
++        iov = np.array([[self._base, 1 << self._PAGE_SHIFT]], dtype=np.uint64)
++        rc = self._libc.syscall(
++            self._SYS_PROCESS_MADVISE,
++            pidfd,
++            ctypes.c_void_p(iov.ctypes.data),
++            1,
++            self._MADV_WILLNEED,
++            0,
++        )
++        if rc < 0:
++            err = ctypes.get_errno()
++            logger.info(
++                "process_madvise unavailable (%s; under podman it needs "
++                "cap_add SYS_PTRACE); PLE page prefetch uses per-range madvise",
++                os.strerror(err),
++            )
++            return False
++        return True
++
++
++
++class Qwen4ExpPLEMmapHostEmbedding(Qwen4ExpPLEPinnedHostEmbedding):
++    """PLE table kept on disk and gathered on the host through a mmap.
++
++    ``VLLM_PLE_MMAP_PATH`` names a raw C-contiguous
++    ``[num_embeddings_padded, embedding_dim]`` array in the checkpoint's
++    storage dtype. It is the ``shard_0 .. shard_N`` tensors concatenated in
++    index order. A missing file is created and filled while the checkpoint
++    loads. An existing file of the right size is mapped copy-on-write and not
++    written. Sparse files are refilled instead of treated as valid caches.
++    Completion requires every checkpoint row, across all loader visits.
++    ``VLLM_PLE_MMAP_REBUILD=1`` forces a refill.
++
++    Requires ETP=1.
++
++    The gather reads the ids on the host, so it cannot run inside a CUDA
++    graph. ``Qwen4ExpModelState.prepare_inputs`` calls :meth:`host_gather`
++    before the forward, and :meth:`forward` only reads the filled buffer. This
++    works with every cudagraph mode, including ``FULL_DECODE_ONLY``. PIECEWISE
++    modes also need ``VLLM_USE_BREAKABLE_CUDAGRAPH=1`` for the eager breaks in
++    the GDN, QSA and short-conv layers.
++
++    ``VLLM_PLE_HOST_GATHER=0`` runs the gather inside the forward as earlier
++    releases did, for A/B tests. FULL cudagraph modes are then rejected.
++    """
++
++    def __init__(
++        self,
++        num_embeddings: int,
++        embedding_dim: int,
++        *,
++        params_dtype: torch.dtype,
++        padding_size: int,
++        prefix: str,
++        embedding_method: "Qwen4ExpPLEEmbeddingMethod",
++        num_ngram_heads: int = 1,
++        max_total_tokens: int = 0,
++        data_parallel_rank: int = 0,
++    ) -> None:
++        self._mmap_path = os.environ.get(_PLE_MMAP_PATH_ENV, "").strip()
++        if not self._mmap_path:
++            raise RuntimeError(
++                f"{_PLE_MMAP_PATH_ENV} must point at the raw PLE table file"
++            )
++        self._mmap_array: "np.memmap | None" = None
++        self._mmap_prefilled = False
++        self._mmap_loaded_ranges: list[tuple[int, int]] = []
++        # Skip Qwen4ExpPLEPinnedHostEmbedding.__init__, which requires UVA. The
++        # other methods of that class are reused.
++        Qwen4ExpPLEEmbedding.__init__(
++            self,
++            num_embeddings,
++            embedding_dim,
++            params_dtype=params_dtype,
++            padding_size=padding_size,
++            prefix=prefix,
++            embedding_method=embedding_method,
++            num_ngram_heads=num_ngram_heads,
++            max_total_tokens=max_total_tokens,
++            data_parallel_rank=data_parallel_rank,
++        )
++        if self.tp_size != 1:
++            raise RuntimeError(
++                "The mmap PLE backend requires ETP=1 because the mapped file "
++                f"holds the whole table; got ETP={self.tp_size}"
++            )
++
++        self.prefetch_from_model_state = (
++            os.environ.get(_PLE_HOST_GATHER_ENV, "1").strip() not in ("", "0")
++        )
++
++        from vllm.compilation.breakable_cudagraph import (
++            is_breakable_cudagraph_enabled,
++        )
++
++        cg_mode = get_current_vllm_config().compilation_config.cudagraph_mode
++        if not self.prefetch_from_model_state and cg_mode.has_full_cudagraphs():
++            raise RuntimeError(
++                f"{_PLE_HOST_GATHER_ENV}=0 keeps the host gather inside the "
++                f"forward, where it cannot be captured; cudagraph_mode "
++                f"{cg_mode.name} requires it hoisted out"
++            )
++        if cg_mode.has_piecewise_cudagraphs() and not is_breakable_cudagraph_enabled():
++            raise RuntimeError(
++                f"mmap PLE with cudagraph_mode {cg_mode.name} requires "
++                "VLLM_USE_BREAKABLE_CUDAGRAPH=1"
++            )
++
++        device = torch.device("cuda", torch.cuda.current_device())
++        self._block_d = triton.next_power_of_2(self.embedding_dim)
++        self._prefetch_stream = torch.cuda.Stream(device=device)
++        # forward() returns a view of this buffer. It is allocated once so graph
++        # replays read a fixed address, and zeroed so a forward that runs
++        # before the first gather reads zeros.
++        self._prefetch_buffer = torch.zeros(
++            max_total_tokens * self.etp_data_parallel_size,
++            num_ngram_heads,
++            self.embedding_dim,
++            dtype=self.weight.dtype,
++            device=device,
++        )
++        self._host_stage = torch.empty(
++            max_total_tokens * self.etp_data_parallel_size * num_ngram_heads,
++            self.embedding_dim,
++            dtype=self.weight.dtype,
++            device="cpu",
++            pin_memory=True,
++        )
++        storage_dtype = _PLE_STORAGE_TORCH_DTYPES[self.weight.dtype.itemsize]
++        self._host_stage_np = self._host_stage.view(storage_dtype).numpy()
++        self._output_dim = num_ngram_heads * self.embedding_dim
++
++        # Created after allocate_embedding_weight() has mapped the file, since
++        # the prefetcher needs its address. Each token has num_ngram_heads rows.
++        self._page_prefetcher: "_PLEPagePrefetcher | None" = None
++        if (
++            self._mmap_array is not None
++            and os.environ.get(_PLE_PREFETCH_ENV, "1").strip() not in ("", "0")
++        ):
++            batch_tokens = int(os.environ.get(_PLE_PREFETCH_BATCH_ENV, "1024"))
++            self._page_prefetcher = _PLEPagePrefetcher(
++                base_address=self._mmap_array.ctypes.data,
++                nbytes=self._mmap_array.nbytes,
++                row_bytes=self.embedding_dim * self.weight.dtype.itemsize,
++                batch_rows=batch_tokens * num_ngram_heads,
++            )
++            logger.info(
++                "PLE page prefetch on: %d tokens per batch, %s",
++                batch_tokens,
++                "process_madvise" if self._page_prefetcher.batched
++                else "per-range madvise",
++            )
++
++    def prefetch_request(self, req_id: str, rows_fn) -> None:
++        """Queue a new request's rows for page prefetch."""
++        if self._page_prefetcher is not None:
++            self._page_prefetcher.submit(req_id, rows_fn)
++
++    def cancel_prefetch(self, req_id: str) -> None:
++        if self._page_prefetcher is not None:
++            self._page_prefetcher.cancel(req_id)
++
++    def allocate_embedding_weight(
++        self,
++        num_embeddings: int,
++        embedding_dim: int,
++        dtype: torch.dtype,
++    ) -> torch.Tensor:
++        """Map the complete PLE weight from the raw file on disk."""
++        np_dtype = _PLE_STORAGE_NUMPY_DTYPES.get(dtype.itemsize)
++        if np_dtype is None:
++            raise RuntimeError(
++                f"mmap PLE backend cannot represent a {dtype.itemsize}-byte "
++                f"storage dtype ({dtype})"
++            )
++        path = self._mmap_path
++        nbytes = num_embeddings * embedding_dim * dtype.itemsize
++        exists = os.path.exists(path)
++        if exists:
++            actual = os.path.getsize(path)
++            if actual != nbytes:
++                raise RuntimeError(
++                    f"PLE mmap table {path} is {actual} bytes but this model "
++                    f"needs {nbytes} for [{num_embeddings}, {embedding_dim}] "
++                    f"{dtype}. Point {_PLE_MMAP_PATH_ENV} elsewhere or delete "
++                    "the stale file."
++                )
++        rebuild = os.environ.get(_PLE_MMAP_REBUILD_ENV, "0").strip() not in ("", "0")
++        # truncate() creates a correctly sized sparse file without table data.
++        # Legacy zero/partial caches must not be trusted just because size fits.
++        # A complete raw table is dense, including the checkpoint's padded rows.
++        if exists and os.stat(path).st_blocks * 512 < nbytes:
++            logger.warning(
++                "PLE mmap table %s is sparse/incomplete; refilling from checkpoint",
++                path,
++            )
++            rebuild = True
++        self._mmap_prefilled = exists and not rebuild
++        if not exists:
++            parent = os.path.dirname(os.path.abspath(path))
++            os.makedirs(parent, exist_ok=True)
++            with open(path, "wb") as handle:
++                handle.truncate(nbytes)
++        # Copy-on-write, so a stray write cannot corrupt a shared cache file.
++        mode = "c" if self._mmap_prefilled else "r+"
++        self._mmap_array = np.memmap(
++            path,
++            dtype=np_dtype,
++            mode=mode,
++            shape=(num_embeddings, embedding_dim),
++        )
++        # Rows are read at random offsets, so readahead is turned off.
++        raw_map = getattr(self._mmap_array, "_mmap", None)
++        if raw_map is not None and hasattr(raw_map, "madvise"):
++            try:
++                raw_map.madvise(mmap.MADV_RANDOM)
++            except OSError as err:
++                logger.warning("MADV_RANDOM on the PLE table failed: %s", err)
++        logger.info(
++            "PLE table mapped from %s (%.2f GiB, mode=%s, prefilled=%s)",
++            path,
++            nbytes / (1 << 30),
++            mode,
++            self._mmap_prefilled,
++        )
++        return torch.from_numpy(self._mmap_array).view(dtype)
++
++    def weight_loader(
++        self,
++        param: torch.Tensor,
++        loaded_weight: torch.Tensor,
++        checkpoint_start: int | None = None,
++    ) -> None:
++        """Skip the copy when the mapped file already holds the table."""
++        if self._mmap_prefilled and param is self.weight:
++            return
++        super().weight_loader(param, loaded_weight, checkpoint_start)
++        # FP8's global scale uses this loader too, but is not a table row.
++        if param is not self.weight:
++            return
++        # Record successful copies across *all* AutoWeightsLoader visits. Its
++        # prefix grouping can call the PLE module first for hash buffers, then
++        # again for each group of n-gram shards from the extra files. Count row
++        # coverage, not visits/shards: duplicates must not hide a missing range.
++        start = 0 if checkpoint_start is None else checkpoint_start
++        end = min(start + loaded_weight.shape[0], self.org_vocab_size)
++        if start < end:
++            ranges = sorted([*self._mmap_loaded_ranges, (start, end)])
++            merged: list[tuple[int, int]] = []
++            for lo, hi in ranges:
++                if merged and lo <= merged[-1][1]:
++                    merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
++                else:
++                    merged.append((lo, hi))
++            self._mmap_loaded_ranges = merged
++
++    def finalize_mmap_cache(self, *, strict: bool = False) -> None:
++        """Flush only a complete table; reject missing rows after model load."""
++        if self._mmap_prefilled or self._mmap_array is None:
++            return
++        if self._mmap_loaded_ranges != [(0, self.org_vocab_size)]:
++            if strict:
++                rows = sum(hi - lo for lo, hi in self._mmap_loaded_ranges)
++                raise RuntimeError(
++                    f"PLE mmap table {self._mmap_path} is incomplete: loaded "
++                    f"{rows}/{self.org_vocab_size} rows from checkpoint"
++                )
++            return
++        self._mmap_array.flush()
++        self._mmap_prefilled = True
++        logger.info("PLE table written to %s", self._mmap_path)
++
++    def _lookup(
++        self,
++        input_ids: torch.Tensor,
++        output: torch.Tensor | None = None,
++    ) -> torch.Tensor:
++        """Gather the requested rows on the host and copy them to the device."""
++        expected_shape = (*input_ids.shape, self.embedding_dim)
++        if output is None:
++            output = torch.empty(
++                expected_shape,
++                dtype=self.weight.dtype,
++                device=input_ids.device,
++            )
++        elif (
++            tuple(output.shape) != expected_shape
++            or output.dtype != self.weight.dtype
++            or output.device != input_ids.device
++        ):
++            raise ValueError(
++                "PLE prefetch output must match the input shape, weight dtype, "
++                "and input device"
++            )
++
++        flat_ids = input_ids.reshape(-1)
++        count = flat_ids.numel()
++        if count:
++            if count > self._host_stage.shape[0]:
++                raise RuntimeError(
++                    f"PLE host staging buffer holds {self._host_stage.shape[0]} "
++                    f"rows but {count} were requested"
++                )
++            # Copying the ids to the CPU synchronizes with the device.
++            ids = flat_ids.to(device="cpu", dtype=torch.int64).numpy()
++            vocab_start = self.shard_indices.org_vocab_start_index
++            vocab_end = self.shard_indices.org_vocab_end_index
++            in_range = (ids >= vocab_start) & (ids < vocab_end)
++            local_ids = np.where(in_range, ids - vocab_start, 0)
++            stage = self._host_stage_np[:count]
++            prefetcher = self._page_prefetcher
++            if prefetcher is not None and count <= _PLE_GATHER_ADVISE_MAX_ROWS:
++                # Decode: the rows of the token just sampled could not be
++                # prefetched. Ask for all their pages at once so the faults
++                # below overlap instead of reading one page at a time.
++                prefetcher.advise_now(local_ids)
++            np.take(self._mmap_array, local_ids, axis=0, out=stage)
++            if not in_range.all():
++                stage[~in_range] = 0
++            output.view(-1, self.embedding_dim).copy_(
++                self._host_stage[:count], non_blocking=True
++            )
++        return output
++
++    prefetch_from_model_state: bool      # set in __init__ from VLLM_PLE_HOST_GATHER
++
++    # Measured on 3 x RTX 3090. Inside the forward, the device-to-host copy of
++    # the ids blocks the host every step. The host cannot run ahead of the GPU,
++    # and the eager segments on each rank (12 GDN, 4 QSA, 1 PLE short conv)
++    # become GPU idle time. Single-stream decode was 45 tok/s with a GPU-busy
++    # floor of 12.6 ms. Moving the gather out of the forward alone gave
++    # 45.1 tok/s. Moving it out and using FULL_DECODE_ONLY gave 80 tok/s.
++
++    def host_gather(self, ngram_ids: torch.Tensor) -> None:
++        """Fill the lookup buffer. Called before the forward.
++
++        The H2D copy runs on the calling stream, which the forward or its graph
++        replay uses next, so no event is needed.
++        """
++        slot_size, _ = self._get_dp_gather_slot(ngram_ids.shape[0])
++        gathered_ids = self._gather_dp_ids(ngram_ids, slot_size)
++        self._lookup(
++            gathered_ids,
++            output=self._prefetch_buffer[: gathered_ids.shape[0]],
++        )
++
++    def start_prefetch(
++        self,
++        hidden_states: torch.Tensor,
++        ngram_ids: torch.Tensor,
++    ) -> None:
++        """Old in-forward path. Does nothing when host_gather() is used."""
++        if self.prefetch_from_model_state:
++            return
++        super().start_prefetch(hidden_states, ngram_ids)
++
++    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
++        """Return a view of the rows host_gather() wrote.
++
++        With ETP=1 the all-reduce and DP row selection in _finalize_prefetch do
++        nothing, so only the flatten(-2) remains.
++        """
++        if not self.prefetch_from_model_state:
++            return super().forward(hidden_states)
++        return self._prefetch_buffer[: hidden_states.shape[0]].flatten(-2)
++
++
+ class Qwen4ExpNGramEmbedding(nn.Module):
+     _MASK64 = (1 << 64) - 1
+     _SPLITMIX_GAMMA = 0x9E3779B97F4A7C15
+@@ -208,11 +819,12 @@ class Qwen4ExpNGramEmbedding(nn.Module):
+         if params_dtype is None:
+             params_dtype = torch.get_default_dtype()
+         engram_config = get_current_vllm_config().engram_config
+-        embedding_cls = (
+-            Qwen4ExpPLEPinnedHostEmbedding
+-            if engram_config is not None and engram_config.cpu_offload
+-            else Qwen4ExpPLEDeviceEmbedding
+-        )
++        if os.environ.get(_PLE_MMAP_PATH_ENV, "").strip():
++            embedding_cls = Qwen4ExpPLEMmapHostEmbedding
++        elif engram_config is not None and engram_config.cpu_offload:
++            embedding_cls = Qwen4ExpPLEPinnedHostEmbedding
++        else:
++            embedding_cls = Qwen4ExpPLEDeviceEmbedding
+         self.ngram_embedding = embedding_cls(
+             padded_vocab_size,
+             self.head_dim,
+@@ -363,6 +975,27 @@ class Qwen4ExpNGramEmbedding(nn.Module):
+         ngram_ids = self.compute_ngram_ids(input_ids, query_start_loc, ngram_context)
+         return self.ngram_embedding(ngram_ids).flatten(-2)
+ 
++    def host_gather(
++        self,
++        input_ids: torch.Tensor,
++        query_start_loc: torch.Tensor,
++        ngram_context: torch.Tensor,
++    ) -> None:
++        """Compute the n-gram ids and run the mmap backend's host_gather().
++
++        Called from Qwen4ExpModelState.prepare_inputs. Does nothing for the
++        device and pinned backends.
++        """
++        embedding = self.ngram_embedding
++        if not getattr(embedding, "prefetch_from_model_state", False):
++            return
++        ngram_ids = self.compute_ngram_ids(
++            input_ids,
++            query_start_loc,
++            ngram_context,
++        )
++        embedding.host_gather(ngram_ids)
++
+     def start_prefetch(
+         self,
+         hidden_states: torch.Tensor,
+@@ -374,6 +1007,10 @@ class Qwen4ExpNGramEmbedding(nn.Module):
+         embedding = self.ngram_embedding
+         if not embedding.supports_prefetch:
+             return
++        if getattr(embedding, "prefetch_from_model_state", False):
++            # host_gather() already ran. Computing the ids again would add a
++            # kernel to every forward.
++            return
+         ngram_ids = self.compute_ngram_ids(
+             input_ids,
+             query_start_loc,
+@@ -382,6 +1019,51 @@ class Qwen4ExpNGramEmbedding(nn.Module):
+         )
+         embedding.start_prefetch(hidden_states, ngram_ids)
+ 
++    # Look-ahead page prefetch (mmap backend only).
++    _ple_hash_np: "tuple[np.ndarray, np.ndarray, np.ndarray] | None" = None
++
++    def _ple_hash_numpy(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
++        # CPU copies of the hash buffers, reused across requests.
++        # load_weights() clears them.
++        cached = self._ple_hash_np
++        if cached is None:
++            cached = tuple(
++                buffer.detach().cpu().numpy().astype(np.int64)
++                for buffer in (
++                    self.layer_multipliers,
++                    self.ngram_heads_vocab_sizes,
++                    self.ngram_heads_offsets,
++                )
++            )
++            self._ple_hash_np = cached
++        return cached
++
++    def prefetch_request(self, req_id: str, token_ids, start: int = 0) -> None:
++        """Prefetch the PLE pages for ``token_ids[start:]`` of a new request.
++
++        Called from Qwen4ExpModelState.add_request. The rows are computed on
++        the prefetch thread. Does nothing unless the backend reads a mmap.
++        """
++        submit = getattr(self.ngram_embedding, 'prefetch_request', None)
++        if submit is None or not token_ids:
++            return
++        multipliers, sizes, offsets = self._ple_hash_numpy()
++        eos_token_id = self.eos_token_id
++        heads_per_ngram = self.heads_per_ngram
++
++        def rows() -> np.ndarray:
++            ids = _ple_ngram_rows_numpy(
++                token_ids, multipliers, sizes, offsets, eos_token_id, heads_per_ngram
++            )
++            return ids[start:].reshape(-1)
++
++        submit(req_id, rows)
++
++    def cancel_prefetch(self, req_id: str) -> None:
++        cancel = getattr(self.ngram_embedding, 'cancel_prefetch', None)
++        if cancel is not None:
++            cancel(req_id)
++
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         """Load hash buffers and checkpoint-split embedding rows."""
+         persistent_buffers = {
+@@ -445,6 +1127,10 @@ class Qwen4ExpNGramEmbedding(nn.Module):
+ 
+         if regular_weights:
+             loaded.update(AutoWeightsLoader(self).load_weights(regular_weights))
++        finalize = getattr(self.ngram_embedding, "finalize_mmap_cache", None)
++        if finalize is not None:
++            finalize()
++        self._ple_hash_np = None    # hash buffers changed
+         return loaded
+ 
+ 
