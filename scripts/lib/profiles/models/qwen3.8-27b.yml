@@ -290,6 +290,30 @@ weights:
     kind: main
     verify_glob: "*.safetensors"
     manual_note: "The W4A16 export HyperQwen's prepare step is written for (docker/prepare.sh HF_REPO): a compressed-tensors pack-quantized re-export that keeps '-AutoRound' in its name. Pinned to the revision of 2026-10-14. Served only through vllm-hyperqwen, which prepares it in place at the first start."
+  ukisai-swift15-gsq-rco-iq3s-mtp:
+    path: swift-1.5-qwen3.8-27b-gsq-rco
+    local_subdir: swift-1.5-qwen3.8-27b-gsq-rco
+    size_gb: 11.3
+    format: gguf
+    status: production
+    kind: main
+    verify_glob: '*.gguf'
+    hf_repo: ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF
+    engine: llama-cpp
+    files:
+    - Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf
+  ukisai-swift15-mmproj-f16:
+    path: swift-1.5-qwen3.8-27b-gguf
+    local_subdir: swift-1.5-qwen3.8-27b-gguf
+    size_gb: 0.9
+    format: gguf
+    status: production
+    kind: mmproj
+    verify_glob: '*.gguf'
+    hf_repo: ukisai/Swift-1.5-Qwen3.8-27B-GGUF
+    files:
+    - mmproj-Swift-1.5-Qwen3.8-27B-F16.gguf
+    engine: llama-cpp
 default_weight_variant: unsloth-iq4xs
 # Validated drafters for this model (each names a drafters/<id>.yml we ship):
 #   - qwen-mtp-builtin      — embedded nextn head (blk.64.nextn.* in the unsloth

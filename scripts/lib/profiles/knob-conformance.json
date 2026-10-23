@@ -409,6 +409,21 @@
    }
   },
   {
+   "compose": "models/qwen3.8-27b/llama-cpp/compose/single/ukisai-swift15-gsq-rco-iq3s-mtp/base.yml",
+   "knobs": [
+    "THINKING_BUDGETS",
+    "THINKING_BUDGET_LOW",
+    "THINKING_BUDGET_MEDIUM",
+    "THINKING_BUDGET_XHIGH"
+   ],
+   "reads_instead": {
+    "THINKING_BUDGETS": "REASONING_BUDGET",
+    "THINKING_BUDGET_LOW": "REASONING_BUDGET",
+    "THINKING_BUDGET_MEDIUM": "REASONING_BUDGET",
+    "THINKING_BUDGET_XHIGH": "REASONING_BUDGET"
+   }
+  },
+  {
    "compose": "models/qwen3.8-27b/llama-cpp/compose/single/unsloth-iq4xs/q4kv-vision.yml",
    "knobs": [
     "THINKING_BUDGETS",
@@ -526,5 +541,5 @@
    ]
   }
  ],
- "not_wired_ceiling": 96
+ "not_wired_ceiling": 100
 }

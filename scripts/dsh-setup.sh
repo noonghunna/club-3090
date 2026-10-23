@@ -91,7 +91,7 @@ KEY_NAME = "CLUB3090_GATEWAY_KEY"
 # Qwen3.8-family served ids — the same list as scripts/omp-setup.sh, which
 # test-omp-setup checks against every name the composes serve (test-dsh-setup
 # keeps the two lists equal).
-QWEN38_IDS = ["qwen3.8-27b", "qwen3.8-27b-fp8", "thinkingcap38-27b", "thinkingcap38-27b-fp8"]
+QWEN38_IDS = ["qwen3.8-27b", "qwen3.8-27b-fp8", "qwen3.8-27b-swift15", "thinkingcap38-27b", "thinkingcap38-27b-fp8"]
 ALWAYS = "qwen3.8-27b"      # every Qwen3.8 slug serves it, so it is listed even when nothing is up
 FALLBACK_WINDOW = 262144    # the dual-fast slugs' window, for an id the gateway isn't serving now
 REPLY_CAP = 32768           # thinking + answer; at most half the window on every Qwen3.8 slug

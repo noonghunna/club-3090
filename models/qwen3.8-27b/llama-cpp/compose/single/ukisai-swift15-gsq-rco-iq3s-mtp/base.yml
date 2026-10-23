@@ -1,0 +1,276 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B — UkisAI Swift-1.5 fine-tune (GSQ-RCO IQ3_S-mtp GGUF,
+#              12.12 GB decimal; MTP head EMBEDDED: 866 tensors = 851 model +
+#              15 blk.64.nextn.*, verified in the file header 2026-10-20)
+#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-local.yml install.spec)
+#   Topology:  Single card (TP=1)
+#   Drafter:   MTP n=2 built-in (--spec-type draft-mtp; the head is EMBEDDED in this GGUF)
+#              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
+#   KV:        q4_0 K + q4_0 V @262144 (compose default) — measured on this
+#              rig: 2,996 MB free flat across the 91%-fill stress ladder
+#              (block below). This rig's daily serve: KV_TYPE=q8_0
+#              CTX_SIZE=239000 (launch-task prefix — per-slug settings don't
+#              carry CTX_SIZE) + LLAMA_ARG_MMPROJ_OFFLOAD=false (global
+#              club3090.env) — measured 1,238 MB free (series below).
+#   Vision:    YES — mmproj-Swift-1.5-Qwen3.8-27B-F16 (0.93 GB, ukisai's own tower)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Max ctx:   262144
+#   Genesis:   N/A — llama.cpp engine; Genesis is vLLM/Qwen3-Next-specific
+#   Status:    ✅ Production
+#   Quality:   toolcall-15 13/15 (87%) · instructfollow-15 15/15 (100%) · structoutput-15 12/15 (80%) · dataextract-15 11/15 (73%) · reasonmath-15 15/15 (100%) (--medium, sampling=server, budget=server 32768, validity=valid, packs tc1.0.1·if2.0.0·so2.1.0·de1.2.0·rm1.1.0, 2026-10-21)
+#   Engine-profile: llama-cpp-local
+#   Best for:  Swift 1.5's shorter thinking on one card with room to spare
+# ---------------------------------------------------------------------------
+# Cloned 2026-10-20 from
+# models/qwen3.8-27b/llama-cpp/compose/single/unsloth-iq4xs/q4kv-vision.yml
+# (same engine, image and settings); only the weights paths, the served
+# name, the port and the container name differ. That sibling's measurement
+# history does NOT apply here — the weights are a different quant of a
+# post-trained checkpoint.
+#
+# WHAT THIS IS: Swift 1.5 is a POST-TRAINED (RL+OPD) checkpoint from UkisAI,
+# not a re-quant: it is marketed as thinking shorter (~45-63% fewer reasoning
+# tokens at <1% accuracy loss on UkisAI's GPQA/IFBench/AIME numbers), so
+# compare ANSWERS, not only speed. Their detailed pitch + benchmarks:
+# https://www.ukisai.com/swift-1-5-27b — the thinking-reduction claim is
+# theirs, not independently reproduced here (the gates measure answer quality
+# and throughput, not reasoning length). The weights are 3-bit GSQ-RCO
+# (KLD 0.0513, ukisai's per-tensor-refined tier) — deliberately a quality
+# step below the 4-bit sibling, bought back as ~4 GiB of headroom on a
+# 24 GB card.
+#
+# Target: /models/swift-1.5-qwen3.8-27b-gsq-rco/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf
+#          (ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF)
+# Projector: /models/swift-1.5-qwen3.8-27b-gguf/mmproj-Swift-1.5-Qwen3.8-27B-F16.gguf
+#          (ukisai/Swift-1.5-Qwen3.8-27B-GGUF)
+#
+# ARCHITECTURE (config.json — Qwen3_5ForConditionalGeneration / model_type qwen3_5):
+# a HYBRID, not uniform GQA. 64 layers, `full_attention_interval: 4` => 16
+# full-attention (KV-growing) layers + 48 linear-attention (DeltaNet-style
+# recurrent) layers. Non-MoE. Identical architecture to the sibling compose —
+# its KV budget math (q4_0 = 18,432 B/token => 262,144 ctx = 4.50 GiB) holds
+# here verbatim; only the weights term moves (11.26 GiB instead of 13.27).
+#
+# MEASURED FIT series (2026-10-20/21, on this rig — a WATERBLOCKED RTX 4090,
+# 450 W — NOT the repo's 3090 reference; q8_0 KV, F16 projector in RAM,
+# nvidia-smi free — which EXCLUDES ~484 MiB of driver/CUDA reservation
+# present at every ctx, so total−used OVERSTATES free by that amount):
+#   ctx 215,040: 2,246 MB (first boot; bench peak 21,834 MiB, 0 MiB leak)
+#   ctx 235,008: 1,414 MB
+#   ctx 239,008: 1,238 MB  ← the rig's serve (stress: recall to 219,535 tok /
+#              91% fill; 1,012 MB at ceiling — 12 MB under the 1,024 MB gate)
+#   ctx 244,000:  836 MB
+#   ctx 262,144:  246 MB (stress: recall to 240,658 tok / 91% fill; below gate)
+# Pool step ≈ 44,500 B/token; the allocator wobbles ±~200 MiB around the
+# linear line, so trust the measured rows. 262,144 is the model ceiling.
+# Extra-headroom option: ctx 238,000 with the projector offloaded to system
+# RAM (LLAMA_ARG_MMPROJ_OFFLOAD=false) — ≈45 MB more free than 239K (linear
+# pool step, unmeasured); clears the 1,024 MB stress gate that 239K misses.
+#
+# MEASURED — compose default (2026-10-21, on this rig — a WATERBLOCKED
+# RTX 4090, 450 W — NOT the repo's 3090 reference; q4_0 KV @262144, F16
+# projector on GPU, REASONING_BUDGET=32768): 21,085 MiB at load, bench peak
+# 21,085 MiB
+# (0 MiB leak). verify-stress: all 6 rungs recalled to 240,659 tok (91% of
+# n_ctx), 2,996 MB free flat across the ladder (Δ 0 MB; ≥ 1,024 MB gate).
+# Bench: 102.9 / 120.7 decode TPS (narrative/code, CV 1.4%), prefill 2,691
+# tok/s @10K, TTFT ~80 ms, MTP acceptance 0.70. Soak (continuous): 25/25
+# turns, 0 MiB growth, p50 120.3 TPS, 100% retention.
+# Same-card A/B (2026-10-21, base Qwen3.8-27B IQ4_XS, same standard config,
+# args verified in-container: -c 262144, q4_0 KV, GPU projector): 92.4 /
+# 111.7 decode, 2,843 @10K, peak 22,825 MiB — Swift 1.5 decodes +11% / +8%
+# faster, prefill −5%, 1,740 MiB less VRAM.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR        host dir mounted as /models  (default: ../../../../../../models-cache —
+#                    six levels up, the repo root)
+#   GGUF_FILE        path under /models  (default: swift-1.5-qwen3.8-27b-gsq-rco/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf)
+#   MMPROJ_FILE      projector under /models  (default: swift-1.5-qwen3.8-27b-gguf/mmproj-Swift-1.5-Qwen3.8-27B-F16.gguf)
+#   CTX_SIZE         KV pool size        (default: 262144 — the q4_0 ceiling; drop
+#                    it if a future quant/pin changes the fit)
+#   BATCH_SIZE       llama.cpp -b        (default: 4096)
+#   UBATCH_SIZE      llama.cpp -ub       (default: 512 — the tight-headroom lever)
+#   KV_TYPE          K and V quant type  (default: q4_0; KV_TYPE=q8_0 CTX_SIZE=131072
+#                    is the quality-KV option this extra headroom buys)
+#   IMAGE_MIN_TOKENS min image tokens    (unset by default; set 1024 for grounding)
+#   LLAMA_ARG_MMPROJ_OFFLOAD  projector on GPU (unset by default = GPU); false keeps
+#                    it in system RAM: frees ~1,180 MiB; a new image then costs
+#                    ~1.5 s (bursts to ~4 s) instead of 0.6 s (#1380)
+#   NP               parallel slots      (default: 1)
+#   SERVED_NAME      --alias value       (default: qwen3.8-27b-swift15)
+#   ENABLE_THINKING  club's standard switch (true | false): false boots the INSTRUCT
+#                    row, true (or unset) keeps the THINKING row
+#   THINKING         this compose's own name; THINKING=1 wins over ENABLE_THINKING=false
+#   REASONING        thinking gate       (default: ON — 2026-09-01 flip; INSTRUCT=1 opts out)
+#   INSTRUCT         one-knob opt-out    (unset by default; INSTRUCT=1 restores the card's
+#                                        INSTRUCT row AND --reasoning off, together)
+#   TEMP/TOP_P/TOP_K/MIN_P               (defaults: card THINKING row — 1.0 / 0.95 / 20 / 0.0)
+#   PORT             host port           (default: 8023)
+#   CUDA_VISIBLE_DEVICES  which GPU      (default: 0)
+#   LLAMACPP_IMAGE   engine image        (default: the llama-cpp-local pin)
+#
+# Quick start (after the weights are in MODEL_DIR):
+#   bash scripts/switch.sh llamacpp/qwen38-27b-swift15-iq3s-mtp
+
+services:
+  llama-cpp-qwen38-27b-swift15-single:
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:e4cfff28678327b0ae7eda129e700e56a0fa55aa23db2f016256ea155c15c2b5}
+    container_name: "${ESTATE_CONTAINER:-llama-cpp-qwen38-27b-swift15-single}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8023}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    environment:
+      # Drafter toggle - docker forwards only what is declared here.
+      # MTP_DRAFT_N_MAX is read by the entrypoint too, so the drafter ON/OFF decision and the
+      # banner default to the same depth as the flag (2), and MTP_DRAFT_N_MAX=0 disables.
+      - MTP_DRAFT_N_MAX
+      # Bare form on purpose: `- VAR=${VAR:-}` forwards EMPTY-but-present, and the
+      # catalog's empty-string-forward ratchet (test-launch-knobs) counts those.
+      # Bare keeps unset unset — the entrypoint's `$${SPEC_N:-…}` handles both.
+      - SPEC_N
+      - SPEC
+      # ⚠️⚠️ THE ROW VARS MUST BE DECLARED HERE OR THE FLIP SILENTLY DOES NOTHING.
+      # They are read by the entrypoint INSIDE the container, where docker forwards
+      # ONLY what is listed here. Omitting them boots clean, logs the THINKING row,
+      # and ignores INSTRUCT=1. Bare form on purpose: `- VAR=${VAR:-}` sets the var
+      # EMPTY-but-present.
+      - ENABLE_THINKING
+      - INSTRUCT
+      - THINKING
+      - REASONING
+      # Reasoning knobs read by the entrypoint above. Bare form on purpose:
+      # `- VAR=${VAR:-}` would set them EMPTY-but-present, and an empty
+      # REASONING_BUDGET would land as `--reasoning-budget ''`.
+      - REASONING_BUDGET
+      - REASONING_BUDGET_MESSAGE
+      - REASONING_PRESERVE
+      - TEMP
+      - TEMPERATURE
+      - TOP_P
+      - PRESENCE_PENALTY
+      # Default reasoning effort = medium. Upstream's card: low "is not supported and
+      # when selected the model will behave close to xhigh" — so a `low` default buys
+      # FULL xhigh reasoning cost while the config claims the cheapest tier.
+      - LLAMA_ARG_CHAT_TEMPLATE_KWARGS=${LLAMA_ARG_CHAT_TEMPLATE_KWARGS:-{"reasoning_effort":"${REASONING_EFFORT:-medium}"}}
+      # Projector placement: LLAMA_ARG_MMPROJ_OFFLOAD=false keeps the F16 projector in
+      # system RAM (#1380). llama-server reads it natively; nothing in `command:` may
+      # pass --mmproj-offload / --no-mmproj-offload, because argv overrides the env.
+      # Bare form on purpose: `- VAR=${VAR:-}` would set it EMPTY-but-present, and
+      # llama.cpp rejects an empty boolean ("invalid boolean value"), so every
+      # default boot would die before loading the model.
+      - LLAMA_ARG_MMPROJ_OFFLOAD
+      - CUDA_VISIBLE_DEVICES=${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}
+    # ⚠ -np 1 is intentional on a single 24 GB card — extra slots divide throughput
+    #   and each takes its own KV slice.
+    # ⚠️ BUILT-IN MTP — head EMBEDDED in this GGUF (866 tensors, blk.64.nextn.*).
+    # ⚠️ SAMPLER ships the card's THINKING row: temp 1.0 / top_p 0.95 / top_k 20 /
+    #   min_p 0.0 / presence_penalty 0.0. INSTRUCT=1 flips reasoning AND the whole
+    #   sampler back to the INSTRUCT row (0.7/0.80/1.5) together.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        # -- Reasoning row: resolved ONCE, appended ONCE ------------------------
+        # Resolving here emits each flag exactly once, so the
+        # llama.cpp multiple-same-flag deprecation cannot bite.
+        # INSTRUCT wins when both INSTRUCT and THINKING are set, matching the old
+        # last-wins order (the INSTRUCT line came second).
+        # ENABLE_THINKING (club-3090's standard switch: true | false) picks the same row: false
+        # selects the INSTRUCT row, true keeps the THINKING row. INSTRUCT / THINKING / REASONING
+        # are this compose's own names and win when set; a boot note says so when they disagree.
+        case "$${ENABLE_THINKING:-}" in
+          ""|true|false) ;;
+          *) echo "[thinking] ENABLE_THINKING='$${ENABLE_THINKING}' must be true or false." >&2; exit 1 ;;
+        esac
+        if [ "$${ENABLE_THINKING:-}" = false ] && [ -z "$${INSTRUCT:-}" ]; then
+          if [ -n "$${THINKING:-}" ]; then
+            echo "[thinking] THINKING=$${THINKING} wins over ENABLE_THINKING=false (this compose's own name)" >&2
+          else
+            INSTRUCT=1
+          fi
+        elif [ "$${ENABLE_THINKING:-}" = true ] && [ -n "$${INSTRUCT:-}" ]; then
+          echo "[thinking] INSTRUCT=$${INSTRUCT} wins over ENABLE_THINKING=true (this compose's own name)" >&2
+        fi
+        if [ -n "$${ENABLE_THINKING:-}" ] && [ -n "$${REASONING:-}" ]; then
+          echo "[thinking] REASONING=$${REASONING} sets --reasoning itself (this compose's own name); ENABLE_THINKING=$${ENABLE_THINKING} picks the sampler row" >&2
+        fi
+        if [ -n "$${INSTRUCT:-}" ]; then
+          _r="$${REASONING:-off}"; _t="$${TEMP:-$${TEMPERATURE:-0.7}}"
+          _p="$${TOP_P:-0.80}";    _pp="$${PRESENCE_PENALTY:-1.5}"
+          echo "[sampler] INSTRUCT row: reasoning=$$_r temp=$$_t top_p=$$_p presence=$$_pp" >&2
+        else
+          _r="$${REASONING:-on}";  _t="$${TEMP:-$${TEMPERATURE:-1.0}}"
+          _p="$${TOP_P:-0.95}";    _pp="$${PRESENCE_PENALTY:-0.0}"
+          echo "[sampler] THINKING row (default): reasoning=$$_r temp=$$_t top_p=$$_p presence=$$_pp" >&2
+        fi
+        ROW=(--reasoning "$$_r" --temp "$$_t" --top-p "$$_p" --presence-penalty "$$_pp")
+        # -- Reasoning knobs: all six --reasoning-* flags reachable ------------
+        # BUDGET 32768 by default: the SERVER DEFAULT, NOT A CEILING — a request's
+        # own reasoning_budget_tokens wins in either direction. The budget MESSAGE
+        # makes exhaustion visible (upstream's empty default makes a truncated
+        # trace indistinguishable from a short answer).
+        ROW+=(--reasoning-budget "$${REASONING_BUDGET:-32768}")
+        ROW+=(--reasoning-budget-message "$${REASONING_BUDGET_MESSAGE:-[reasoning budget exhausted]}")
+        case "$${REASONING_PRESERVE:-}" in
+          1|on|true|yes)   ROW+=(--reasoning-preserve) ;;
+          0|off|false|no)  ROW+=(--no-reasoning-preserve) ;;
+          "")              : ;;
+          *) echo "[reasoning] REASONING_PRESERVE='$${REASONING_PRESERVE}' must be on/off/true/false/yes/no, or unset for the template default" >&2; exit 1 ;;
+        esac
+        echo "[reasoning] budget=$${REASONING_BUDGET:-32768} preserve=$${REASONING_PRESERVE:-<template default>}" >&2
+        # -- Drafter toggle: SPEC_N=<n> depth; SPEC_N=0 (or SPEC=off) disables ----
+        # Disabling REMOVES the drafter flags. A non-numeric SPEC_N is a hard error.
+        _spec_n="$${SPEC_N:-$${MTP_DRAFT_N_MAX:-2}}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        if [ "$$_spec_n" -gt 0 ]; then
+          echo "[spec] drafter ON (SPEC_N=$$_spec_n)" >&2
+          exec /app/llama-server "$$@" "$${ROW[@]}"
+        fi
+        ARGS=(); _skip=0
+        for _a in "$$@"; do
+          if [ "$$_skip" = 1 ]; then _skip=0; continue; fi
+          case "$$_a" in
+            --spec-type|--spec-draft-model|--spec-draft-n-max|--spec-draft-n-min|-md|--model-draft) _skip=1; continue ;;
+          esac
+          ARGS+=("$$_a")
+        done
+        echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - drafter flags removed" >&2
+        exec /app/llama-server "$${ARGS[@]}" "$${ROW[@]}"
+      - --
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-swift-1.5-qwen3.8-27b-gsq-rco/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf}
+      --mmproj /models/${MMPROJ_FILE:-swift-1.5-qwen3.8-27b-gguf/mmproj-Swift-1.5-Qwen3.8-27B-F16.gguf}
+      --alias ${SERVED_NAME:-qwen3.8-27b-swift15}
+      -c ${CTX_SIZE:-262144}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-512}
+      -ngl 99
+      -fa on
+      --cache-type-k ${KV_TYPE:-q4_0}
+      --cache-type-v ${KV_TYPE:-q4_0}
+      -np ${NP:-1}
+      --spec-type draft-mtp
+      --spec-draft-n-max ${SPEC_N:-${MTP_DRAFT_N_MAX:-2}}
+      --jinja
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --top-k ${TOP_K:-20}
+      --min-p ${MIN_P:-0.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+      ${IMAGE_MIN_TOKENS:+--image-min-tokens ${IMAGE_MIN_TOKENS}}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

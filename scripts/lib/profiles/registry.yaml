@@ -6820,6 +6820,38 @@ entries:
     gateway: false
     serve_aliases: []
     category: frontier
+  llamacpp/qwen38-27b-swift15-iq3s-mtp:
+    origin: core
+    model: qwen3.8-27b
+    weights_variant: ukisai-swift15-gsq-rco-iq3s-mtp
+    workload: vision-coding
+    engine: llama-cpp-local
+    drafter: null
+    spec_method: null
+    kv_format: q4_0
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    kv_offload: null
+    chat_template: native
+    tp: 1
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/qwen3.8-27b/llama-cpp/compose/single/ukisai-swift15-gsq-rco-iq3s-mtp/base.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8023
+    kvcalc_key: SKIP
+    status: production
+    status_note: null
+    weights_companions:
+      - ukisai-swift15-mmproj-f16
+    gateway: false
+    serve_aliases: []
 
 defaults:
   qwen3.6-27b:

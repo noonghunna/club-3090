@@ -34,7 +34,8 @@ before you put an agent on it.
 |  | `vllm/qwen-27b-single-nvfp4` | ⚠️ caveats | 65536 | [single/nvfp4/mtp.yml](../models/qwen3.6-27b/vllm/compose/single/nvfp4/mtp.yml) | [#608](https://github.com/noonghunna/club-3090/discussions/608) | needs sm 9.0+ (not a 3090) |
 | **Qwen 3.6 35B-A3B (MoE)** | `vllm/qwen-35b-a3b-single-nvfp4` | ⚠️ caveats | 131072 | [single/nvfp4/fp8.yml](../models/qwen3.6-35b-a3b/vllm/compose/single/nvfp4/fp8.yml) | [#608](https://github.com/noonghunna/club-3090/discussions/608) | needs sm 9.0+ (not a 3090) |
 |  | `vllm/qwen-a3b-preview-single` | 👁️ preview | 8192 | [single/autoround-int4/preview.yml](../models/qwen3.6-35b-a3b/vllm/compose/single/autoround-int4/preview.yml) | — |  |
-| **Qwen 3.8 27B** | `llama-cpp-prism/qwen38-27b-single-ternary-mtp` | 🧪 experimental | 262144 | [single/prism-ternary-mtp/mtp.yml](../models/qwen3.8-27b/llama-cpp-prism/compose/single/prism-ternary-mtp/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) |  |
+| **Qwen 3.8 27B** | `llamacpp/qwen38-27b-swift15-iq3s-mtp` | ✅ production | 262144 | [single/ukisai-swift15-gsq-rco-iq3s-mtp/base.yml](../models/qwen3.8-27b/llama-cpp/compose/single/ukisai-swift15-gsq-rco-iq3s-mtp/base.yml) | [#993](https://github.com/noonghunna/club-3090/discussions/993) |  |
+|  | `llama-cpp-prism/qwen38-27b-single-ternary-mtp` | 🧪 experimental | 262144 | [single/prism-ternary-mtp/mtp.yml](../models/qwen3.8-27b/llama-cpp-prism/compose/single/prism-ternary-mtp/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) |  |
 |  | `llamacpp/qwen38-27b-single-iq4xs` | 🧪 experimental | 262144 | [single/unsloth-iq4xs/q4kv-vision.yml](../models/qwen3.8-27b/llama-cpp/compose/single/unsloth-iq4xs/q4kv-vision.yml) | [#993](https://github.com/noonghunna/club-3090/discussions/993) |  |
 |  | `sgl/qwen38-27b-single-fast` | 🧪 experimental | 262144 | [single/autoround-int4/mtp.yml](../models/qwen3.8-27b/sglang/compose/single/autoround-int4/mtp.yml) | [#1245](https://github.com/noonghunna/club-3090/discussions/1245) |  |
 |  | `vllm/qwen38-27b-single-fast` | 🧪 experimental | 262144 | [single/autoround-int4/mtp.yml](../models/qwen3.8-27b/vllm/compose/single/autoround-int4/mtp.yml) | [#1024](https://github.com/noonghunna/club-3090/discussions/1024) |  |
@@ -44,7 +45,7 @@ before you put an agent on it.
 | **Qwen3.8-Flash-Next (MoE, Qwen)** | `strata/qwen3.8-flash-next-iq3s-single` | 🐣 incubating | 131072 | [single/ista-iq3s/base.yml](../models/qwen3.8-flash-next/strata/compose/single/ista-iq3s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 84 GB |
 |  | `strata/qwen3.8-flash-next-swift15-abliterated-iq3s-single` | 🐣 incubating | 131072 | [single/sc117-swift15-abliterated-iq3s/base.yml](../models/qwen3.8-flash-next/strata/compose/single/sc117-swift15-abliterated-iq3s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 84 GB |
 
-21 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+22 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table single -->
 
 ## Launch
