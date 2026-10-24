@@ -25,11 +25,14 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from typing import NamedTuple
 
 try:                                    # run as a file from scripts/lib (litellm-sync.sh)
     import litellm_local
+    import club_config
 except ImportError:                     # imported as scripts.lib.litellm_sync
     from scripts.lib import litellm_local
+    from scripts.lib import club_config
 
 BEGIN = "  # === BEGIN GENERATED LOCAL BLOCK"
 END = "  # === END GENERATED LOCAL BLOCK ==="
@@ -54,10 +57,33 @@ def registry_ports(variants: list[dict]) -> list[int]:
     return sorted({v["port"] for v in variants if v.get("port")})
 
 
-# A live route: (port, served id, context window or None, whether Claude Code's
-# /v1/messages goes to the engine's own Anthropic endpoint — see serves_messages,
-# whether the engine serves /v1/responses itself — see serves_responses).
-Live = tuple[int, str, "int | None", bool, bool]
+# A live route: port, served id, context window or None; whether Claude Code's
+# /v1/messages goes to the engine's own Anthropic endpoint — see serves_messages;
+# whether the engine serves /v1/responses itself — see serves_responses; and the
+# key the server requires — "" for a keyless engine, see engine_key_for_port.
+class Live(NamedTuple):
+    port: int
+    model: str
+    ctx: "int | None"
+    native_messages: bool
+    responses: bool
+    key: str
+
+
+def bearer(req: urllib.request.Request, key: str) -> urllib.request.Request:
+    """The Bearer header on a probe request, when a key applies. Keyless stays
+    keyless — exactly the request shape as before (#1794)."""
+    if key:
+        req.add_header("Authorization", f"Bearer {key}")
+    return req
+
+
+def get_models(port: int, key: str) -> list[dict]:
+    """The /v1/models listing, with the Bearer header when a key applies.
+    Raises urllib.error.HTTPError — a 401 is the signal to go find the key."""
+    req = bearer(urllib.request.Request(f"http://127.0.0.1:{port}/v1/models"), key)
+    with urllib.request.urlopen(req, timeout=2) as r:
+        return json.load(r).get("data") or []
 
 
 def probe(port: int) -> list[Live]:
@@ -69,16 +95,38 @@ def probe(port: int) -> list[Live]:
     tabbyAPI is the exception: with auth disabled every caller is admin, and an
     admin /v1/models lists every directory under --model-dir (other engines'
     weights, .cache) — a request naming one silently runs the loaded model.
-    Its names come from /v1/model, the loaded model only."""
+    Its names come from /v1/model, the loaded model only.
+    A server that requires a key (Strata 0.2+ answers nothing but GET /health
+    without one) 401s the keyless first try; the key is then resolved from the
+    server's own container (see engine_key_for_port) and the probe retried once
+    with it as a Bearer header — without the retry, a keyed Strata slug
+    renders no route at all (#1794). The key rule is Strata's (the
+    container's API_KEY, else STRATA_API_KEY): a keyed engine of another kind
+    resolves no key and renders no route, the way a dead port does — the
+    runtime view never advertises a model it cannot serve. A keyless engine
+    pays one keyless request, exactly as before."""
+    key = ""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2) as r:
-            data = json.load(r).get("data") or []
+        data = get_models(port, "")
+    except urllib.error.HTTPError as e:
+        if e.code != 401:
+            return []
+        key = engine_key_for_port(port)
+        if not key:
+            return []
+        try:
+            data = get_models(port, key)
+        except Exception:
+            return []
+    except Exception:
+        return []
+    try:
         owned_by = next((str(m["owned_by"]) for m in data if m.get("owned_by")), "")
         if engine_kind_from_owned_by(owned_by) == "exllamav3":
             data = loaded_model(port) or data
         first_id = next((str(m["id"]) for m in data if m.get("id")), "")
-        native = serves_messages(port, owned_by, first_id) if first_id else False
-        responses = serves_responses(port)
+        native = serves_messages(port, owned_by, first_id, key) if first_id else False
+        responses = serves_responses(port, key)
         out: list[Live] = []
         for m in data:
             if not m.get("id"):
@@ -86,8 +134,8 @@ def probe(port: int) -> list[Live]:
             ml = m.get("max_model_len")
             ml = int(ml) if isinstance(ml, int) and ml > 0 else None
             if ml is None:
-                ml = llamacpp_ctx(port)   # llama.cpp reports its window on /props instead
-            out.append((port, m["id"], ml, native, responses))
+                ml = llamacpp_ctx(port, key)   # llama.cpp reports its window on /props instead
+            out.append(Live(port, m["id"], ml, native, responses, key))
         return out
     except Exception:
         return []
@@ -118,13 +166,62 @@ def engine_kind_from_owned_by(owned_by: str) -> str:
     return out.stdout.strip() or "unknown"
 
 
-def count_tokens(port: int, model: str, body: dict) -> "int | None":
+def engine_key_for_port(port: int) -> str:
+    """The key the server on this port requires, when it has one — resolved by
+    the repo's own helpers, never by a copy of their rules here:
+    club-containers.sh's club_container_for_url answers WHICH container
+    publishes this URL (the one answer, #1584), and engine-auth.sh's
+    club_engine_api_key answers WHICH key that container needs (the one rule).
+    Called lazily — only after a keyless probe was refused — so a rig with
+    only keyless engines pays nothing (#1794).
+    ENGINE_API_KEY — engine-auth.sh's override for a remote URL= with no
+    container here — is stripped from the helpers' environment: this probe
+    only ever asks 127.0.0.1, where the container decides, so a saved
+    override must never answer for a local port.
+    TEST SEAM: C3_LITELLM_FAKE_ENGINE_KEYS="8018=key,..." substitutes the
+    container lookup wholesale — env-only, for tests, not operators."""
+    fake = os.environ.get("C3_LITELLM_FAKE_ENGINE_KEYS")
+    if fake is not None:
+        for item in fake.split(","):
+            p, _, k = item.partition("=")
+            if p.strip() == str(port):
+                return k
+        return ""
+    lib = os.path.dirname(os.path.abspath(__file__))
+    # The probe is never a remote URL=, so engine-auth.sh's first precedence
+    # (ENGINE_API_KEY, meant for exactly that) must not reach its helpers:
+    # run both without it, or a saved override answers for any local port
+    # that 401s — keyed engine of another kind or not.
+    env = {k: v for k, v in os.environ.items() if k != "ENGINE_API_KEY"}
+    try:
+        out = subprocess.run(
+            ["bash", "-c", 'source "$1" && club_container_for_url "http://127.0.0.1:${2}"',
+             "_", os.path.join(lib, "club-containers.sh"), str(port)],
+            capture_output=True, text=True, encoding="utf-8", timeout=15, env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    container = out.stdout.strip()
+    if not container:
+        return ""
+    try:
+        out = subprocess.run(
+            ["bash", "-c", 'source "$1" && club_engine_api_key "$2"',
+             "_", os.path.join(lib, "engine-auth.sh"), container],
+            capture_output=True, text=True, encoding="utf-8", timeout=15, env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip()
+
+
+def count_tokens(port: int, model: str, body: dict, key: str = "") -> "int | None":
     """Anthropic /v1/messages/count_tokens: renders the prompt, generates nothing."""
-    req = urllib.request.Request(
+    req = bearer(urllib.request.Request(
         f"http://127.0.0.1:{port}/v1/messages/count_tokens",
         data=json.dumps({"model": model, **body}).encode(),
         headers={"content-type": "application/json"},
-    )
+    ), key)
     try:
         with urllib.request.urlopen(req, timeout=5) as r:
             n = json.load(r).get("input_tokens")
@@ -133,7 +230,7 @@ def count_tokens(port: int, model: str, body: dict) -> "int | None":
     return n if isinstance(n, int) else None
 
 
-def serves_messages(port: int, owned_by: str, model: str) -> bool:
+def serves_messages(port: int, owned_by: str, model: str, key: str = "") -> bool:
     """Whether the gateway should hand Claude Code's Anthropic /v1/messages to the
     engine's own endpoint instead of translating it. Both must hold:
       - the engine is SGLang or vLLM, the two checked with the Claude Code CLI:
@@ -156,13 +253,13 @@ def serves_messages(port: int, owned_by: str, model: str) -> bool:
         return False
     turns = [{"role": "user", "content": "a"}, {"role": "user", "content": "b"}]
     inline = count_tokens(port, model, {"system": "Be brief.", "messages": [
-        turns[0], {"role": "system", "content": "Env: linux"}, turns[1]]})
+        turns[0], {"role": "system", "content": "Env: linux"}, turns[1]]}, key)
     merged = count_tokens(port, model, {"system": [
-        {"type": "text", "text": "Be brief."}, {"type": "text", "text": "Env: linux"}], "messages": turns})
+        {"type": "text", "text": "Be brief."}, {"type": "text", "text": "Env: linux"}], "messages": turns}, key)
     return inline is not None and merged is not None and inline > merged + 1
 
 
-def serves_responses(port: int) -> bool:
+def serves_responses(port: int, key: str = "") -> bool:
     """Whether the engine serves the Responses API itself. omp talks Responses to
     every gateway route, and LiteLLM turns Claude Code's /v1/messages into a
     Responses call too; both are forwarded to the engine's /v1/responses as-is.
@@ -173,10 +270,10 @@ def serves_responses(port: int) -> bool:
     Only a 404 counts as absent. Anything else — including no answer — keeps
     today's route, because bridging an engine that has the endpoint would move
     omp off the wire whose prefix reuse docs/CODING_AGENTS.md measures."""
-    req = urllib.request.Request(
+    req = bearer(urllib.request.Request(
         f"http://127.0.0.1:{port}/v1/responses", data=b"{}",
         headers={"content-type": "application/json"},
-    )
+    ), key)
     try:
         with urllib.request.urlopen(req, timeout=2):
             return True
@@ -186,10 +283,11 @@ def serves_responses(port: int) -> bool:
         return True
 
 
-def llamacpp_ctx(port: int) -> "int | None":
+def llamacpp_ctx(port: int, key: str = "") -> "int | None":
     """llama.cpp's runtime context window (/props n_ctx); None anywhere else."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/props", timeout=2) as r:
+        req = bearer(urllib.request.Request(f"http://127.0.0.1:{port}/props"), key)
+        with urllib.request.urlopen(req, timeout=2) as r:
             props = json.load(r)
     except Exception:
         return None
@@ -205,8 +303,9 @@ def live_routes(ports: list[int]) -> list[Live]:
     # happens to be serving, which is neither deterministic nor reproducible on
     # a contributor's machine. `C3_LITELLM_FAKE_LIVE="8182=a,8091=b"` substitutes
     # the probe result wholesale; `8113=qwen@262144` adds the context window,
-    # a trailing `+messages` marks a server that serves /v1/messages itself, and
-    # `+noresponses` one without /v1/responses (flags combine: `+messages+noresponses`).
+    # a trailing `+messages` marks a server that serves /v1/messages itself,
+    # `+noresponses` one without /v1/responses, and `+keyed=<key>` one that
+    # requires that key (flags combine: `+messages+noresponses+keyed=k`).
     # Deliberately env-only and undocumented in --help: it is for tests, not
     # operators.
     fake = os.environ.get("C3_LITELLM_FAKE_LIVE")
@@ -218,10 +317,12 @@ def live_routes(ports: list[int]) -> list[Live]:
                 rest, *flags = rest.split("+")
                 flags = {f.strip() for f in flags}
                 mid, _, ml = rest.partition("@")
+                key = next((f[len("keyed="):] for f in flags if f.startswith("keyed=")), "")
                 if p.strip().isdigit():
-                    out.append((int(p.strip()), mid.strip(),
-                                int(ml) if ml.strip().isdigit() else None,
-                                "messages" in flags, "noresponses" not in flags))
+                    out.append(Live(int(p.strip()), mid.strip(),
+                                    int(ml) if ml.strip().isdigit() else None,
+                                    "messages" in flags, "noresponses" not in flags,
+                                    key))
         return out
     found: list[Live] = []
     with cf.ThreadPoolExecutor(max_workers=32) as ex:
@@ -313,7 +414,51 @@ def model_info(ctx: "int | None", facts: dict, native_messages: bool = False) ->
     return lines
 
 
-def render_block(live: list[Live], facts: "dict[int, dict] | None" = None) -> tuple[str, int]:
+# The key every shipped strata compose falls back to — e.g.
+# models/qwen3.8-flash-next/strata/compose/dual/ista-iq3s/base.yml:
+# `API_KEY: "${STRATA_API_KEY:-club-3090-strata-local-key}"`. Public by
+# definition (it is published in the repo), so it is the only key the runtime
+# view may carry as a literal; a user's own key never does.
+PUBLIC_DEFAULT_ENGINE_KEY = "club-3090-strata-local-key"
+
+
+def route_api_key(key: str, root: str, port: int, warnings: list) -> "str | None":
+    """The route's api_key line. A keyless engine keeps EMPTY. A keyed one
+    references the setting ONLY when the stored value is the one the container
+    runs — the key stays in secrets.env and the route-keys file hands it to
+    the gateway. The public default renders literally. An unstored key renders
+    the reference too, plus a warning telling the user to save it: the runtime
+    file is world-readable like the rest of the checkout, and the repo's rule
+    is that a user's key lives in 0600 secrets.env, not in a rendered config
+    (#1794 review). A SAVED key that differs from the container's renders NO
+    route — None here, skipped by render_block — and not an EMPTY one either:
+    the reference would hand the user's secret to a server that does not use
+    it, and an EMPTY route advertises a model that 401s every request, which
+    the runtime view never does — the way a dead port, or a keyed engine of
+    another kind, does."""
+    if not key:
+        return "EMPTY"
+    if key == PUBLIC_DEFAULT_ENGINE_KEY:
+        return json.dumps(key)
+    stored = club_config.get("STRATA_API_KEY", root)
+    if stored == key:
+        return "os.environ/STRATA_API_KEY"
+    if not stored:
+        warnings.append(
+            f":{port} runs a key that is not saved in your settings — its route "
+            "references os.environ/STRATA_API_KEY, which the gateway does not "
+            "have yet. Save it: bash scripts/settings.sh set STRATA_API_KEY=…")
+        return "os.environ/STRATA_API_KEY"
+    warnings.append(
+        f":{port} runs a key that is not the saved STRATA_API_KEY — no route "
+        "is rendered for it rather than hand your saved secret to a server "
+        "that does not use it. Make STRATA_API_KEY the key this container "
+        "runs, then re-sync: bash scripts/settings.sh set STRATA_API_KEY=…")
+    return None
+
+
+def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
+                 root: str = "", warnings: "list | None" = None) -> tuple[str, int]:
     lines = [
         BEGIN.rstrip() + " — RUNTIME VIEW, rendered by scripts/lib/litellm-sync.sh ===",
         "  # Routes for endpoints that answered /v1/models at render time. Names come",
@@ -323,21 +468,25 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None) -> tu
     ]
     seen: set[str] = set()
     facts = facts or {}
-    for port, mid, ctx, native, responses in sorted(live, key=lambda t: (t[1], t[0])):
-        if mid in seen:
-            lines.append(f"  # ⚠️ '{mid}' is also served on :{port}; keeping the first route only")
+    warnings = warnings if warnings is not None else []
+    for r in sorted(live, key=lambda t: (t.model, t.port)):
+        if r.model in seen:
+            lines.append(f"  # ⚠️ '{r.model}' is also served on :{r.port}; keeping the first route only")
             continue
-        seen.add(mid)
+        ak = route_api_key(r.key, root, r.port, warnings)
+        if ak is None:   # a saved key the container does not use: no route, warned
+            continue
+        seen.add(r.model)
         lines += [
-            f"  - model_name: {mid}",
+            f"  - model_name: {r.model}",
             "    litellm_params:",
-            f"      model: openai/{mid}",
-            f"      api_base: http://host.docker.internal:{port}/v1",
-            "      api_key: EMPTY",
+            f"      model: openai/{r.model}",
+            f"      api_base: http://host.docker.internal:{r.port}/v1",
+            f"      api_key: {ak}",
             *ROUTE_PARAMS,
-            *([] if responses else [RESPONSES_BRIDGE]),
+            *([] if r.responses else [RESPONSES_BRIDGE]),
         ]
-        lines += model_info(ctx, facts.get(port, {}), native) + [""]
+        lines += model_info(r.ctx, facts.get(r.port, {}), r.native_messages) + [""]
     if not live:
         lines.append("  # (nothing serving right now — no local routes)")
     return "\n".join(lines).rstrip() + "\n" + END + "\n", len(seen)
@@ -484,7 +633,10 @@ def main() -> int:
     reg_ports = {str(p) for p in ports}
     live_ports = {str(r[0]) for r in live}
 
-    block, n_routes = render_block(live, port_facts(variants))
+    warnings: list = []
+    block, n_routes = render_block(live, port_facts(variants), a.root, warnings)
+    for w in warnings:
+        print(f"[litellm-sync] WARN: {w}", file=sys.stderr)
     out = (prune(src[:b], reg_ports, live_ports)
            + block
            + local_routes(a.root)
@@ -504,7 +656,7 @@ def main() -> int:
     # with its keys) and under the test seam.
     if not a.no_restart and os.environ.get("C3_LITELLM_FAKE_LIVE") is None:
         names = gateway_env_names()
-        missing = litellm_local.keys_missing_from_gateway(a.root, names) if names is not None else []
+        missing = litellm_local.keys_missing_from_gateway(a.root, names, runtime_path=runtime) if names is not None else []
         if missing:
             print(f"[litellm-sync] WARN: the running gateway has no {', '.join(missing)}, which your routes use. "
                   "A restart can't add it; recreate the gateway: bash scripts/gpu-mode.sh gateway", file=sys.stderr)

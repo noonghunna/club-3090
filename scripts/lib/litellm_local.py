@@ -63,6 +63,7 @@ ROUTES_FILE = "config.local.yaml"
 LEGACY_ROUTES = Path("services/litellm") / ROUTES_FILE
 LEGACY_KEYS = Path("services/litellm/local.env")
 CATALOG = Path("services/litellm/config.yaml")
+RUNTIME = Path("services/litellm") / "config.runtime.yaml"
 KEYS_VAR = "CLUB3090_LITELLM_ROUTE_KEYS"
 # The compose sets these itself (`environment:` wins over an env_file), so they are
 # never handed over as route keys.
@@ -125,32 +126,40 @@ def _refs(text: str) -> set:
     return out
 
 
-def referenced_keys(root, environ=None, override: bool = True) -> list:
+def referenced_keys(root, environ=None, override: bool = True, runtime_path=None) -> list:
     """The key names the gateway's routes read from its environment: the catalog
-    config.yaml's and this rig's own routes' (``active_routes``), minus the ones
-    the compose sets itself."""
+    config.yaml's, the runtime view's (a keyed engine's route references its key
+    there, #1794), and this rig's own routes' (``active_routes``), minus the ones
+    the compose sets itself. ``runtime_path`` overrides where the runtime view
+    is: the sync renders the file the container MOUNTS, which from a worktree
+    is not ``root``'s copy — scanning the wrong one asks the gateway for keys
+    its running config never references."""
     names = set()
     if root is not None:
         names |= _refs(_read(Path(root) / CATALOG))
+    if runtime_path is not None:
+        names |= _refs(_read(runtime_path))
+    elif root is not None:
+        names |= _refs(_read(Path(root) / RUNTIME))
     path, _origin = active_routes(root, environ, override)
     if path is not None:
         names |= _refs(_read(path))
     return sorted(names - COMPOSE_OWN)
 
 
-def route_keys(root, environ=None) -> dict:
+def route_keys(root, environ=None, runtime_path=None) -> dict:
     """``{NAME: value}`` for each referenced key a settings file sets (the shell
     wins, as in every launch). A key no settings file sets is left to the legacy
     local.env, which the compose still loads."""
     res = club_config.resolve(root, environ)
-    return {k: res[k][1] for k in referenced_keys(root, environ) if k in res}
+    return {k: res[k][1] for k in referenced_keys(root, environ, runtime_path=runtime_path) if k in res}
 
 
-def write_route_keys_file(root, environ=None):
+def write_route_keys_file(root, environ=None, runtime_path=None):
     """Write the referenced keys (``route_keys``) to a new 0600 temp file that
     ``docker compose`` reads back exactly, and return its path; the caller removes
     it. ``None`` (and no file) when no route needs a saved key."""
-    keys = route_keys(root, environ)
+    keys = route_keys(root, environ, runtime_path=runtime_path)
     if not keys:
         return None
     text = "".join(f"{k}={club_config.compose_env_quote(v)}\n" for k, v in keys.items())
@@ -166,14 +175,15 @@ def write_route_keys_file(root, environ=None):
     return Path(name)
 
 
-def keys_missing_from_gateway(root, have_names, environ=None) -> list:
+def keys_missing_from_gateway(root, have_names, environ=None, runtime_path=None) -> list:
     """The keys a route uses that a gateway created with the variables ``have_names``
     lacks, though they are saved (in your settings, or the older local.env): a
     route added after the gateway started, say, or a key saved since. A restart
     can't add them — a container keeps the environment it was created with — so
-    the caller says to recreate it. ``have_names`` are variable NAMES only."""
-    wanted = set(referenced_keys(root, environ))
-    saved = set(route_keys(root, environ))
+    the caller says to recreate it. ``have_names`` are variable NAMES only;
+    ``runtime_path`` is where the RUNNING gateway's runtime view lives."""
+    wanted = set(referenced_keys(root, environ, runtime_path=runtime_path))
+    saved = set(route_keys(root, environ, runtime_path=runtime_path))
     if root is not None:
         saved |= set(club_config.parse_env_file(Path(root) / LEGACY_KEYS))
     return sorted((wanted & saved) - set(have_names))

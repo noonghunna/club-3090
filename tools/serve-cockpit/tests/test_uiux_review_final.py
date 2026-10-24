@@ -467,12 +467,18 @@ async def test_pane_headings_wrap_instead_of_truncating_at_80():
 
 
 @pytest.mark.asyncio
-async def test_catalog_hint_shows_the_sort_and_columns_keys_at_80():
+async def test_catalog_hint_shows_the_sort_and_columns_keys_at_80(tmp_path):
     """#18 — `#catalog-hint` wraps (it is in the `width: 1fr` list) but was
     `height: 1`, which clipped every wrapped row but the first.  At 80 cols the
     line stopped at "[c]", so `[s] sort` and `[|] columns` never rendered at any
     width below ~159 — and neither key had another teaching surface."""
     app, _, _ = make_app()
+    # The status line carries a "⚠ model dir not found" banner when the bundled
+    # default model dir is missing on the machine running the suite; wrapped, it
+    # is six rows that push the hint out of the 80-col pane.  Pin an existing
+    # dir (the established _model_dir test seam) so the line length is the same
+    # on every rig.
+    app._data._model_dir = str(tmp_path)
     async with app.run_test(size=(80, 24)) as pilot:
         await _settle(pilot)
         await _settle(pilot)
