@@ -141,6 +141,60 @@ assert_not_contains "$SOAK_OUT" "decode_tps=0.0 "
 mixed_basis="$(tr -d '\r' < "${SOAK_ENV_DIR}/run-mixed/turn-log.csv" | cut -d, -f10 | tail -n +2 | paste -sd, -)"
 [[ "$mixed_basis" == "wall,wall,wall" ]] || fail "expected the canvas classification to latch, got: '$mixed_basis'"
 
+# ── 4b. whole replies (#1897): an AR engine that sends a tool call whole ────
+# QEngine streams role, ONE tool_calls chunk, finish. The window to the finish
+# chunk is ~0, so master read every such turn as a block-diffusion canvas: a
+# wall-derived "decode" figure (mostly prefill), the engine counter discarded,
+# and the whole run latched to canvas.
+cat > "${PLAN_DIR}/whole" <<'PLAN'
+whole:31900
+PLAN
+
+# (a) no engine counter: no figure, labelled, never wall-derived, no latch.
+soak_stub_start "${PLAN_DIR}/whole"
+soak_run "$ROOT_DIR" "${SOAK_ENV_DIR}/run-whole"
+soak_stub_stop
+whole_summary="$(cat "${SOAK_ENV_DIR}/run-whole/summary.md")"
+assert_not_contains "$SOAK_OUT" "canvas"
+assert_not_contains "$whole_summary" "canvas"
+assert_not_contains "$SOAK_OUT" "decode_tps=0.0 "
+assert_contains "$SOAK_OUT" "decode_tps=n/a"
+assert_contains "$SOAK_OUT" "the reply arrived whole in one output chunk"
+assert_contains "$SOAK_OUT" "whole_replies        10 / 10"
+assert_contains "$whole_summary" "10 no decode figure (reply arrived whole in one output chunk, no engine counter) of 10 turn(s)"
+assert_contains "$whole_summary" "10 of 10 turn(s) arrived whole"
+assert_contains "$whole_summary" "TTFT is the time to the whole reply, decode included"
+whole_basis="$(tr -d '\r' < "${SOAK_ENV_DIR}/run-whole/turn-log.csv" | cut -d, -f10,12 | tail -n +2 | sort -u | paste -sd' ' -)"
+[[ "$whole_basis" == "whole,1" ]] || fail "expected every whole reply as basis 'whole' with whole_reply=1, got: '$whole_basis'"
+[[ "$SOAK_RC" -eq 0 ]] || fail "a clean whole-reply run should exit 0, got $SOAK_RC"
+
+# (b) an engine counter answers: the figure is the engine's own decode rate.
+soak_stub_start "${PLAN_DIR}/whole" STUB_TPOT_TPS=123.456
+soak_run "$ROOT_DIR" "${SOAK_ENV_DIR}/run-whole-counter"
+soak_stub_stop
+whole_counter_summary="$(cat "${SOAK_ENV_DIR}/run-whole-counter/summary.md")"
+assert_not_contains "$SOAK_OUT" "canvas"
+assert_contains "$SOAK_OUT" "decode_tps=123.456"
+assert_contains "$SOAK_OUT" "engine-reported: /metrics time_per_output_token_seconds; the reply arrived whole, so its TTFT includes its decode"
+assert_contains "$whole_counter_summary" "| p50 decode TPS | 123.46 |"
+assert_contains "$whole_counter_summary" "10 of 10 turn(s) arrived whole: "
+assert_contains "$whole_counter_summary" "10 of them carry the engine's own decode counter"
+assert_contains "$(tr -d '\r' < "${SOAK_ENV_DIR}/run-whole-counter/turn-log.csv" | tail -1)" ",engine,prom-tpot,1"
+
+# (c) a whole reply must not latch the run to canvas: later narrow turns stay
+# autoregressive (compare 4. above, where a real canvas turn does latch).
+cat > "${PLAN_DIR}/whole-then-narrow" <<'PLAN'
+whole:31900
+narrow:31900
+narrow:31900
+PLAN
+soak_stub_start "${PLAN_DIR}/whole-then-narrow"
+SOAK_SESSIONS=1 SOAK_TURNS=3 soak_run "$ROOT_DIR" "${SOAK_ENV_DIR}/run-whole-narrow"
+soak_stub_stop
+assert_not_contains "$SOAK_OUT" "canvas"
+wn_basis="$(tr -d '\r' < "${SOAK_ENV_DIR}/run-whole-narrow/turn-log.csv" | cut -d, -f10 | tail -n +2 | paste -sd, -)"
+[[ "$wn_basis" == "whole,unmeasurable,unmeasurable" ]] || fail "a whole reply must not latch canvas, got: '$wn_basis'"
+
 # ── 5. autoregressive regression guard — byte-identical to origin/master ────
 # The leg that matters most. Two plans: a normal stream (measurable window) and
 # the #849 fast-burst shape (82 ms window — sub-threshold but NOT zero). Both
@@ -175,7 +229,9 @@ if ! git archive origin/master scripts/lib 2>/dev/null | tar -x -C "${BASE_TREE}
   echo "SKIP: origin/master:scripts/lib not available — cannot run the byte-identity leg" >&2
   have_base=0
 fi
-for f in soak-test.sh soak-helper.py; do
+# preflight.sh too: the base soak-test.sh sources it when present (its thinking-control
+# detection), so without it the base run took a path the new run did not.
+for f in soak-test.sh soak-helper.py preflight.sh; do
   if ! git show "origin/master:scripts/${f}" > "${BASE_TREE}/scripts/${f}" 2>/dev/null; then
     echo "SKIP: origin/master:scripts/${f} not available — cannot run the byte-identity leg" >&2
     have_base=0
@@ -198,7 +254,7 @@ if [[ "$have_base" == "1" ]]; then
     exit 1
   done < <({ command grep -oE 'pwd\)/[A-Za-z0-9_./-]+' "${BASE_TREE}/scripts/soak-test.sh" 2>/dev/null | sed 's|pwd)/||'
              command grep -oE '\$\{(REPO_ROOT|ROOT_DIR)\}/scripts/[A-Za-z0-9_./-]+' "${BASE_TREE}/scripts/soak-test.sh" 2>/dev/null \
-               | sed -E 's|^\$\{(REPO_ROOT|ROOT_DIR)\}/scripts/||'; } | sort -u)
+               | sed -E 's#^\$\{(REPO_ROOT|ROOT_DIR)\}/scripts/##'; } | sort -u)
 fi
 
 normalise() {

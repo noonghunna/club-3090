@@ -151,7 +151,9 @@ if ! git archive origin/master scripts/lib 2>/dev/null | tar -x -C "${BASE_TREE}
   echo "SKIP: origin/master:scripts/lib not available — cannot run the byte-identity leg" >&2
   BASE_TREE=""
 fi
-for f in soak-test.sh soak-helper.py; do
+# preflight.sh too: the base soak-test.sh sources it when present (its thinking-control
+# detection), so without it the base run took a path the new run did not.
+for f in soak-test.sh soak-helper.py preflight.sh; do
   [[ -n "$BASE_TREE" ]] || break   # lib/ already missing: nothing to write into
   if ! git show "origin/master:scripts/${f}" > "${BASE_TREE}/scripts/${f}" 2>/dev/null; then
     echo "SKIP: origin/master:scripts/${f} not available — cannot run the byte-identity leg" >&2
@@ -175,7 +177,7 @@ if [[ -n "$BASE_TREE" ]]; then
     exit 1
   done < <({ command grep -oE 'pwd\)/[A-Za-z0-9_./-]+' "${BASE_TREE}/scripts/soak-test.sh" 2>/dev/null | sed 's|pwd)/||'
              command grep -oE '\$\{(REPO_ROOT|ROOT_DIR)\}/scripts/[A-Za-z0-9_./-]+' "${BASE_TREE}/scripts/soak-test.sh" 2>/dev/null \
-               | sed -E 's|^\$\{(REPO_ROOT|ROOT_DIR)\}/scripts/||'; } | sort -u)
+               | sed -E 's#^\$\{(REPO_ROOT|ROOT_DIR)\}/scripts/##'; } | sort -u)
 fi
 
 soak_stub_start "${PLAN_DIR}/all-clean"

@@ -697,7 +697,7 @@ def engine_rate_from_logs(text):
     return None, ""
 
 
-def decode_label(basis, source, window_ms):
+def decode_label(basis, source, window_ms, whole=False):
     """Provenance for one turn's decode figure (#1267).
 
     The contract: an UNMEASURABLE turn and a genuine SILENT-EMPTY turn must
@@ -705,15 +705,25 @@ def decode_label(basis, source, window_ms):
     so a harmless turn and the failure soak exists to catch were byte-identical
     in the log and the reader had to redo `wall - ttft` by hand to tell them
     apart.
+
+    `whole` marks a reply that arrived in one output chunk (#1897): its TTFT is
+    the time to the WHOLE reply, so the label says so next to the figure.
     """
     if basis == "engine":
-        return ENGINE_SOURCE_LABELS.get(source, "engine-reported: %s" % (source or "engine counter"))
+        label = ENGINE_SOURCE_LABELS.get(source, "engine-reported: %s" % (source or "engine counter"))
+        if whole:
+            label += "; the reply arrived whole, so its TTFT includes its decode"
+        return label
     if basis == "decode":
         return "client-timed: %d ms decode window" % window_ms
     if basis == "wall":
         return "wall-derived, canvas"
     if basis == "empty":
         return "SILENT-EMPTY: 0 completion tokens"
+    if basis == "whole":
+        return ("no decode figure: the reply arrived whole in one output chunk, so there is "
+                "no decode window to time, and no engine counter was available; its TTFT "
+                "includes its decode")
     if basis == "unmeasurable":
         return ("no decode figure: %d ms decode window is under the %d ms client-timing "
                 "floor and no engine counter was available" % (window_ms, int(DECODE_FLOOR_MS)))
@@ -764,6 +774,8 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
     t0 = time.time()
     ttft = None
     completion_tokens = 0
+    choice_chunks = 0  # chunks carrying `choices`
+    out_chunks = 0     # of those, the ones carrying output (the TTFT rule)
     status = 0
     error = ""
     # Continuous-mode response capture — accumulate streamed deltas so the
@@ -789,6 +801,7 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
                     error = str(chunk["error"])[:240]
                 choices = chunk.get("choices") or []
                 if choices:
+                    choice_chunks += 1
                     delta = choices[0].get("delta") or {}
                     # vLLM emits reasoning under either `delta.reasoning_content`
                     # (older qwen3 reasoner path) or `delta.reasoning` (current
@@ -796,8 +809,10 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
                     # both so the soak harness doesn't go silent when the
                     # underlying field name shifts under us.
                     reasoning_delta = delta.get("reasoning_content") or delta.get("reasoning")
-                    if ttft is None and (delta.get("content") or reasoning_delta or delta.get("tool_calls")):
-                        ttft = time.time() - t0
+                    if delta.get("content") or reasoning_delta or delta.get("tool_calls"):
+                        out_chunks += 1
+                        if ttft is None:
+                            ttft = time.time() - t0
                     # Accumulate streamed parts. vLLM splits content/reasoning
                     # across many small deltas; tool_calls stream as indexed
                     # objects whose fields (name, arguments) arrive in pieces.
@@ -866,6 +881,9 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
     #   empty         completion_tokens == 0 — genuine silent-empty. Keeps the
     #                 0.0 that the silent-empty discriminator depends on; this
     #                 case must not regress (club-3090 #43, #47).
+    #   whole         the reply arrived in ONE output chunk (#1897) and no
+    #                 engine counter answered. No figure: decode_tps stays 0.0
+    #                 in the CSV, like `unmeasurable`, and is never rendered.
     #   unmeasurable  window unmeasurable on a run NOT classified as canvas and
     #                 no engine counter available. decode_tps stays 0.0 in the
     #                 CSV for column compatibility, but it is NOT a measurement
@@ -893,7 +911,19 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
     granularity = (os.environ.get("SOAK_DECODE_GRANULARITY") or "auto").strip().lower()
     if granularity not in ("auto", "canvas", "autoregressive"):
         granularity = "auto"
-    canvas_signature = completion_tokens > 0 and (
+    # A reply that arrived WHOLE (#1897). QEngine sends a tool call once it is
+    # complete: role, ONE tool_calls chunk, finish. TTFT then lands on the
+    # finished call and the window to the finish chunk is ~0.1 ms, which is the
+    # canvas signature, so every tool-call turn used to be read as a
+    # block-diffusion canvas: a wall-derived "decode" figure that is mostly
+    # prefill (12-15 tok/s on #1897, against ~120 from the engine's own counter,
+    # which was discarded), and the run latched to canvas. One output chunk is
+    # one sample, so no client-side window exists, however wide it looks; the
+    # engine's counter is the only decode figure such a turn can have. Same rule
+    # as bench-agentic (#1864): count the chunks that carry output. A canvas
+    # still arrives as ONE chunk in all (#809), so it is not a whole reply here.
+    whole_reply = completion_tokens > 0 and out_chunks == 1 and choice_chunks > 1
+    canvas_signature = completion_tokens > 0 and not whole_reply and (
         single_chunk or decode_s * 1000.0 <= canvas_window_ms
     )
     # Branch order is load-bearing and unchanged from #809 for the client-side
@@ -910,6 +940,17 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
         decode_tps = 0.0
         decode_basis = "empty"
         decode_source = "none"
+    elif whole_reply and granularity != "canvas":
+        # An autoregressive engine that buffered its reply: its own counter is
+        # a real decode rate. Without one there is no figure, never a wall one.
+        if engine_tps is not None:
+            decode_tps = engine_tps
+            decode_basis = "engine"
+            decode_source = engine_source
+        else:
+            decode_tps = 0.0
+            decode_basis = "whole"
+            decode_source = "none"
     elif measurable_window or not canvas_turn:
         if engine_tps is not None:
             decode_tps = engine_tps
@@ -950,8 +991,10 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
         "decode_tps": decode_tps,
         "decode_basis": decode_basis,
         "decode_source": decode_source,
-        "decode_label": decode_label(decode_basis, decode_source, round(decode_s * 1000)),
+        "decode_label": decode_label(decode_basis, decode_source, round(decode_s * 1000),
+                                     whole=whole_reply),
         "decode_window_ms": round(decode_s * 1000),
+        "whole_reply": whole_reply,
         "completion_tokens": completion_tokens,
         # Continuous-mode capture (ignored in fresh mode):
         "content": "".join(content_parts)[:4000],
@@ -979,6 +1022,8 @@ def cmd_append_log(log_path, session, turn, vram, metrics_path):
                 # reading the pre-#809 column order positionally still lines up.
                 metrics.get("decode_basis", "decode"),
                 metrics.get("decode_source", ""),
+                # whole_reply (#1897): the reply arrived in one output chunk.
+                1 if metrics.get("whole_reply") else 0,
             ]
         )
 
@@ -999,7 +1044,8 @@ def cmd_metric(metrics_path):
     basis = m.get("decode_basis", "decode")
     source = m.get("decode_source", "") or "none"
     window_ms = int(m.get("decode_window_ms", 0) or 0)
-    label = m.get("decode_label") or decode_label(basis, source, window_ms)
+    label = m.get("decode_label") or decode_label(basis, source, window_ms,
+                                                  whole=bool(m.get("whole_reply")))
     print(m.get("status", 0), m.get("t_ms", 0), m.get("ttft_ms", 0), m.get("decode_tps", 0),
           err_flag, basis, window_ms, source, label)
 
@@ -1043,6 +1089,8 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
         has_decode_basis = "decode_basis" in (reader.fieldnames or [])
         # decode_source column added 2026-09-13 (#1268). Absent on older CSVs.
         has_decode_source = "decode_source" in (reader.fieldnames or [])
+        # whole_reply column added 2026-10-31 (#1897). Absent on older CSVs.
+        has_whole_reply = "whole_reply" in (reader.fieldnames or [])
         for row in reader:
             for key in ("session_id", "turn_id", "t_ms", "vram_mib", "ttft_ms", "status"):
                 row[key] = int(float(row[key] or 0))
@@ -1051,6 +1099,7 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
             row["completion_tokens"] = int(float(row.get("completion_tokens", 0) or 0))
             row["decode_basis"] = (row.get("decode_basis") or "decode") if has_decode_basis else "decode"
             row["decode_source"] = (row.get("decode_source") or "") if has_decode_source else ""
+            row["whole_reply"] = has_whole_reply and (row.get("whole_reply") or "0").strip() == "1"
             rows.append(row)
 
     sessions = sorted({r["session_id"] for r in rows})
@@ -1099,6 +1148,11 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
     engine_rows = [r for r in rows if r["decode_basis"] == "engine"]
     stream_rows = [r for r in rows if r["decode_basis"] == "decode"]
     unmeasurable_rows = [r for r in rows if r["decode_basis"] == "unmeasurable"]
+    # Replies that arrived whole (#1897): `whole_rows` had no engine counter and
+    # carry no figure; `whole_any` is every such reply, counted or not, whose
+    # TTFT therefore includes its decode.
+    whole_rows = [r for r in rows if r["decode_basis"] == "whole"]
+    whole_any = [r for r in rows if r["whole_reply"]]
     empty_rows = [r for r in rows if r["decode_basis"] == "empty"]
     engine_sources = sorted({r["decode_source"] for r in engine_rows if r["decode_source"]})
     tps = [r["decode_tps"] for r in measured_rows if realistic_row(r)]
@@ -1258,6 +1312,10 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
         basis_seg.append(
             f"{len(unmeasurable_rows)} unmeasurable (decode window under the "
             f"{int(DECODE_FLOOR_MS)} ms client-timing floor, no engine counter)")
+    if whole_rows:
+        basis_seg.append(
+            f"{len(whole_rows)} no decode figure (reply arrived whole in one output "
+            f"chunk, no engine counter)")
     if derived:
         basis_seg.append(f"{len(derived)} wall-derived (canvas)")
     if empty_rows:
@@ -1276,7 +1334,7 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
 
     basis_lines = []
     basis_rows = []
-    if derived or engine_rows or unmeasurable_rows or ceiling_dropped:
+    if derived or engine_rows or unmeasurable_rows or whole_rows or ceiling_dropped:
         basis_text = (
             f"- Decode-window basis: {' / '.join(basis_seg)} of {len(rows)} turn(s). "
             f"The decode percentiles and retention below are computed over the {len(tps)} "
@@ -1290,6 +1348,16 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
                 "INCLUDES prefill and is not a decode rate."
             )
         basis_lines = [basis_text]
+    if whole_any:
+        counted = sum(1 for r in whole_any if r["decode_basis"] == "engine")
+        basis_lines.append(
+            f"- {len(whole_any)} of {len(rows)} turn(s) arrived whole: the engine sent the "
+            f"reply (typically a tool call) in ONE output chunk once it was complete, so the "
+            f"client saw no decode window"
+            + (f"; {counted} of them carry the engine's own decode counter" if counted else "")
+            + ". Their TTFT is the time to the whole reply, decode included, so the TTFT "
+            f"figures below also carry reply length, not only the prompt read."
+        )
     if ceiling_dropped:
         basis_lines.append(
             f"- ⚠️ {len(ceiling_dropped)} client-timed turn(s) exceeded "
@@ -1377,6 +1445,9 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out,
     print(f"[soak]   p50_decode_tps       {percentile(tps, 0.50):.2f}")
     if basis_lines:
         print(f"[soak]   decode_basis         {' / '.join(basis_seg)} of {len(rows)}")
+    if whole_any:
+        print(f"[soak]   whole_replies        {len(whole_any)} / {len(rows)}  "
+              f"(one output chunk: no client decode window; TTFT includes their decode)")
     if derived:
         print(f"[soak]   p50_wall_tps_canvas  {percentile(dtps, 0.50):.2f}  (includes prefill — NOT a decode rate)")
     print(f"[soak]   p95_ttft_ms          {percentile(ttft, 0.95):.0f}")
