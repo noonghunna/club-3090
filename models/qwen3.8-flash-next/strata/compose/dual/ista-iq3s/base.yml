@@ -17,10 +17,11 @@
 #   Caveats:   Not gate-passing yet: IQ3_S quality unmeasured (8-pack pending). Up to 3 requests at once (Strata's pick here).
 #              The first start needs the network (setup range-reads ~5 GB of MTP tensors from
 #              Qwen/Qwen3.8-Flash-Next) and ~93 GB of free host RAM when the
-#              auto PLE policy keeps the n-gram table in RAM (it decides from free RAM at that
-#              moment, not the disk type — an SSD usually reads it direct, but a big-CONTEXT boot
-#              can lock it and then starve the expert arena; STRATA_PLE_AUTO_RAM=0 forces disk
-#              reads). Host
+#              n-gram table lands in RAM — either setup's --ple-io ram for a rotational disk
+#              (which STRATA_PLE_AUTO_RAM=0 does NOT override) or the engine's free-RAM policy
+#              locking it on an SSD boot (it counts only the table + expert arena, so a
+#              big-CONTEXT boot can lock it and then starve the arena; =0 keeps the SSD on
+#              direct disk reads). Host
 #              needs NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only. Strata reasons by default,
 #              at the template's xhigh (as the bucko-vllm Flash-Next slugs). Launch settings
 #              (REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, SPEC_N,
@@ -99,11 +100,16 @@ services:
       STRATA_GDN_TC:
       STRATA_GDN_CONVL2:
       # Strata's PLE (n-gram) residency switch: 0 keeps the ~27 GiB table on direct disk
-      # reads instead of page-locking it in RAM. The residency policy's free-RAM check
-      # counts only the table + the expert arena — not the KV stream, the conversation
-      # cache or the batch sessions that fill right after it — so on a big-context boot
-      # the auto choice can lock the table and still starve the arena. 0 is the right
-      # call whenever the model disk is an SSD. Unset = Strata's own auto policy.
+      # reads instead of page-locking it in RAM — but only for the engine's free-RAM
+      # residency policy, which decides for --ple-io direct. On a rotational disk setup
+      # itself writes --ple-io ram into the run config when the RAM holds the table, and
+      # 0 does NOT override that (verified on the reference rig: the boot still logged
+      # "PLE table locked in RAM (--ple-io ram)"). The policy's free-RAM check counts
+      # only the table + the expert arena — not the KV stream, the conversation cache or
+      # the batch sessions that fill right after it — so on an SSD a big-context boot can
+      # lock the table and still starve the arena. 0 is the right call for an SSD model
+      # disk at a raised CONTEXT (the hang needs the big arena; at stock context the lock
+      # costs only 2-3% of prompt speed, per upstream). Unset = Strata's own auto policy.
       STRATA_PLE_AUTO_RAM:
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/qwen3.8-flash-next-gsq-rco-gguf/IQ3_S:/gguf:ro"

@@ -23,10 +23,11 @@
 #              (8-pack pending). NEVER BOOTED on the reference rig (2 GPUs): multi4 is community-
 #              validated by design; Strata's layer split takes any number of cards (its
 #              docs/MULTI_GPU.md shows a 4-card split). Up to 3 requests at once (Strata's pick here). Needs ~93 GB of free
-#              host RAM when the auto PLE policy keeps the 28.8 GB n-gram table in RAM (it decides from
-#              free RAM at that moment, not the disk type — an SSD usually reads it direct, but a
-#              big-CONTEXT boot can lock it and then starve the expert arena; STRATA_PLE_AUTO_RAM=0
-#              forces disk reads), NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only. Strata reasons by
+#              host RAM when the 28.8 GB n-gram table lands in RAM — either setup's --ple-io ram
+#              for a rotational disk (which STRATA_PLE_AUTO_RAM=0 does NOT override) or the
+#              engine's free-RAM policy locking it on an SSD boot (it counts only the table +
+#              expert arena, so a big-CONTEXT boot can lock it and then starve the arena;
+#              =0 keeps the SSD on direct disk reads), NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only. Strata reasons by
 #              default, at the template's xhigh (what SC117 recommends; as the bucko-vllm Flash-Next slugs).
 #              Launch settings (REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, SPEC_N,
 #              ROPE_SCALING, ROPE_SCALE, the sampler;

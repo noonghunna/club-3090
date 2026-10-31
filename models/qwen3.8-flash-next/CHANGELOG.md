@@ -138,17 +138,24 @@ Quality (`quality-test.sh --full`, benchlocal-cli v0.11.0, on v0.31.0, thinking 
 
 ## 2026-10-31 — PLE residency switch on every Strata compose (`STRATA_PLE_AUTO_RAM`)
 
-- The engine's PLE residency policy decides from free RAM at the moment of the check, not
-  the disk type: it counts only the ~27 GiB n-gram table and the 46.8 GiB expert arena, not
-  the KV stream, the conversation cache or the batch sessions that fill right after it. A
-  big-CONTEXT boot can therefore page-lock the table and then starve the arena — measured
-  2026-10-31 at CONTEXT=524288 on an SSD rig: 46.8 GiB needed, 34.6 available, and the host
-  hung (the compose headers' "rotational disk" framing predates the finding; reworded).
+- Two mechanisms put the n-gram table in RAM (review on this branch, verified on the
+  reference rig): **setup, by disk type** — on a rotational disk setup writes
+  `--ple-io ram` into the run config when the RAM holds the table, and
+  `STRATA_PLE_AUTO_RAM=0` does NOT override that (the boot still logged
+  `PLE table locked in RAM (--ple-io ram)` with the switch set); and **the engine's
+  residency policy, by free RAM at the moment of the check** (0.2.7+, decides only for
+  `--ple-io direct`) — it counts only the ~27 GiB table and the 46.8 GiB expert arena,
+  not the KV stream, the conversation cache or the batch sessions that fill right after
+  it. A big-CONTEXT boot on an SSD can therefore page-lock the table and then starve
+  the arena — measured 2026-10-31 at CONTEXT=524288 on an SSD rig: 46.8 GiB needed,
+  34.6 available, and the host hung. Either RAM path needs the ~93 GB figure.
 - All five Strata composes now forward `STRATA_PLE_AUTO_RAM` as a bare launch-env key
-  (unset = Strata's auto policy, the default slug unchanged). `0` keeps the table on direct
-  disk reads — the right call on an SSD. Proven at CONTEXT=524288 + yarn ×2: arena fills
-  clean, `verify-stress.sh` ceiling ladder 6/6 to 481K tokens, MemAvailable floor 6.7 GiB,
-  zero swap.
+  (unset = Strata's auto policy, the default slug unchanged). `0` keeps the table on
+  direct disk reads — the right call for an SSD model disk at a raised CONTEXT (at
+  stock context the lock costs 2–3% of prompt speed per upstream, and on a rotational
+  disk setup's own `--ple-io ram` wins regardless). Proven at CONTEXT=524288 + yarn ×2:
+  arena fills clean, `verify-stress.sh` ceiling ladder to 481K tokens, MemAvailable
+  floor 6.7 GiB, zero swap.
 - `strip_managed` also learned the third rope state the review of this branch found: our
   `ROPE_SCALING`/`ROPE_SCALE` overriding setup's own auto-resolution in place (the flag in
   `args` AND in `args_written`, different value) — removing the settings now restores
