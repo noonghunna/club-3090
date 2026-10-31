@@ -28,12 +28,12 @@ ok()  { echo "  ✓ $1"; }
 bash -n "$S" 2>/dev/null || bad "wrapper syntax" "clean bash -n" "syntax error"
 python3 -c "import ast,sys; ast.parse(open('$P').read())" 2>/dev/null || bad "probe syntax" "parseable python" "syntax error"
 
-# --- refusal: MODEL is required. A wrong/absent model 404s, which reads as a
-# dead server — the exact confusion this must not create.
+# --- refusal: MODEL unset and nothing to resolve it from (a dead URL; the script asks the endpoint
+# otherwise). A guessed model 404s, which reads as a dead server — the exact confusion this must not create.
 out="$(URL=http://127.0.0.1:9 MODEL= bash "$S" 2>&1)"; rc=$?
 [[ $rc -eq 2 ]] || bad "missing MODEL exits 2" "2" "$rc"
 command grep -qi '404' <<<"$out" || bad "missing-MODEL message explains the 404 risk" "a mention of 404" "absent"
-ok "refuses without MODEL, and says why it matters"
+ok "refuses when no model can be resolved, and says why it matters"
 
 # --- refusal: bad MODE
 out="$(URL=http://127.0.0.1:9 MODEL=x MODE=sideways bash "$S" 2>&1)"; rc=$?
