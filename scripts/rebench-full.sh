@@ -241,6 +241,18 @@ case "${WITH_8PACK}" in
   both)  RUN_8PACK_OFF=1; RUN_8PACK_ON=1 ;;
   *) echo "✗ --with-8pack-thinking must be off|on|both (got: '${WITH_8PACK}')" >&2; exit 2 ;;
 esac
+# The 8-pack runs last, an hour or more in. Check now that benchlocal-cli can be found, so a run that can't
+# score quality says so before it starts, not after every other step (#1888's 512K rebench). Also
+# puts ~/.local/bin on PATH for quality-test.sh when the shell lacks it (scripts/lib/benchlocal-path.sh).
+if [[ -n "${WITH_8PACK}" ]]; then
+  # shellcheck source=lib/benchlocal-path.sh
+  source "$ROOT_DIR/scripts/lib/benchlocal-path.sh"
+  if ! club_benchlocal_on_path; then
+    echo "✗ --with-8pack-thinking needs benchlocal-cli, which isn't on PATH or in ~/.local/bin." >&2
+    echo "  Install it (docs/QUALITY_TEST.md), add its directory to PATH, or drop --with-8pack-thinking." >&2
+    exit 2
+  fi
+fi
 
 # --- endpoint + model auto-detect ------------------------------------------
 # Source preflight if available; it sets URL + CONTAINER from running compose.

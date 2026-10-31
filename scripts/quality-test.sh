@@ -701,9 +701,16 @@ if [[ -n "$RESUME" ]]; then
   fi
 fi
 
-if ! command -v benchlocal-cli >/dev/null 2>&1; then
+# Not on PATH is not the same as not installed: a non-login shell (cron, a systemd unit, some IDE or tmux
+# setups) often lacks ~/.local/bin, where pip --user / uv tool / pipx put it (scripts/lib/benchlocal-path.sh).
+# shellcheck source=lib/benchlocal-path.sh
+source "${ROOT_DIR}/scripts/lib/benchlocal-path.sh"
+if ! club_benchlocal_on_path; then
   cat >&2 <<EOF
-✗ benchlocal-cli not found on \$PATH
+✗ benchlocal-cli not found on \$PATH, nor in ~/.local/bin (or \$UV_TOOL_BIN_DIR / \$XDG_BIN_HOME)
+
+Installed already? Then it is somewhere this shell can't see. Run \`command -v benchlocal-cli\` in the shell
+where it works, and add that directory to PATH here.
 
 Install it (one-time; benchlocal-cli needs Python 3.11+):
   pip install git+https://github.com/noonghunna/benchlocal-cli.git
