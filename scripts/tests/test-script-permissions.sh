@@ -32,6 +32,7 @@ SOURCED_OK = {
     "scripts/lib/club-containers.sh",       # sourced by report/health/soak/gpu-mode/preflight
     "scripts/lib/engine-restart-guard.sh", # sourced by quality-test.sh / bench.sh
     "scripts/lib/engine-auth.sh",           # sourced by preflight.sh / switch.sh (#1763)
+    "scripts/lib/benchlocal-path.sh",       # sourced by quality-test.sh / rebench-full.sh
     "scripts/lib/gpu-select.sh",            # sourced by launch.sh
     "scripts/lib/p2p-state.sh",             # sourced by preflight.sh
     "scripts/lib/report_calib.sh",          # sourced by test-report-calib.sh
