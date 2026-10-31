@@ -16,7 +16,10 @@
 #   Caveats:   Not gate-passing yet: IQ3_S quality unmeasured (8-pack pending). Up to 3 requests at once (Strata's pick here).
 #              The first start needs the network (setup range-reads ~5 GB of MTP tensors from
 #              Qwen/Qwen3.8-Flash-Next) and ~93 GB of free host RAM when the
-#              model disk is rotational (setup then keeps the n-gram table in RAM; less on an SSD). Host
+#              auto PLE policy keeps the n-gram table in RAM (it decides from free RAM at that
+#              moment, not the disk type — an SSD usually reads it direct, but a big-CONTEXT boot
+#              can lock it and then starve the expert arena; STRATA_PLE_AUTO_RAM=0 forces disk
+#              reads). Host
 #              needs NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only. Strata reasons by default,
 #              at the template's xhigh (as the bucko-vllm Flash-Next slugs). Launch settings
 #              (REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, SPEC_N,
@@ -93,6 +96,10 @@ services:
       # DeltaNet prompt kernels on the tensor cores); 0 turns each off.
       STRATA_GDN_TC:
       STRATA_GDN_CONVL2:
+      # PLE (n-gram) residency switch: 0 = direct disk reads instead of page-locking the ~27 GiB
+      # table; the auto policy can lock it and still starve the expert arena at big CONTEXT
+      # (the dual ista-iq3s compose's block has the full note). Unset = Strata's auto policy.
+      STRATA_PLE_AUTO_RAM:
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/qwen3.8-flash-next-gsq-rco-gguf/IQ3_S:/gguf:ro"
       # Strata 0.2's layout (0.1.x's strata-data is not read by it), under ~/.local/share/club-3090 from

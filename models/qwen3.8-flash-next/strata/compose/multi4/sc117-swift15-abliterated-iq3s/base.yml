@@ -23,8 +23,10 @@
 #              (8-pack pending). NEVER BOOTED on the reference rig (2 GPUs): multi4 is community-
 #              validated by design; Strata's layer split takes any number of cards (its
 #              docs/MULTI_GPU.md shows a 4-card split). Up to 3 requests at once (Strata's pick here). Needs ~93 GB of free
-#              host RAM when the model disk is rotational (setup then keeps the 28.8 GB n-gram table in RAM; on an SSD it stays
-#              on disk), NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only. Strata reasons by
+#              host RAM when the auto PLE policy keeps the 28.8 GB n-gram table in RAM (it decides from
+#              free RAM at that moment, not the disk type — an SSD usually reads it direct, but a
+#              big-CONTEXT boot can lock it and then starve the expert arena; STRATA_PLE_AUTO_RAM=0
+#              forces disk reads), NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only. Strata reasons by
 #              default, at the template's xhigh (what SC117 recommends; as the bucko-vllm Flash-Next slugs).
 #              Launch settings (REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, SPEC_N,
 #              ROPE_SCALING, ROPE_SCALE, the sampler;
@@ -99,6 +101,10 @@ services:
       # DeltaNet prompt kernels on the tensor cores); 0 turns each off.
       STRATA_GDN_TC:
       STRATA_GDN_CONVL2:
+      # PLE (n-gram) residency switch: 0 = direct disk reads instead of page-locking the ~27 GiB
+      # table; the auto policy can lock it and still starve the expert arena at big CONTEXT
+      # (the dual ista-iq3s compose's block has the full note). Unset = Strata's auto policy.
+      STRATA_PLE_AUTO_RAM:
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/qwen3.8-flash-next-swift15-abliterated-gsq-rco-gguf/IQ3_S:/gguf:ro"
       # Strata 0.2's layout (0.1.x's strata-data is not read by it), under ~/.local/share/club-3090 from

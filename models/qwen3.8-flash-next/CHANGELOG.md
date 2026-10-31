@@ -110,7 +110,7 @@ Quality (`quality-test.sh --full`, benchlocal-cli v0.11.0, on v0.31.0, thinking 
   boot, forwarded by all five Strata composes and catalogued in `launch-knobs.json` — so
   `switch.sh <slug> --set ROPE_SCALING=yarn` (or a one-off `ROPE_SCALING=yarn CONTEXT=524288
   bash scripts/switch.sh <slug>`) extends the existing slug instead of a dedicated one.
-  The pinned engine (0.1.54, image 0.2.8) and setup already had YaRN; this is plumbing.
+  The pinned engine (0.1.55, image 0.2.9) and setup already had YaRN; this is plumbing.
 - Past the trained 262144 setup resolves yarn itself (factor ctx/262144); the knobs override
   that at every boot. `none` past 262144 is refused; `linear`/`yarn` with no factor derive
   the same value as setup. The launcher strips the flags it wrote — including ones setup
@@ -135,3 +135,21 @@ Quality (`quality-test.sh --full`, benchlocal-cli v0.11.0, on v0.31.0, thinking 
   delivery through the compose scan. Bench gates — 8-pack, a >262144 needle probe on this
   rig, a within-262144 quality A/B against the unscaled boot, MTP acceptance under yarn —
   pending.
+
+## 2026-10-31 — PLE residency switch on every Strata compose (`STRATA_PLE_AUTO_RAM`)
+
+- The engine's PLE residency policy decides from free RAM at the moment of the check, not
+  the disk type: it counts only the ~27 GiB n-gram table and the 46.8 GiB expert arena, not
+  the KV stream, the conversation cache or the batch sessions that fill right after it. A
+  big-CONTEXT boot can therefore page-lock the table and then starve the arena — measured
+  2026-10-31 at CONTEXT=524288 on an SSD rig: 46.8 GiB needed, 34.6 available, and the host
+  hung (the compose headers' "rotational disk" framing predates the finding; reworded).
+- All five Strata composes now forward `STRATA_PLE_AUTO_RAM` as a bare launch-env key
+  (unset = Strata's auto policy, the default slug unchanged). `0` keeps the table on direct
+  disk reads — the right call on an SSD. Proven at CONTEXT=524288 + yarn ×2: arena fills
+  clean, `verify-stress.sh` ceiling ladder 6/6 to 481K tokens, MemAvailable floor 6.7 GiB,
+  zero swap.
+- `strip_managed` also learned the third rope state the review of this branch found: our
+  `ROPE_SCALING`/`ROPE_SCALE` overriding setup's own auto-resolution in place (the flag in
+  `args` AND in `args_written`, different value) — removing the settings now restores
+  setup's value instead of leaving the override forever. Test covers it.
