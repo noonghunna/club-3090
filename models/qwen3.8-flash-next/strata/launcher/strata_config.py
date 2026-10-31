@@ -45,7 +45,8 @@ setup resolves --rope-scaling/--rope-scale itself (yarn with a derived factor; i
 rope flag sitting in args_written with no matching user_args entry is setup's own resolution and strip LEAVES it --
 deleting it would silently unscale a long-context boot. Ours are the ones in user_args or in args beyond
 args_written; a removed rope setting deletes ours and setup re-derives its own at its next run (a CONTEXT change
-re-runs it). CONTEXT and KV
+re-runs it). When our flag sits in args_written too but with a different value, it is an override of setup's
+resolution: strip restores setup's value rather than deleting, so the boot keeps its scaling. CONTEXT and KV
 belong to setup (they size the KV and the expert cache): Strata's own entrypoint passes them to
 `strata launch`, which runs setup again when they change; here they are only checked.
 
@@ -230,9 +231,13 @@ def strip_managed(cfg):
     written = cfg.get("args_written") or []
     for flag in ROPE_FLAGS:
         # ours = in user_args (setup folded it) or in args beyond args_written; a rope flag only in args_written is
-        # setup's own resolution for this context (it auto-yarns past the trained length) and stays
+        # setup's own resolution for this context (it auto-yarns past the trained length) and stays. A third state:
+        # the flag in args AND in args_written with a DIFFERENT value — that is our override of setup's resolution,
+        # and strip restores setup's value (deleting would unscale the boot; leaving ours is a stale override).
         args = cfg.get("args") or []
         ours = flag in user or (flag in args[:-1] and flag not in written)
+        override = (not ours) and flag in args[:-1] and flag in written \
+            and arg_value(args, flag) != arg_value(written, flag)
         if flag in user:
             i = user.index(flag)
             del user[i:i + 2]
@@ -241,6 +246,8 @@ def strip_managed(cfg):
             i = args.index(flag)
             del args[i:i + 2]
             cfg["args"] = args            # a removed rope setting is gone; setup re-derives its own at its next run
+        elif override:
+            cfg["args"] = set_arg(cfg["args"], flag, arg_value(written, flag))
     if user:
         cfg["user_args"] = user
     else:

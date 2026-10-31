@@ -129,6 +129,23 @@ PY
 out="$(run 2>&1)"
 [[ "$(get 'c["args"][c["args"].index("--rope-scaling")+1] + "/" + c["args"][c["args"].index("--rope-scale")+1]')" == yarn/2 ]] \
   && ok "setup's own auto-yarn (in args_written, no user_args) survives strip" || bad "stripped setup's rope: $(get 'c["args"]')"
+# the third state: our override OF setup's resolution (args linear/4, args_written yarn/2, no user_args) ->
+# strip restores setup's value; leaving ours is a stale override, deleting would unscale the boot
+cp "$work/setup.orig" "$work/cfg.json"
+python3 - "$work/cfg.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+c["args"] += ["--rope-scaling", "yarn", "--rope-scale", "2"]; c["args_written"] = list(c["args"])
+json.dump(c, open(sys.argv[1], "w"))
+PY
+run ROPE_SCALING=linear ROPE_SCALE=4 >/dev/null          # apply rewrites args only (args_written stays yarn/2)
+[[ "$(get 'c["args"][c["args"].index("--rope-scaling")+1] + "/" + c["args"][c["args"].index("--rope-scale")+1]')" == linear/4 ]] \
+  && ok "override of setup's resolution lands in args" || bad "override apply: $(get 'c["args"]')"
+run >/dev/null                                            # settings removed: strip must restore setup's pair
+[[ "$(get 'c["args"][c["args"].index("--rope-scaling")+1] + "/" + c["args"][c["args"].index("--rope-scale")+1]')" == yarn/2 \
+   && "$(get 'c["args"].count("--rope-scaling") + c["args"].count("--rope-scale")')" == 2 ]] \
+  && ok "a removed override reverts to setup's yarn/2 (not left stale, not deleted)" \
+  || bad "override strip: $(get 'c["args"]')"
 rm -f "$work/setup-spec"
 run SPEC_N=3 >/dev/null
 python3 - "$work/cfg.json" <<'PY'
