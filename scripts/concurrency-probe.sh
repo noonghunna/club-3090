@@ -193,8 +193,6 @@ fi
 # Remember whether the caller pinned MODEL — SWEEP re-resolves after each boot
 # and must not clobber an explicit pin.
 MODEL_PINNED="${MODEL:+1}"
-MODEL="${MODEL:-$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
-  | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || echo qwen3.6-27b)}"
 # Container for VRAM, GPU label, slot count and flag introspection: the one that publishes URL on
 # THIS host through an engine port — club_container_for_url, the answer preflight's autodetect
 # and soak-test.sh use too (#1584). #1537 had replaced a `vllm-(qwen|gemma)` name heuristic with a
@@ -213,6 +211,14 @@ if [[ "${CONTAINER:-}" == "none" ]]; then
 elif [[ -z "${CONTAINER:-}" ]]; then
   CONTAINER="$(club_container_for_url "$URL")"
 fi
+# The engine's API key (Strata 0.2+), read back from the container (scripts/lib/engine-auth.sh) —
+# resolved BEFORE the model probe below, which needs it. Exports CLUB_ENGINE_API_KEY for the
+# python helper and wraps this shell's curl.
+# shellcheck source=lib/engine-auth.sh
+source "${ROOT_DIR}/scripts/lib/engine-auth.sh"
+club_engine_auth_enable "${CONTAINER:-}"
+MODEL="${MODEL:-$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
+  | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || echo qwen3.6-27b)}"
 # A remote endpoint: no local container AND the URL is not this machine. This rig's GPUs are then
 # not the server's, so their VRAM and names must not land on its card — they used to, as
 # "2× GeForce RTX 3090" and a VRAM curve of whatever this host happened to be doing. A host-process

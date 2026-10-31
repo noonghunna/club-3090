@@ -796,16 +796,16 @@ fi
 export BENCH_ENDPOINT="${BENCH_ENDPOINT:-$ENDPOINT}"
 export BENCH_SHORT_EOS_FRAC="${BENCH_SHORT_EOS_FRAC:-$SHORT_EOS_FRAC}"
 
-python3 - "$URL" "$MODEL" "$WARMUPS" "$RUNS" "$QUIET" "$ONLY" \
+CLUB_SCRIPTS_LIB="${ROOT_DIR}/scripts/lib" python3 - "$URL" "$MODEL" "$WARMUPS" "$RUNS" "$QUIET" "$ONLY" \
             "$CONTAINER" "$PP_MODE" "$PP_FALLBACK_TOKENS" "$PP_MAX_TOKENS" \
             "$ENABLE_THINKING" "$FORCE_TOKENS" \
             "$PROMPT_NARR" "$MAX_TOKENS_NARR" \
             "$PROMPT_CODE" "$MAX_TOKENS_CODE" << 'PYEOF'
 import json, os, random, re, shutil, string, subprocess, sys, time, urllib.request, statistics as s
-# the engine's API key (Strata 0.2+), set by scripts/lib/engine-auth.sh when one applies
-_HEADERS = {"Content-Type": "application/json"}
-if os.environ.get("CLUB_ENGINE_API_KEY"):
-    _HEADERS["Authorization"] = "Bearer " + os.environ["CLUB_ENGINE_API_KEY"]
+# every request to the engine goes through scripts/lib/engine_http.py — it resolves the
+# engine's API key (Strata 0.2+) from the URL through the repo's own helpers, lazily.
+sys.path.insert(0, os.environ["CLUB_SCRIPTS_LIB"])
+import engine_http
 
 (URL, MODEL, WARMUPS, RUNS, QUIET, ONLY,
  CONTAINER, PP_MODE, PP_FALLBACK_TOKENS, PP_MAX_TOKENS,
@@ -982,8 +982,8 @@ def token_ratio():
     try:
         body = json.dumps({"content": sample}).encode()
         req = urllib.request.Request(f"{URL}/tokenize", data=body,
-                                     headers=_HEADERS)
-        with urllib.request.urlopen(req, timeout=20) as r:
+                                     headers=engine_http.headers(URL))
+        with engine_http.urlopen(req, timeout=20) as r:
             obj = json.loads(r.read().decode("utf-8", errors="ignore"))
         toks = obj.get("tokens", obj if isinstance(obj, list) else [])
         if isinstance(toks, list) and toks:
@@ -1057,12 +1057,12 @@ def run_once(prompt, max_tokens, force=0):
         req_body["ignore_eos"] = True
     body = json.dumps(req_body).encode()
     req = urllib.request.Request(f"{URL}{path}", data=body,
-                                 headers=_HEADERS)
+                                 headers=engine_http.headers(URL))
     t_send = time.time()
     ttft = None
     completion_tokens = 0
     prompt_tokens = 0
-    with urllib.request.urlopen(req, timeout=600) as r:
+    with engine_http.urlopen(req, timeout=600) as r:
         for line in r:
             line = line.decode("utf-8", errors="ignore").rstrip()
             if not line.startswith("data: "):

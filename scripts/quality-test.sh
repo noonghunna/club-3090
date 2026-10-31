@@ -401,8 +401,10 @@ ALLOW_PARTIAL=0
 MODE_EXPLICIT=0
 # Cloud/proxy endpoint auth: bearer token forwarded to benchlocal-cli (--api-key)
 # and added to the reachability probe below. Falls back to BENCHLOCAL_API_KEY so
-# either env works. Local composes leave it empty and behave exactly as before.
-API_KEY="${API_KEY:-${BENCHLOCAL_API_KEY:-}}"
+# either env works, then to the serving container's own key (scripts/lib/engine-auth.sh
+# via preflight's autodetect) — Strata 0.2+ answers nothing without it. Local composes
+# without a key leave it empty and behave exactly as before.
+API_KEY="${API_KEY:-${BENCHLOCAL_API_KEY:-${CLUB_ENGINE_API_KEY:-}}}"
 # #1023/#987: promoted first-class flags (help + validation below).
 RETRY_RUNAWAYS=0
 STRICT_THINKING=0

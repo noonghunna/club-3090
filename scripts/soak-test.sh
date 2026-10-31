@@ -397,6 +397,12 @@ if [[ "$HOST_MODE" == "1" ]]; then
 else
   ENDPOINT="${ENDPOINT:-${URL:-$(endpoint_from_container "$CONTAINER")}}"
 fi
+# The engine's API key (Strata 0.2+), read back from the container (scripts/lib/engine-auth.sh):
+# the /v1/models probe below and the helper's requests need it. CONTAINER=none (host mode) is a
+# no-op; an ENGINE_API_KEY the caller set wins.
+# shellcheck source=lib/engine-auth.sh
+source "${REPO_ROOT}/scripts/lib/engine-auth.sh"
+club_engine_auth_enable "${CONTAINER:-}"
 mkdir -p "$SOAK_OUTPUT"
 
 MODELS_JSON="${SOAK_OUTPUT}/models.json"

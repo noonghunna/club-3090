@@ -30,6 +30,9 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+# The extracted send_streaming_niah heredoc imports engine_http from the scripts lib;
+# verify-stress.sh sets this inline when it runs the heredoc, so the standalone exec must too.
+export CLUB_SCRIPTS_LIB="$ROOT_DIR/scripts/lib"
 
 PASS=0
 FAIL=0

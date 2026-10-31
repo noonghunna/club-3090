@@ -123,6 +123,12 @@ if [[ ! -f "$FIXTURE" ]]; then
   exit 1
 fi
 
+# The engine's API key (Strata 0.2+): the URL is the only input — club_container_for_url
+# answers which container publishes it, engine-auth.sh which key (no per-script rules).
+# shellcheck source=lib/engine-auth.sh
+source "${ROOT_DIR}/scripts/lib/engine-auth.sh"
+club_engine_auth_enable_for_url "$URL"
+
 if ! curl -sf "${URL}/v1/models" >/dev/null; then
   echo "ERROR: service not reachable at ${URL}/v1/models" >&2
   echo "  Start with: bash scripts/launch.sh (or bash scripts/switch.sh <variant>)" >&2
@@ -159,8 +165,12 @@ if [[ "${BENCH_AGENTIC_RECORD:-1}" == "1" ]] && command -v python3 >/dev/null 2>
   export AGENTIC_CURVE_JSON="$_BA_CURVE_JSON"
 fi
 
-python3 - "$URL" "$MODEL" "$SESSIONS" "$TURNS" "$QUIET" "$FIXTURE" << 'PYEOF'
+CLUB_SCRIPTS_LIB="${ROOT_DIR}/scripts/lib" python3 - "$URL" "$MODEL" "$SESSIONS" "$TURNS" "$QUIET" "$FIXTURE" << 'PYEOF'
 import json, os, sys, time, urllib.request, statistics as s, pathlib
+# every request to the engine goes through scripts/lib/engine_http.py — it resolves the
+# engine's API key (Strata 0.2+) from the URL through the repo's own helpers, lazily.
+sys.path.insert(0, os.environ["CLUB_SCRIPTS_LIB"])
+import engine_http
 
 # Reasoning switch resolved by the shell (see preflight.sh header) — WHICH key
 # works is model-specific and an unrecognised one is silently ignored. Returns
@@ -188,7 +198,7 @@ def _scrape_engine_metrics(base_url):
             "vllm:num_preemptions_total", "vllm:num_preemptions")
     out = {}
     try:
-        with urllib.request.urlopen(base_url.rstrip("/") + "/metrics", timeout=5) as r:
+        with engine_http.urlopen(base_url.rstrip("/") + "/metrics", timeout=5) as r:
             for line in r.read().decode("utf-8", "replace").splitlines():
                 if line.startswith("#") or " " not in line:
                     continue
@@ -322,7 +332,7 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
 
     req = urllib.request.Request(
         f"{URL}/v1/chat/completions", data=body,
-        headers={"Content-Type": "application/json"})
+        headers=engine_http.headers(URL))
     t_send = time.time()
     ttft = None
     completion_tokens = 0
@@ -332,7 +342,7 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
     content_parts = []
     tool_calls_acc = {}
 
-    with urllib.request.urlopen(req, timeout=600) as r:
+    with engine_http.urlopen(req, timeout=600) as r:
         for line in r:
             line = line.decode("utf-8", errors="replace").rstrip()
             if not line.startswith("data: "):

@@ -13,8 +13,12 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #      with no key, curl is untouched.
 #   3. preflight_autodetect_endpoint turns it on for the CONTAINER it settles on, also when URL= and
 #      CONTAINER= are given (its early return) and with PREFLIGHT_NO_AUTODETECT=1.
-#   4. The other delivery paths: bench.sh's python requests, strata_metrics.py, switch.sh's
-#      wait_ready and Open WebUI registration read the key the helper found.
+#   4. The other delivery paths: every python request in the bench / verify-stress / bench-agentic /
+#      concurrency_probe / soak-helper / compaction / deep-context chain goes through
+#      scripts/lib/engine_http.py — which resolves the key from the URL through the helpers
+#      (401-lazily, §4b) — never a re-derived key; strata_metrics.py, switch.sh's wait_ready and
+#      Open WebUI registration read the key the helper found; the chain's shells enable it for the
+#      URL or CONTAINER they settle on; quality-test.sh's --api-key fallback reads CLUB_ENGINE_API_KEY.
 #
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -26,16 +30,18 @@ fail() { echo "✗ $1" >&2; exit 1; }
 pass() { echo "  ✓ $1"; }
 
 tmp="$(mktemp -d)"
-srv=""
-trap '[[ -n "$srv" ]] && kill "$srv" 2>/dev/null; rm -rf "$tmp"' EXIT
+srv="" srv2=""
+trap '[[ -n "$srv" ]] && kill "$srv" 2>/dev/null; [[ -n "$srv2" ]] && kill "$srv2" 2>/dev/null; rm -rf "$tmp"' EXIT
 bin="$tmp/bin"; mkdir -p "$bin"
 
 bash -n scripts/lib/engine-auth.sh || fail "bash -n: engine-auth.sh"
 
 # `docker inspect -f <fmt> <name>`: the image and the env of a few fake containers; anything
-# else (or an unknown name) fails like docker does.
+# else (or an unknown name) fails like docker does. `docker ps` answers with strata-new
+# publishing FAKE_ENGINE_PORT — the URL→container half of the rule (#1584).
 cat > "$bin/docker" <<'EOF'
 #!/usr/bin/env bash
+[[ "$1" == ps ]] && { echo "strata-new|0.0.0.0:${FAKE_ENGINE_PORT:-18018}->8000/tcp"; exit 0; }
 [[ "$1" == inspect && "$2" == -f ]] || exit 1
 fmt="$3"; name="$4"
 case "$name" in
@@ -118,11 +124,19 @@ export U
 pass "preflight_autodetect_endpoint enables it for the CONTAINER it settles on (and not for a keyless one)"
 
 # --- 4. the other delivery paths ----------------------------------------------------------------
-n="$(command grep -c -E 'urllib\.request\.Request\(' scripts/bench.sh)"
-m="$(command grep -c -E 'headers=_HEADERS\)' scripts/bench.sh)"
-[[ "$n" -ge 1 && "$n" == "$m" ]] || fail "bench.sh: every urllib Request must use _HEADERS ($m of $n)"
-command grep -q -E 'CLUB_ENGINE_API_KEY' scripts/bench.sh || fail "bench.sh: _HEADERS must read CLUB_ENGINE_API_KEY"
-pass "bench.sh: all $n python requests carry _HEADERS, which reads CLUB_ENGINE_API_KEY"
+# One rule, one entry point: every python request in the chain goes through engine_http, and
+# no path re-derives the key (no CLUB_ENGINE_API_KEY reads, no bare urlopen, no hand-built auth).
+for f in scripts/bench.sh scripts/bench-agentic.sh scripts/verify-stress.sh \
+         scripts/lib/concurrency_probe.py scripts/soak-helper.py \
+         scripts/lib/compaction_probe.py scripts/lib/deep_context_probe.py; do
+  n="$(command grep -c -E 'urllib\.request\.Request\(' "$f" || true)"
+  m="$(command grep -c -E 'headers=engine_http' "$f" || true)"
+  [[ "$n" -ge 1 && "$n" == "$m" ]] || fail "$f: every urllib Request must carry engine_http headers ($m of $n)"
+  command grep -q -E 'import engine_http' "$f" || fail "$f: its python requests bypass scripts/lib/engine_http.py"
+  ! command grep -q -E 'urllib\.request\.urlopen\(' "$f" || fail "$f: a request bypasses engine_http.urlopen"
+  ! command grep -q -E 'CLUB_ENGINE_API_KEY' "$f" || fail "$f: re-derives the engine key instead of using engine_http"
+done
+pass "all seven chain scripts: every python request goes through engine_http, none re-derives the key"
 CLUB_ENGINE_API_KEY=k-metrics-0000000001 python3 - "$U" <<'PY' || fail "strata_metrics.py did not send CLUB_ENGINE_API_KEY"
 import hashlib, sys, urllib.request
 sys.path.insert(0, "scripts/lib")
@@ -146,4 +160,73 @@ command grep -q -F 'docker exec -i -e CLUB_ENGINE_API_KEY' scripts/lib/owui-regi
   || fail "owui-register.sh must pass CLUB_ENGINE_API_KEY into its exec by name"
 pass "switch.sh's wait_ready enables it; Open WebUI registration gets it by name"
 
-echo "PASS: test-engine-auth"
+# --- 4b. engine_http: the URL is the only input --------------------------------------------------
+# A server that demands a key (401 without one) + the fake docker's ps arm (FAKE_ENGINE_PORT →
+# strata-new): engine_http must resolve the key through the bash helpers after the 401 and retry.
+cat > "$tmp/srv401.py" <<'EOF'
+import hashlib, http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def _r(self):
+        a = self.headers.get("Authorization")
+        if not a:
+            self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers(); return
+        b = hashlib.sha256(a.encode()).hexdigest().encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    do_GET = _r; do_POST = _r
+    def log_message(self, *a): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(sys.argv[1], "w").write(str(s.server_address[1]))
+s.serve_forever()
+EOF
+python3 "$tmp/srv401.py" "$tmp/port401" & srv2=$!
+for _ in $(seq 50); do [[ -s "$tmp/port401" ]] && break; sleep 0.1; done
+[[ -s "$tmp/port401" ]] || fail "the 401 server did not start"
+U2="http://127.0.0.1:$(cat "$tmp/port401")/"
+export FAKE_ENGINE_PORT="$(cat "$tmp/port401")"
+
+got="$(python3 - "$U2" <<'PY'
+import sys; sys.path.insert(0, "scripts/lib"); import engine_http
+print(engine_http.urlopen(sys.argv[1], timeout=5).read().decode())
+PY
+)"
+[[ "$got" == "$(want key-from-the-container-0001)" ]] || fail "engine_http: the 401 did not trigger the URL's key resolution ($got)"
+pass "engine_http: a 401 resolves the URL's container key through the bash helpers, retries once"
+got="$(CLUB_ENGINE_API_KEY=env-key-0000000000001 python3 - "$U2" <<'PY'
+import sys; sys.path.insert(0, "scripts/lib"); import engine_http
+print(engine_http.urlopen(sys.argv[1], timeout=5).read().decode())
+PY
+)"
+[[ "$got" == "$(want env-key-0000000000001)" ]] || fail "engine_http ignored CLUB_ENGINE_API_KEY from the parent shell ($got)"
+pass "engine_http: a parent shell's CLUB_ENGINE_API_KEY is used without re-resolving"
+got="$(python3 - "$U" <<'PY'
+import sys; sys.path.insert(0, "scripts/lib"); import engine_http
+print(engine_http.urlopen(sys.argv[1], timeout=5).read().decode())
+PY
+)"
+[[ "$got" == none ]] || fail "engine_http sent a key to a server that never asked for one ($got)"
+pass "engine_http: a server that does not 401 sees the identical keyless request"
+
+# club_engine_auth_enable_for_url: the shell half — URL in, container+key resolved by the helpers.
+got="$(bash -c 'source scripts/lib/engine-auth.sh; club_engine_auth_enable_for_url "$1"; curl -s "$1"' _ "$U2")"
+[[ "$got" == "$(want key-from-the-container-0001)" ]] || fail "club_engine_auth_enable_for_url did not send the URL's container key ($got)"
+got="$(bash -c 'source scripts/lib/engine-auth.sh; club_engine_auth_enable_for_url "$1"; curl -s "$1"' _ "$U")"
+[[ "$got" == none ]] || fail "club_engine_auth_enable_for_url sent a key for a URL no container publishes ($got)"
+pass "club_engine_auth_enable_for_url: keys our URL, pays nothing for a URL that is not ours"
+
+# --- 4c. the rebench chain's shells ---------------------------------------------------------------
+# 2026-10-30: a key-custom Strata container 401'd every one of these.
+for f in scripts/bench-agentic.sh scripts/verify-stress.sh scripts/compaction-probe.sh scripts/deep-context-probe.sh; do
+  command grep -q -E 'club_engine_auth_enable_for_url "\$URL"' "$f" \
+    || fail "$f: must enable the key for the URL it settles on"
+done
+pass "bench-agentic / verify-stress / compaction-probe / deep-context-probe shells enable it for their URL"
+command grep -q -E 'club_engine_auth_enable "\$\{CONTAINER:-\}"' scripts/concurrency-probe.sh \
+  || fail "concurrency-probe.sh must enable the key for its resolved container"
+command grep -q -E 'club_engine_auth_enable "\$\{CONTAINER:-\}"' scripts/soak-test.sh \
+  || fail "soak-test.sh must enable the key for its resolved container"
+pass "concurrency-probe.sh and soak-test.sh enable it for the CONTAINER they settle on"
+command grep -q -E 'API_KEY=.*CLUB_ENGINE_API_KEY' scripts/quality-test.sh \
+  || fail "quality-test.sh: the API_KEY fallback chain must include CLUB_ENGINE_API_KEY"
+pass "quality-test.sh's external benchlocal-cli gets the key through the env fallback"
+
+echo "✓ engine-auth: one rule, one entry point per language, every path covered"

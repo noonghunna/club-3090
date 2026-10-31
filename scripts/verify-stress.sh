@@ -368,6 +368,12 @@ if [[ -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
   _DEFAULT_ENDPOINT_PORT="$(registry_lookup_default_port qwen3.6-27b 2>/dev/null || true)"
 fi
 URL="${URL:-http://localhost:${_DEFAULT_ENDPOINT_PORT:-8020}}"
+# The engine's API key (Strata 0.2+): the URL is the only input — club_container_for_url
+# answers which container publishes it, engine-auth.sh which key (no per-script rules).
+# This shell's curl probes below and the python helpers both need it.
+# shellcheck source=lib/engine-auth.sh
+source "${ROOT_DIR}/scripts/lib/engine-auth.sh"
+club_engine_auth_enable_for_url "$URL"
 # Resolve the served model from /v1/models when MODEL is unset (#372).
 declare -F preflight_autodetect_model >/dev/null && preflight_autodetect_model
 # #1330: NOT an unconditional `MODEL="${MODEL:-…}"` any more. That fell back to
@@ -600,8 +606,12 @@ esac
 # --------------------------------------------------------------------
 send_streaming_niah() {
   local _req_file="$1" _result_file="$2" _url="$3" _timeout="$4"
-  python3 - "$_req_file" "$_result_file" "$_url" "$_timeout" <<'PYEOF'
+  CLUB_SCRIPTS_LIB="${ROOT_DIR}/scripts/lib" python3 - "$_req_file" "$_result_file" "$_url" "$_timeout" <<'PYEOF'
 import json, os, sys, time, urllib.request, urllib.error
+# every request to the engine goes through scripts/lib/engine_http.py — it resolves the
+# engine's API key (Strata 0.2+) from the URL through the repo's own helpers, lazily.
+sys.path.insert(0, os.environ["CLUB_SCRIPTS_LIB"])
+import engine_http
 
 req_file, result_file, url, timeout_s = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 
@@ -616,7 +626,7 @@ body = json.dumps(req).encode("utf-8")
 http_req = urllib.request.Request(
     f"{url}/v1/chat/completions",
     data=body,
-    headers={"Content-Type": "application/json"},
+    headers=engine_http.headers(url),
 )
 
 t_send = time.time()
@@ -627,7 +637,7 @@ timings = None
 result = {"http_code": 0, "error": None}
 
 try:
-    with urllib.request.urlopen(http_req, timeout=timeout_s) as resp:
+    with engine_http.urlopen(http_req, timeout=timeout_s) as resp:
         result["http_code"] = resp.getcode() or 200
         for raw_line in resp:
             line = raw_line.decode("utf-8", errors="ignore").rstrip()

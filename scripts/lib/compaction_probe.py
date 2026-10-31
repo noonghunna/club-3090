@@ -5,7 +5,11 @@ Measures whether decode throughput degrades AFTER a context compaction at depth,
 which is the shape reported in club-3090 #1052 and which nothing we shipped
 measured: bench-agentic grows monotonically and never compacts.
 """
-import argparse, json, sys, time, urllib.request
+import argparse, json, os, sys, time, urllib.request
+# every request to the engine goes through engine_http (scripts/lib) — it resolves the
+# engine's API key (Strata 0.2+) from the URL through the repo's own helpers, lazily.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import engine_http
 
 _METRICS = ("vllm:request_generation_tokens_sum",
             "vllm:request_decode_time_seconds_sum",
@@ -15,8 +19,8 @@ _METRICS = ("vllm:request_generation_tokens_sum",
 def _post(url, payload, timeout=1800):
     req = urllib.request.Request(url + "/v1/chat/completions",
                                  data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+                                 headers=engine_http.headers(url))
+    with engine_http.urlopen(req, timeout=timeout) as r:
         return json.load(r)
 
 
@@ -26,7 +30,7 @@ def _metrics(url):
     hand back exactly the kind of number #1096 was built on."""
     out = {}
     try:
-        with urllib.request.urlopen(url + "/metrics", timeout=10) as r:
+        with engine_http.urlopen(url + "/metrics", timeout=10) as r:
             for line in r.read().decode("utf-8", "replace").splitlines():
                 if line.startswith("#") or " " not in line:
                     continue
@@ -122,7 +126,7 @@ def main():
     max_ctx = a.max_ctx
     if not max_ctx:
         try:
-            with urllib.request.urlopen(a.url + "/v1/models", timeout=10) as r:
+            with engine_http.urlopen(a.url + "/v1/models", timeout=10) as r:
                 d = json.load(r)
             max_ctx = int(d["data"][0].get("max_model_len") or 0)
         except Exception:

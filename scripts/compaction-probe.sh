@@ -47,6 +47,11 @@ if declare -F registry_lookup_default_port >/dev/null 2>&1; then
   _DEFAULT_PORT="$(registry_lookup_default_port qwen3.6-27b 2>/dev/null || true)"
 fi
 URL="${URL:-http://localhost:${_DEFAULT_PORT:-8020}}"
+# The engine's API key (Strata 0.2+): the URL is the only input — club_container_for_url
+# answers which container publishes it, engine-auth.sh which key (no per-script rules).
+# shellcheck source=lib/engine-auth.sh
+source scripts/lib/engine-auth.sh
+club_engine_auth_enable_for_url "$URL"
 FILL_FRAC="${FILL_FRAC:-0.90}"
 REPS="${REPS:-5}"
 

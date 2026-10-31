@@ -30,6 +30,10 @@ import sys
 import threading
 import time
 import urllib.request
+# every request to the engine goes through engine_http (scripts/lib) — it resolves the
+# engine's API key (Strata 0.2+) from the URL through the repo's own helpers, lazily.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import engine_http
 
 # ~0.23 tok/char was calibrated on the BLOCK below (same as the heredoc).
 TOK_PER_CHAR = 0.23
@@ -360,7 +364,7 @@ class GaugePoller:
 
     def _read(self):
         try:
-            with urllib.request.urlopen(self.url, timeout=2) as r:
+            with engine_http.urlopen(self.url, timeout=2) as r:
                 return metrics_gauges(r.read().decode("utf-8", "replace"))
         except Exception:
             return (None, None)
@@ -521,7 +525,7 @@ def spec_label_from_sglang_info(info):
 def _sglang_info(url):
     for path in ("/get_server_info", "/server_info"):
         try:
-            with urllib.request.urlopen(url.rstrip("/") + path, timeout=5) as r:
+            with engine_http.urlopen(url.rstrip("/") + path, timeout=5) as r:
                 info = json.loads(r.read().decode("utf-8", "replace"))
             if isinstance(info, dict):
                 return info
@@ -553,7 +557,7 @@ def served_max_len(url, container=""):
         if isinstance(v, int) and v > 0:
             return v
         try:
-            with urllib.request.urlopen(url.rstrip("/") + "/v1/models", timeout=5) as r:
+            with engine_http.urlopen(url.rstrip("/") + "/v1/models", timeout=5) as r:
                 data = json.loads(r.read().decode("utf-8", "replace")).get("data") or []
             v = (data[0] or {}).get("max_model_len") if data else None
             if isinstance(v, int) and v > 0:
@@ -842,7 +846,7 @@ def run_probe():
         req = urllib.request.Request(
             URL + "/v1/chat/completions",
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=engine_http.headers(URL),
         )
         t0 = time.time()
         t_first = None
@@ -851,7 +855,7 @@ def run_probe():
         chunks = 0
         cached = 0
         try:
-            resp = urllib.request.urlopen(req, timeout=REQ_TIMEOUT)
+            resp = engine_http.urlopen(req, timeout=REQ_TIMEOUT)
             for raw in resp:
                 line = raw.decode("utf-8", "ignore").strip()
                 if not line.startswith("data:"):

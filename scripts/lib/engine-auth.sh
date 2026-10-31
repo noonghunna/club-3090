@@ -47,3 +47,13 @@ club_engine_auth_enable() {
   export CLUB_ENGINE_API_KEY="$CLUB_ENGINE_KEY_"
   curl() { command curl -H @<(printf 'Authorization: Bearer %s\n' "$CLUB_ENGINE_KEY_") "$@"; }
 }
+
+# club_engine_auth_enable_for_url URL — the same, for scripts that know only their endpoint:
+# club_container_for_url answers WHICH container publishes it (#1584), then the key rule
+# decides WHICH key. Scripts never resolve a container or a key themselves — the URL is the
+# only input, so no path through the repo hardcodes either.
+club_engine_auth_enable_for_url() {
+  declare -F club_container_for_url >/dev/null 2>&1 \
+    || source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/club-containers.sh"
+  club_engine_auth_enable "$(club_container_for_url "${1:-}")"
+}

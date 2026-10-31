@@ -11,6 +11,10 @@ import sys
 import time
 import urllib.error
 import urllib.request
+# every request to the engine goes through engine_http (scripts/lib) — it resolves the
+# engine's API key (Strata 0.2+) from the URL through the repo's own helpers, lazily.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+import engine_http
 
 
 TOOLS = [
@@ -608,7 +612,7 @@ def _metrics_url(endpoint):
 def _read_metrics_text(url, timeout=3.0):
     """GET a Prometheus page. Any failure means 'no counter', never a run failure."""
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with engine_http.urlopen(url, timeout=timeout) as resp:
             if getattr(resp, "status", 200) != 200:
                 return ""
             return resp.read(4 * 1024 * 1024).decode("utf-8", errors="replace")
@@ -744,7 +748,7 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
     req = urllib.request.Request(
         endpoint.rstrip("/") + "/v1/chat/completions",
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=engine_http.headers(endpoint.rstrip("/") + "/v1/chat/completions"),
         method="POST",
     )
     # Engine-side decode counter (#1268). The source is resolved ONCE per run by
@@ -768,7 +772,7 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
     reasoning_parts = []
     tool_calls_acc = {}  # idx → {id, type, name, args}
     try:
-        with urllib.request.urlopen(req, timeout=int(timeout_s)) as resp:
+        with engine_http.urlopen(req, timeout=int(timeout_s)) as resp:
             status = getattr(resp, "status", 200)
             for raw in resp:
                 line = raw.decode("utf-8", errors="replace").strip()

@@ -5,6 +5,10 @@ Stdlib only, OpenAI-compatible chat API — works against vLLM and SGLang alike.
 See the wrapper's header for why this exists (club-3090#1259) and how to read it.
 """
 import json, os, sys, time, urllib.error, urllib.request
+# every request to the engine goes through engine_http (scripts/lib) — it resolves the
+# engine's API key (Strata 0.2+) from the URL through the repo's own helpers, lazily.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import engine_http
 
 URL, MODEL, MODE = sys.argv[1], sys.argv[2], sys.argv[3]
 TARGET_CTX, TURN_TOKENS = int(sys.argv[4]), int(sys.argv[5])
@@ -87,7 +91,7 @@ FLAG_HINT = ("SGLang: --enable-cache-report (+ --enable-metrics for the counter 
 
 def fetch_metrics():
     try:
-        with urllib.request.urlopen(BASE + "/metrics", timeout=10) as r:
+        with engine_http.urlopen(BASE + "/metrics", timeout=10) as r:
             return r.read().decode("utf-8", "replace")
     except Exception:
         return None
@@ -232,7 +236,7 @@ def _post(msgs, max_tokens):
                "stream_options": {"include_usage": True, "continuous_usage_stats": True}}
     body = json.dumps(payload).encode()
     return urllib.request.Request(BASE + "/v1/chat/completions", data=body,
-                                  headers={"Content-Type": "application/json"})
+                                  headers=engine_http.headers(BASE))
 
 def measure(msgs, max_tokens=24):
     """One turn. Returns a dict:
@@ -274,7 +278,7 @@ def measure(msgs, max_tokens=24):
     # usage once still streams its tokens, and that window is a real decode window.
     c_first = None; c_last = None
     nchunks = 0; ncontent = 0; finish = None
-    with urllib.request.urlopen(_post(msgs, max_tokens), timeout=1800) as r:
+    with engine_http.urlopen(_post(msgs, max_tokens), timeout=1800) as r:
         for raw in r:
             line = raw.decode("utf-8", "replace").strip()
             if not line.startswith("data: ") or line == "data: [DONE]":
