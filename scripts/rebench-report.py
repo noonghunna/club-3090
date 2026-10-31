@@ -96,6 +96,39 @@ def parse_container_config(blob: dict | None) -> dict:
     }
 
 
+# The vLLM flags parse_container_config reads off the command line. Another engine (llama.cpp,
+# SGLang, Strata, QEngine, Project Maya, TabbyAPI) has none of them there, so every row read "?"
+# (#1878's Strata report). Whether ANY was read decides which config table the report shows; the
+# engine itself is never guessed from a name here (scripts/lib/engine-kind.sh owns that).
+VLLM_FLAG_KEYS = ("tensor_parallel_size", "max_model_len", "gpu_memory_utilization", "max_num_seqs",
+                  "max_num_batched_tokens", "kv_cache_dtype", "dtype", "quantization", "speculative_config")
+
+
+def vllm_flags_read(c: dict) -> bool:
+    return any(c.get(k) not in (None, "", "?") for k in VLLM_FLAG_KEYS)
+
+
+def parse_fingerprint(bench_log: str) -> dict:
+    """bench.sh's CONFIG FINGERPRINT block as {label: value}, in order. It is engine-aware already
+    (capture.sh reads each engine's argv, /props and boot log), so the report reuses it rather than
+    re-deriving any engine's settings."""
+    out, inside = {}, False
+    for line in bench_log.splitlines():
+        if "CONFIG FINGERPRINT" in line:
+            inside, out = True, {}          # the last block wins (a resumed bench prints it again)
+            continue
+        if not inside:
+            continue
+        if line.startswith("=") or not line.strip():
+            if out:
+                inside = False
+            continue
+        m = re.match(r"\s{2}([A-Za-z][A-Za-z -]*?)\s*:\s(.*)$", line)
+        if m:
+            out[m.group(1).strip()] = m.group(2).strip()
+    return out
+
+
 def parse_model_config_json(model_dir: Path) -> dict:
     """Read config.json from the served model dir to get quant metadata."""
     cfg_path = model_dir / "config.json"
@@ -407,7 +440,7 @@ def render(report: dict) -> str:
     if meta.get("container"):
         c = meta["container"]
         lines.append(f"- **Served as:** `{c.get('served_model_name')}` from `{c.get('model')}`")
-        lines.append(f"- **vLLM image:** `{c.get('image')}`")
+        lines.append(f"- **Image:** `{c.get('image')}`")
         lines.append(f"- **Container:** `{c.get('name')}`")
     rig = meta.get("rig", {})
     if rig:
@@ -422,10 +455,20 @@ def render(report: dict) -> str:
     # --- config ---
     lines.append("## Config")
     lines.append("")
+    fp = meta.get("fingerprint") or {}
+    if fp:
+        lines.append("As the running server reported it (`bench.sh`'s CONFIG FINGERPRINT):")
+        lines.append("")
+        lines.append("| Setting | Value |")
+        lines.append("|---|---|")
+        for k, v in fp.items():
+            lines.append(f"| {k} | {v} |")
+        lines.append("")
     if meta.get("container"):
         c = meta["container"]
         lines.append("| Setting | Value |")
         lines.append("|---|---|")
+    if meta.get("container") and vllm_flags_read(c):
         lines.append(f"| `--tensor-parallel-size` | {c.get('tensor_parallel_size')} |")
         lines.append(f"| `--max-model-len` | {c.get('max_model_len')} |")
         lines.append(f"| `--gpu-memory-utilization` | {c.get('gpu_memory_utilization')} |")
@@ -435,6 +478,7 @@ def render(report: dict) -> str:
         lines.append(f"| `--dtype` | `{c.get('dtype')}` |")
         lines.append(f"| `--quantization` | `{c.get('quantization')}` |")
         lines.append(f"| `--speculative-config` | `{c.get('speculative_config')}` |")
+    if meta.get("container"):
         patches = c.get("patches") or []
         lines.append(f"| Patches mounted | {', '.join(f'`{p}`' for p in patches) if patches else 'none'} |")
         # Genesis detection
@@ -673,9 +717,14 @@ def render_discuss(report: dict) -> str:
         mc = meta.get("model_config", {}) or {}
         quant_str = f"{mc.get('quant_method', c.get('quantization', '?'))} {mc.get('bits', '?')}-bit" \
             if mc.get("bits") else c.get("quantization", "?")
-        lines.append(f"Config: `{c.get('image')}` · {quant_str} · "
-                     f"`{c.get('kv_cache_dtype')}` KV · `{c.get('max_model_len')}` ctx · "
-                     f"`{c.get('speculative_config')}` · TP={c.get('tensor_parallel_size')}")
+        if vllm_flags_read(c):
+            lines.append(f"Config: `{c.get('image')}` · {quant_str} · "
+                         f"`{c.get('kv_cache_dtype')}` KV · `{c.get('max_model_len')}` ctx · "
+                         f"`{c.get('speculative_config')}` · TP={c.get('tensor_parallel_size')}")
+        else:
+            fp = meta.get("fingerprint") or {}
+            parts = [f"`{c.get('image')}`"] + [f"{k} {fp[k]}" for k in ("KV cache type", "served ctx", "drafter") if fp.get(k)]
+            lines.append("Config: " + " · ".join(parts))
         lines.append("")
     # bench
     bench = report.get("bench", {})
@@ -801,12 +850,16 @@ def compute_reproducer(meta: dict) -> dict:
     """Render bash commands to re-run this exact config."""
     c = meta.get("container", {})
     cmds = []
+    fp = meta.get("fingerprint") or {}
     if c.get("image"):
-        cmds.append("# Same vLLM nightly + KV class + ctx + MTP n as this run:")
+        cmds.append("# Same engine image + KV class + ctx + drafter as this run:")
         cmds.append(f"# image: {c['image']}")
     cmds.append("")
     cmds.append("# Bring the model up via gpu-mode (or docker compose -f <compose>.yml up -d):")
-    cmds.append(f"# served_model_name = {c.get('served_model_name', '?')}")
+    served = c.get("served_model_name")
+    if served in (None, "", "?"):
+        served = fp.get("model", "?")          # not a vLLM command line: the name the server reported
+    cmds.append(f"# served_model_name = {served}")
     cmds.append("")
     cmds.append("bash scripts/rebench-full.sh")
     cmds.append("")
@@ -896,11 +949,17 @@ def extract_date(tag_dir: Path) -> str:
 
 
 def extract_quality_oneliner(qfull_log: str) -> str | None:
-    """Grep the paste-ready Quality: line from quality-test.sh stdout."""
+    """Grep the paste-ready Quality: line from quality-test.sh stdout.
+
+    quality-test.sh prints a header first -- "Quality: line for compose schema field (paste into
+    compose YAML header):" -- and the line itself after it. The header used to be returned, so the
+    report's paste-ready line was the header (#1878). The last match wins, as in a resumed run."""
+    found = None
     for line in qfull_log.splitlines():
-        if line.lstrip().startswith("Quality:"):
-            return line.strip()
-    return None
+        s = line.strip()
+        if s.startswith("Quality:") and not s.startswith("Quality: line for"):
+            found = s
+    return found
 
 
 def main(argv=None):
@@ -961,6 +1020,7 @@ def main(argv=None):
             "container": parse_container_config(container_blob),
             "model_config": model_config,
             "rig": parse_rig(rig_txt),
+            "fingerprint": parse_fingerprint(bench_log),
         },
         "vllm_boot": parse_vllm_boot(boot_log),
         "concurrency_slots": parse_concurrency_slots(read_file(tag_dir / "concurrency-slots.txt")),
