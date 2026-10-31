@@ -70,6 +70,8 @@ EOF
 : > "${TMP}/log-empty"
 printf '%s\n' "slot print_timing: id  0 | task 7 | draft acceptance = 0.95833 (  184 accepted /   192 generated)" > "${TMP}/log-good"
 printf '%s\n' "slot print_timing: id  0 | task 9 | draft acceptance = 0.05000 (   10 accepted /   200 generated), mean len =  1.10" > "${TMP}/log-bad"
+# #1857: an n-gram drafter's first request after a boot drafted ONE token, rejected — a 0/1 sample
+printf '%s\n' "slot print_timing: id  0 | task 3 | draft acceptance = 0.00000 (    0 accepted /     1 generated), mean len =  1.00" > "${TMP}/log-tiny"
 
 # --- 1: llamacpp_spec_args -----------------------------------------------------
 source "${TMP}/fns.sh"
@@ -124,6 +126,23 @@ check "step 9: no drafter and no draft lines -> SKIP on one request" \
   "SKIP rc=0 requests=1" "$(run_step "${TMP}/top-none" "${TMP}/log-empty" "${TMP}/log-empty")"
 check "step 9: LLAMACPP_ACCEPT_MIN raises the floor -> FAIL" \
   "FAIL rc=1 requests=1" "$(LLAMACPP_ACCEPT_MIN=0.99 run_step "${TMP}/top-mtp" "${TMP}/log-good" "${TMP}/log-good")"
+# #1857: a sample too small to judge is no verdict — ask again, judge the second request.
+check "step 9: n-gram drafts 1 token (rejected) on request 1, then drafts -> PASS on request 2 (#1857)" \
+  "PASS rc=0 requests=2" "$(run_step "${TMP}/top-ngram" "${TMP}/log-tiny" "${TMP}/log-good")"
+check "step 9: still too few drafts on request 2 -> FAIL (too few to judge), not a 0/1 verdict" \
+  "FAIL rc=1 requests=2" "$(run_step "${TMP}/top-ngram" "${TMP}/log-tiny" "${TMP}/log-tiny")"
+got="$( set +e
+  ENGINE_KIND=llamacpp CONTAINER=c URL=http://127.0.0.1:1 MODEL=m THINK_OFF_STD='' THINK_OFF_KW='{}'
+  pass() { echo "PASS $1"; }; fail() { echo "FAIL $1"; }; skip() { echo "SKIP $1"; }
+  container_is_real() { return 0; }; sleep() { :; }; curl() { return 0; }
+  docker() { case "$1" in top) cat "${TMP}/top-ngram" ;; logs) cat "${TMP}/log-tiny" ;; esac; }
+  check_mtp_acceptance 2>&1 )"
+[[ "$got" == *"too few to judge"* ]] && ok "step 9: the too-few FAIL says so (not 'acceptance 0.000 < 0.30')" \
+  || bad "step 9: the too-few FAIL says so" "*too few to judge*" "$got"
+check "step 9: LLAMACPP_DRAFT_MIN_SAMPLE=1 judges the one-token sample -> FAIL on request 1" \
+  "FAIL rc=1 requests=1" "$(LLAMACPP_DRAFT_MIN_SAMPLE=1 run_step "${TMP}/top-ngram" "${TMP}/log-tiny" "${TMP}/log-good")"
+check "step 9: an invalid LLAMACPP_DRAFT_MIN_SAMPLE -> FAIL before any request" \
+  "FAIL rc=1 requests=0" "$(LLAMACPP_DRAFT_MIN_SAMPLE=x run_step "${TMP}/top-ngram" "${TMP}/log-good" "${TMP}/log-good")"
 
 if [[ "$FAIL" == 0 ]]; then
   echo "PASS: test-verify-full-llamacpp-spec"
