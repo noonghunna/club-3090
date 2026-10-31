@@ -85,9 +85,18 @@ PRESSURE = {"counter": None}
 FLAG_HINT = ("SGLang: --enable-cache-report (+ --enable-metrics for the counter fallback); "
              "vLLM: --enable-prompt-tokens-details")
 
+def _auth(headers=None):
+    """`headers` plus the engine's API key when scripts/lib/engine-auth.sh found one (CLUB_ENGINE_API_KEY):
+    Strata 0.2+ answers nothing but /health without it (#1878)."""
+    h = dict(headers or {})
+    if os.environ.get("CLUB_ENGINE_API_KEY"):
+        h["Authorization"] = "Bearer " + os.environ["CLUB_ENGINE_API_KEY"]
+    return h
+
+
 def fetch_metrics():
     try:
-        with urllib.request.urlopen(BASE + "/metrics", timeout=10) as r:
+        with urllib.request.urlopen(urllib.request.Request(BASE + "/metrics", headers=_auth()), timeout=10) as r:
             return r.read().decode("utf-8", "replace")
     except Exception:
         return None
@@ -232,7 +241,7 @@ def _post(msgs, max_tokens):
                "stream_options": {"include_usage": True, "continuous_usage_stats": True}}
     body = json.dumps(payload).encode()
     return urllib.request.Request(BASE + "/v1/chat/completions", data=body,
-                                  headers={"Content-Type": "application/json"})
+                                  headers=_auth({"Content-Type": "application/json"}))
 
 def measure(msgs, max_tokens=24):
     """One turn. Returns a dict:

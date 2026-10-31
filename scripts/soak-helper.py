@@ -605,10 +605,19 @@ def _metrics_url(endpoint):
     return endpoint.rstrip("/") + "/metrics"
 
 
+def _auth(headers=None):
+    """`headers` plus the engine's API key when scripts/lib/engine-auth.sh found one (CLUB_ENGINE_API_KEY):
+    Strata 0.2+ answers nothing but /health without it (#1878)."""
+    h = dict(headers or {})
+    if os.environ.get("CLUB_ENGINE_API_KEY"):
+        h["Authorization"] = "Bearer " + os.environ["CLUB_ENGINE_API_KEY"]
+    return h
+
+
 def _read_metrics_text(url, timeout=3.0):
     """GET a Prometheus page. Any failure means 'no counter', never a run failure."""
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=_auth()), timeout=timeout) as resp:
             if getattr(resp, "status", 200) != 200:
                 return ""
             return resp.read(4 * 1024 * 1024).decode("utf-8", errors="replace")
@@ -744,7 +753,7 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
     req = urllib.request.Request(
         endpoint.rstrip("/") + "/v1/chat/completions",
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=_auth({"Content-Type": "application/json"}),
         method="POST",
     )
     # Engine-side decode counter (#1268). The source is resolved ONCE per run by

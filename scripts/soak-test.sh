@@ -399,6 +399,13 @@ else
 fi
 mkdir -p "$SOAK_OUTPUT"
 
+# The engine's API key for every request from here on: curl sends it, and soak-helper.py gets it as
+# CLUB_ENGINE_API_KEY. Strata 0.2+ answers nothing but /health without it, and this script picks its
+# container itself rather than through preflight_autodetect_endpoint, which would enable it (#1878).
+# shellcheck source=lib/engine-auth.sh
+source "${REPO_ROOT}/scripts/lib/engine-auth.sh"
+club_engine_auth_enable "$CONTAINER"
+
 MODELS_JSON="${SOAK_OUTPUT}/models.json"
 curl -sf -m 10 "${ENDPOINT}/v1/models" -o "$MODELS_JSON" \
   || die "no response from ${ENDPOINT}/v1/models"

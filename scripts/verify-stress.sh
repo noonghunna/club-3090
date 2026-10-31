@@ -603,6 +603,14 @@ send_streaming_niah() {
   python3 - "$_req_file" "$_result_file" "$_url" "$_timeout" <<'PYEOF'
 import json, os, sys, time, urllib.request, urllib.error
 
+def _auth(headers=None):
+    """`headers` plus the engine's API key when scripts/lib/engine-auth.sh found one (CLUB_ENGINE_API_KEY):
+    Strata 0.2+ answers nothing but /health without it (#1878)."""
+    h = dict(headers or {})
+    if os.environ.get("CLUB_ENGINE_API_KEY"):
+        h["Authorization"] = "Bearer " + os.environ["CLUB_ENGINE_API_KEY"]
+    return h
+
 req_file, result_file, url, timeout_s = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 
 with open(req_file) as f:
@@ -616,7 +624,7 @@ body = json.dumps(req).encode("utf-8")
 http_req = urllib.request.Request(
     f"{url}/v1/chat/completions",
     data=body,
-    headers={"Content-Type": "application/json"},
+    headers=_auth({"Content-Type": "application/json"}),
 )
 
 t_send = time.time()

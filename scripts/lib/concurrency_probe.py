@@ -31,6 +31,16 @@ import threading
 import time
 import urllib.request
 
+
+def _auth(headers=None):
+    """`headers` plus the engine's API key when scripts/lib/engine-auth.sh found one (CLUB_ENGINE_API_KEY):
+    Strata 0.2+ answers nothing but /health without it (#1878)."""
+    h = dict(headers or {})
+    if os.environ.get("CLUB_ENGINE_API_KEY"):
+        h["Authorization"] = "Bearer " + os.environ["CLUB_ENGINE_API_KEY"]
+    return h
+
+
 # ~0.23 tok/char was calibrated on the BLOCK below (same as the heredoc).
 TOK_PER_CHAR = 0.23
 BLOCK = (
@@ -360,7 +370,7 @@ class GaugePoller:
 
     def _read(self):
         try:
-            with urllib.request.urlopen(self.url, timeout=2) as r:
+            with urllib.request.urlopen(urllib.request.Request(self.url, headers=_auth()), timeout=2) as r:
                 return metrics_gauges(r.read().decode("utf-8", "replace"))
         except Exception:
             return (None, None)
@@ -521,7 +531,8 @@ def spec_label_from_sglang_info(info):
 def _sglang_info(url):
     for path in ("/get_server_info", "/server_info"):
         try:
-            with urllib.request.urlopen(url.rstrip("/") + path, timeout=5) as r:
+            with urllib.request.urlopen(urllib.request.Request(url.rstrip("/") + path, headers=_auth()),
+                                        timeout=5) as r:
                 info = json.loads(r.read().decode("utf-8", "replace"))
             if isinstance(info, dict):
                 return info
@@ -553,7 +564,8 @@ def served_max_len(url, container=""):
         if isinstance(v, int) and v > 0:
             return v
         try:
-            with urllib.request.urlopen(url.rstrip("/") + "/v1/models", timeout=5) as r:
+            with urllib.request.urlopen(urllib.request.Request(url.rstrip("/") + "/v1/models", headers=_auth()),
+                                        timeout=5) as r:
                 data = json.loads(r.read().decode("utf-8", "replace")).get("data") or []
             v = (data[0] or {}).get("max_model_len") if data else None
             if isinstance(v, int) and v > 0:
@@ -842,7 +854,7 @@ def run_probe():
         req = urllib.request.Request(
             URL + "/v1/chat/completions",
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=_auth({"Content-Type": "application/json"}),
         )
         t0 = time.time()
         t_first = None

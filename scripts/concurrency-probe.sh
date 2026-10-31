@@ -213,6 +213,12 @@ if [[ "${CONTAINER:-}" == "none" ]]; then
 elif [[ -z "${CONTAINER:-}" ]]; then
   CONTAINER="$(club_container_for_url "$URL")"
 fi
+# The engine's API key for every request from here on: curl sends it, and the Python helper gets it as
+# CLUB_ENGINE_API_KEY (Strata 0.2+ answers nothing but /health without it, #1878). Under rebench-full.sh
+# preflight has done this already; run on its own, nothing else would.
+# shellcheck source=lib/engine-auth.sh
+source "${ROOT_DIR}/scripts/lib/engine-auth.sh"
+club_engine_auth_enable "$CONTAINER"
 # A remote endpoint: no local container AND the URL is not this machine. This rig's GPUs are then
 # not the server's, so their VRAM and names must not land on its card — they used to, as
 # "2× GeForce RTX 3090" and a VRAM curve of whatever this host happened to be doing. A host-process

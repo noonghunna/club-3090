@@ -15,6 +15,10 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #      CONTAINER= are given (its early return) and with PREFLIGHT_NO_AUTODETECT=1.
 #   4. The other delivery paths: bench.sh's python requests, strata_metrics.py, switch.sh's
 #      wait_ready and Open WebUI registration read the key the helper found.
+#   4b. The rest of the rebench chain (#1878): every python request in verify-stress.sh,
+#      bench-agentic.sh, concurrency_probe.py, soak-helper.py and deep_context_probe.py carries the key
+#      (static), concurrency-probe.sh and soak-test.sh enable it themselves, and soak-helper.py's run plus concurrency_probe.py's
+#      GETs reach a server that refuses everything without it (functional, with a no-key control).
 #
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -26,8 +30,8 @@ fail() { echo "✗ $1" >&2; exit 1; }
 pass() { echo "  ✓ $1"; }
 
 tmp="$(mktemp -d)"
-srv=""
-trap '[[ -n "$srv" ]] && kill "$srv" 2>/dev/null; rm -rf "$tmp"' EXIT
+srv=""; srv2=""
+trap '[[ -n "$srv" ]] && kill "$srv" 2>/dev/null; [[ -n "$srv2" ]] && kill "$srv2" 2>/dev/null; rm -rf "$tmp"' EXIT
 bin="$tmp/bin"; mkdir -p "$bin"
 
 bash -n scripts/lib/engine-auth.sh || fail "bash -n: engine-auth.sh"
@@ -145,5 +149,77 @@ command grep -q -E 'club_engine_auth_enable "\$container"' scripts/switch.sh || 
 command grep -q -F 'docker exec -i -e CLUB_ENGINE_API_KEY' scripts/lib/owui-register.sh \
   || fail "owui-register.sh must pass CLUB_ENGINE_API_KEY into its exec by name"
 pass "switch.sh's wait_ready enables it; Open WebUI registration gets it by name"
+
+# --- 4b. the rest of the rebench chain (#1878) -----------------------------------------------------
+# Static: each file defines _auth (reading CLUB_ENGINE_API_KEY), every urllib Request it builds carries
+# _auth(...), and every urlopen gets such a Request (never a bare URL, which would go out keyless).
+python3 - scripts/verify-stress.sh scripts/bench-agentic.sh scripts/lib/concurrency_probe.py \
+  scripts/soak-helper.py scripts/lib/deep_context_probe.py <<'PY' || fail "a rebench-chain python request goes out without the key"
+import re, sys
+bad = []
+for f in sys.argv[1:]:
+    t = open(f, encoding="utf-8").read()
+    if not re.search(r"def _auth\(.*?CLUB_ENGINE_API_KEY", t, re.S):
+        bad.append(f"{f}: no _auth() reading CLUB_ENGINE_API_KEY")
+    for m in re.finditer(r"urllib\.request\.Request\(", t):
+        if "_auth(" not in t[m.end():m.end() + 300].split("\n\n")[0]:
+            bad.append(f"{f}:{t[:m.start()].count(chr(10)) + 1}: a Request without _auth(...)")
+    for m in re.finditer(r"urlopen\(\s*", t):
+        if not re.match(r"(urllib\.request\.Request\(|req\b|http_req\b|_post\()", t[m.end():]):
+            bad.append(f"{f}:{t[:m.start()].count(chr(10)) + 1}: urlopen of something other than an authed Request")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+for f in scripts/concurrency-probe.sh scripts/soak-test.sh; do
+  command grep -q -E 'club_engine_auth_enable "\$CONTAINER"' "$f" \
+    || fail "$f must enable the key for its container (it doesn't go through preflight_autodetect_endpoint)"
+done
+pass "verify-stress / bench-agentic / concurrency_probe / soak-helper / deep_context_probe: every request carries _auth(); concurrency-probe.sh and soak-test.sh enable the key"
+
+# Functional: a server that answers 401 to anything without the right bearer, as Strata 0.2+ does.
+KEY4B=k-chain-0000000001
+port4b="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+KEY4B="$KEY4B" python3 - "$port4b" > /dev/null 2>&1 <<'PY' &
+import json, os, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+KEY = "Bearer " + os.environ["KEY4B"]
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def _ok(self):
+        if self.headers.get("Authorization") != KEY:
+            self.send_response(401); self.end_headers(); return False
+        return True
+    def do_GET(self):
+        if not self._ok(): return
+        if self.path == "/v1/models":
+            b = json.dumps({"data": [{"id": "m", "max_model_len": 4321}]}).encode()
+        elif self.path == "/metrics":
+            b = b"# ok\n"
+        else:
+            self.send_response(404); self.end_headers(); return
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if not self._ok(): return
+        self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+        for c in ({"choices": [{"delta": {"content": "hi"}}]},
+                  {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 1}}):
+            self.wfile.write(b"data: " + json.dumps(c).encode() + b"\n\n")
+        self.wfile.write(b"data: [DONE]\n\n")
+HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+PY
+srv2=$!
+for _ in $(seq 1 50); do curl -s -m 1 -o /dev/null "http://127.0.0.1:$port4b/v1/models" && break; sleep 0.1; done
+U4B="http://127.0.0.1:$port4b"
+printf '%s' '{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":4}' > "$tmp/req4b.json"
+CLUB_ENGINE_API_KEY="$KEY4B" python3 scripts/soak-helper.py run "$U4B" "$tmp/req4b.json" 30 "$tmp/m4b-key.json" >/dev/null 2>&1 || true
+env -u CLUB_ENGINE_API_KEY python3 scripts/soak-helper.py run "$U4B" "$tmp/req4b.json" 30 "$tmp/m4b-nokey.json" >/dev/null 2>&1 || true
+s_key="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status"))' "$tmp/m4b-key.json" 2>/dev/null || echo none)"
+s_nokey="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status"))' "$tmp/m4b-nokey.json" 2>/dev/null || echo none)"
+[[ "$s_key" == 200 && "$s_nokey" == 401 ]] || fail "soak-helper.py run: with the key status=$s_key (want 200), without status=$s_nokey (want 401)"
+n_key="$(cd scripts/lib && CLUB_ENGINE_API_KEY="$KEY4B" URL="$U4B" CONTAINER="" python3 concurrency_probe.py --served-max-len 2>/dev/null || true)"
+n_nokey="$(cd scripts/lib && env -u CLUB_ENGINE_API_KEY URL="$U4B" CONTAINER="" python3 concurrency_probe.py --served-max-len 2>/dev/null || true)"
+[[ "$n_key" == 4321 && "$n_nokey" != 4321 ]] || fail "concurrency_probe.py --served-max-len: with the key '$n_key' (want 4321), without '$n_nokey' (want anything else)"
+pass "against a server that refuses keyless requests: soak-helper.py run 200 with the key / 401 without; concurrency_probe.py reads /v1/models with it, not without"
 
 echo "PASS: test-engine-auth"

@@ -162,6 +162,14 @@ fi
 python3 - "$URL" "$MODEL" "$SESSIONS" "$TURNS" "$QUIET" "$FIXTURE" << 'PYEOF'
 import json, os, sys, time, urllib.request, statistics as s, pathlib
 
+def _auth(headers=None):
+    """`headers` plus the engine's API key when scripts/lib/engine-auth.sh found one (CLUB_ENGINE_API_KEY):
+    Strata 0.2+ answers nothing but /health without it (#1878)."""
+    h = dict(headers or {})
+    if os.environ.get("CLUB_ENGINE_API_KEY"):
+        h["Authorization"] = "Bearer " + os.environ["CLUB_ENGINE_API_KEY"]
+    return h
+
 # Reasoning switch resolved by the shell (see preflight.sh header) — WHICH key
 # works is model-specific and an unrecognised one is silently ignored. Returns
 # the payload fragment: the kwargs object plus, when the model uses an effort
@@ -188,7 +196,8 @@ def _scrape_engine_metrics(base_url):
             "vllm:num_preemptions_total", "vllm:num_preemptions")
     out = {}
     try:
-        with urllib.request.urlopen(base_url.rstrip("/") + "/metrics", timeout=5) as r:
+        with urllib.request.urlopen(urllib.request.Request(base_url.rstrip("/") + "/metrics", headers=_auth()),
+                                    timeout=5) as r:
             for line in r.read().decode("utf-8", "replace").splitlines():
                 if line.startswith("#") or " " not in line:
                     continue
@@ -322,7 +331,7 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
 
     req = urllib.request.Request(
         f"{URL}/v1/chat/completions", data=body,
-        headers={"Content-Type": "application/json"})
+        headers=_auth({"Content-Type": "application/json"}))
     t_send = time.time()
     ttft = None
     completion_tokens = 0
