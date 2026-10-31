@@ -4,13 +4,15 @@
 #              experts INT4 bit-exact; shared expert and DeltaNet INT4 RTN; attention and lm_head
 #              INT8 at load), the INT8 n-gram table, its INT4 MTP head (128 GB)
 #   Engine:    QEngine 1.3.2 (bpx03): its second engine, libqflash.so, in the author's own image
-#              ghcr.io/bpx03/qengine (source fb1da72d, text only)
+#              ghcr.io/bpx03/qengine (source fb1da72d, the :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (experts split evenly over the two cards; GPU-to-GPU P2P when the
 #              driver grants it)
 #   Drafter:   MTP, up to 3 drafts a step (adaptive; SPEC_N sets the most, 0 turns MTP off) + lookup
 #              drafts from the conversation history
 #   KV:        fp8_e4m3 (QEngine's attention KV, split by position over the cards)
-#   Vision:    no (the text-only image; QEngine's :vision image adds image input, from 1.3.1)
+#   Vision:    yes (VISION=0 turns it off; verify-full vision 4/4, 2026-10-31). The encoder runs on GPU1:
+#              MEASURED its expert budget 15.73 -> 15.05 GiB (1,485 fewer resident expert groups, ~2.4% of
+#              both cards'); the KV pool is unchanged
 #   Max ctx:   262144
 #   Genesis:   none
 #   Status:    🐣 Incubating
@@ -54,6 +56,8 @@
 #     MemAvailable minus a margin and gives memory back, so it isn't part of the need. From 1.3.2,
 #     pinned system prompts add up to 8 GB as agent kinds appear (FLASH_PREFIX_GB; ~0.4 GB for a 20K-token
 #     prompt, upstream), not at ready.
+#   ⤷ 2026-10-31 (1.3.2): MemAvailable fell 85.5 GiB at ready on the text-only image and 88.2 GiB with vision
+#     on (the default; the encoder's weights stay pinned in host RAM, plus PyTorch), so 88 still holds.
 # Requires-min-vram-gb: 24
 # Requires-min-gpu-count: 2
 # Tensor-parallel: 2
@@ -76,6 +80,7 @@
 #                     that send none
 #   SPEC_N=<n>        --mtp-k, the most MTP drafts a step (default 3; the engine adapts below it);
 #                     0 = no MTP (lookup drafts stay on; FLASH_LOOKUP=0 turns them off)
+#   VISION            1 (default) | 0: --vision 1 | 0, image input (OpenAI image_url, Anthropic image blocks)
 # The Flash-Next engine's own settings, passed through when set (its defaults otherwise):
 #   FLASH_MAX_SEQS       sequence slots, 1-16 (16); fewer leave VRAM to the expert cache
 #   FLASH_KV_ARCHIVE_GB  pinned host-RAM archive of conversations (48; 0 = off, ~85 GB host RAM)
@@ -129,7 +134,7 @@
 #   bash scripts/settings.sh set FLASH_MAX_SEQS=8
 services:
   qengine-qwen38-flash-next-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:ff323aa49b26d333209171b30997f9f4be65184a825aa9e6ba39f297ea76be9d}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:3375a4253e677ef073876662af439e5bfc44736b4cfd5e9fb34c1613bb7f8008}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-flash-next-dual}"
     user: "0:${DOCKER_GID:-1000}"
@@ -192,6 +197,7 @@ services:
       - ENABLE_THINKING
       - REASONING_EFFORT
       - SPEC_N
+      - VISION
     entrypoint:
       - bash
       - -c
@@ -235,6 +241,20 @@ services:
         fi
         export QE_REASONING_EFFORT="$$_reff"
         echo "[reasoning] default reasoning_effort=$$_reff (QE_REASONING_EFFORT; a request's own effort wins)" >&2
+        # VISION (our knob) -> --vision 1|0: image input, the encoder on the last card. Needs the :vision image
+        # (PyTorch); engines/qengine.yml pins it.
+        _vis="$${VISION:-1}"
+        case "$$_vis" in
+          1) if ! python3 -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("torch") is None)'; then
+               echo "[vision] VISION=1, but this image has no PyTorch for the vision encoder." >&2
+               echo "[vision] Fix: VISION=0, or QEngine's :<release>-vision image (the one engines/qengine.yml pins)." >&2
+               exit 1
+             fi
+             _args+=(--vision 1) ;;
+          0) _args+=(--vision 0) ;;
+          *) echo "[vision] VISION='$$_vis' must be 1 or 0" >&2; exit 1 ;;
+        esac
+        echo "[vision] image input $$( [ "$$_vis" = 1 ] && echo on || echo off ) (VISION=$$_vis)" >&2
         # The engine library makes ~/.cache/qengine/locks 0755 whatever the umask; group-writable, the
         # lock files it leaves in the shared engine cache stay removable by the user.
         mkdir -p /root/.cache/qengine/locks && chmod g+w /root/.cache/qengine/locks

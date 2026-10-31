@@ -15,14 +15,16 @@ lineage:
 image_env: QENGINE_IMAGE
 install:
   method: docker_image
-  # The author's own image, ghcr.io/bpx03/qengine:<release> (text only; the :vision tags add the vision encoder and
-  # PyTorch, ~3 GB). Its org.opencontainers.image.revision label is the source commit: 1.3.2 is git tag v1.3.2, the
-  # release's "(update)" commit fb1da72d on top of fdc347c6 (the 27B asset download, added after publication).
-  # pin-current: 1.3.2 · source fb1da72d · pinned 2026-10-31 · booted 2026-10-31 on both slugs (verify-full)
-  # pin-earlier: 1.3.1 `849b059d…` (source 016c9249, 2026-10-30); 1.3 `b9d1b0af…` (source d15a4d3a, 2026-10-28); 1.3-rc4 `18b3c4bb…` (source 116bd8d9, 2026-10-27)
+  # The author's own image, ghcr.io/bpx03/qengine:<release>-vision: the engine plus PyTorch for the vision encoder
+  # (~3 GB; the text-only :<release> is ~0.3 GB). Pinned from 2026-10-31 so the slugs take images (VISION, default
+  # on); its server, engine libraries and entrypoint are byte-identical to the text image of the same release.
+  # Its org.opencontainers.image.revision label is the source commit: 1.3.2 is git tag v1.3.2, the release's
+  # "(update)" commit fb1da72d on top of fdc347c6 (the 27B asset download, added after publication).
+  # pin-current: 1.3.2-vision · source fb1da72d · pinned 2026-10-31 · booted 2026-10-31 on both slugs (verify-full, vision)
+  # pin-earlier: 1.3.2 text-only `ff323aa4…` (source fb1da72d, 2026-10-31; runs the slugs with VISION=0); 1.3.1 `849b059d…` (source 016c9249, 2026-10-30); 1.3 `b9d1b0af…` (source d15a4d3a, 2026-10-28); 1.3-rc4 `18b3c4bb…` (source 116bd8d9, 2026-10-27)
   # Before 1.3.1 there is no QE_REASONING_EFFORT, so the composes refuse those images: a rollback to 1.3 also
   # needs the composes' earlier entrypoint, which served a copy of the template with its default effort replaced.
-  spec: ghcr.io/bpx03/qengine@sha256:ff323aa49b26d333209171b30997f9f4be65184a825aa9e6ba39f297ea76be9d
+  spec: ghcr.io/bpx03/qengine@sha256:3375a4253e677ef073876662af439e5bfc44736b4cfd5e9fb34c1613bb7f8008
 supported_model_families:
   - qwen35-dense          # Qwen3.8-27B, RedHatAI's INT4 only (libqengine.so)
   - qwen4exp              # Qwen3.8-Flash-Next, the author's own INT4 layout (libqflash.so, from 1.3; upstream calls it a

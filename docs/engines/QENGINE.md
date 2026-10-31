@@ -22,7 +22,9 @@ What it does, from its README:
 
 ## Image
 
-The author publishes `ghcr.io/bpx03/qengine` (text only, about 0.3 GB; the `:vision` tags add the vision encoder and PyTorch, about 3 GB). Each image's `org.opencontainers.image.revision` label names its source commit. The profile pins **`1.3.2`** by digest (`sha256:ff323aa4…`, source `fb1da72d` = git tag `v1.3.2`), and the launchers will inject it as `QENGINE_IMAGE`.
+The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<release>`, text only (about 0.3 GB), and `:<release>-vision`, which adds PyTorch for the vision encoder (about 3 GB to pull). Each image's `org.opencontainers.image.revision` label names its source commit. The profile pins **`1.3.2-vision`** by digest (`sha256:3375a425…`, source `fb1da72d` = git tag `v1.3.2`), and the launchers inject it as `QENGINE_IMAGE`. Its server, engine libraries and entrypoint are byte-identical to the text image's, so text serving is the same in either; the vision image is what lets the slugs take images.
+
+**Vision (`VISION`, default 1):** both slugs accept images (OpenAI `image_url`, data URLs or http(s); Anthropic `image` blocks) through QEngine's `--vision 1`. Both weights folders carry the checkpoint's vision tower. The encoder runs in PyTorch on the last card, with its weights pinned in host RAM. Measured on the reference rig (2026-10-31, verify-full vision 4/4 on both): on the 27B, the encoder and PyTorch's CUDA context on GPU1 shrink the KV pool from 374,784 to 289,792 tokens (-23%), because tensor parallel sizes it by the smaller card; it still holds a full 262K context, and `VISION=0` gives the pool back. On Flash-Next, GPU1's expert budget goes from 15.73 to 15.05 GiB (1,485 fewer resident expert groups, ~2.4% of both cards'), the KV pool is unchanged, and MemAvailable at ready fell 88.2 GiB against 85.5 on the text image. Upstream measured text output unchanged by the feature and agent throughput the same (536 vs 537 tok/s, three cards); it has no vision quality benchmark yet, and video isn't supported. `VISION=0` turns it off; the compose stops with the reason if `VISION=1` meets an image without PyTorch.
 
 ## Settings
 

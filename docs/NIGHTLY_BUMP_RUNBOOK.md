@@ -298,7 +298,8 @@ does, and what to do by hand when it refuses.
 
 ### qengine
 
-- Pinned by digest to the author's own `ghcr.io/bpx03/qengine:<release>` (text only; the `:vision` tags add PyTorch).
+- Pinned by digest to the author's own `ghcr.io/bpx03/qengine:<release>-vision` (the engine plus PyTorch for the vision
+  encoder, which the slugs' `VISION` default needs; `:<release>` is the same build without PyTorch).
   Each image's `org.opencontainers.image.revision` label is its source commit, which `lineage.source_ref` records.
   A bump is `scripts/engine-pin-bump.sh qengine ghcr.io/bpx03/qengine@sha256:<digest>` and `source_ref`, then a boot
   of `qengine/qwen38-27b-dual` on the new digest with `verify-full` (the slugs since 2026-10-28; boot
