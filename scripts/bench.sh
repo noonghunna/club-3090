@@ -676,7 +676,7 @@ if [[ "$CAPTURE" == "1" && -f "${ROOT_DIR}/scripts/lib/capture.sh" ]]; then
   # value on stdout, so a notice printed there gets captured by this $(...) and
   # rendered inside the label — seen live as
   #   "KV cache type  : capture: KV cache type unavailable (…)".
-  if _v="$(cap_kv_type "$CAP_ARGV")"; then
+  if _v="$(cap_kv_type "$CAP_ARGV" "$ENGINE_KIND")"; then
     echo "  KV cache type  : ${_v}"
   else
     cap_note_unavailable "KV cache type" "not in argv, /props or the boot log"
@@ -2128,7 +2128,7 @@ for name, v in d.get("shapes", {}).items():
     card_kv "$CARD_REC" fp.slots         "$(cap_props_get 'total_slots' || true)"
     card_kv "$CARD_REC" fp.ftype         "$(cap_props_get 'model_ftype' || true)"
     card_kv "$CARD_REC" fp.drafter       "$(cap_props_get 'default_generation_settings.params.speculative.types' || true)"
-    card_kv "$CARD_REC" fp.kv            "$(cap_kv_type "$CAP_ARGV" || true)"
+    card_kv "$CARD_REC" fp.kv            "$(cap_kv_type "$CAP_ARGV" "$ENGINE_KIND" || true)"
     card_kv "$CARD_REC" fp.argv          "$(cap_argv_fingerprint "$CAP_ARGV" 2>/dev/null || true)"
     card_kv "$CARD_REC" fp.moe           "$(cap_moe_cache_config "$CAP_ARGV" || true)"
     card_kv "$CARD_REC" fp.offload       "${CAP_OFFLOAD_DESC:-}"
