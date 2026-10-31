@@ -1,6 +1,6 @@
 # Strata — an engine written for Qwen3.8-Flash-Next on one or two cards
 
-**Engine id:** `strata` · **Slug prefix:** `strata/` · **Status of its slugs:** 🐣 Incubating · **Requires:** NVIDIA compute capability 7.5+, driver ≥ 580 (CUDA 13), an x86-64 CPU with AVX2, ~86 GB of host RAM for IQ3_S when the model disk is rotational (setup keeps the 28.8 GB n-gram table in RAM; less on an SSD)
+**Engine id:** `strata` · **Slug prefix:** `strata/` · **Status of its slugs:** 🐣 Incubating · **Requires:** NVIDIA compute capability 7.5+, driver ≥ 580 (CUDA 13), an x86-64 CPU with AVX2, ~93 GB of host RAM for IQ3_S when the model disk is rotational (setup keeps the 28.8 GB n-gram table in RAM; less on an SSD)
 
 ## What it is
 
