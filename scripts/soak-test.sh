@@ -83,6 +83,10 @@
 #                          LABELS it, instead of printing decode_tps=0.0 (#809).
 #                          "auto" detects the signature and latches; "canvas"
 #                          forces it; "autoregressive" restores the old zeroing.
+#                          A reply whose output arrives in ONE chunk of several
+#                          (an engine that sends a tool call whole, QEngine) is
+#                          not a canvas: it takes the engine counter, else n/a,
+#                          and never latches (#1897).
 #   SOAK_ENGINE_COUNTER    auto (default) | off. "auto" reads the ENGINE's own
 #                          decode counter when one is reachable — vLLM/SGLang
 #                          `<engine>:time_per_output_token_seconds` on
@@ -435,7 +439,7 @@ RESPONSE_DIR="${SOAK_OUTPUT}/responses"
 STATE_DIR="${SOAK_OUTPUT}/states"
 mkdir -p "$REQUEST_DIR" "$RESPONSE_DIR" "$STATE_DIR"
 
-printf 'session_id,turn_id,t_ms,vram_mib,ttft_ms,decode_tps,completion_tokens,status,error,decode_basis,decode_source\n' > "$TURN_LOG"
+printf 'session_id,turn_id,t_ms,vram_mib,ttft_ms,decode_tps,completion_tokens,status,error,decode_basis,decode_source,whole_reply\n' > "$TURN_LOG"
 printf 'session_id,turn_id,gpu_index,memory_used_mib,utilization_gpu_pct\n' > "$GPU_LOG"
 
 capture_state "baseline"
@@ -540,8 +544,12 @@ for session in $(seq 1 "$SOAK_SESSIONS"); do
     # to catch reads exactly like a harmless fast turn. `n/a` + the window width
     # + the label make the two impossible to confuse. The summary's silent-empty
     # discriminator is unchanged — it keys on completion_tokens, not on this.
+    # A reply that arrived whole with no engine counter (`whole`, #1897) has no
+    # figure either.
     decode_show="$decode_tps"
-    [[ "${decode_basis:-decode}" == "unmeasurable" ]] && decode_show="n/a"
+    case "${decode_basis:-decode}" in
+      unmeasurable|whole) decode_show="n/a" ;;
+    esac
     log "  turn ${turn}/${SOAK_TURNS}: status=${status} wall=${t_ms}ms ttft=${ttft_ms}ms decode_tps=${decode_show} vram=${vram}MiB (${decode_note})"
   done
 

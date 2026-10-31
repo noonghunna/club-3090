@@ -30,6 +30,11 @@ Plan directive syntax (one per line, '#' comments and blanks ignored):
   canvas[:VRAM]    canvas granularity — the entire response arrives in ONE
                    chunk carrying content + usage, so the decode window is
                    zero-width. The #809 shape.
+  whole[:VRAM]     a reply sent WHOLE by an autoregressive engine: a role
+                   chunk, ONE chunk carrying the complete tool call, then a
+                   finish chunk with usage. The window to the finish chunk is
+                   ~0, like a canvas, but the stream has three chunks. QEngine's
+                   shape (#1897): must NOT be read as a canvas.
   empty[:VRAM]     HTTP 200, stream closes with usage completion_tokens=0.
                    Genuine silent-empty; must stay decode_tps=0.0.
   http:CODE[:VRAM] respond with an HTTP error status.
@@ -132,6 +137,15 @@ def chunk(content=None, usage=None):
     return sse(body)
 
 
+def delta_chunk(delta):
+    return sse({
+        "id": "chatcmpl-stub",
+        "object": "chat.completion.chunk",
+        "model": "stub-model",
+        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+    })
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -218,6 +232,20 @@ class Handler(BaseHTTPRequestHandler):
                 # ONE chunk carrying the whole canvas + usage: the decode window
                 # collapses to zero width, which is the #809 signature.
                 self.wfile.write(chunk(content="canvas block " * 20, usage=usage))
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+                return
+
+            if kind == "whole":
+                # role, the finished tool call in ONE chunk, finish + usage.
+                self.wfile.write(delta_chunk({"role": "assistant", "content": ""}))
+                self.wfile.flush()
+                time.sleep(0.15)
+                self.wfile.write(delta_chunk({"tool_calls": [{
+                    "index": 0, "id": "call_stub", "type": "function",
+                    "function": {"name": "read_file", "arguments": "{\"path\": \"README.md\"}"},
+                }]}))
+                self.wfile.write(chunk(usage=usage))
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
                 return
