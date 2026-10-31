@@ -184,6 +184,26 @@ cap_server_pid_source() {
   esac
 }
 
+# cap_owned_by [url] — cached /v1/models data[0].owned_by: what the server calls itself ("qengine",
+# "llamacpp", "vllm", ...), empty when it says nothing. The family of a host-run server, which has no
+# container to name it (scripts/lib/engine-kind.sh maps it).
+CAP_OWNED_BY=""
+CAP_OWNED_BY_TRIED=0
+cap_owned_by() {
+  local url="${1:-${URL:-}}"
+  if (( CAP_OWNED_BY_TRIED )); then printf '%s' "$CAP_OWNED_BY"; [[ -n "$CAP_OWNED_BY" ]]; return; fi
+  CAP_OWNED_BY_TRIED=1
+  [[ -n "$url" ]] || return 1
+  CAP_OWNED_BY="$(curl -sf -m 5 "${url}/v1/models" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    print(((json.load(sys.stdin).get("data") or [{}])[0] or {}).get("owned_by", "") or "")
+except Exception:
+    pass' 2>/dev/null || true)"
+  [[ -n "$CAP_OWNED_BY" ]] || return 1
+  printf '%s' "$CAP_OWNED_BY"
+}
+
 # cap_init [tmpdir] — resolve everything the later captures depend on.
 # Safe to call more than once. Never fails the caller.
 cap_init() {
@@ -325,13 +345,22 @@ sys.stdout.write(str(cur))
 # ---------------------------------------------------------------------------
 # Order of authority: argv (what was actually asked for) > /props > boot log.
 # Prints "<type> (source: <where>)"; returns 1 and notes unavailability if none
-# of the three can answer.
+# of the three can answer. $2 is the engine family the caller resolved (bench.sh's
+# ENGINE_KIND); unknown or absent, it comes from what the server calls itself.
 cap_kv_type() {
-  local argv="${1:-}" v
+  local argv="${1:-}" kind="${2:-unknown}" v
+  if [[ -z "$kind" || "$kind" == unknown ]]; then
+    # shellcheck source=engine-kind.sh
+    declare -F engine_kind_from_owned_by >/dev/null || source "$(dirname "${BASH_SOURCE[0]}")/engine-kind.sh"
+    kind="$(engine_kind_from_owned_by "$(cap_owned_by || true)")"
+  fi
   if [[ -n "$argv" ]]; then
     v="$(cap_argv_flag "$argv" -ct -ctk -ctv --cache-type-k --cache-type-v --kv-cache-dtype || true)"
     [[ -n "$v" ]] && { echo "$v (source: argv)"; return 0; }
   fi
+  # QEngine has one KV format and no flag for it. Its /props (from 1.3.1) is llama.cpp-shaped but
+  # carries no cache type, so without this the llama.cpp default below answered "f16".
+  if [[ "$kind" == qengine ]]; then echo "fp8_e4m3 (QEngine's only KV format)"; return 0; fi
   v="$(cap_props_get "default_generation_settings.params.cache_type_k" || true)"
   [[ -n "$v" ]] && { echo "$v (source: /props)"; return 0; }
   if [[ -n "$CAP_LOG" && -r "$CAP_LOG" ]]; then
@@ -356,8 +385,11 @@ cap_kv_type() {
   # ENGINE DEFAULT is f16, and "f16 (engine default)" is a fact the reader can act
   # on where "unavailable" is not. Only inferred when the family is identified —
   # /props answering, or llama.cpp markers in the log. Anything else stays honestly
-  # unavailable rather than guessing another engine's default.
-  if [[ -n "$argv" ]] || [[ -n "$CAP_LOG" ]]; then
+  # unavailable rather than guessing another engine's default. /props alone doesn't identify it:
+  # TabbyAPI, Strata and QEngine serve a llama.cpp-style one too, so a family that names another
+  # engine skips this.
+  if [[ -z "$kind" || "$kind" == unknown || "$kind" == llamacpp ]] \
+     && { [[ -n "$argv" ]] || [[ -n "$CAP_LOG" ]]; }; then
     if cap_props_json >/dev/null 2>&1 \
        || { [[ -r "${CAP_LOG:-/dev/null}" ]] \
             && command grep -qE 'llama_context:|llama_model_loader:|llama_kv_cache' "$CAP_LOG" 2>/dev/null; }; then

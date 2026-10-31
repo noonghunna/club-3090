@@ -145,12 +145,16 @@ detect_engine() {
   # classified every exl3 run as llamacpp — which sent step 9 down the llamacpp
   # branch to SKIP, reading as "no drafter" on an engine whose MTP was running
   # at ~0.69 acceptance the whole time. Prefer container/image evidence whenever
-  # it names a family; fall back to llamacpp otherwise, so host builds and
+  # it names a family, then what the server calls itself (/v1/models owned_by):
+  # QEngine serves a llama.cpp-style /props too from 1.3.1, and a host-run one has
+  # no container to name it. Fall back to llamacpp otherwise, so host builds and
   # unconventional container names behave exactly as before.
   if curl -sf -m 3 "${URL}/props" >/dev/null 2>&1; then
     local _props_kind
     _props_kind="$(engine_kind_from_container "$CONTAINER")"
     [[ "$_props_kind" == "unknown" ]] && _props_kind="$(engine_kind_from_image "$CONTAINER")"
+    [[ "$_props_kind" == "unknown" ]] && _props_kind="$(engine_kind_from_owned_by "$(curl -sf -m 5 "${URL}/v1/models" 2>/dev/null \
+      | python3 -c "import sys,json; print(((json.load(sys.stdin).get('data') or [{}])[0] or {}).get('owned_by','') or '')" 2>/dev/null)")"
     [[ "$_props_kind" != "unknown" ]] && { echo "$_props_kind"; return 0; }
     echo "llamacpp"; return 0
   fi
@@ -175,7 +179,11 @@ detect_engine() {
   # is the same one rebench-full.sh and club3090-env.sh already use.
   # The prefix arms themselves now live in scripts/lib/engine-kind.sh
   # (club-3090#1282) so adding an engine is a ONE-place change.
-  engine_kind_from_container "$CONTAINER"
+  k="$(engine_kind_from_container "$CONTAINER")"
+  [[ "$k" != "unknown" ]] && { echo "$k"; return 0; }
+  # Last, /v1/models' owned_by, which needs no container (as in verify-stress.sh).
+  engine_kind_from_owned_by "$(curl -sf -m 5 "${URL}/v1/models" 2>/dev/null \
+      | python3 -c "import sys,json; print(((json.load(sys.stdin).get('data') or [{}])[0] or {}).get('owned_by','') or '')" 2>/dev/null)"
   return 0
 }
 
