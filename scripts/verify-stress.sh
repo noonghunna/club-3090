@@ -532,12 +532,15 @@ run_check() {
 # always saying "Check: docker logs $CONTAINER" — meaningless to a host-build
 # llama.cpp user. Engine class is detected once at startup and cached.
 detect_engine() {
-  # /props is not llama.cpp's alone: TabbyAPI and Strata serve a compatible one, so a
-  # container name or image that names a family wins, as in verify-full.sh.
+  # /props is not llama.cpp's alone: TabbyAPI, Strata and QEngine (from 1.3.1) serve a compatible
+  # one, so a container name or image that names a family wins, then what the server calls itself
+  # (/v1/models owned_by, the only name a host-run QEngine has), as in verify-full.sh.
   if curl -sf -m 3 "${URL}/props" >/dev/null 2>&1; then
     local _props_kind
     _props_kind="$(engine_kind_from_container "$CONTAINER")"
     [[ "$_props_kind" == "unknown" ]] && _props_kind="$(engine_kind_from_image "$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null)")"
+    [[ "$_props_kind" == "unknown" ]] && _props_kind="$(engine_kind_from_owned_by "$(curl -sf -m 5 "${URL}/v1/models" 2>/dev/null \
+      | python3 -c "import sys,json; print(((json.load(sys.stdin).get('data') or [{}])[0] or {}).get('owned_by','') or '')" 2>/dev/null)")"
     [[ "$_props_kind" != "unknown" ]] && { echo "$_props_kind"; return 0; }
     echo "llamacpp"; return 0
   fi
@@ -555,7 +558,7 @@ detect_engine() {
   k="$(engine_kind_from_container "$CONTAINER")"
   [[ "$k" != "unknown" ]] && { echo "$k"; return 0; }
   # Last, /v1/models' owned_by, which needs no container: a host-run QEngine (CONTAINER=none) sends
-  # no fingerprint and serves no /props, and only this names it (#1826).
+  # no fingerprint, and before 1.3.1 served no /props either, so only this named it (#1826).
   engine_kind_from_owned_by "$(curl -sf -m 5 "${URL}/v1/models" 2>/dev/null \
     | python3 -c "import sys,json; print(((json.load(sys.stdin).get('data') or [{}])[0] or {}).get('owned_by','') or '')" 2>/dev/null)"
   return 0
