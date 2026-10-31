@@ -361,6 +361,20 @@ cap_kv_type() {
   # QEngine has one KV format and no flag for it. Its /props (from 1.3.1) is llama.cpp-shaped but
   # carries no cache type, so without this the llama.cpp default below answered "f16".
   if [[ "$kind" == qengine ]]; then echo "fp8_e4m3 (QEngine's only KV format)"; return 0; fi
+  # Strata: the port belongs to its Python server, and the KV belongs to the engine it starts as a
+  # child (`strata --serve ... --kv int8 --kv-resident 32768`), so neither the argv above nor /props
+  # carries it. Read the child's own command line in the container, as llamacpp_spec_args does
+  # for llama-server. Until this, every Strata bench said "KV cache type unavailable" (#1878).
+  if [[ "$kind" == strata && -n "${CONTAINER:-}" && "$CONTAINER" != none ]] && cap_have docker; then
+    local eargs res
+    # pid,args, not args alone: docker top refuses a ps format without a PID column
+    eargs="$(docker top "$CONTAINER" -eo pid,args 2>/dev/null | command grep -E -- '(^| )--kv [^ ]' | head -1 || true)"
+    if v="$(cap_argv_flag "$eargs" --kv)"; then
+      res="$(cap_argv_flag "$eargs" --kv-resident || true)"
+      echo "${v}${res:+, ${res} cells in VRAM (--kv-resident)} (source: Strata engine argv)"
+      return 0
+    fi
+  fi
   v="$(cap_props_get "default_generation_settings.params.cache_type_k" || true)"
   [[ -n "$v" ]] && { echo "$v (source: /props)"; return 0; }
   if [[ -n "$CAP_LOG" && -r "$CAP_LOG" ]]; then
