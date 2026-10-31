@@ -37,6 +37,14 @@
    "applies": "never",
    "why": "an opt-in feature of the KV-offload composes"
   },
+  "ROPE_SCALING": {
+   "applies": "never",
+   "why": "an opt-in long-context extension (past a model's trained length); a slug at or under its trained context needs no scaling, and setup resolves yarn itself past it"
+  },
+  "ROPE_SCALE": {
+   "applies": "never",
+   "why": "the factor of an opt-in long-context extension; under linear/yarn with it unset the factor derives from CONTEXT, exactly as setup's own resolution"
+  },
   "KV_OFFLOAD_DISK_GB": {
    "applies": "never",
    "why": "an opt-in feature of the KV-offload composes"

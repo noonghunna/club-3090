@@ -62,6 +62,8 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 # Strata's engine (components/engine/<version>/strata) reads these; named one by one, because a
                 # STRATA_ prefix would also excuse our own STRATA_START_GPUS / STRATA_API_KEY settings
                 "STRATA_GDN_TC", "STRATA_GDN_CONVL2",
+                # the engine's PLE residency policy: 0 keeps the n-gram table on direct disk reads
+                "STRATA_PLE_AUTO_RAM",
                 # from 1.3.2
                 "FLASH_PFB_ALIAS", "FLASH_PREFIX_GB", "FLASH_YARN", "FLASH_LEND_CHECK",
                 # 1.3.2's copy-engine prefill pipeline switch (#1841)

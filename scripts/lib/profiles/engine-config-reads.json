@@ -60,6 +60,8 @@
     "ENABLE_THINKING": "false",
     "THINKING_BUDGET": "256",
     "SPEC_N": "3",
+    "ROPE_SCALING": "yarn",
+    "ROPE_SCALE": "2",
     "TEMP": "0.7",
     "TOP_P": "0.9",
     "TOP_K": "10",
@@ -96,6 +98,8 @@
     "sampling.presence_penalty": "sampling_defaults_from_config()",
     "sampling.repetition_penalty": "sampling_defaults_from_config()",
     "args:--spec": "the engine's own flag: the MTP drafter's verify window",
+    "args:--rope-scaling": "the engine's own flag: RoPE extension past the trained 262144 (none | linear | yarn; `strata --help`)",
+    "args:--rope-scale": "the engine's own flag: the linear/yarn extension factor (`strata --help`)",
     "aliases": "main(): svc.set_aliases(), other names the model answers to (Strata #297), each listed in /v1/models"
    }
   },

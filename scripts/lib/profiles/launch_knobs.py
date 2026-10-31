@@ -99,6 +99,8 @@ MOUNTED_READERS = (
             "REASONING_EFFORT": None,
             "ENABLE_THINKING": None,
             "SPEC_N": None,
+            "ROPE_SCALING": None,
+            "ROPE_SCALE": None,
         },
     },
     {
