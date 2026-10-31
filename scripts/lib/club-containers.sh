@@ -165,6 +165,19 @@ club_container_for_url() {
   return 0
 }
 
+# club_url_for_container NAME — http://localhost:<port> for the host port NAME publishes on an engine
+# port, or nothing. The other direction of club_container_for_url: with CONTAINER= set and no URL=, the
+# URL is that container's own port (#1584), as preflight's autodetect has it for the serving scripts.
+club_url_for_container() {
+  local c="${1:-}" ports port
+  [[ -n "$c" && "$c" != none ]] || return 0
+  ports="$(docker ps --filter "name=^${c}\$" --format '{{.Ports}}' 2>/dev/null | head -1 || true)"
+  port="$(command grep -oE "([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(${CLUB_ENGINE_PORTS_ANY})/tcp" <<<"$ports" \
+    | head -1 | sed -E 's|^[^:]+:([0-9]+)->.*|\1|' || true)"
+  [[ -n "$port" ]] && printf 'http://localhost:%s\n' "$port"
+  return 0
+}
+
 club_engine_port_lines() {
   declare -F engine_kind_from_image >/dev/null 2>&1 \
     || source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/engine-kind.sh"

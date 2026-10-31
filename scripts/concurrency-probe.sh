@@ -92,6 +92,15 @@ if [[ -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
   REGISTRY_LOOKUP_ROOT="${ROOT_DIR}"
   _DEFAULT_ENDPOINT_PORT="$(registry_lookup_default_port qwen3.6-27b 2>/dev/null || true)"
 fi
+# CONTAINER= with no URL=: the URL is that container's own port (#1584), as preflight's autodetect
+# gives the other serving scripts. This used to fall back to the default port below, so a probe
+# told CONTAINER=<another slug> measured whatever answered on that port, or nothing.
+if [[ -z "${URL:-}" && -n "${CONTAINER:-}" && "${CONTAINER}" != none ]]; then
+  # shellcheck source=lib/club-containers.sh
+  source "${ROOT_DIR}/scripts/lib/club-containers.sh"
+  URL="$(club_url_for_container "$CONTAINER")"
+  if [[ -n "$URL" ]]; then echo "[concurrency-probe] URL=${URL} (the port ${CONTAINER} publishes; set URL= to choose)" >&2; fi
+fi
 URL="${URL:-http://localhost:${_DEFAULT_ENDPOINT_PORT:-8020}}"
 PROMPT_TOKENS="${PROMPT_TOKENS:-16000}"
 GEN_TOKENS="${GEN_TOKENS:-256}"

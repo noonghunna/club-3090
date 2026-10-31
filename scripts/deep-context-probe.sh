@@ -75,7 +75,8 @@
 #
 # Env:
 #   URL           endpoint base (default: registry default port for qwen3.6-27b)
-#   MODEL         served model name (required — no default; a wrong one 404s)
+#   MODEL         served model name (default: the one URL serves, as every serving script resolves it;
+#                 still refused when the endpoint names none, since a guessed name 404s)
 #   MODE          depth | breadth | concurrent  (default: depth)
 #   TARGET_CTX    depth: accumulated prompt tokens to reach (default: 140000)
 #   TURN_TOKENS   depth: approx tokens appended per turn   (default: 4000)
@@ -111,8 +112,17 @@ fi
 SESSION_CTX="${SESSION_CTX:-28000}"
 KV_POOL="${KV_POOL:-0}"
 
+# MODEL unset: the one the endpoint serves (club_served_model_id, #372), as verify-full, bench.sh and
+# the other serving scripts resolve it. Until 2026-10-31 this script made you name it every time.
 if [[ -z "$MODEL" ]]; then
-  echo "MODEL is required (the served name). A wrong one returns HTTP 404 and reads as a dead server." >&2
+  # shellcheck source=lib/served-model.sh
+  source "${ROOT_DIR}/scripts/lib/served-model.sh"
+  MODEL="$(club_served_model_id "$URL")"
+  if [[ -n "$MODEL" ]]; then echo "[deep-context] model=${MODEL} (what ${URL} serves; set MODEL= to choose)" >&2; fi
+fi
+if [[ -z "$MODEL" ]]; then
+  echo "could not resolve which model to request: ${URL} names none (is it up?). Set MODEL= to the served name;" >&2
+  echo "a guessed one returns HTTP 404 and reads as a dead server." >&2
   exit 2
 fi
 case "$MODE" in depth|breadth|concurrent) ;; *) echo "MODE must be depth|breadth|concurrent (got '$MODE')" >&2; exit 2 ;; esac
