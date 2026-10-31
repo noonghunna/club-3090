@@ -1138,14 +1138,21 @@ if [[ "${BENCHLOCAL_HERMES_RESOLVE_LOCALHOST:-}" == "1" && "$NO_SANDBOX" != "1" 
     # Prefer a direct probe from a throwaway container — that is exactly the path
     # the sandbox will take. Any small image with a fetcher works; try what is
     # already local before pulling anything.
+    # ANY HTTP answer means the path works: a 401 from an engine that wants a key
+    # (Strata 0.2+ answers nothing keyless but /health) proves it as well as a 200.
+    # Only no answer at all is a failure. Counting the 401 as "unreachable" blamed a
+    # firewall and aborted every --full run against a keyed Strata. curl without -f
+    # exits 0 on any status; busybox wget (alpine's too) exits 1 either way, so its
+    # "server returned error: HTTP/…" line is the answer that counts.
     for _img in curlimages/curl:latest alpine:latest busybox:latest; do
       docker image inspect "$_img" >/dev/null 2>&1 || continue
       case "$_img" in
-        curlimages/curl:*) _q_cmd=(curl -sf -m 10 "http://host.docker.internal:${_q_port}/v1/models") ;;
+        curlimages/curl:*) _q_cmd=(curl -s -o /dev/null -m 10 "http://host.docker.internal:${_q_port}/v1/models") ;;
         alpine:*)          _q_cmd=(sh -c "wget -q -T 10 -O /dev/null http://host.docker.internal:${_q_port}/v1/models") ;;
         *)                 _q_cmd=(wget -q -T 10 -O /dev/null "http://host.docker.internal:${_q_port}/v1/models") ;;
       esac
-      if docker run --rm --add-host=host.docker.internal:host-gateway "$_img" "${_q_cmd[@]}" >/dev/null 2>&1; then
+      if _q_out="$(docker run --rm --add-host=host.docker.internal:host-gateway "$_img" "${_q_cmd[@]}" 2>&1)" \
+         || [[ "$_q_out" == *"server returned error: HTTP/"* ]]; then
         _q_reach=ok
       else
         _q_reach=fail
