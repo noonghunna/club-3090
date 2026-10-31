@@ -21,7 +21,8 @@
 #   8. MTP acceptance length — parse SpecDecoding metrics from docker logs,
 #      assert mean AL >= 2.0 (sanity that spec-decode is contributing).
 #      llama.cpp: per-request draft acceptance rate >= LLAMACPP_ACCEPT_MIN
-#      (default 0.30); skipped when llama-server runs no drafter
+#      (default 0.30), judged on at least LLAMACPP_DRAFT_MIN_SAMPLE drafted
+#      tokens (default 16); skipped when llama-server runs no drafter
 #
 # For boundary / stress validation (longctx needle ladder, ~25K-token tool
 # prefill OOM detection): see scripts/verify-stress.sh
@@ -718,8 +719,13 @@ check_mtp_acceptance() {
         skip "container '${CONTAINER}' not found (CONTAINER=none for host endpoints)"
         return 0
       fi
-      local lc_cfg lc_since lc_out="" lc_try lc_rate lc_acc lc_gen lc_min
+      local lc_cfg lc_since lc_out="" lc_try lc_rate lc_acc lc_gen=0 lc_min lc_floor
       lc_cfg="$(llamacpp_spec_args "${CONTAINER}")"
+      lc_floor="${LLAMACPP_DRAFT_MIN_SAMPLE:-16}"
+      if ! [[ "$lc_floor" =~ ^[0-9]+$ ]]; then
+        fail "invalid LLAMACPP_DRAFT_MIN_SAMPLE=${lc_floor}" "Set a whole number of drafted tokens."
+        return 1
+      fi
       for lc_try in 1 2; do
         lc_since="$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
         curl -sf -m 300 "${URL}/v1/chat/completions" \
@@ -733,10 +739,13 @@ check_mtp_acceptance() {
           }" >/dev/null 2>&1 || { fail "acceptance-trigger request failed" "Check docker logs"; return 1; }
         sleep 2
         lc_out="$(docker logs --since "${lc_since}" "${CONTAINER}" 2>&1 | llamacpp_draft_rate)"
-        # A second request only when a drafter is configured and drafted nothing: an n-gram
-        # drafter (ngram-mod) has nothing to match on the first request after a boot
-        # (measured: 0 drafted, then 200/200 on the same request).
-        [[ -n "$lc_out" || -z "$lc_cfg" ]] && break
+        # A second request when the first gave too small a sample to judge: an n-gram
+        # drafter (ngram-mod) has little to match on the first request after a boot. On
+        # our rig it drafted nothing, then 200/200 on the same request. On #1857's it
+        # drafted ONE token, which was rejected, and a 0/1 sample failed the check.
+        [[ -z "$lc_out" && -z "$lc_cfg" ]] && break
+        read -r _ _ lc_gen _ <<<"${lc_out:-0 0 0 0}"
+        (( lc_gen >= lc_floor )) && break
       done
       if [[ -z "$lc_out" ]]; then
         if [[ -n "$lc_cfg" ]]; then
@@ -748,6 +757,11 @@ check_mtp_acceptance() {
         return 0
       fi
       read -r lc_rate lc_acc lc_gen _ <<<"$lc_out"
+      if (( lc_gen < lc_floor )); then
+        fail "the drafter drafted only ${lc_gen} token(s) in ${lc_try} request(s), too few to judge (LLAMACPP_DRAFT_MIN_SAMPLE=${lc_floor}${lc_cfg:+; ${lc_cfg}})" \
+             "The same counting prompt sent twice gives an n-gram drafter its own first answer to match, and an MTP head or draft model drafts on nearly every step, so a working drafter clears this easily. Check the boot log for the drafter loading."
+        return 1
+      fi
       lc_min="${LLAMACPP_ACCEPT_MIN:-0.30}"
       if ! [[ "$lc_min" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
         fail "invalid LLAMACPP_ACCEPT_MIN=${lc_min}" "Set a non-negative numeric threshold."

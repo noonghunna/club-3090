@@ -69,11 +69,13 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/club-containers.
 #   MODEL               served-model-name (default: GET /v1/models)
 #   TAG                 output-dir basename (default: ${MODEL}-YYYYMMDD-HHMM)
 #   OUT_DIR             override the output directory
-#   SOAK_SESSIONS       passed through to soak-test.sh (default: 10 —
-#                       halved from the 20-session default to keep total
-#                       runtime ~1.75-2 hr per leg; bump to 20 for the
-#                       canonical stability matrix when validating new
-#                       compose paths.)
+#   SOAK_SESSIONS       passed through to soak-test.sh (default: 10 in the
+#                       default fresh mode — halved from the 20-session
+#                       default to keep total runtime ~1.75-2 hr per leg;
+#                       bump to 20 for the canonical stability matrix when
+#                       validating new compose paths. Another SOAK_MODE
+#                       keeps soak-test.sh's own preset. Only applied from
+#                       2026-10-31: before, every rebench soak ran 20.)
 #   SOAK_TURNS          passed through to soak-test.sh (default: 5)
 #   SAMPLING_FROM_SERVER
 #                       Default 1: the 8-pack measures the model as served —
@@ -162,7 +164,7 @@ OPTIONS
   -h, --help      Show this help and exit.
 
 ENV OVERRIDES (rarely needed — preflight autodetects our composes)
-  URL MODEL TAG OUT_DIR · SOAK_SESSIONS (10) · SOAK_TURNS (5)
+  URL MODEL TAG OUT_DIR · SOAK_SESSIONS (10 in fresh mode) · SOAK_TURNS (5)
   MAX_TOKENS (both 8-pack passes, default 4096) · THINKING_MAX_TOKENS (reasoning-ON pass, 16384)
   SAMPLING_FROM_SERVER (default 1 = the served sampler; 0 = the packs' fixed one)
   AGENTIC_SESSIONS (1) · AGENTIC_TURNS (12)
@@ -563,11 +565,18 @@ else
 fi
 
 # --- step 5: soak-test ------------------------------------------------------
+# soak-test.sh reads SOAK_SESSIONS / SOAK_TURNS. Until 2026-10-31 this step passed
+# SESSIONS= / TURNS=, names it never read, so the halved default never applied and every
+# rebench soak ran soak-test.sh's own 20 sessions (#1857's ran out of its 1800 s cap at
+# session 15). The 10 is for fresh mode; any other SOAK_MODE keeps soak-test.sh's own
+# preset (continuous: 5) unless SOAK_SESSIONS is set.
+_soak_sessions="${SOAK_SESSIONS:-}"
+if [[ -z "$_soak_sessions" && "${SOAK_MODE:-fresh}" == fresh ]]; then _soak_sessions=10; fi
 URL="$URL" MODEL="$MODEL" \
   SOAK_MODE="${SOAK_MODE:-fresh}" \
   SOAK_OUTPUT="$OUT_DIR/soak-artifacts" \
-  SESSIONS="${SOAK_SESSIONS:-10}" \
-  TURNS="${SOAK_TURNS:-5}" \
+  SOAK_SESSIONS="$_soak_sessions" \
+  SOAK_TURNS="${SOAK_TURNS:-5}" \
   run_step soak "$OUT_DIR/soak.log" \
     bash "$ROOT_DIR/scripts/soak-test.sh"
 
