@@ -95,6 +95,13 @@ services:
       # DeltaNet prompt kernels on the tensor cores); 0 turns each off.
       STRATA_GDN_TC:
       STRATA_GDN_CONVL2:
+      # Strata's PLE (n-gram) residency switch: 0 keeps the ~27 GiB table on direct disk
+      # reads instead of page-locking it in RAM. The residency policy's free-RAM check
+      # counts only the table + the expert arena — not the KV stream, the conversation
+      # cache or the batch sessions that fill right after it — so on a big-context boot
+      # the auto choice can lock the table and still starve the arena. 0 is the right
+      # call whenever the model disk is an SSD. Unset = Strata's own auto policy.
+      STRATA_PLE_AUTO_RAM:
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/qwen3.8-flash-next-gsq-rco-gguf/IQ3_S:/gguf:ro"
       # Strata 0.2's layout (0.1.x's strata-data is not read by it), under ~/.local/share/club-3090 from
