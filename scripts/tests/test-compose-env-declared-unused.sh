@@ -65,7 +65,9 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 # the engine's PLE residency policy: 0 keeps the n-gram table on direct disk reads
                 "STRATA_PLE_AUTO_RAM",
                 # from 1.3.2
-                "FLASH_PFB_ALIAS", "FLASH_PREFIX_GB", "FLASH_YARN", "FLASH_LEND_CHECK"}
+                "FLASH_PFB_ALIAS", "FLASH_PREFIX_GB", "FLASH_YARN", "FLASH_LEND_CHECK",
+                # 1.3.2's copy-engine prefill pipeline switch (#1841)
+                "FLASH_QSA_PIPE_CE"}
 
 # DEBT REGISTER — each entry must name WHY the dead knob is deliberate.
 # Shrink it; never grow it silently. An entry here means a documented knob is
