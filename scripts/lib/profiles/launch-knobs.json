@@ -2030,6 +2030,135 @@
     }
    ]
   },
+  "ROPE_SCALING": {
+   "status": "candidate",
+   "description": "RoPE extension past the model's trained length, as Strata's engine flag --rope-scaling, written into the run config at every boot.",
+   "type": "enum",
+   "unset": "setup's own resolution: no scaling at or under the trained 262144, auto yarn (factor ctx/262144) past it",
+   "engines": [
+    "strata"
+   ],
+   "variants": [
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "qwen3.8-flash-next"
+      ]
+     },
+     "enforced": "boot",
+     "values": [
+      "none",
+      "linear",
+      "yarn"
+     ],
+     "default": "",
+     "source": {
+      "file": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+      "what": "settings(): ROPE_SCALING must be none/linear/yarn (the engine's --rope-scaling choices) or the boot exits 2; none with CONTEXT past the trained 262144 is refused there too (setup refuses no scaling past the trained length)"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/qwen3.8-flash-next/strata/compose/dual/ista-iq3s/base.yml",
+       "program": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+       "args": [
+        "validate"
+       ],
+       "accept": [
+        "none",
+        "linear",
+        "yarn"
+       ],
+       "reject": [
+        "longrope",
+        "yarn2",
+        "0",
+        "x"
+       ]
+      }
+     ]
+    }
+   ],
+   "interacts": [
+    {
+     "knob": "CONTEXT",
+     "effect": "Strata: CONTEXT past the trained 262144 refuses none; linear/yarn with no ROPE_SCALE derive the factor from CONTEXT (ctx/262144, min 1) exactly as setup does; removing the setting deletes ours and leaves setup's own resolution standing at the next boot",
+     "source": {
+      "file": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+      "what": "settings(): the none-past-trained refusal and the TRAINED_CTX derivation; strip_managed(): a rope flag only in args_written is setup's own resolution and stays"
+     }
+    }
+   ]
+  },
+  "ROPE_SCALE": {
+   "status": "candidate",
+   "description": "The RoPE extension factor for linear/yarn scaling, as Strata's engine flag --rope-scale, written into the run config at every boot.",
+   "type": "size_gb",
+   "unit": "x the trained length",
+   "unset": "under linear/yarn: derived from CONTEXT (ctx/262144, min 1) past the trained length; the model file's factor otherwise, and this GGUF ships none (1 = no extension)",
+   "engines": [
+    "strata"
+   ],
+   "variants": [
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "qwen3.8-flash-next"
+      ]
+     },
+     "enforced": "boot",
+     "pattern": "[0-9]+(?:\\.[0-9]+)?",
+     "min": 1,
+     "default": "",
+     "source": {
+      "file": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+      "what": "settings(): ROPE_SCALE must be a number >= 1 (as_float, \">= 1 (the extension factor: 2 -> 524288 positions)\") or the boot exits 2; it goes into the engine args as --rope-scale, which Strata applies only under linear/yarn scaling"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/qwen3.8-flash-next/strata/compose/dual/ista-iq3s/base.yml",
+       "program": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+       "args": [
+        "validate"
+       ],
+       "env": {
+        "ROPE_SCALING": "yarn"
+       },
+       "accept": [
+        "1",
+        "2",
+        "1.5",
+        "4"
+       ],
+       "reject": [
+        "0",
+        "0.5",
+        "-1",
+        "x",
+        "2x"
+       ]
+      }
+     ]
+    }
+   ],
+   "interacts": [
+    {
+     "knob": "ROPE_SCALING",
+     "effect": "Strata: the factor applies only under linear/yarn scaling; set alone it does nothing (a note says so at boot)",
+     "source": {
+      "file": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+      "what": "settings(): the ROPE_SCALE-without-ROPE_SCALING note"
+     }
+    }
+   ]
+  },
   "THINKING_BUDGET_LOW": {
    "status": "first-batch",
    "description": "Reasoning-token budget for requests at effort low (and minimal) (Qwen3.8 / ThinkingCap vLLM + SGLang composes).",

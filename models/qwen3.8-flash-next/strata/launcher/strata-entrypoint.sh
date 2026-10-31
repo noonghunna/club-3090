@@ -10,10 +10,13 @@
 #   API_KEY                the key every request must send (Strata 0.2+ serves nothing but /health
 #                          without one); the composes set club-3090's default unless STRATA_API_KEY is set
 #   REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, SPEC_N,
+#   ROPE_SCALING, ROPE_SCALE,
 #   TEMP, TOP_P, TOP_K, MIN_P, PRESENCE_PENALTY, REPEAT_PENALTY, SERVED_NAME
 #                          written into the run config by strata_config.py (mounted next to this file;
 #                          its header maps each to Strata's key). Unset = Strata's own default; a bad
-#                          value stops the boot.
+#                          value stops the boot. ROPE_SCALING/ROPE_SCALE extend RoPE past the model's
+#                          trained 262144 (see the CONTEXT note above: raising CONTEXT re-runs setup,
+#                          which picks yarn itself; these knobs override that at every boot).
 #
 # Its one argument is the model family, fixed by the compose (not a setting, so a saved value can never
 # point a slug at the other model's files): qwen (ISTA-DASLab's GSQ-RCO of the original, the default

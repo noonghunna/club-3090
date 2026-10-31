@@ -26,7 +26,8 @@
 #              host RAM when the model disk is rotational (setup then keeps the 28.8 GB n-gram table in RAM; on an SSD it stays
 #              on disk), NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only. Strata reasons by
 #              default, at the template's xhigh (what SC117 recommends; as the bucko-vllm Flash-Next slugs).
-#              Launch settings (REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, SPEC_N, the sampler;
+#              Launch settings (REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, SPEC_N,
+#              ROPE_SCALING, ROPE_SCALE, the sampler;
 #              docs/engines/STRATA.md) are written into Strata's config at every boot. The first start
 #              builds this model's pack on the shared data volume (~45 s when the MTP layer is already
 #              there; setup serves on an unpublished port until it is done).
@@ -84,6 +85,8 @@ services:
       ENABLE_THINKING:
       THINKING_BUDGET:
       SPEC_N:
+      ROPE_SCALING:
+      ROPE_SCALE:
       TEMP:
       TOP_P:
       TOP_K:

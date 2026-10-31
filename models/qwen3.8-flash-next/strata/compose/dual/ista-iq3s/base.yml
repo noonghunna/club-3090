@@ -20,7 +20,8 @@
 #              model disk is rotational (setup then keeps the n-gram table in RAM; less on an SSD). Host
 #              needs NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only. Strata reasons by default,
 #              at the template's xhigh (as the bucko-vllm Flash-Next slugs). Launch settings
-#              (REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, SPEC_N, the sampler;
+#              (REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, SPEC_N,
+#              ROPE_SCALING, ROPE_SCALE, the sampler;
 #              docs/engines/STRATA.md) are written into Strata's config at every boot. The FIRST start on a
 #              fresh data volume took 511 s on the reference rig with the image pulled (MTP fetch and pack;
 #              setup serves on an unpublished port until it is done), close to switch.sh's 10-minute wait:
@@ -80,6 +81,8 @@ services:
       ENABLE_THINKING:
       THINKING_BUDGET:
       SPEC_N:
+      ROPE_SCALING:
+      ROPE_SCALE:
       TEMP:
       TOP_P:
       TOP_K:

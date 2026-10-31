@@ -102,3 +102,36 @@ Quality (`quality-test.sh --full`, benchlocal-cli v0.11.0, on v0.31.0, thinking 
   #58815, #49039 / #61405 / #48926 / #59895, #50653), and a row for vllm#61281, the prefix-cache
   miss under concurrent prefills that `--prefix-match-unit 16` makes likely (read from the
   source, not reproduced).
+
+## 2026-10-31 — RoPE-extension launch settings on every Strata slug (`ROPE_SCALING` / `ROPE_SCALE`)
+
+- New launcher knobs `ROPE_SCALING` (`none`/`linear`/`yarn`) and `ROPE_SCALE` (factor ≥ 1),
+  written into the run config as the engine args `--rope-scaling` / `--rope-scale` at every
+  boot, forwarded by all five Strata composes and catalogued in `launch-knobs.json` — so
+  `switch.sh <slug> --set ROPE_SCALING=yarn` (or a one-off `ROPE_SCALING=yarn CONTEXT=524288
+  bash scripts/switch.sh <slug>`) extends the existing slug instead of a dedicated one.
+  The pinned engine (0.1.54, image 0.2.8) and setup already had YaRN; this is plumbing.
+- Past the trained 262144 setup resolves yarn itself (factor ctx/262144); the knobs override
+  that at every boot. `none` past 262144 is refused; `linear`/`yarn` with no factor derive
+  the same value as setup. The launcher strips the flags it wrote — including ones setup
+  folded into its own record — and leaves flags setup wrote itself alone, so unscale-back
+  past 262144 is refused the same way setup refuses it.
+- Raising `CONTEXT` re-runs setup at the next boot (it sizes the KV and expert cache); the
+  run-config folder is shared, so one slug walks 131072 → 524288 → back without a second
+  slug or a re-download — the packs and MTP layer stay in `Strata-data`.
+- YaRN's mscale applies at every position: inside 262144 the run is a slightly different
+  model from the stock one (upstream's greedy comparison diverges after ~19 tokens). An
+  ordinary-RoPE KV session can't be restored into a yarn engine; replay the conversation.
+  Upstream with this scheme: 8/8 needles at 512K
+  (Strata's `bench/results/2026-09-28-rope-scaling`), 1M 3-fact 3/3 YaRN vs 0/3 ordinary
+  (Strata's `bench/results/2026-10-09-rope-yarn-long-context`).
+- RAM at a raised CONTEXT: the pinned KV pool IS allocated at start (engine default: the
+  whole `--max-context`; only `--kv-grow` defers it, single-GPU only) and grows ~13.7
+  KB/token (int8): +5.4 GB at 524288 over 131K, +12.7 GB at 1048576 — against 22-24 GB
+  measured headroom while the 131K slug runs (2026-10-30). `KV=q4_0` (half the pool,
+  upstream-benched) is the fallback at 1M.
+- `test-strata-config-knobs.sh` covers the apply/strip/refusal paths; `test-launch-knobs.sh`
+  proves the catalogue domains through `strata_config.py validate` (program checks) and the
+  delivery through the compose scan. Bench gates — 8-pack, a >262144 needle probe on this
+  rig, a within-262144 quality A/B against the unscaled boot, MTP acceptance under yarn —
+  pending.

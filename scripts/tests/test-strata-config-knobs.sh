@@ -3,11 +3,14 @@
 # Strata's run config at every boot (models/qwen3.8-flash-next/strata/launcher/).
 #   1. no settings: the run config is setup's, unchanged;
 #   2. each setting lands on the key Strata reads (reasoning_effort, reasoning_budget_tokens,
-#      sampling.*, --spec in args, aliases; never max_tokens, never user_args, never setup's model_name);
+#      sampling.*, --spec in args, --rope-scaling/--rope-scale in args, aliases; never max_tokens, never
+#      user_args, never setup's model_name);
 #      xhigh / max become Strata's "high"; ENABLE_THINKING=false wins over REASONING_EFFORT;
 #   3. the input is never written; a removed setting is gone at the next apply, also after Strata 0.2's
 #      setup has kept our keys and folded our --spec into user_args / args_written (setup's own --spec
-#      comes back: the recorded one, else the documented 4); an unchanged in-place apply leaves the bytes;
+#      comes back: the recorded one, else the documented 4; our folded rope flags go away, but setup's
+#      OWN auto-yarn past the trained length -- args_written without user_args -- survives strip);
+#      an unchanged in-place apply leaves the bytes;
 #   4. effective: what the server runs from, blind to setup's bookkeeping (args_written, user_args);
 #   5. a bad value exits 2 with the reason, for each setting (the launch-knob catalogue's
 #      domain checks run the same `validate`); a short API_KEY is a warning, not a refusal;
@@ -36,7 +39,7 @@ cat > "$work/setup.json" <<'JSON'
  "model_name": "qwen3.8-flash-next-iq3_s", "port": 8080, "gpu": [0, 1], "gpus_asked": true, "layer_split": "auto"}
 JSON
 cp "$work/setup.json" "$work/setup.orig"
-SETTINGS="REASONING_EFFORT ENABLE_THINKING THINKING_BUDGET SPEC_N MAX_TOKENS TEMP TOP_P TOP_K MIN_P PRESENCE_PENALTY REPEAT_PENALTY SERVED_NAME CONTEXT KV API_KEY"
+SETTINGS="REASONING_EFFORT ENABLE_THINKING THINKING_BUDGET SPEC_N ROPE_SCALING ROPE_SCALE MAX_TOKENS TEMP TOP_P TOP_K MIN_P PRESENCE_PENALTY REPEAT_PENALTY SERVED_NAME CONTEXT KV API_KEY"
 export CLUB3090_STRATA_SETUP_SPEC_FILE="$work/setup-spec"
 run() { env $(for v in $SETTINGS; do printf -- '-u %s ' "$v"; done) "$@" python3 "$H" "${CMD[@]}"; }
 get() { python3 -c "import json,sys; c=json.load(open('$work/cfg.json')); print(eval(sys.argv[1]))" "$1"; }
@@ -69,6 +72,15 @@ out="$(run SERVED_NAME=llm)" || bad "apply failed: $out"
 out="$(run ENABLE_THINKING=false REASONING_EFFORT=low)" || bad "apply failed: $out"
 [[ "$(get 'c["reasoning_effort"]')" == none ]] && command grep -q "ENABLE_THINKING=false wins" <<<"$out" \
   && ok "ENABLE_THINKING=false -> none, and says it overrode REASONING_EFFORT" || bad "thinking off: $out"
+out="$(run ROPE_SCALING=yarn ROPE_SCALE=2 CONTEXT=524288)" || bad "apply failed: $out"
+[[ "$(get 'c["args"][c["args"].index("--rope-scaling")+1] + "/" + c["args"][c["args"].index("--rope-scale")+1]')" == yarn/2 \
+   && "$(get 'c["args"].count("--rope-scaling") + c["args"].count("--rope-scale")')" == 2 ]] \
+  && ok "ROPE_SCALING/ROPE_SCALE -> --rope-scaling yarn --rope-scale 2 (once each)" || bad "rope: $(get 'c["args"]')"
+[[ "$(get 'c["args_written"] != json.load(open("'"$work"'/setup.orig"))["args_written"]')" == False ]] \
+  && ok "rope settings leave setup's args_written alone" || bad "rope wrote args_written"
+out="$(run ROPE_SCALING=yarn CONTEXT=524288)" || bad "apply failed: $out"
+[[ "$(get 'c["args"][c["args"].index("--rope-scale")+1]')" == 2 ]] && ok "ROPE_SCALE derived from CONTEXT=524288 (2)" \
+  || bad "derived scale: $(get 'c["args"]')"
 
 echo "== 3. the input is never written; a removed setting is gone"
 cmp -s "$work/setup.json" "$work/setup.orig" && ok "input untouched (apply <in> <out>)" || bad "apply wrote its input"
@@ -93,6 +105,30 @@ run >/dev/null
    && "$(get 'c["args"][c["args"].index("--spec")+1] + "/" + c["args_written"][c["args_written"].index("--spec")+1]')" == 4/4 ]] \
   && ok "after setup folded --spec 3 into its bookkeeping: removed settings gone, --spec back to setup's 4" \
   || bad "folded: $(get '[c.get(k) for k in ("reasoning_effort","user_args")] + [c["args"][-2:]]')"
+# the rope pair, same fold: our flags in user_args -> ours -> gone at the next apply
+cp "$work/setup.orig" "$work/cfg.json"
+run ROPE_SCALING=yarn ROPE_SCALE=2 >/dev/null
+python3 - "$work/cfg.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+c["args_written"] = list(c["args"]); c["user_args"] = ["--rope-scaling", "yarn", "--rope-scale", "2"]
+json.dump(c, open(sys.argv[1], "w"))
+PY
+run >/dev/null
+[[ "$(get '"user_args" in c or "--rope-scaling" in c["args"] or "--rope-scale" in c["args"]')" == False ]] \
+  && ok "after setup folded our rope flags into user_args: a removed setting is gone" \
+  || bad "rope folded: $(get 'c.get("user_args")')"
+# and the other direction: setup's OWN auto-yarn past the trained length (args_written, no user_args) survives strip
+cp "$work/setup.orig" "$work/cfg.json"
+python3 - "$work/cfg.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+c["args"] += ["--rope-scaling", "yarn", "--rope-scale", "2"]; c["args_written"] = list(c["args"])
+json.dump(c, open(sys.argv[1], "w"))
+PY
+out="$(run 2>&1)"
+[[ "$(get 'c["args"][c["args"].index("--rope-scaling")+1] + "/" + c["args"][c["args"].index("--rope-scale")+1]')" == yarn/2 ]] \
+  && ok "setup's own auto-yarn (in args_written, no user_args) survives strip" || bad "stripped setup's rope: $(get 'c["args"]')"
 rm -f "$work/setup-spec"
 run SPEC_N=3 >/dev/null
 python3 - "$work/cfg.json" <<'PY'
@@ -122,13 +158,17 @@ PY
 echo "== 5. a bad value exits 2 with the reason"
 CMD=(validate)
 for probe in REASONING_EFFORT=minimal ENABLE_THINKING=off THINKING_BUDGET=-1 SPEC_N=0 SPEC_N=9 \
+             ROPE_SCALING=ntk ROPE_SCALE=0.5 \
              TEMP=x TOP_P=0 TOP_K=65 MIN_P=2 PRESENCE_PENALTY=-1 REPEAT_PENALTY=0 KV=q8 CONTEXT=100; do
   err="$(run "$probe" 2>&1)"; r=$?
   [[ $r -eq 2 && "$err" == *"${probe%%=*}"* ]] && ok "$probe refused" || bad "$probe: rc=$r $err"
 done
+err="$(run ROPE_SCALING=none CONTEXT=524288 2>&1)"; r=$?
+[[ $r -eq 2 && "$err" == *ROPE_SCALING* ]] && ok "ROPE_SCALING=none past the trained 262144 refused (setup refuses it too)" \
+  || bad "ROPE_SCALING=none CONTEXT=524288: rc=$r $err"
 err="$(run "SERVED_NAME=my model" 2>&1)"; r=$?
 [[ $r -eq 2 && "$err" == *SERVED_NAME* ]] && ok "SERVED_NAME with a space refused" || bad "SERVED_NAME=my model: rc=$r $err"
-run REASONING_EFFORT=max SPEC_N=8 KV=k8v4 CONTEXT=262144 >/dev/null && ok "valid values pass" || bad "valid values refused"
+run REASONING_EFFORT=max SPEC_N=8 KV=k8v4 CONTEXT=262144 ROPE_SCALING=yarn ROPE_SCALE=2 >/dev/null && ok "valid values pass" || bad "valid values refused"
 out="$(run API_KEY=short 2>&1)"; r=$?
 [[ $r -eq 0 && "$out" == *"API_KEY is 5 characters"* ]] && ok "a short API_KEY: a warning, not a refusal" || bad "short key: rc=$r $out"
 

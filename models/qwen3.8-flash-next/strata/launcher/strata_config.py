@@ -11,6 +11,15 @@ its config (serve/server.py; engine_config_reads.py re-checks that on every bump
   ENABLE_THINKING=false  reasoning_effort: none        thinking off for requests that don't ask for it
   THINKING_BUDGET        reasoning_budget_tokens       whole tokens, 0 = no budget
   SPEC_N                 args: --spec N                the MTP drafter's verify window (setup writes 4; 1..8)
+  ROPE_SCALING           args: --rope-scaling T        none | linear | yarn: extend past the model's trained 262144
+                                                positions (llama.cpp's types; engine 0.1.21+). Past 262144 setup picks
+                                                yarn and derives the factor itself; this knob overrides that at every
+                                                boot, and inside the trained range it is a deliberate choice (the
+                                                scaling applies at every position, so the run is a slightly different
+                                                model from the stock one).
+  ROPE_SCALE             args: --rope-scale F          the factor, >= 1: 2 -> 524288 positions. With linear/yarn and
+                                                no ROPE_SCALE the factor is derived from CONTEXT (ctx / 262144, min 1)
+                                                exactly as Strata's setup does past the trained length.
   TEMP TOP_P TOP_K       sampling.temperature / top_p  >= 0 / 0 < x <= 1 / integer 1..64
   MIN_P                  sampling.min_p                0..1
   PRESENCE_PENALTY       sampling.presence_penalty     >= 0
@@ -31,7 +40,12 @@ keeps keys it doesn't write itself across a new setup, so they would otherwise l
 back to setup's own value, then writes the settings in the environment. SPEC_N goes into args; at its next
 run setup keeps it as an option of the user's (user_args, folded into args and args_written), which is how
 a later apply knows it is ours. Setup's own --spec is remembered in CLUB3090_STRATA_SETUP_SPEC_FILE, since
-after an override setup writes ours instead. CONTEXT and KV
+after an override setup writes ours instead. The rope pair is tricky the other way: past the trained 262144
+setup resolves --rope-scaling/--rope-scale itself (yarn with a derived factor; it refuses no scaling there), so a
+rope flag sitting in args_written with no matching user_args entry is setup's own resolution and strip LEAVES it --
+deleting it would silently unscale a long-context boot. Ours are the ones in user_args or in args beyond
+args_written; a removed rope setting deletes ours and setup re-derives its own at its next run (a CONTEXT change
+re-runs it). CONTEXT and KV
 belong to setup (they size the KV and the expert cache): Strata's own entrypoint passes them to
 `strata launch`, which runs setup again when they change; here they are only checked.
 
@@ -48,6 +62,9 @@ import sys
 EFFORTS = {"none": "none", "low": "low", "medium": "medium", "high": "high",
            "xhigh": "high", "max": "high"}     # our other engines' names for Strata's "high" (the template's xhigh)
 KV_FORMATS = ("fp16", "int8", "q4_0", "k8v4")  # `strata launch --kv` choices; strata-pin-bump.sh checks each new image still offers them
+ROPE_METHODS = ("none", "linear", "yarn")      # `strata --help`: --rope-scaling choices (setup.py's resolve_rope set)
+ROPE_FLAGS = ("--rope-scaling", "--rope-scale")
+TRAINED_CTX = 262144                           # the model's trained length: setup.py picks yarn past it (factor ctx/262144, min 1) and refuses none; --yarn-orig-ctx's default
 MANAGED = ("reasoning_effort", "reasoning_budget_tokens", "aliases")
 MANAGED_SAMPLING = ("temperature", "top_p", "top_k", "min_p", "presence_penalty", "repetition_penalty")
 
@@ -82,7 +99,7 @@ def as_float(name, v, ok, rule):
 
 
 def settings():
-    """The settings in the environment, checked: (config keys, sampling keys, spec, notes)."""
+    """The settings in the environment, checked: (config keys, sampling keys, spec, rope args, notes)."""
     keys, sampling, notes = {}, {}, []
     spec = None
     effort = env("REASONING_EFFORT")
@@ -126,12 +143,40 @@ def settings():
     if kv is not None and kv not in KV_FORMATS:
         raise Bad(f"KV={kv!r}: expected one of {', '.join(KV_FORMATS)}")
     context = env("CONTEXT")
-    if context is not None:
-        as_int("CONTEXT", context, lo=4096)
+    ctx = as_int("CONTEXT", context, lo=4096) if context is not None else None
+    rope = {}
+    scaling = env("ROPE_SCALING")
+    if scaling is not None:
+        if scaling not in ROPE_METHODS:
+            raise Bad(f"ROPE_SCALING={scaling!r}: expected none, linear or yarn (Strata's --rope-scaling)")
+        rope["--rope-scaling"] = scaling
+    scale = env("ROPE_SCALE")
+    if scale is not None:
+        rope["--rope-scale"] = "%g" % as_float("ROPE_SCALE", scale, lambda x: x >= 1,
+                                               ">= 1 (the extension factor: 2 -> 524288 positions)")
+    if rope.get("--rope-scaling") == "none" and ctx is not None and ctx > TRAINED_CTX:
+        raise Bad(f"ROPE_SCALING=none with CONTEXT={ctx}: past the trained {TRAINED_CTX} Strata's setup refuses no "
+                  f"scaling (the stock angles break there)")
+    if rope.get("--rope-scaling") in ("linear", "yarn"):
+        if "--rope-scale" not in rope:
+            if ctx is not None and ctx > TRAINED_CTX:
+                rope["--rope-scale"] = "%g" % max(1.0, ctx / TRAINED_CTX)   # setup.py's own derivation past the trained length
+                notes.append(f"ROPE_SCALE unset: derived {rope['--rope-scale']} from CONTEXT={ctx} / {TRAINED_CTX}, as setup does")
+            else:
+                notes.append(f"ROPE_SCALING={rope['--rope-scaling']} with no ROPE_SCALE: the factor comes from the model "
+                             f"file, and this GGUF ships none (1 = no extension)")
+        elif ctx is not None and ctx > TRAINED_CTX and float(rope["--rope-scale"]) * TRAINED_CTX < ctx:
+            notes.append(f"ROPE_SCALE={rope['--rope-scale']} covers {int(float(rope['--rope-scale']) * TRAINED_CTX)} "
+                         f"positions; CONTEXT={ctx} is past that (Strata keeps an explicit factor as given)")
+        elif ctx is not None and ctx <= TRAINED_CTX:
+            notes.append(f"ROPE_SCALING={rope['--rope-scaling']} inside the trained {TRAINED_CTX}: the scaling applies at "
+                         f"every position, so the run is a slightly different model from the stock one")
+    if "--rope-scale" in rope and "--rope-scaling" not in rope:
+        notes.append("ROPE_SCALE set without ROPE_SCALING: Strata applies the factor only to linear/yarn scaling")
     key = env("API_KEY")                              # read by Strata's own entrypoint; here only checked
     if key is not None and len(key) < 16:
         notes.append(f"API_KEY is {len(key)} characters; Strata warns below 16 (openssl rand -hex 24 makes one)")
-    return keys, sampling, spec, notes
+    return keys, sampling, spec, rope, notes
 
 
 def arg_value(args, flag):
@@ -167,10 +212,13 @@ def set_arg(args, flag, value):
 
 
 def strip_managed(cfg):
-    """Take out what an earlier apply wrote: the managed keys, and --spec back to setup's own value.
+    """Take out what an earlier apply wrote: the managed keys, --spec back to setup's own value, and our rope flags.
 
     Strata 0.2's setup keeps an option it doesn't choose itself as user_args (what args has beyond
-    args_written) and folds it into both at its next run, so an --spec of ours is recognised by user_args."""
+    args_written) and folds it into both at its next run, so an --spec of ours is recognised by user_args.
+    A rope flag is ours the same way, but the other direction matters too: past the trained 262144 setup writes
+    --rope-scaling/--rope-scale itself, and a rope flag with no user_args entry is that resolution -- ours is
+    deleted, setup's is left standing (stripping it would unscale a long-context boot into extrapolation)."""
     for k in MANAGED:
         cfg.pop(k, None)
     sampling = {k: v for k, v in (cfg.get("sampling") or {}).items() if k not in MANAGED_SAMPLING}
@@ -179,6 +227,24 @@ def strip_managed(cfg):
     else:
         cfg.pop("sampling", None)
     user = list(cfg.get("user_args") or [])
+    written = cfg.get("args_written") or []
+    for flag in ROPE_FLAGS:
+        # ours = in user_args (setup folded it) or in args beyond args_written; a rope flag only in args_written is
+        # setup's own resolution for this context (it auto-yarns past the trained length) and stays
+        args = cfg.get("args") or []
+        ours = flag in user or (flag in args[:-1] and flag not in written)
+        if flag in user:
+            i = user.index(flag)
+            del user[i:i + 2]
+        if ours and flag in (cfg.get("args") or [])[:-1]:
+            args = list(cfg["args"])
+            i = args.index(flag)
+            del args[i:i + 2]
+            cfg["args"] = args            # a removed rope setting is gone; setup re-derives its own at its next run
+    if user:
+        cfg["user_args"] = user
+    else:
+        cfg.pop("user_args", None)
     if "--spec" not in user[:-1]:                      # no --spec of ours: setup's value is the one there
         theirs = arg_value(cfg.get("args_written") or [], "--spec") or arg_value(cfg.get("args") or [], "--spec")
         if theirs is not None:
@@ -200,16 +266,23 @@ def strip_managed(cfg):
 
 
 def apply(in_cfg):
-    keys, sampling, spec, notes = settings()
+    keys, sampling, spec, rope, notes = settings()
     cfg = strip_managed(json.loads(json.dumps(in_cfg)))   # a deep copy: the input is never touched
     cfg.update(keys)
     if sampling:
         cfg["sampling"] = {**(cfg.get("sampling") or {}), **sampling}
     if spec is not None:                              # setup records it as user_args itself at its next run
         cfg["args"] = set_arg(cfg.get("args") or [], "--spec", str(spec))
+    for flag, value in rope.items():                  # ours: setup keeps them as user_args at its next run
+        cfg["args"] = set_arg(cfg.get("args") or [], flag, value)
+    context = env("CONTEXT")
+    if context is not None and int(context) > TRAINED_CTX and "--rope-scaling" not in (cfg.get("args") or []):
+        notes.append(f"CONTEXT={context} is past the trained {TRAINED_CTX} and the live args carry no rope scaling: "
+                     f"a CONTEXT change re-runs setup, which derives yarn itself; until then this run extrapolates")
     shown = [f"{k}={v}" for k, v in keys.items()] + [f"sampling.{k}={v}" for k, v in sampling.items()]
     if spec is not None:
         shown.append(f"--spec {spec}")
+    shown += [f"{flag} {value}" for flag, value in rope.items()]
     return cfg, shown, notes
 
 
@@ -217,7 +290,7 @@ def main(argv):
     cmd = argv[1] if len(argv) > 1 else ""
     try:
         if cmd == "validate":
-            for n in settings()[3]:
+            for n in settings()[4]:
                 print(f"[strata-recipe] {n}")
             return 0
         if cmd == "effective" and len(argv) == 3:       # what the server runs from: args and our keys
