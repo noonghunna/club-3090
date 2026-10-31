@@ -14,9 +14,12 @@
 #              374,784 -> 289,792 tokens (-23%, still a full 262K context); VISION=0 gives it back
 #   Max ctx:   262144
 #   Genesis:   none
-#   Status:    🐣 Incubating
+#   Status:    ⚠️ Production w/ caveats — promoted 2026-10-31 (the full gate on a community rig, #1862)
 #   Caveats:   ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
-#              New engine; quality not validated here (no 8-pack, verify-stress or soak). No
+#              The full gate passed on another rig, not this one: eddietheengineer's #1862 (QEngine 1.3,
+#              3090 + 3090 Ti at 260 / 240 W) ran verify-full, verify-stress 8/8 with the ceiling ladder
+#              filled to 240K, both soaks (PASS, 0 MB growth) and the 8-pack (108 / 132 of 150, thinking
+#              off / on); here it has bench and verify-full. 1.3.1 and 1.3.2 were boot-tested. No
 #              thinking-budget cap (THINKING_BUDGET_* are not wired: QEngine has
 #              none). The default effort is low, as on the other Qwen3.8 slugs, through QEngine's
 #              QE_REASONING_EFFORT (its template's own default is xhigh); a request's own effort
@@ -42,7 +45,7 @@
 # our AutoRound INT4 doesn't load; RedHatAI's checkpoint is the one it is built for.
 #
 #   bash scripts/setup.sh qengine/qwen38-27b-dual
-#   bash scripts/switch.sh --force qengine/qwen38-27b-dual
+#   bash scripts/switch.sh qengine/qwen38-27b-dual
 #
 # The two release assets (README "Model files") make the engine faster: without them it drafts from the
 # full vocabulary with the checkpoint's own MTP head (upstream: ~8-9% fewer accepted tokens). From 1.3.2 the
