@@ -399,8 +399,10 @@ INCREMENTAL=0
 RESUME=""
 ALLOW_PARTIAL=0
 MODE_EXPLICIT=0
-# Cloud/proxy endpoint auth: bearer token forwarded to benchlocal-cli (--api-key)
-# and added to the reachability probe below. Falls back to BENCHLOCAL_API_KEY so
+# Cloud/proxy endpoint auth: bearer token handed to benchlocal-cli in its environment
+# (BENCHLOCAL_API_KEY, which it reads whenever --api-key isn't given) and sent by the
+# reachability probe below; never on a command line, where any user sees it in the
+# process list. Falls back to BENCHLOCAL_API_KEY so
 # either env works, then to the serving container's own key (scripts/lib/engine-auth.sh
 # via preflight's autodetect) — Strata 0.2+ answers nothing without it. Local composes
 # without a key leave it empty and behave exactly as before.
@@ -781,8 +783,14 @@ fi
 # HTTP response as "reachable" and abort only when nothing answers at all
 # (http_code 000 = no connection), so cloud/proxy references work without a
 # local compose. The probe sends the bearer key when one is set.
-_probe_code=$(curl -s -m 8 -o /dev/null -w "%{http_code}" \
-  ${API_KEY:+-H "Authorization: Bearer ${API_KEY}"} "${URL}/v1/models" 2>/dev/null || echo "000")
+# The header comes from a process substitution, as engine-auth.sh sends it, not from argv. `command curl`
+# skips engine-auth's wrapper, which would add the same header a second time.
+if [[ -n "$API_KEY" ]]; then
+  _probe_code=$(command curl -s -m 8 -o /dev/null -w "%{http_code}" \
+    -H @<(printf 'Authorization: Bearer %s\n' "$API_KEY") "${URL}/v1/models" 2>/dev/null || echo "000")
+else
+  _probe_code=$(command curl -s -m 8 -o /dev/null -w "%{http_code}" "${URL}/v1/models" 2>/dev/null || echo "000")
+fi
 if [[ "${_probe_code}" == "000" ]]; then
   echo "✗ endpoint ${URL} not responding (no HTTP response on /v1/models)" >&2
   echo "  bring up a compose first: bash scripts/launch.sh  (or check URL= / --api-key for a cloud/proxy endpoint)" >&2
@@ -1614,8 +1622,11 @@ if [[ -n "$BUDGETS_NOTE" ]]; then
   fi
 fi
 if [[ -n "$API_KEY" ]]; then
-  CLI_ARGS+=(--api-key "$API_KEY")
-  echo "[quality-test] api-key: set (cloud/proxy endpoint auth)"
+  # In benchlocal-cli's environment, not its argv: the key may be the serving engine's own (a keyed
+  # Strata, #1883), and argv is world-readable in /proc. benchlocal-cli has read BENCHLOCAL_API_KEY
+  # since it gained --api-key (benchlocal-cli #63).
+  export BENCHLOCAL_API_KEY="$API_KEY"
+  echo "[quality-test] api-key: set (sent to benchlocal-cli in its environment)"
 fi
 # #1023/#987 promoted first-class flags.
 if [[ "$RETRY_RUNAWAYS" == "1" ]]; then

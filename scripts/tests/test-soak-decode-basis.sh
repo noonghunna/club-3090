@@ -168,7 +168,14 @@ have_base=1
 # `cat: .../summary.md: No such file or directory` that named neither the cause
 # nor the fix. The have_base guard below did not catch it because it only tests
 # whether `git show` succeeded — which it did, for the two files it knew about.
-for f in soak-test.sh soak-helper.py lib/club-containers.sh; do
+# #1883 made soak-test.sh source lib/engine-auth.sh (and through it engine-kind.sh, listen-scope.sh)
+# and soak-helper.py import lib/engine_http.py. A per-file list missed them and both soak gates went
+# red on master, so the whole of origin/master's scripts/lib comes along now (git archive).
+if ! git archive origin/master scripts/lib 2>/dev/null | tar -x -C "${BASE_TREE}" 2>/dev/null; then
+  echo "SKIP: origin/master:scripts/lib not available — cannot run the byte-identity leg" >&2
+  have_base=0
+fi
+for f in soak-test.sh soak-helper.py; do
   if ! git show "origin/master:scripts/${f}" > "${BASE_TREE}/scripts/${f}" 2>/dev/null; then
     echo "SKIP: origin/master:scripts/${f} not available — cannot run the byte-identity leg" >&2
     have_base=0
@@ -179,7 +186,7 @@ done
 # Coverage check: re-derive the BASE script's own relative dependencies and
 # assert we extracted them. This is what makes the next added `source` fail
 # LOUDLY here instead of silently three steps later at a missing summary.md.
-if [[ -n "$have_base" ]]; then
+if [[ "$have_base" == "1" ]]; then
   while IFS= read -r dep; do
     [[ -z "$dep" || -f "${BASE_TREE}/scripts/${dep}" ]] && continue
     # ⚠️ FAIL, not SKIP. "origin/master unavailable" is an ENVIRONMENT condition and
@@ -189,7 +196,9 @@ if [[ -n "$have_base" ]]; then
     echo "FAIL: base tree INCOMPLETE — origin/master's soak-test.sh sources scripts/${dep}," >&2
     echo "      which this gate does not extract. Add it to the extraction list above." >&2
     exit 1
-  done < <(command grep -oE 'pwd\)/[A-Za-z0-9_./-]+' "${BASE_TREE}/scripts/soak-test.sh" 2>/dev/null | sed 's|pwd)/||')
+  done < <({ command grep -oE 'pwd\)/[A-Za-z0-9_./-]+' "${BASE_TREE}/scripts/soak-test.sh" 2>/dev/null | sed 's|pwd)/||'
+             command grep -oE '\$\{(REPO_ROOT|ROOT_DIR)\}/scripts/[A-Za-z0-9_./-]+' "${BASE_TREE}/scripts/soak-test.sh" 2>/dev/null \
+               | sed -E 's|^\$\{(REPO_ROOT|ROOT_DIR)\}/scripts/||'; } | sort -u)
 fi
 
 normalise() {
