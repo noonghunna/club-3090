@@ -215,11 +215,16 @@ pass "club_engine_auth_enable_for_url: keys our URL, pays nothing for a URL that
 
 # --- 4c. the rebench chain's shells ---------------------------------------------------------------
 # 2026-10-30: a key-custom Strata container 401'd every one of these.
-for f in scripts/bench-agentic.sh scripts/verify-stress.sh scripts/compaction-probe.sh scripts/deep-context-probe.sh; do
+for f in scripts/bench-agentic.sh scripts/verify-stress.sh scripts/compaction-probe.sh; do
   command grep -q -E 'club_engine_auth_enable_for_url "\$URL"' "$f" \
     || fail "$f: must enable the key for the URL it settles on"
 done
-pass "bench-agentic / verify-stress / compaction-probe / deep-context-probe shells enable it for their URL"
+pass "bench-agentic / verify-stress / compaction-probe shells enable it for their URL"
+# deep-context-probe.sh finds its endpoint through preflight_autodetect_endpoint, which turns the key on
+# for the container it settles on (section 3 proves that), so it no longer calls the URL form itself.
+command grep -qE '^preflight_autodetect_endpoint' scripts/deep-context-probe.sh \
+  || fail "deep-context-probe.sh must find its endpoint (and the key) through preflight_autodetect_endpoint"
+pass "deep-context-probe.sh gets the key through preflight_autodetect_endpoint"
 command grep -q -E 'club_engine_auth_enable "\$\{CONTAINER:-\}"' scripts/concurrency-probe.sh \
   || fail "concurrency-probe.sh must enable the key for its resolved container"
 command grep -q -E 'club_engine_auth_enable "\$\{CONTAINER:-\}"' scripts/soak-test.sh \

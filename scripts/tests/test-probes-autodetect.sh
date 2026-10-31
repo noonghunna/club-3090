@@ -9,7 +9,8 @@
 #
 #   1. club_url_for_container: the host port a container publishes on an engine port (docker stubbed);
 #   2. concurrency-probe.sh with CONTAINER= and no URL= announces and uses that port; URL= still wins;
-#   3. deep-context-probe.sh with no MODEL= asks the endpoint (a stub server) for it.
+#   3. deep-context-probe.sh with no MODEL= asks the endpoint (a stub server) for it, and with no URL= finds the
+#      running engine container's port, as the other serving scripts do.
 # ⚠️ Against the pre-fix tree this must FAIL.
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -30,6 +31,10 @@ cat > "$bin/docker" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == ps ]]; then
   f=""; for a in "$@"; do case "$a" in name=*) f="$a" ;; esac; done
+  # preflight's scan of running containers: one engine container, publishing the stub server's port
+  if [[ -z "$f" && -n "${STUB_DEEP_PORT:-}" && "$*" == *"{{.Names}}|{{.Ports}}"* ]]; then
+    echo "deep-x|0.0.0.0:${STUB_DEEP_PORT}->8000/tcp|vllm/vllm-openai:v0.32.0"; exit 0
+  fi
   case "$f" in
     'name=^qengine-x$') echo "9393/tcp, 0.0.0.0:8198->8080/tcp, [::]:8198->8080/tcp" ;;
     'name=^strata-y$')  echo "127.0.0.1:8024->8080/tcp" ;;
@@ -80,5 +85,11 @@ set -e
 [[ "$out" == *"[deep-context] model=stub-model"* ]] || { echo "$out" >&2; fail "MODEL unset: not resolved from the endpoint"; }
 [[ $rc -eq 2 && "$out" == *"MODE must be"* ]] || fail "expected the MODE refusal after MODEL resolved (rc=$rc)"
 pass "deep-context-probe.sh: MODEL unset resolves to what the endpoint serves"
+set +e
+out="$(env -u MODEL -u URL -u CONTAINER PATH="$bin:$PATH" STUB_DEEP_PORT="$port" MODE=sideways bash scripts/deep-context-probe.sh 2>&1)"; rc=$?
+set -e
+[[ "$out" == *"[deep-context] model=stub-model (what http://localhost:$port serves"* ]] \
+  || { echo "$out" >&2; fail "URL unset: the running container's port was not found"; }
+pass "deep-context-probe.sh: URL unset finds the running engine container's port"
 
 echo "test-probes-autodetect: ok"
