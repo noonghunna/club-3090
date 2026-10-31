@@ -15,6 +15,9 @@
 #   C. the REAL wrapper, driven to the preflight with docker/ss/curl/benchlocal-cli
 #      stubbed: the per-cause message, the exit code, a reachable endpoint passing,
 #      the no-probe-image fallback, and both bypass hints actually bypassing.
+#   D. an endpoint that answers 401 (a keyed Strata) IS reachable: the probe's own
+#      curl command runs for real against a local 401 server (and fails against a
+#      closed port), and busybox wget's "server returned error" counts as an answer.
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 
@@ -50,8 +53,12 @@ cat > "${tmp_bin}/ss" <<'SS'
 [[ -f "${STUB_SS_FILE:-}" ]] && cat "$STUB_SS_FILE"
 exit 0
 SS
-# docker: sandbox images present; the probe image present unless STUB_NO_PROBE_IMAGE=1;
-# the probe `docker run` exits $STUB_PROBE_RC (and is recorded); bridge gateway 172.17.0.1.
+# docker: sandbox images present; the probe image present unless STUB_NO_PROBE_IMAGE=1
+# (STUB_PROBE_IMAGE=busybox:latest makes busybox the only one); the probe `docker run`
+# exits $STUB_PROBE_RC after printing $STUB_PROBE_OUT (and is recorded) — or, with
+# STUB_PROBE_EXEC=1, runs the probe's own command on this host with the real curl
+# (host.docker.internal → 127.0.0.1), so its flags decide what a 401 means; bridge
+# gateway 172.17.0.1.
 cat > "${tmp_bin}/docker" <<'DOCKER'
 #!/usr/bin/env bash
 case "${1:-} ${2:-}" in
@@ -60,12 +67,22 @@ case "${1:-} ${2:-}" in
       benchlocal-sandbox-*:latest)
         [[ "${4:-}" == "--format" ]] && date -u -d '+1 day' '+%Y-%m-%dT%H:%M:%S.000000000Z'
         exit 0 ;;
-      curlimages/curl:latest) [[ "${STUB_NO_PROBE_IMAGE:-0}" == "1" ]] && exit 1; exit 0 ;;
+      curlimages/curl:latest) [[ "${STUB_NO_PROBE_IMAGE:-0}" == "1" || -n "${STUB_PROBE_IMAGE:-}" ]] && exit 1; exit 0 ;;
+      busybox:latest) [[ "${STUB_PROBE_IMAGE:-}" == "busybox:latest" ]] && exit 0; exit 1 ;;
     esac
     exit 1 ;;
   "network inspect") echo "172.17.0.1"; exit 0 ;;
 esac
-if [[ "${1:-}" == "run" ]]; then echo "run $*" >> "${STUB_DOCKER_LOG}"; exit "${STUB_PROBE_RC:-1}"; fi
+if [[ "${1:-}" == "run" ]]; then
+  echo "run $*" >> "${STUB_DOCKER_LOG}"
+  if [[ "${STUB_PROBE_EXEC:-0}" == "1" ]]; then
+    shift; while [[ "${1:-}" == -* ]]; do shift; done; shift   # docker's options, then the image
+    [[ "${1:-}" == curl ]] && set -- "$STUB_REAL_CURL" "${@:2}"
+    exec "${@//host.docker.internal/127.0.0.1}"
+  fi
+  [[ -n "${STUB_PROBE_OUT:-}" ]] && echo "$STUB_PROBE_OUT" >&2
+  exit "${STUB_PROBE_RC:-1}"
+fi
 exit 1
 DOCKER
 cat > "${tmp_bin}/curl" <<'CURL'
@@ -139,6 +156,7 @@ fi
 
 # ---- C. the real wrapper, driven to the preflight ---------------------------------
 PORT=18080
+SECTION=C   # the label expect_fail prints
 run_wrapper() {  # extra env assignments...; sets OUT, RC
   : > "${tmp_work}/bl.log"; : > "${tmp_work}/docker.log"
   set +e
@@ -151,11 +169,11 @@ run_wrapper() {  # extra env assignments...; sets OUT, RC
 }
 expect_fail() {  # label, then substrings the message must carry
   local label="$1"; shift
-  [[ "$RC" == "2" ]] || { echo "$OUT" | tail -20 >&2; fail "C/$label: expected exit 2, got $RC"; }
-  [[ ! -s "${tmp_work}/bl.log" ]] || fail "C/$label: benchlocal-cli ran after a failed preflight"
-  for n in "$@"; do [[ "$OUT" == *"$n"* ]] || { echo "$OUT" | tail -20 >&2; fail "C/$label: message lacks: $n"; }; done
-  [[ "$OUT" == *"--no-sandboxed, or BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=0"* ]] || fail "C/$label: bypass hint must name the real flag and =0"
-  echo "  ✓ C: $label"
+  [[ "$RC" == "2" ]] || { echo "$OUT" | tail -20 >&2; fail "$SECTION/$label: expected exit 2, got $RC"; }
+  [[ ! -s "${tmp_work}/bl.log" ]] || fail "$SECTION/$label: benchlocal-cli ran after a failed preflight"
+  for n in "$@"; do [[ "$OUT" == *"$n"* ]] || { echo "$OUT" | tail -20 >&2; fail "$SECTION/$label: message lacks: $n"; }; done
+  [[ "$OUT" == *"--no-sandboxed, or BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=0"* ]] || fail "$SECTION/$label: bypass hint must name the real flag and =0"
+  echo "  ✓ $SECTION: $label"
 }
 
 printf '%s\n' "$(L 127.0.0.1:${PORT})" > "${tmp_work}/ss.lines"
@@ -207,5 +225,52 @@ echo "  ✓ C: bypass hint 2 works — --no-sandboxed skips the probe"
 run_wrapper STUB_PROBE_RC=1
 [[ "$RC" == "2" ]] || fail "C: with the variable unset the preflight must still run (the wrapper auto-sets it)"
 echo "  ✓ C: 'unset' is not a bypass (why the hint changed)"
+
+# ---- D. a 401 is an answer -------------------------------------------------------
+# A keyed engine (Strata 0.2+) answers /v1/models 401 without its key. The probe asks
+# whether the PATH works, so that answer means reachable — counting it as a failure
+# blamed a firewall and stopped every --full run against a keyed Strata (2026-10-31).
+SECTION=D
+REAL_CURL="$(command -v curl || true)"
+if [[ -n "$REAL_CURL" ]]; then
+  python3 -c '
+import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers()
+    def log_message(self, *a): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+print(s.server_address[1], flush=True); s.serve_forever()' > "${tmp_work}/port.401" 2>/dev/null </dev/null &
+  PIDS+=("$!")
+  PORT=""; for _ in $(seq 1 50); do PORT="$(head -1 "${tmp_work}/port.401" 2>/dev/null || true)"; [[ -n "$PORT" ]] && break; sleep 0.1; done
+  [[ -n "$PORT" ]] || fail "D: the 401 server did not start"
+  printf '%s\n' "$(L 0.0.0.0:${PORT})" > "${tmp_work}/ss.lines"
+  run_wrapper STUB_PROBE_EXEC=1 STUB_REAL_CURL="$REAL_CURL"
+  [[ -s "${tmp_work}/docker.log" ]] || fail "D: the container probe never ran — the assertion below would be vacuous"
+  [[ "$RC" != "2" && "$OUT" == *"endpoint reachable from a container"* && -s "${tmp_work}/bl.log" ]] \
+    || { echo "$OUT" | tail -15 >&2; fail "D: an endpoint answering 401 must pass the preflight and run (rc=$RC)"; }
+  echo "  ✓ D: the probe's own curl command gets a 401 → reachable, benchlocal runs"
+  # Negative control: the same real command against a port nothing listens on must fail.
+  PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+  printf '%s\n' "$(L 0.0.0.0:${PORT})" > "${tmp_work}/ss.lines"
+  run_wrapper STUB_PROBE_EXEC=1 STUB_REAL_CURL="$REAL_CURL"
+  expect_fail "the same real probe against a closed port → not reachable" "the bind is NOT the problem"
+else
+  echo "  - D: real-curl legs skipped (no curl on this host)"
+fi
+# busybox wget (alpine's too) exits 1 for a 401 AND for no connection; only what it
+# prints tells them apart. These are its exact lines against a 401 server and a closed
+# port, measured from the busybox and alpine images over the Docker bridge.
+PORT=18080
+printf '%s\n' "$(L 0.0.0.0:${PORT})" > "${tmp_work}/ss.lines"
+run_wrapper STUB_PROBE_IMAGE=busybox:latest STUB_PROBE_RC=1 \
+  STUB_PROBE_OUT="wget: server returned error: HTTP/1.0 401 Unauthorized"
+command grep -q 'busybox:latest wget' "${tmp_work}/docker.log" || fail "D: the busybox probe never ran"
+[[ "$RC" != "2" && "$OUT" == *"endpoint reachable from a container"* ]] \
+  || { echo "$OUT" | tail -15 >&2; fail "D: busybox wget's 401 must count as reachable (rc=$RC)"; }
+echo "  ✓ D: busybox wget 'server returned error: HTTP/1.0 401' → reachable"
+run_wrapper STUB_PROBE_IMAGE=busybox:latest STUB_PROBE_RC=1 \
+  STUB_PROBE_OUT="wget: can't connect to remote host (172.17.0.1): Connection refused"
+expect_fail "busybox wget can't connect → not reachable" "the bind is NOT the problem"
 
 echo "test-hermes-reachability: ok"
