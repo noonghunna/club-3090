@@ -258,6 +258,28 @@ cp -r "${TMP_DIR}/bucko-ok/qwen3.8-flash-next-w4a16-fp8ple" "${TMP_DIR}/bucko-re
 ln -s "elsewhere/qwen3.8-flash-next-w4a16-fp8ple" "${TMP_DIR}/bucko-rel/qwen3.8-flash-next-w4a16-fp8ple"
 out="$(run_deps "$bucko_main" "${TMP_DIR}/bucko-rel")"
 [[ -z "$out" ]] || { echo "ASSERTION FAILED: an in-MODEL_DIR relative symlink was refused: $out" >&2; exit 1; }
+# ExLlamaV3 / TabbyAPI: the whole ${MODEL_DIR} at /models and the model named as
+# `--model-dir /models --model-name <folder>`, a folder name rather than a /models/<path>
+# token, so no reader saw it: preflight passed with no weights on disk and `weights.sh
+# show` listed no folder for the exl3 slugs. Run against the REAL composes.
+exl3_305="${ROOT_DIR}/models/qwen3.8-flash-next/exllamav3/compose/dual/exl3-3.05bpw/cpumoe.yml"
+mkdir -p "${TMP_DIR}/exl3-empty"
+out="$(expect_missing "$exl3_305" "${TMP_DIR}/exl3-empty")"
+assert_contains "$out" "${TMP_DIR}/exl3-empty/qwen3.8-flash-next-exl3-3.05bpw/config.json (HF model)"
+assert_contains "$out" "WEIGHT_KEY=qwen3.8-flash-next:exl3-3.05bpw"
+# POSITIVE CONTROL: the folder present → no complaint.
+mkdir -p "${TMP_DIR}/exl3-ok/qwen3.8-flash-next-exl3-3.05bpw"
+touch "${TMP_DIR}/exl3-ok/qwen3.8-flash-next-exl3-3.05bpw/config.json"
+out="$(run_deps "$exl3_305" "${TMP_DIR}/exl3-ok")"
+[[ -z "$out" ]] || { echo "ASSERTION FAILED: exl3 weights present but reported: $out" >&2; exit 1; }
+# The reader on its own: the inline `command: [...]` form works, and a --model-dir that
+# isn't the /models mount gives nothing rather than a guessed host path.
+tabby() { printf '%s\n' "services:" "  t:" "    volumes:" '      - "${MODEL_DIR:-x}:/models:ro"' "$1" > "${TMP_DIR}/tabby.yml"
+  ( export ROOT_DIR; source "${ROOT_DIR}/scripts/preflight.sh"; preflight_compose_weight_paths "${TMP_DIR}/tabby.yml" ); }
+got="$(tabby "    command: ['--model-dir', '/models', '--model-name', 'flow-model']")"
+assert_contains "$got" $'command\tflow-model'
+got="$(tabby "    command: ['--model-dir', '/elsewhere', '--model-name', 'other-model']")"
+[[ -z "$got" ]] || { echo "ASSERTION FAILED: a --model-dir other than /models was mapped onto MODEL_DIR: $got" >&2; exit 1; }
 # Only `command:` lists are read: a `/models/…` bind-mount TARGET (as SGLang's chat
 # template mounts) must not be checked as a host path.
 target_compose="${TMP_DIR}/mount-target.yml"

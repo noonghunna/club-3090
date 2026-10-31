@@ -943,6 +943,55 @@ _preflight_compose_command_model_paths() {
     | command grep -oE '/models/[^]"'"'"'\\[:space:],]+' || true
 }
 
+# _preflight_compose_tabby_model_paths <compose>... — /models/<name> for a TabbyAPI (ExLlamaV3)
+# command, which names its model as `--model-dir /models --model-name <folder>`: a folder name
+# and a directory, never a /models/<path> token, so neither reader above sees it. The exl3
+# slugs mount the whole ${MODEL_DIR} at /models, so `weights.sh show` listed no weights
+# folder for them and preflight never checked theirs. Reads the `command:` list in either
+# form (`[ ... ]` or one `- item` per line). Only --model-dir /models maps onto MODEL_DIR;
+# another directory, or no --model-dir, gives nothing rather than a guessed host path.
+_preflight_compose_tabby_model_paths() {
+  awk '
+    function flush() { if (dir == "/models" && name != "") print "/models/" name; dir = ""; name = ""; prev = "" }
+    function take(item) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", item)
+      gsub(/^["\047]|["\047]$/, "", item)
+      if (item ~ /^--model-dir=/)  { dir = substr(item, 13); prev = ""; return }
+      if (item ~ /^--model-name=/) { name = substr(item, 14); prev = ""; return }
+      if (prev == "--model-dir")  dir = item
+      if (prev == "--model-name") name = item
+      prev = item
+    }
+    FNR == 1 { if (NR > 1) flush(); incmd = 0; flow = 0 }
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      sub(/[[:space:]]+#.*$/, "", line)
+      if (!incmd && line ~ /^[[:space:]]*command:/) {
+        incmd = 1
+        rest = line; sub(/^[[:space:]]*command:[[:space:]]*/, "", rest)
+        if (rest ~ /^\[/) {
+          flow = 1; sub(/^\[/, "", rest)
+          if (rest ~ /\]/) { sub(/\].*$/, "", rest); n = split(rest, a, ","); for (i = 1; i <= n; i++) take(a[i]); incmd = 0; flow = 0 }
+          else { n = split(rest, a, ","); for (i = 1; i <= n; i++) if (a[i] ~ /[^[:space:]]/) take(a[i]) }
+        }
+        next
+      }
+      if (incmd && flow) {
+        done_ = (line ~ /\]/); if (done_) sub(/\].*$/, "", line)
+        n = split(line, a, ","); for (i = 1; i <= n; i++) if (a[i] ~ /[^[:space:]]/) take(a[i])
+        if (done_) { incmd = 0; flow = 0 }
+        next
+      }
+      if (incmd) {
+        if (line ~ /^[[:space:]]*- /) { item = line; sub(/^[[:space:]]*- /, "", item); take(item); next }
+        if (line ~ /^[[:space:]]*$/) next
+        incmd = 0
+      }
+    }
+    END { flush() }' "$@" 2>/dev/null || true
+}
+
 # _preflight_compose_script_model_paths <compose>... — the /models/<path> that a
 # shell-script `command:` passes to SGLang's --model-path, written either literally or
 # through a variable the script assigns first:
@@ -1444,7 +1493,8 @@ preflight_compose_weight_paths() {
   # so none of the readers above saw them and a missing or misnamed folder got past
   # preflight to fail inside the container (Discussion #1700). SGLang does the same
   # with a shell-script `command:` whose --model-path names a variable set to
-  # /models/<sub>. Only those two readers count: elsewhere `/models/…` is also a
+  # /models/<sub>, and TabbyAPI (the exl3 slugs) with `--model-dir /models --model-name <folder>`.
+  # Only those three readers count: elsewhere `/models/…` is also a
   # bind-mount TARGET (SGLang's chat templates) or a shell default, which must not be
   # checked as a host path.
   if _preflight_compose_mounts_model_dir_whole "${compose_files[@]}"; then
@@ -1453,7 +1503,8 @@ preflight_compose_weight_paths() {
       [[ -n "$path" ]] || continue
       printf 'command\t%s\n' "$path"
     done < <({ _preflight_compose_command_model_paths "${compose_files[@]}"
-               _preflight_compose_script_model_paths "${compose_files[@]}"; } | sort -u)
+               _preflight_compose_script_model_paths "${compose_files[@]}"
+               _preflight_compose_tabby_model_paths "${compose_files[@]}"; } | sort -u)
   fi
   return 0
 }
