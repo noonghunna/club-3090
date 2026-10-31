@@ -74,7 +74,8 @@
 #   MODE=concurrent SESSIONS=2 TARGET_CTX=100000 bash scripts/deep-context-probe.sh
 #
 # Env:
-#   URL           endpoint base (default: registry default port for qwen3.6-27b)
+#   URL           endpoint base (default: the running engine container's port, found as the other serving
+#                 scripts find it; :8020 when none runs). CONTAINER= picks the container instead
 #   MODEL         served model name (default: the one URL serves, as every serving script resolves it;
 #                 still refused when the endpoint names none, since a guessed name 404s)
 #   MODE          depth | breadth | concurrent  (default: depth)
@@ -89,12 +90,14 @@ set -uo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The endpoint as every serving script finds it (preflight_autodetect_endpoint, #1584): URL= names the
+# server and its container is the one that publishes it; CONTAINER= names the container and the URL is its
+# port; neither, and it is the running engine container. It also turns on the engine's API key (Strata 0.2+)
+# for that container. Until 2026-10-31 this script assumed :8020 unless told otherwise.
+# shellcheck source=preflight.sh
+source "${ROOT_DIR}/scripts/preflight.sh"
+preflight_autodetect_endpoint
 URL="${URL:-http://localhost:8020}"
-# The engine's API key (Strata 0.2+): the URL is the only input — club_container_for_url
-# answers which container publishes it, engine-auth.sh which key (no per-script rules).
-# shellcheck source=lib/engine-auth.sh
-source "${ROOT_DIR}/scripts/lib/engine-auth.sh"
-club_engine_auth_enable_for_url "$URL"
 MODEL="${MODEL:-}"
 MODE="${MODE:-depth}"
 TARGET_CTX="${TARGET_CTX:-140000}"
