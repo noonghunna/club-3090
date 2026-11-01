@@ -3,7 +3,7 @@
 #   Model:     Qwen3.8-27B — RedHatAI INT4 (compressed-tensors W4A16, group 128, symmetric) with
 #              its MTP head, plus QEngine's fine-tuned MTP head and draft vocabulary (its release
 #              assets, unchanged since v1.0; the server downloads them when they're missing)
-#   Engine:    QEngine 1.3.3 (bpx03): its own C++/CUDA engine and server, the author's own image
+#   Engine:    QEngine 1.3.3.1 (bpx03): its own C++/CUDA engine and server, the author's own image
 #              ghcr.io/bpx03/qengine (source 21517be6, the :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (tensor parallel 2; GPU-to-GPU P2P when the driver grants it)
 #   Drafter:   MTP, up to 7 drafts a step (adaptive; SPEC_N sets the most, 0 turns MTP off) + lookup
@@ -19,7 +19,7 @@
 #              The full gate passed on another rig, not this one: eddietheengineer's #1862 (QEngine 1.3,
 #              3090 + 3090 Ti at 260 / 240 W) ran verify-full, verify-stress 8/8 with the ceiling ladder
 #              filled to 240K, both soaks (PASS, 0 MB growth) and the 8-pack (108 / 132 of 150, thinking
-#              off / on); here it has bench and verify-full. 1.3.1, 1.3.2 and 1.3.3 were boot-tested. No
+#              off / on); here it has bench and verify-full. 1.3.1, 1.3.2, 1.3.3 and 1.3.3.1 were boot-tested. No
 #              thinking-budget cap (THINKING_BUDGET_* are not wired: QEngine has
 #              none). The default effort is low, as on the other Qwen3.8 slugs, through QEngine's
 #              QE_REASONING_EFFORT (its template's own default is xhigh); a request's own effort
@@ -95,7 +95,7 @@
 #   bash scripts/settings.sh set QE_KV_ARCHIVE_GB=8
 services:
   qengine-qwen38-27b-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:0358837d11ba4081266c8149f065c573ce3dff7697d1688640bcd95fb8f772c1}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:39c1cf066164543ff61d9ede429b0a6ebea5de5ac817cc90cf12cdbcf0bcdf23}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-27b-dual}"
     user: "0:${DOCKER_GID:-1000}"
