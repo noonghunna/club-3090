@@ -71,7 +71,9 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 # 1.3.3's engine-step watchdog
                 "FLASH_RUN_TIMEOUT_S",
                 # 1.3.4's parallel mode (tensor parallel / layer pipeline)
-                "FLASH_PAR"}
+                "FLASH_PAR",
+                # Project Maya's serve/server.py reads it (model load/unload endpoints, on by default from v1.1.47)
+                "MAYA_MODEL_MANAGEMENT"}
 
 # DEBT REGISTER — each entry must name WHY the dead knob is deliberate.
 # Shrink it; never grow it silently. An entry here means a documented knob is
