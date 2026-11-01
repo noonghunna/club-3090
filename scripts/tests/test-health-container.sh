@@ -160,7 +160,7 @@ assert_contains "$out" "runtime details aren't parsed" "unknown engine: says so 
 
 # --- 7. QEngine gets its own runtime section (#1846): it fell through to the llama.cpp branch,
 # which looked for a drafter on llama-server's command line. Real lines from both slugs' logs.
-QE_IMG="ghcr.io/bpx03/qengine@sha256:39c1cf066164543ff61d9ede429b0a6ebea5de5ac817cc90cf12cdbcf0bcdf23"
+QE_IMG="ghcr.io/bpx03/qengine@sha256:2b3f8fb5aa0c6c6706ead209a7fb55a744844e3a1f587f86ea534f32af540363"
 fn_logs='[flash] 16 sequence slots: 103 MB of recurrent state per extra slot and card
 [qflash] 16 sequence slots over a pool of 256 periods; archive: 48.0 GB host budget (pinning in the background), checkpoints every 8192 tokens
 [qflash 46s] ready, context 262144
