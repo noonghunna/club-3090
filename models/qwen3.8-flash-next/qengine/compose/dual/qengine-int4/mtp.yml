@@ -21,8 +21,8 @@
 #              yet; quality isn't measured here either. On two cards about half the expert groups
 #              stay in pinned host RAM (~15 GB a card), next to the 51.8 GB INT8 n-gram table:
 #              MemAvailable fell 88 GB at ready and up to 114 GB as the 48 GB archive filled
-#              (measured; FLASH_KV_ARCHIVE_GB=0 keeps it off). At most 16 sequence slots, and each
-#              card has ~0.24 GiB of VRAM left after loading.
+#              (measured; FLASH_KV_ARCHIVE_GB=0 keeps it off). 8 sequence slots here (QEngine's own
+#              default, and its most, is 16), and each card has ~0.3 GiB of VRAM left after loading.
 #              On another two-card rig, community PR #1836 (eddietheengineer) found a long-prefill
 #              NaN with FLASH_COMM=auto and an out-of-memory in the 8-pack's agent pack at 8 slots.
 #              Neither reproduced here (90K and 107K needles on auto; 8 concurrent conversations
@@ -83,7 +83,7 @@
 # QEngine's Flash-Next engine (from 1.3; README "Qwen3.8-Flash-Next"): the 512 routed experts split over
 # the cards in 128-wide groups, an expert cache that copies hot host-resident groups into part of
 # the KV pool, FP8 attention KV split by position with the indexer's top-512 block selection past
-# 2K tokens, MTP (k = 3) plus lookup drafts, 16 slots with batched decode. Two cards measured by
+# 2K tokens, MTP (k = 3) plus lookup drafts, up to 16 slots with batched decode. Two cards measured by
 # upstream (2026-10-26): short c=1 139 tok/s, agent c=8 264 tok/s through the server.
 # It needs P2P for its prefill exchanges or falls back to the copy engine or host memory.
 #
@@ -100,7 +100,12 @@
 #                     0 = no MTP (lookup drafts stay on; FLASH_LOOKUP=0 turns them off)
 #   VISION            1 (default) | 0: --vision 1 | 0, image input (OpenAI image_url, Anthropic image blocks)
 # The Flash-Next engine's own settings, passed through when set (its defaults otherwise):
-#   FLASH_MAX_SEQS       sequence slots, 1-16 (16); fewer leave VRAM to the expert cache
+#   FLASH_MAX_SEQS       sequence slots, 1-16 (8 here; QEngine's default is 16). Each slot holds ~103 MB
+#                        of recurrent state a card, and the VRAM fewer slots free goes to the expert cache.
+#                        2026-11-01 on two 3090s (1.3.3.1, one boot each), 16 / 8 / 4 slots: single-user
+#                        decode 162 / 181 / 175 narrative, 150 / 156 / 189 code; prefill @90K 2,583 / 3,338
+#                        / 3,212; decode at 90K depth 71 / 107 / 136; 8 streams at 4K 153 / 189 tok/s in all
+#                        (4 slots: a fifth request waits). 4 suits one user; 16 more than 8 streams at once
 #   FLASH_KV_ARCHIVE_GB  pinned host-RAM archive of conversations (48; 0 = off, ~85 GB host RAM)
 #   FLASH_NGRAM_PIN      0 = disk mode: the n-gram table read through the file mapping, not pinned
 #   FLASH_EC_MARGIN_MB   VRAM per card left free next to the expert cache (256); a list sets each card
@@ -155,7 +160,7 @@
 # `switch.sh --set` saves only our three knobs for this slug; it refuses QEngine's own names, because
 # they aren't catalogued launch settings. Set those for one launch, or for every QEngine slug:
 #   FLASH_KV_ARCHIVE_GB=0 READY_TIMEOUT=3600 bash scripts/switch.sh --force qengine/qwen38-flash-next-dual
-#   bash scripts/settings.sh set FLASH_MAX_SEQS=8
+#   bash scripts/settings.sh set FLASH_MAX_SEQS=4      # one user at a time: faster still (above)
 services:
   qengine-qwen38-flash-next-dual:
     image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:39c1cf066164543ff61d9ede429b0a6ebea5de5ac817cc90cf12cdbcf0bcdf23}
@@ -189,7 +194,7 @@ services:
       - QE_GPUS=0,1
       - QE_PORT=8080
       - QE_MODEL=/app/models/Qwen3.8-Flash-Next-QE-INT4
-      - FLASH_MAX_SEQS
+      - FLASH_MAX_SEQS=${FLASH_MAX_SEQS:-8}
       - FLASH_KV_ARCHIVE_GB
       - FLASH_NGRAM_PIN
       - FLASH_EC_MARGIN_MB

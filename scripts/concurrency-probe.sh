@@ -602,11 +602,18 @@ PY
   if [[ "$slots_src" == "container -np" ]]; then engine="llamacpp"
   elif [[ "$slots_src" == "container max-num-seqs" ]]; then engine="vllm"
   elif [[ "$slots_src" == "container max-running-requests" || "$slots_src" == "server max_running_requests" ]]; then engine="sglang"
+  elif [[ "$slots_src" == "container log (QEngine)" ]]; then engine="qengine"
   else engine=""
+  fi
+  # QEngine's slot setting is per model: FLASH_MAX_SEQS on Flash-Next (its log lines start "[qflash]"),
+  # QE_MAX_SEQS on the 27B. MAX_NUM_SEQS reaches neither.
+  seq_knob=""
+  if [[ "$engine" == "qengine" ]]; then
+    if docker logs "$CONTAINER" 2>&1 | command grep -c '^\[qflash' >/dev/null; then seq_knob="FLASH_MAX_SEQS"; else seq_knob="QE_MAX_SEQS"; fi
   fi
   MODEL="$MODEL" SLUG="${SLUG:-}" SPEC="$(_spec_fp)" GPUS="$(_gpu_fp)" \
   KV_TOKENS="${KV_TOKENS:-}" SLOTS="${slots:-}" GEN_TOKENS="$GEN_TOKENS" \
-  CACHE_LABEL="$cache_label" ENGINE="$engine" SERVED_MAX_LEN="${max_len:-}" \
+  CACHE_LABEL="$cache_label" ENGINE="$engine" SEQ_KNOB="$seq_knob" SERVED_MAX_LEN="${max_len:-}" \
   PROBE_LIBDIR="$ROOT_DIR/scripts/lib" \
   python3 - "$cells_jsonl" "$rec_json" <<'PY'
 import json, os, sys
@@ -630,6 +637,7 @@ rec = {
     "slots": int(slots) if slots and str(slots).isdigit() else None,
     "served_max_len": int(served) if served and str(served).isdigit() else None,
     "engine": os.environ.get("ENGINE") or "",
+    "seq_knob": os.environ.get("SEQ_KNOB") or "",
     "gen_tokens": int(os.environ.get("GEN_TOKENS") or 256),
     "cache": os.environ.get("CACHE_LABEL") or "cold",
     "command": "bash scripts/concurrency-probe.sh --sweep",
