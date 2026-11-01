@@ -3,7 +3,7 @@
 #   Model:     Qwen3.8-Flash-Next — bpx03's QEngine layout of Intel's W4A16 AutoRound (routed
 #              experts INT4 bit-exact; shared expert and DeltaNet INT4 RTN; attention and lm_head
 #              INT8 at load), the INT8 n-gram table, its INT4 MTP head (128 GB)
-#   Engine:    QEngine 1.3.3 (bpx03): its second engine, libqflash.so, in the author's own image
+#   Engine:    QEngine 1.3.3.1 (bpx03): its second engine, libqflash.so, in the author's own image
 #              ghcr.io/bpx03/qengine (source 21517be6, the :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (experts split evenly over the two cards; GPU-to-GPU P2P when the
 #              driver grants it)
@@ -158,7 +158,7 @@
 #   bash scripts/settings.sh set FLASH_MAX_SEQS=8
 services:
   qengine-qwen38-flash-next-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:0358837d11ba4081266c8149f065c573ce3dff7697d1688640bcd95fb8f772c1}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:39c1cf066164543ff61d9ede429b0a6ebea5de5ac817cc90cf12cdbcf0bcdf23}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-flash-next-dual}"
     user: "0:${DOCKER_GID:-1000}"
