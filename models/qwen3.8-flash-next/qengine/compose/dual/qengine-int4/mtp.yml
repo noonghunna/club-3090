@@ -3,8 +3,8 @@
 #   Model:     Qwen3.8-Flash-Next — bpx03's QEngine layout of Intel's W4A16 AutoRound (routed
 #              experts INT4 bit-exact; shared expert and DeltaNet INT4 RTN; attention and lm_head
 #              INT8 at load), the INT8 n-gram table, its INT4 MTP head (128 GB)
-#   Engine:    QEngine 1.3.2 (bpx03): its second engine, libqflash.so, in the author's own image
-#              ghcr.io/bpx03/qengine (source fb1da72d, the :vision image: PyTorch for the encoder)
+#   Engine:    QEngine 1.3.3 (bpx03): its second engine, libqflash.so, in the author's own image
+#              ghcr.io/bpx03/qengine (source 21517be6, the :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (experts split evenly over the two cards; GPU-to-GPU P2P when the
 #              driver grants it)
 #   Drafter:   MTP, up to 3 drafts a step (adaptive; SPEC_N sets the most, 0 turns MTP off) + lookup
@@ -44,10 +44,20 @@
 #              with FLASH_COMM=ce, a concurrent request whose prompt shares a prefix with another slot
 #              came back with 0 tokens, and on that rig's patched build both cards twice hung.
 #              FLASH_QSA_PIPE_CE=0 turns the pipeline off (5 of 5 sweeps clean there, ~4% prefill at
-#              90K): set it with FLASH_COMM=ce until upstream fixes it. Reproduced here 2026-10-31:
-#              with FLASH_COMM=ce one stream of the concurrency sweep's 8K x 4 cell came back empty
-#              ('gen 0' in the log); with FLASH_QSA_PIPE_CE=0 the same sweep was clean. FLASH_COMM=auto
-#              keeps P2P on this rig (tax 1.79, under the one-NUMA-node cap), so the default never runs it.
+#              90K). Reproduced here 2026-10-31: with FLASH_COMM=ce one stream of the concurrency
+#              sweep's 8K x 4 cell came back empty ('gen 0' in the log); with FLASH_QSA_PIPE_CE=0 the
+#              same sweep was clean. FLASH_COMM=auto keeps P2P on this rig (tax 1.79, under the
+#              one-NUMA-node cap), so the default never runs it.
+#              1.3.3 (pinned 2026-11-01) fixes that fault: the pipeline numbered a very short batch
+#              piece (1-8 rows, e.g. a resumed conversation) as if no exchange were pending, so two
+#              pieces read each other's data. The same FLASH_COMM=ce sweep here, pipeline on, ran 9 of
+#              9 cells clean (no 'gen 0', no collective timeout), so FLASH_QSA_PIPE_CE=0 is no longer
+#              needed; it stays forwarded as an off switch. 1.3.3 also keeps 2 MB per GB of host
+#              memory registered after load out of the expert cache (112 MB a card here, for the
+#              archive and pinned prefixes; it had come out of the 256 MB margin), and adds watchdogs:
+#              an engine step stuck past FLASH_RUN_TIMEOUT_S (120 s) or a server with no progress
+#              for QE_HANG_S (180 s) logs a diagnosis and exits 75, and restart: unless-stopped
+#              brings it back.
 #              Measured 2026-10-28 on two 3090s at 230 W (bench.sh on its own boot): 164.0 / 170.6
 #              decode, 1,921 prefill @10K (CV 15%), 2,373 @90K, MTP acceptance length 2.8, 24.1 GB
 #              a card. First start 113 s with the weights already in the page cache (a cold start
@@ -120,8 +130,12 @@
 #   FLASH_MAX_PREFILLS   prompts prefilled at the same time, sharing batches (8)
 #   FLASH_GUARD_MAX      distinct non-finite faults within 5 minutes before the server stops (4)
 #   FLASH_LEND_CHECK     1: a debug check that no buffer overlaps memory lent to the expert cache
-#   FLASH_QSA_PIPE_CE    0 turns off 1.3.2's prefill pipeline on the copy-engine path (on whenever
-#                        FLASH_COMM resolves to ce); see the caveat above for why
+#   FLASH_QSA_PIPE_CE    0 turns off the prefill pipeline on the copy-engine path (on whenever
+#                        FLASH_COMM resolves to ce); 1.3.2's fault in it is fixed in 1.3.3 (caveat above)
+#   FLASH_RUN_TIMEOUT_S  an engine step that doesn't finish in this many seconds ends the server
+#                        with a diagnosis, exit 75, and the restart policy restarts it (120; 0 = off)
+#   QE_HANG_S            no scheduler progress for this many seconds: stacks to the log, open requests
+#                        fail, exit 75 (180; 0 = off)
 #   QE_COMM_CHECK        rounds of the start-up P2P data check per pair and transport (4; 0 = off)
 #   QE_COMM_TAX_SEVERE, QE_COMM_TAX_1NODE  the P2P co-run tax at which FLASH_COMM=auto takes the
 #                        copy engine (3.0 on any layout; 1.90 on one NUMA node over a narrow link)
@@ -144,7 +158,7 @@
 #   bash scripts/settings.sh set FLASH_MAX_SEQS=8
 services:
   qengine-qwen38-flash-next-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:3375a4253e677ef073876662af439e5bfc44736b4cfd5e9fb34c1613bb7f8008}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:0358837d11ba4081266c8149f065c573ce3dff7697d1688640bcd95fb8f772c1}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-flash-next-dual}"
     user: "0:${DOCKER_GID:-1000}"
@@ -192,6 +206,8 @@ services:
       - FLASH_YARN
       - FLASH_LEND_CHECK
       - FLASH_QSA_PIPE_CE
+      - FLASH_RUN_TIMEOUT_S
+      - QE_HANG_S
       - QE_COMM_CHECK
       - QE_COMM_TAX_SEVERE
       - QE_COMM_TAX_1NODE
