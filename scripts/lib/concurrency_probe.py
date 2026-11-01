@@ -1358,6 +1358,7 @@ def recommend_compose(record):
         "full_ctx": _row_summary(_best_row(rows, agent_ctx) if agent_ctx else None),
         "served_max_len": served,
         "engine": record.get("engine") or "",
+        "seq_knob": record.get("seq_knob") or "",
         "slug": record.get("slug") or "",
     }
 
@@ -1379,8 +1380,17 @@ def format_recommend(rec):
     # ignore MAX_NUM_SEQS / MAX_MODEL_LEN (#1537's card told an SGLang user to set MAX_NUM_SEQS).
     seq_knob, ctx_knob = (("MAX_RUNNING_REQUESTS", "CONTEXT_LENGTH") if engine == "sglang"
                           else ("MAX_NUM_SEQS", "MAX_MODEL_LEN"))
+    # QEngine composes take QE_MAX_SEQS (27B) / FLASH_MAX_SEQS (Flash-Next), which the probe reads
+    # off the boot log, and have no context-length knob: the context stays at what the engine serves.
+    qengine = engine == "qengine"
+    if qengine:
+        seq_knob = rec.get("seq_knob") or "QE_MAX_SEQS"
 
     def knobs(n, ctx_keep, ctx_set=None):
+        if qengine:
+            return [f"    {seq_knob}={n}", f"    {seq_knob}={n} bash scripts/switch.sh {slug}",
+                    "    QEngine: the context stays as served (no knob); slots share VRAM with the KV pool"
+                    " and, on Flash-Next, the expert cache, so fewer slots can be faster: re-measure"]
         launch = [f"{seq_knob}={n}"]
         if ctx_set is not None:
             launch.append(f"{ctx_knob}={ctx_set}")
@@ -1426,7 +1436,7 @@ def format_recommend(rec):
             lines.append("")
             lines.append(cell_line("max aggregate (short prompts only)", peak))
             lines.extend(knobs(peak["n"], served, ctx_set=peak["ctx"]))
-            if served and peak["ctx"] < served:
+            if served and peak["ctx"] < served and not qengine:
                 lines.append(
                     f"    do not drop {ctx_knob} unless traffic stays near {fmt_ctx(peak['ctx'])} — "
                     f"raising slots to {peak['n']} at {served_s} will not reproduce {peak['agg']:.0f} tok/s"

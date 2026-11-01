@@ -485,6 +485,32 @@ command grep -q "CONTEXT_LENGTH=" <<<"$card_sgl" || fail "an SGLang recommendati
 command grep -q "MAX_NUM_SEQS\|MAX_MODEL_LEN\|max-model-len" <<<"$card_sgl" && fail "an SGLang recommendation must not name vLLM's knobs"
 echo "  ✓ KV pool (SGLang server info; vLLM log head past the --tail window), slot source, SGLang knob names"
 
+# QEngine: its slot knob is QE_MAX_SEQS (27B) / FLASH_MAX_SEQS (Flash-Next), and it has no context knob.
+# The card told Flash-Next users MAX_NUM_SEQS / MAX_MODEL_LEN, which neither compose reads (#1905).
+qe_card() {
+  python3 "$LIB" --card <<JSON
+{
+  "model": "qwen3.8-flash-next", "slug": "qengine/qwen38-flash-next-dual", "spec": "spec ?",
+  "gpus": "2× RTX 3090", "kv_tokens": null, "slots": 8, "served_max_len": 262144,
+  "engine": "qengine", "seq_knob": "$1", "gen_tokens": 256, "cache": "cold",
+  "command": "bash scripts/concurrency-probe.sh --sweep",
+  "rows": [
+    {"ctx": 4096, "n": 1, "strm": 93.7, "agg": 92, "ttft_s": 0.04, "vram_gb": 47.1, "clean": 1, "pass": 1, "skip": null},
+    {"ctx": 4096, "n": 8, "strm": 32.9, "agg": 189, "ttft_s": 1.8, "vram_gb": 47.1, "clean": 1, "pass": 1, "skip": null},
+    {"ctx": 16384, "n": 1, "strm": 90.0, "agg": 88, "ttft_s": 0.2, "vram_gb": 47.1, "clean": 1, "pass": 1, "skip": null},
+    {"ctx": 16384, "n": 4, "strm": 40.0, "agg": 150, "ttft_s": 1.0, "vram_gb": 47.1, "clean": 1, "pass": 1, "skip": null}
+  ]
+}
+JSON
+}
+card_qf="$(qe_card FLASH_MAX_SEQS)"
+card_q27="$(qe_card QE_MAX_SEQS)"
+command grep -q "FLASH_MAX_SEQS=4 bash scripts/switch.sh qengine/qwen38-flash-next-dual" <<<"$card_qf" \
+  || fail "a Flash-Next recommendation should name FLASH_MAX_SEQS: $card_qf"
+command grep -q "QE_MAX_SEQS=4" <<<"$card_q27" || fail "a QEngine 27B recommendation should name QE_MAX_SEQS"
+command grep -q "MAX_NUM_SEQS=\|MAX_MODEL_LEN\|vLLM:" <<<"$card_qf$card_q27" && fail "a QEngine recommendation must not name vLLM's knobs"
+echo "  ✓ QEngine knob names (FLASH_MAX_SEQS / QE_MAX_SEQS, no context knob)"
+
 # #1537 follow-up: the served context ("max-len"). A grep of the container's flags for
 # `max-model-len N` read "?" for vLLM auto-fit (`--max-model-len -1`) and for every SGLang compose
 # (`--context-length`, set in the entrypoint); it feeds the header, the planner's ctx clip and
