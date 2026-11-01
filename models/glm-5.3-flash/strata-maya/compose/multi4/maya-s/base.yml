@@ -46,7 +46,7 @@
 # MAYA_PCIE_SHARE / MAYA_CPU_LANE (the engine's STRATA_GLM_PCIE_SHARE / STRATA_GLM_CPU_LANE).
 services:
   strata-maya:
-    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:e8a413a830642e1a700aa4fdd97b619f05a4de3bd36b51063d5a2780ea13f6b9}
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:96abef954ec44ec99d4a2a494a01f36a9670d91f42df17562aa0375cddaaa56c}
     container_name: ${ESTATE_CONTAINER:-strata-maya-glm53-flash-multi4-maya-s}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
@@ -80,6 +80,10 @@ services:
       REPEAT_PENALTY:
       SERVED_NAME:
       LOOP_GUARD:
+      # Maya's model load/unload endpoints (/models/load, /models/unload, /models/sse), on by default from
+      # v1.1.47. These composes set no API key, so anyone who reaches the port can unload the model:
+      # MAYA_MODEL_MANAGEMENT=0 turns them off
+      MAYA_MODEL_MANAGEMENT:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/glm-5.3-flash-maya-gguf/Maya-S-v2-IQ2_XXS:/gguf:ro"
