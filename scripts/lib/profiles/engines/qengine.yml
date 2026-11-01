@@ -3,13 +3,15 @@ id: qengine
 display_name: QEngine (bpx03's engines for Qwen3.8-27B and Qwen3.8-Flash-Next INT4 on RTX 3090s; the author's own image)
 type: qengine
 stability: experimental
+# The RTX 3090 is QEngine's supported, tuned card. From 1.3.4 its images also carry sm_89 (RTX 4090,
+# untested upstream) and sm_120 (RTX 5090, community-tested in #1826) code, neither tuned.
 min_sm: 8.6
 lineage:
   relation: "new"
   base: null
   base_version: null
   source: "https://github.com/bpx03/QEngine"
-  source_ref: "7bd4bebf2eb4e1f14af1bbe8672b8a34352b692a"
+  source_ref: "c3f8ca75a13111e02bfa682b32ba58b2ef306c3a"
   chain: []
   delta: "Independent C++/CUDA engine (libqengine.so, about 26k lines) for one model, Qwen3.8-27B INT4 (RedHatAI's compressed-tensors W4A16 checkpoint and its MTP head), tuned for RTX 3090s with tensor parallel over PCIe, with its own Python server (OpenAI- and Anthropic-compatible APIs). Pinned to the image its author publishes (ghcr.io/bpx03/qengine)"
 image_env: QENGINE_IMAGE
@@ -18,12 +20,12 @@ install:
   # The author's own image, ghcr.io/bpx03/qengine:<release>-vision: the engine plus PyTorch for the vision encoder
   # (~3 GB; the text-only :<release> is ~0.3 GB). Pinned from 2026-10-31 so the slugs take images (VISION, default
   # on); its server, engine libraries and entrypoint are byte-identical to the text image of the same release.
-  # Its org.opencontainers.image.revision label is the source commit: 1.3.3.1 is git tag v1.3.3.1, commit 7bd4bebf.
-  # pin-current: 1.3.3.1-vision · source 7bd4bebf · pinned 2026-11-01 · booted 2026-11-01 on both slugs (verify-full, vision, concurrent-prefill sweep)
-  # pin-earlier: 1.3.3-vision `0358837d…` (source 21517be6, 2026-11-01; booted on both slugs, Flash-Next FLASH_COMM=ce sweep 9/9 clean with the pipeline on); 1.3.2-vision `3375a425…` (source fb1da72d, 2026-10-31); 1.3.2 text-only `ff323aa4…` (source fb1da72d, 2026-10-31; runs the slugs with VISION=0); 1.3.1 `849b059d…` (source 016c9249, 2026-10-30); 1.3 `b9d1b0af…` (source d15a4d3a, 2026-10-28); 1.3-rc4 `18b3c4bb…` (source 116bd8d9, 2026-10-27)
+  # Its org.opencontainers.image.revision label is the source commit: 1.3.4 is git tag v1.3.4, commit c3f8ca75.
+  # pin-current: 1.3.4-vision · source c3f8ca75 · pinned 2026-11-01 · booted 2026-11-01 on both slugs (verify-full, vision; thinking budget per request and by QE_THINKING_BUDGET; Flash-Next concurrency sweep clean)
+  # pin-earlier: 1.3.3.1-vision `39c1cf06…` (source 7bd4bebf, 2026-11-01; booted on both slugs, verify-full, vision, concurrent-prefill sweep); 1.3.3-vision `0358837d…` (source 21517be6, 2026-11-01; booted on both slugs, Flash-Next FLASH_COMM=ce sweep 9/9 clean with the pipeline on); 1.3.2-vision `3375a425…` (source fb1da72d, 2026-10-31); 1.3.2 text-only `ff323aa4…` (source fb1da72d, 2026-10-31; runs the slugs with VISION=0); 1.3.1 `849b059d…` (source 016c9249, 2026-10-30); 1.3 `b9d1b0af…` (source d15a4d3a, 2026-10-28); 1.3-rc4 `18b3c4bb…` (source 116bd8d9, 2026-10-27)
   # Before 1.3.1 there is no QE_REASONING_EFFORT, so the composes refuse those images: a rollback to 1.3 also
   # needs the composes' earlier entrypoint, which served a copy of the template with its default effort replaced.
-  spec: ghcr.io/bpx03/qengine@sha256:39c1cf066164543ff61d9ede429b0a6ebea5de5ac817cc90cf12cdbcf0bcdf23
+  spec: ghcr.io/bpx03/qengine@sha256:2b3f8fb5aa0c6c6706ead209a7fb55a744844e3a1f587f86ea534f32af540363
 supported_model_families:
   - qwen35-dense          # Qwen3.8-27B, RedHatAI's INT4 only (libqengine.so)
   - qwen4exp              # Qwen3.8-Flash-Next, the author's own INT4 layout (libqflash.so, from 1.3; upstream calls it a
@@ -57,6 +59,7 @@ notes: >
   Registered 2026-10-27 with no slug; the first two (2026-10-28) are two-card ones, qengine/qwen38-27b-dual
   and qengine/qwen38-flash-next-dual. They map ENABLE_THINKING to --think, SPEC_N to --mtp-k and
   REASONING_EFFORT to QE_REASONING_EFFORT (from 1.3.1; until then a copy of QEngine's own template, whose
-  default is xhigh); QEngine has no thinking budget. bench.sh and verify-full read its [stats] lines
+  default is xhigh). From 1.3.4 QEngine caps thinking per request (thinking_budget, Anthropic budget_tokens) or by
+  QE_THINKING_BUDGET, which the slugs forward; our THINKING_BUDGET_* effort map isn't wired to it. bench.sh and verify-full read its [stats] lines
   (llama.cpp's timing format, vLLM's SpecDecoding metrics format); health.sh and bench.sh's interconnect block read its boot log (#1854). Its metrics
   port (9393) is unpublished; QE_METRICS_PORT=<port> publishes it on 127.0.0.1 only (switch.sh's override).

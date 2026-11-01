@@ -3,7 +3,7 @@
 #   Model:     Qwen3.8-Flash-Next — bpx03's QEngine layout of Intel's W4A16 AutoRound (routed
 #              experts INT4 bit-exact; shared expert and DeltaNet INT4 RTN; attention and lm_head
 #              INT8 at load), the INT8 n-gram table, its INT4 MTP head (128 GB)
-#   Engine:    QEngine 1.3.3.1 (bpx03): its second engine, libqflash.so, in the author's own image
+#   Engine:    QEngine 1.3.4 (bpx03): its second engine, libqflash.so, in the author's own image
 #              ghcr.io/bpx03/qengine (source 21517be6, the :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (experts split evenly over the two cards; GPU-to-GPU P2P when the
 #              driver grants it)
@@ -17,6 +17,8 @@
 #   Genesis:   none
 #   Status:    🐣 Incubating
 #   Caveats:   ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
+#              QEngine 1.3.4's known issue: with vision on (the default here), agent workloads may
+#              briefly drop CUDA graphs under VRAM pressure; the engine recovers.
 #              Upstream calls this engine a preview: tested on one machine, no quality benchmark
 #              yet; quality isn't measured here either. On two cards about half the expert groups
 #              stay in pinned host RAM (~15 GB a card), next to the 51.8 GB INT8 n-gram table:
@@ -61,7 +63,8 @@
 #              Measured 2026-10-28 on two 3090s at 230 W (bench.sh on its own boot): 164.0 / 170.6
 #              decode, 1,921 prefill @10K (CV 15%), 2,373 @90K, MTP acceptance length 2.8, 24.1 GB
 #              a card. First start 113 s with the weights already in the page cache (a cold start
-#              reads 128 GB from disk first), later 64 s. No thinking-budget cap (QEngine has none). The default effort is
+#              reads 128 GB from disk first), later 64 s. From 1.3.4 QEngine caps thinking per request or by QE_THINKING_BUDGET (off by
+#              default; our THINKING_BUDGET_* map isn't wired to it). The default effort is
 #              low, as on the other Qwen3.8 slugs, through QEngine's QE_REASONING_EFFORT (its
 #              template's own default is xhigh); a request's own effort wins, and maps high ->
 #              xhigh but minimal and max -> medium.
@@ -141,6 +144,16 @@
 #                        with a diagnosis, exit 75, and the restart policy restarts it (120; 0 = off)
 #   QE_HANG_S            no scheduler progress for this many seconds: stacks to the log, open requests
 #                        fail, exit 75 (180; 0 = off)
+#   FLASH_PAR            parallel mode (1.3.4): auto (tensor parallel on 2 equal cards) | tp | pp (a layer
+#                        pipeline: faster long uncached prompts, ~0.6x one-conversation decode; no vision)
+#   QE_THINKING_BUDGET   default thinking budget in tokens for requests that send none (from 1.3.4;
+#                        0 = off, the default); at the budget the server closes </think> itself. A request
+#                        sets its own with thinking_budget (OpenAI) or thinking.budget_tokens (Anthropic)
+#   QE_THINK_TAIL        room kept for the answer when max_tokens would end inside <think> (auto =
+#                        1/8 of max_tokens, 64-2048; 0 = off, from 1.3.4)
+#   QE_EMPTY_RETRY       a non-streamed sampled reply with no text and no tool call is sampled again up
+#                        to N times (2, from 1.3.4; 0 = off)
+#   QE_HOST_RESERVE_GB   host RAM the start-up plan leaves to the system (max(8, 8% of RAM), 1.3.4)
 #   QE_COMM_CHECK        rounds of the start-up P2P data check per pair and transport (4; 0 = off)
 #   QE_COMM_TAX_SEVERE, QE_COMM_TAX_1NODE  the P2P co-run tax at which FLASH_COMM=auto takes the
 #                        copy engine (3.0 on any layout; 1.90 on one NUMA node over a narrow link)
@@ -163,7 +176,7 @@
 #   bash scripts/settings.sh set FLASH_MAX_SEQS=4      # one user at a time: faster still (above)
 services:
   qengine-qwen38-flash-next-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:39c1cf066164543ff61d9ede429b0a6ebea5de5ac817cc90cf12cdbcf0bcdf23}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:2b3f8fb5aa0c6c6706ead209a7fb55a744844e3a1f587f86ea534f32af540363}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-flash-next-dual}"
     user: "0:${DOCKER_GID:-1000}"
@@ -213,6 +226,11 @@ services:
       - FLASH_QSA_PIPE_CE
       - FLASH_RUN_TIMEOUT_S
       - QE_HANG_S
+      - FLASH_PAR
+      - QE_THINKING_BUDGET
+      - QE_THINK_TAIL
+      - QE_EMPTY_RETRY
+      - QE_HOST_RESERVE_GB
       - QE_COMM_CHECK
       - QE_COMM_TAX_SEVERE
       - QE_COMM_TAX_1NODE

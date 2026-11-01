@@ -3,7 +3,7 @@
 #   Model:     Qwen3.8-27B — RedHatAI INT4 (compressed-tensors W4A16, group 128, symmetric) with
 #              its MTP head, plus QEngine's fine-tuned MTP head and draft vocabulary (its release
 #              assets, unchanged since v1.0; the server downloads them when they're missing)
-#   Engine:    QEngine 1.3.3.1 (bpx03): its own C++/CUDA engine and server, the author's own image
+#   Engine:    QEngine 1.3.4 (bpx03): its own C++/CUDA engine and server, the author's own image
 #              ghcr.io/bpx03/qengine (source 21517be6, the :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (tensor parallel 2; GPU-to-GPU P2P when the driver grants it)
 #   Drafter:   MTP, up to 7 drafts a step (adaptive; SPEC_N sets the most, 0 turns MTP off) + lookup
@@ -16,12 +16,14 @@
 #   Genesis:   none
 #   Status:    ⚠️ Production w/ caveats — promoted 2026-10-31 (the full gate on a community rig, #1862)
 #   Caveats:   ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
+#              QEngine 1.3.4's known issue: with vision on (the default here), agent workloads may
+#              briefly drop CUDA graphs under VRAM pressure; the engine recovers.
 #              The full gate passed on another rig, not this one: eddietheengineer's #1862 (QEngine 1.3,
 #              3090 + 3090 Ti at 260 / 240 W) ran verify-full, verify-stress 8/8 with the ceiling ladder
 #              filled to 240K, both soaks (PASS, 0 MB growth) and the 8-pack (108 / 132 of 150, thinking
-#              off / on); here it has bench and verify-full. 1.3.1, 1.3.2, 1.3.3 and 1.3.3.1 were boot-tested. No
-#              thinking-budget cap (THINKING_BUDGET_* are not wired: QEngine has
-#              none). The default effort is low, as on the other Qwen3.8 slugs, through QEngine's
+#              off / on); here it has bench and verify-full. 1.3.1 to 1.3.4 were boot-tested. From 1.3.4
+#              QEngine caps thinking per request or by QE_THINKING_BUDGET (off by default; our
+#              THINKING_BUDGET_* map isn't wired to it). The default effort is low, as on the other Qwen3.8 slugs, through QEngine's
 #              QE_REASONING_EFFORT (its template's own default is xhigh); a request's own effort
 #              still wins, and QEngine's template maps high -> xhigh but minimal and max ->
 #              medium.
@@ -88,6 +90,14 @@
 #                     the mapping); 0 turns the metrics server off
 #   QE_HANG_S         no scheduler progress for this many seconds: stacks to the log, open requests
 #                     fail, exit 75, and the restart policy restarts it (180, from 1.3.3; 0 = off)
+#   QE_THINKING_BUDGET  default thinking budget in tokens for requests that send none (from 1.3.4;
+#                     0 = off, the default); at the budget the server closes </think> itself. A request
+#                     sets its own with thinking_budget (OpenAI) or thinking.budget_tokens (Anthropic)
+#   QE_THINK_TAIL     room kept for the answer when max_tokens would end inside <think> (auto =
+#                     1/8 of max_tokens, 64-2048; 0 = off, from 1.3.4)
+#   QE_EMPTY_RETRY    a non-streamed sampled reply with no text and no tool call is sampled again up
+#                     to N times (2, from 1.3.4; 0 = off)
+#   QE_HOST_RESERVE_GB  host RAM the start-up plan leaves to the system (max(8, 8% of RAM), 1.3.4)
 #   QE_EXTRA_ARGS     more server/app.py flags (--max-ctx, --served-name, ...), after ours
 # `switch.sh --set` saves only our three knobs for this slug; it refuses QEngine's own names, because
 # they aren't catalogued launch settings. Set those for one launch, or for every QEngine slug:
@@ -95,7 +105,7 @@
 #   bash scripts/settings.sh set QE_KV_ARCHIVE_GB=8
 services:
   qengine-qwen38-27b-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:39c1cf066164543ff61d9ede429b0a6ebea5de5ac817cc90cf12cdbcf0bcdf23}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:2b3f8fb5aa0c6c6706ead209a7fb55a744844e3a1f587f86ea534f32af540363}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-27b-dual}"
     user: "0:${DOCKER_GID:-1000}"
@@ -147,6 +157,10 @@ services:
       - QE_LOOP_GUARD_PENALTY
       - QE_METRICS_PORT
       - QE_HANG_S
+      - QE_THINKING_BUDGET
+      - QE_THINK_TAIL
+      - QE_EMPTY_RETRY
+      - QE_HOST_RESERVE_GB
       - QE_EXTRA_ARGS
       # our launch knobs, mapped onto QEngine's flags by the entrypoint below
       - ENABLE_THINKING
