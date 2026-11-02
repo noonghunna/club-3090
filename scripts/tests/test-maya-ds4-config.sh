@@ -146,5 +146,54 @@ command grep -q "SHA-256 mismatch" <<<"$out" && ! command grep -q "NOT STOPPED" 
 echo "== 7. the pinned engine reads every key a setting writes (engine-config-reads.json; no docker)"
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/lib/profiles/engine_config_reads.py check --engine strata-maya:ds4 || rc=1
 
+echo "== 8. ud-iq3-s: no drafter (DSpark off, no --drafter), Maya's own quant key, its files = the model profile's"
+out="$(env $(clean) python3 - "$L" "$work" <<'PY' 2>&1
+import json, re, subprocess, sys, types
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import ds4_prepare as p
+w = Path(sys.argv[2])
+for tag in ("ista-iq2-xxs", "ud-iq3-s"):
+    d = w / ("c-" + tag); d.mkdir()
+    p.config(tag, d, d / "pack", types.SimpleNamespace(gpus="0,1", tp=1, context=65536))
+    c = json.loads((d / "maya-ds4.json").read_text())
+    a = c["args"]
+    print(f"{tag} dspark={a[a.index('--dspark') + 1]} ds4_quant={c['installer']['ds4_quant']}")
+# files_of(): the 8 shards present and no /dspark folder at all is enough for ud-iq3-s
+src = w / "UD-IQ3_S"; src.mkdir()
+for n in p.WEIGHTS["ud-iq3-s"]["gguf"]:
+    (src / n).write_bytes(b"x")
+model, drafter = p.files_of("ud-iq3-s", src, w / "no-dspark-folder")
+print(f"files_of ud-iq3-s: {len(model)} model files, {len(drafter)} drafter files")
+# pack(): the argv pack_gguf.py gets, without running it
+seen = []
+def fake_run(argv, cwd=None):
+    seen.append(argv)
+    out = Path(argv[argv.index("--out") + 1]); out.mkdir(parents=True)
+    (out / "tensors.txt").write_text("")
+    return types.SimpleNamespace(returncode=0)
+p.subprocess = types.SimpleNamespace(run=fake_run)
+p.pack(model, drafter, w / "p-ud", False)
+dj = w / "dspark-xs2.json"; dj.write_text("{}"); db = w / "dspark-xs2.bin"; db.write_bytes(b"x")
+(w / "p-ista").mkdir()
+p.pack(model, [db, dj], w / "p-ista", False)
+print("pack ud-iq3-s drafter arg:", "--drafter" in seen[0])
+print("pack with a drafter:", seen[1][seen[1].index("--drafter") + 1] == str(dj) if "--drafter" in seen[1] else False)
+# the SHA-256 table: 64 hex digits each, and the names the model profile's ud-iq3-s files: list downloads
+bad = [n for n, h in p.WEIGHTS["ud-iq3-s"]["gguf"].items() if not re.fullmatch(r"[0-9a-f]{64}", h)]
+prof = Path("scripts/lib/profiles/models/deepseek-v4.1-flash-1017.yml").read_text(encoding="utf-8")
+listed = sorted(m.group(1) for m in re.finditer(r"^\s+- UD-IQ3_S/(\S+\.gguf)$", prof, re.M))
+print("sha table ok:", not bad, "| profile files == launcher table:", listed == sorted(p.WEIGHTS["ud-iq3-s"]["gguf"]))
+PY
+)"
+command grep -q "^ista-iq2-xxs dspark=on ds4_quant=ISTA IQ2_XXS$" <<<"$out" && command grep -q "^ud-iq3-s dspark=off ds4_quant=gguf-iq3_s$" <<<"$out" \
+  && ok "ista-iq2-xxs: --dspark on; ud-iq3-s: --dspark off, ds4_quant gguf-iq3_s (Maya shows UD-IQ3_S)" || bad "config per tag: $out"
+command grep -q "files_of ud-iq3-s: 8 model files, 0 drafter files" <<<"$out" \
+  && ok "files_of(): 8 shards, no drafter folder needed" || bad "files_of: $out"
+command grep -q "pack ud-iq3-s drafter arg: False" <<<"$out" && command grep -q "pack with a drafter: True" <<<"$out" \
+  && ok "pack(): no --drafter without a drafter; the drafter's .json passed with one" || bad "pack argv: $out"
+command grep -q "sha table ok: True | profile files == launcher table: True" <<<"$out" \
+  && ok "ud-iq3-s: 8 SHA-256s, the same files the model profile downloads" || bad "sha table: $out"
+
 if [[ "$rc" -eq 0 ]]; then echo "test-maya-ds4-config: ok"; else echo "test-maya-ds4-config: FAILED" >&2; fi
 exit "$rc"

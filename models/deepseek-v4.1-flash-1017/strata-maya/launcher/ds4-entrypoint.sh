@@ -2,7 +2,8 @@
 # Project Maya entrypoint for the deepseek-v4.1-flash-1017 strata-maya composes (Maya's maya-ds4 engine); every
 # compose mounts this file and ds4_prepare.py / ds4_settings.py beside it. The image (strata-maya-club3090) has no
 # entrypoint of its own and Maya's own setup (maya.sh) is not used: the weights come from our model directory,
-# mounted read-only at /gguf (the GGUF) and /dspark (the DSpark drafter), and the pack is built on /data.
+# mounted read-only at /gguf (the GGUF) and, for a quant with a drafter, /dspark (the DSpark drafter), and the
+# pack is built on /data.
 #
 #   SETUP_ONLY=1        check the files, build the pack, write the config, then exit (so the boot that gets
 #                       benched is not the one that did the one-time work)
@@ -25,11 +26,11 @@
 # (nproc / 2). A request's own reasoning_effort / chat_template_kwargs win, and so do the Chat
 # settings saved from Maya's web page (maya.shared-settings.json next to the config).
 #
-# Its one argument is the quant (ista-iq2-xxs), fixed by the compose, never a setting, so a saved value can't
-# point a slug at another quant's pack. Each quant has its own folder on /data.
+# Its one argument is the quant (ista-iq2-xxs or ud-iq3-s), fixed by the compose, never a setting, so a saved
+# value can't point a slug at another quant's pack. Each quant has its own folder on /data.
 set -eu
 umask 0002                   # group-writable, so the launcher's user can clear /data
-TAG="${1:?the quant (ista-iq2-xxs) is this script's argument}"
+TAG="${1:?the quant (ista-iq2-xxs or ud-iq3-s) is this script's argument}"
 here="$(dirname "$0")"
 
 /opt/maya/.venv/bin/python "$here/ds4_prepare.py" --tag "$TAG" --context "${CONTEXT:-65536}" \

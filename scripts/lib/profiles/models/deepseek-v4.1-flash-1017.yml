@@ -1,7 +1,7 @@
 schema_version: 1
 id: deepseek-v4.1-flash-1017
 display_name: DeepSeek-V4.1-Flash-1017 (MoE with Engram tables)
-description: DeepSeek-V4.1-Flash-1017 — a 40-layer MoE (384 routed experts, top-6) with MLA single-KV-head attention, a DSA indexer and two Engram hash-table layers; served on two 3090s by Project Maya's maya-ds4 engine from ISTA-DASLab's GSQ-RCO IQ2_XXS GGUF, every CPU-side expert in RAM, with a DSpark drafter.
+description: DeepSeek-V4.1-Flash-1017 — a 40-layer MoE (384 routed experts, top-6) with MLA single-KV-head attention, a DSA indexer and two Engram hash-table layers; served on two 3090s by Project Maya's maya-ds4 engine, every CPU-side expert in RAM — ISTA-DASLab's GSQ-RCO IQ2_XXS GGUF with a DSpark drafter (~106 GB of host RAM), or unsloth's UD-IQ3_S (closer to the original, ~240 GB).
 family: deepseek41-moe
 # Arch: `deepseek41` (a different model from deepseek-v4-flash-0731: Engram layers, 384 experts, 40 layers).
 # Every value below read from the GGUF headers through Maya's tools/ds4/pack_gguf.py (the pack's ds4.txt, which
@@ -49,6 +49,28 @@ weights:
     # reads them too), but not other repos' files there (dspark-*.gguf, UD-Q8_K_XL/).
     verify_glob: "DeepSeek-V4.1-Flash-*.gguf"
     manual_note: "🐣 ISTA-DASLab's GSQ-RCO quant: routed experts IQ1_M / IQ2_XXS / IQ2_XS by ISTA's own allocation (59.5 / 49.0 / 23.6 GB), dense weights Q5_K, the two Engram hash tables IQ4_NL in a shared 110.6 GB file. Served by the strata-maya engine's maya-ds4 (Project Maya v1.1.27 on reads it), which copies every CPU-side expert into RAM when it fits. The launcher SHA-256-checks the 5 files against its own table once (Maya's tables don't list this quant), then builds Maya's pack on the data volume. Text only."
+  ud-iq3-s:
+    path: deepseek-v4.1-flash-1017-gguf/UD-IQ3_S
+    # local_subdir is the BUCKET: unsloth's repo keeps each quant in a folder of its own (UD-IQ3_S/), which
+    # --local-dir preserves, so files and the glob carry the UD-IQ3_S/ prefix (the shape of maya-dspark-xs2 below)
+    local_subdir: deepseek-v4.1-flash-1017-gguf
+    size_gb: 423.63
+    format: gguf
+    status: incubating
+    hf_repo: unsloth/DeepSeek-V4.1-Flash-1017-GGUF
+    revision: 8a6ec9cf118e785a362ea94ee123c61c70553be6
+    shards: 8
+    files:
+      - UD-IQ3_S/DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00001-of-00008.gguf
+      - UD-IQ3_S/DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00002-of-00008.gguf
+      - UD-IQ3_S/DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00003-of-00008.gguf
+      - UD-IQ3_S/DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00004-of-00008.gguf
+      - UD-IQ3_S/DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00005-of-00008.gguf
+      - UD-IQ3_S/DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00006-of-00008.gguf
+      - UD-IQ3_S/DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00007-of-00008.gguf
+      - UD-IQ3_S/DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00008-of-00008.gguf
+    verify_glob: "UD-IQ3_S/DeepSeek-V4.1-Flash-1017-UD-IQ3_S-*.gguf"
+    manual_note: "🐣 unsloth's UD-IQ3_S: routed experts IQ2_S / IQ3_XXS / IQ3_S / Q3_K / MXFP4 by layer, dense weights Q8_0 / BF16, the two Engram hash tables Q6_K in the last shard (161.3 GB, the same bytes as Maya's own Q6_K pair). In Project Maya's own setup list (--ds4-quant gguf-iq3_s, KL 0.061 from the full-precision model on Maya's scorer, Q8 0.047); the launcher checks the 8 files against the SHA-256s Maya v1.1.48 pins. Served by the strata-maya engine's maya-ds4, which needs ~240 GB of host RAM to copy the CPU lane's 219 GB of experts; the Engram shard stays on the disk. Text only."
   maya-dspark-xs2:
     path: deepseek-v4.1-flash-1017-maya-gguf/dspark
     # local_subdir is the BUCKET: the repo keeps the drafters in its dspark/ folder, which --local-dir preserves, so
