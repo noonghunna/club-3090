@@ -793,9 +793,11 @@ check_mtp_acceptance() {
         skip "the engine loaded no draft block (engine.mtp 0: Project Maya drafts only on two or more GPUs)"
         rm -rf "${sm_dir}"; return 0
       fi
-      # MiniMax's maya-mm3 reports its DSpark drafter as engine.dspark: 0 when DSPARK=off, Maya's own default for it
-      if [[ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["engine"].get("dspark", ""))' "${sm_dir}/before.json" 2>/dev/null)" == 0 ]]; then
-        skip "the engine runs no drafter (engine.dspark 0: DSPARK=off, Project Maya's default for MiniMax)"
+      # Maya reports its DSpark drafter as engine.dspark: MiniMax's maya-mm3 writes 0 when DSPARK=off (Maya's own
+      # default for it), DeepSeek's maya-ds4 false when the pack holds no drafter (the UD-IQ3_S slug). Either is off;
+      # a missing field is not (Strata's document has none)
+      if [[ "$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))["engine"].get("dspark"); print("off" if v is not None and v == 0 else "")' "${sm_dir}/before.json" 2>/dev/null)" == off ]]; then
+        skip "the engine runs no drafter (engine.dspark off: DSPARK=off on MiniMax, no drafter in the pack on DeepSeek)"
         rm -rf "${sm_dir}"; return 0
       fi
       curl -sf -m 120 "${URL}/v1/chat/completions" \

@@ -1,9 +1,10 @@
 """Prepare DeepSeek-V4.1-Flash-1017 for Project Maya's maya-ds4 engine on the data volume, for ds4-entrypoint.sh.
 
-The weights are mounted read-only at /gguf (ISTA-DASLab's GSQ-RCO GGUF: four backbone shards and the shared Engram
-file beside them) and the DSpark drafter at /dspark (peasantsmith's dspark-xs2: a .bin and its .json). Maya's
-tools/ds4/pack_gguf.py writes its pack (an index of those files, no weights copied) wherever --out says, and the pack
-names the model folder it indexes (ds4.txt model_dir), so the pack lives on /data and the files stay where they are:
+The weights are mounted read-only at /gguf (one quant's GGUF shards: ISTA-DASLab's GSQ-RCO IQ2_XXS with the shared
+Engram file beside them, or unsloth's UD-IQ3_S, whose last shard holds the Engram tables) and a tag's DSpark drafter,
+when it has one, at /dspark (peasantsmith's dspark-xs2: a .bin and its .json). Maya's tools/ds4/pack_gguf.py writes its
+pack (an index of those files, no weights copied) wherever --out says, and the pack names the model folder it indexes
+(ds4.txt model_dir), so the pack lives on /data and the files stay where they are:
 
     /data/<tag>/pack/            tools/ds4/pack_gguf.py's output + sources.json; expert-profile.bin (the engine's
                                  routing counts, seeded from the image's data/expert-profile-ds4.bin, then its own)
@@ -12,7 +13,8 @@ names the model folder it indexes (ds4.txt model_dir), so the pack lives on /dat
     /data/<tag>/maya-ds4.log     the engine's log
 
 Steps, each skipped when already done: check the files' SHA-256 against WEIGHTS (Maya's own tables don't list ISTA's
-quant; minutes, once, again only when a file's size or time changes); build the pack (seconds; again when a file
+quant; UD-IQ3_S's are the ones Maya pins; minutes, once, again only when a file's size or time changes); build the
+pack (seconds; again when a file
 changed after it was built; Maya's pack builder fills in the DSpark geometry ISTA's GGUF lacks, from v1.1.30); seed the
 expert profile; write the config. Python stdlib only, plus the image's /opt/maya."""
 from __future__ import annotations
@@ -51,11 +53,34 @@ WEIGHTS = {
             "dspark-xs2.json": "56d47ad12d6548a8d3d50a79be96451411f18d5b77064de7b8544bb2da22988f",
         },
     },
+    "ud-iq3-s": {
+        "gguf": {   # unsloth/DeepSeek-V4.1-Flash-1017-GGUF @8a6ec9cf, UD-IQ3_S/ (the SHA-256s Maya v1.1.48's
+                    # tools/ds4/download_gguf.json pins; shard 8 holds the Engram tables, Q6_K)
+            "DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00001-of-00008.gguf":
+                "1d3027d28a1c749a5a185420640d2849849e5d42e7719df5d852572e1771de25",
+            "DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00002-of-00008.gguf":
+                "a5c5b3a1d56fc64e2018442170371348683a6ca31d805040946635c508698c89",
+            "DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00003-of-00008.gguf":
+                "0182203a6278cd29702003589b11635a8b6c58a17613270a94532a7487760092",
+            "DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00004-of-00008.gguf":
+                "5e1aed1952f95ada91abb3332adb8d77eff6a98281a09c246e827c6031ba0a93",
+            "DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00005-of-00008.gguf":
+                "69dd858b60744b9430be3b69684120d1bcb33ba4b5a740b60ddf8fc5a2875dee",
+            "DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00006-of-00008.gguf":
+                "962c493b4f41f2dedfb31ebbfe725d14b55d97a442f0cd14296a42ac51345ff7",
+            "DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00007-of-00008.gguf":
+                "c96d4a18a86dcdb3ed10e3e367bc9f3070d61a1da0144926519d2987c4e41b26",
+            "DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00008-of-00008.gguf":
+                "e70b4bf3ac5b26aa2addb048cff61a6be5490e99ba88cfbc29f7fb7279000141",
+        },
+        "dspark": {},   # no drafter: neither DSpark build sped it up on two 3090s (compose header)
+    },
 }
 # Each tag's files as Maya shows them (its dashboard, /health and /metrics' model_label: tools/maya_quants.config_label,
 # from the installer record's ds4_quant - without one it names Maya's own EXL3 2.9 bpw quant). ISTA's quant is not one
-# of Maya's, so the name is shown as given.
-SHOWN = {"ista-iq2-xxs": "ISTA IQ2_XXS"}
+# of Maya's, so the name is shown as given; UD-IQ3_S is in Maya's setup list, so its key is recorded and Maya shows it
+# as "UD-IQ3_S" (maya_quants.py's table), as its own setup would.
+SHOWN = {"ista-iq2-xxs": "ISTA IQ2_XXS", "ud-iq3-s": "gguf-iq3_s"}
 
 
 def say(msg: str) -> None:
@@ -111,7 +136,8 @@ def verify(tag: str, files: list[Path], d: Path) -> None:
         say("files already verified")
         return
     want = {**WEIGHTS[tag]["gguf"], **WEIGHTS[tag]["dspark"]}
-    say(f"checking {len(files)} files' SHA-256 (once; minutes for ~255 GB) ...")
+    gb = sum(f.stat().st_size for f in files) / 1e9
+    say(f"checking {len(files)} files' SHA-256 (once; minutes for {gb:.0f} GB) ...")
     with ThreadPoolExecutor(max_workers=min(4, len(files))) as pool:   # hashlib frees the GIL: the disk sets the pace
         got = dict(zip(files, pool.map(sha256, files)))
     bad = [f"{f.name}: {h}, want {want[f.name]}" for f, h in got.items() if h != want[f.name]]
@@ -133,9 +159,12 @@ def pack(model: list[Path], drafter: list[Path], d: Path, repack: bool) -> Path:
     say(f"building the pack ({why}; seconds: it indexes the files, no weights copied) ...")
     tmp = d / "pack.tmp"
     shutil.rmtree(tmp, ignore_errors=True)
-    dspark_json = next(f for f in drafter if f.suffix == ".json")
+    # a tag without a drafter passes none: pack_gguf.py then looks for <model>/../dspark/dspark.json, which the compose
+    # of such a tag doesn't mount, so the pack holds no drafter
+    dspark_json = next((f for f in drafter if f.suffix == ".json"), None)
+    want = ["--drafter", str(dspark_json)] if dspark_json else []
     r = subprocess.run([str(MAYA / ".venv/bin/python"), str(MAYA / "tools/ds4/pack_gguf.py"),
-                        "--model", str(model[0].parent), "--out", str(tmp), "--drafter", str(dspark_json),
+                        "--model", str(model[0].parent), "--out", str(tmp), *want,
                         "--shards", *[f.name for f in model]], cwd=str(MAYA))
     if r.returncode != 0:
         die(f"tools/ds4/pack_gguf.py stopped (exit {r.returncode}); the old pack, if any, is unchanged")
@@ -164,9 +193,10 @@ def config(tag: str, d: Path, p: Path, a) -> Path:
     keys, sampling, args, notes = ds4_settings.settings()   # checked once already at the start of main()
     cfg = {
         "exe": str(MAYA / "build/maya-ds4"),
-        # --tp 1 on two GPUs: a layer split (each GPU its own layers, whole experts), not tensor parallel
+        # --tp 1 on two GPUs: a layer split (each GPU its own layers, whole experts), not tensor parallel; DSpark on
+        # for a tag with a drafter (Maya's setup writes none until its calibration says drafting pays), off without one
         "args": ["--pack", str(p), "--max-context", str(a.context), "--tp", str(a.tp), "--vision", "off",
-                 "--dspark", "on"],
+                 "--dspark", "on" if WEIGHTS[tag]["dspark"] else "off"],
         "cwd": str(MAYA),
         "tokenizer": str(p / "tokenizer"),
         "model_name": ds4_settings.DEFAULT_NAME,     # SERVED_NAME replaces it (ds4_settings.py)

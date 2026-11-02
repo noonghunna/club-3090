@@ -6917,6 +6917,38 @@ entries:
     gateway: false
     serve_aliases: []
     category: frontier
+  strata-maya/deepseek41-flash-dual-ud-iq3-s:
+    origin: core
+    model: deepseek-v4.1-flash-1017
+    weights_variant: ud-iq3-s
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: null
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 229
+    kv_offload: null
+    chat_template: native
+    tp: 2
+    max_ctx: 65536
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/deepseek-v4.1-flash-1017/strata-maya/compose/dual/ud-iq3-s/base.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8089
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Two 3090s, Maya's maya-ds4 layer split (--tp 1: each card its own layers, with whole experts), no drafter. unsloth's UD-IQ3_S GGUF (8 shards, 423.6 GB; the Engram tables Q6_K in the last shard, read from the disk) on the strata-maya engine (Project Maya's DeepSeek engine; club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/). Measured 2026-11-02 on this image (v1.1.48, bench.sh on its own boot, cards capped at 230 W, 24 CPU threads, effort high): 34.68 / 33.44 decode, 557 prefill @10K; verify-full all checks; host RAM 229 GB (MemAvailable fall, decimal, 228.7 at its peak on a 257.6 GB host: the CPU lane's 218.2 GB of experts copied into RAM). Closer to the original than the ISTA IQ2_XXS slug: on one 4,096-token sequence (2026-11-02) ISTA's KL from this quant was 0.151 (this quant's run-to-run 0.008), its top token differed at 14.8% of positions, perplexity 4.97 vs 4.56; Maya's own scorer puts UD-IQ3_S at KL 0.061 from the full-precision model. Maya copies the experts only with ~237 GB available at start (--mmap-experts auto, all or none), else reads them in place. DSpark tested and left off (no speedup with either drafter build). Field values: kv_format fp16 is maya-ds4's latent cache; offload 'engine' = a per-layer VRAM expert pool + every CPU-side expert copied into RAM; tp 2 counts the cards (the engine runs --tp 1 across them). One request at a time. ⚠️ Quality unmeasured here (8-pack pending)."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+    category: frontier
   strata-maya/minimax31-flash-dual-maya-s:
     origin: core
     model: minimax-m3.1-flash

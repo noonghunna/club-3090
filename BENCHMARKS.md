@@ -732,6 +732,17 @@ First-pass numbers for the two MoE models onboarded in v0.7.3. **Preview** track
 
 ---
 
+## DeepSeek-V4.1-Flash-1017 (MoE with Engram tables on Project Maya's maya-ds4 — 🐣 incubating)
+
+A different model from DeepSeek-V4-Flash-0731 above (Engram hash-table layers, 384 experts, 40 layers), served by Project Maya's `maya-ds4` engine as a layer split over both cards (`--tp 1`): a per-layer VRAM expert pool, every other routed expert copied into RAM, the Engram tables read from the disk. See [STRATA_MAYA.md](docs/engines/STRATA_MAYA.md). ⚠️ The binding requirement is **host RAM**: ~106 GB for ISTA's IQ2_XXS, ~229 GB for unsloth's UD-IQ3_S.
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `strata-maya/deepseek41-flash-dual-ista-iq2-xxs` | @noonghunna (2× 3090, 230 W cap) | fp16 latent | 65536 | **45.34 / 52.46** | **799** @6K · **911** @10K · **1,055** @60K | 23,700 MiB a card | 2026-10-25 | `bench.sh` on its own boot through `switch.sh`, image v1.1.28, 24 CPU threads, effort high. ISTA-DASLab GSQ-RCO IQ2_XXS + peasantsmith's `dspark-xs2` drafter (82.7% of drafts kept). Host RAM 106 GB (MemAvailable fall, decimal). At stock power (370 / 420 W, 2026-10-26, its own boot): prefill 1,045 / 1,186 / 1,390, decode 45.79 / 50.97. (Recorded in the slug's header and registry note; added to this table 2026-11-02.) |
+| `strata-maya/deepseek41-flash-dual-ud-iq3-s` | @noonghunna (2× 3090, 230 W cap; host 257.6 GB RAM) | fp16 latent | 65536 | **34.68 / 33.44** (CV 0.6% / 1.7%) | **557** @10K (n=3, CV 1.6%); @90K n/a (past the 65,536 context) | 24,102 / 24,104 MiB | 2026-11-02 | `bench.sh` on its own boot through `switch.sh` (second start, ready 112 s; first start 352 s with the SHA-256 check of 424 GB), image v1.1.48, 24 CPU threads, effort high, **no drafter**. TTFT 45 / 46 ms. Maya copied all 13,194 CPU-lane experts (218.2 GB) into RAM (`--mmap-experts auto`); host RAM **228.7 GB** at the peak (MemAvailable fall, decimal); swap check PASS. verify-full: all checks (7 + 3 n/a: Genesis, drafter, vision). Against the ISTA row (same cap, different release and drafter): decode −24% / −36%, prefill @10K −39%. DSpark probe (20-token prompt, 256 tokens, warm pass): off 38.6, Maya's `dspark.bin` 39.5, `dspark-xs2` 38.5 tok/s, so it ships off. Quality not run (8-pack pending); against ISTA on one 4,096-token sequence (maya-ds4 logits): ISTA's KL from this quant 0.151 vs this quant's run-to-run 0.008, top-1 agreement 85.2% vs 96.5%, perplexity 4.97 vs 4.56. |
+
+---
+
 ## Qwen3.8-Flash-Next (MoE via CPU expert offload — 🧪 experimental)
 
 Expert-offloaded MoE on the [`llamacpp-club3090`](docs/engines/LLAMACPP_CLUB3090.md) moe-cache engine — the shipped composes now pin **v1.6-rc0** (`sha256:69b833ee…`, built from `stack/club3090-moecachev1.6` @ `d9cc8af98`). ⚠️ The registry entries still carry the `llamacpp-club3090-v1.5` **engine label**; that label does not select the image for this engine family (llama.cpp pins per-compose — see `registry-emit.sh` `_compose_image_default`), so the served image is v1.6, but the label is inconsistent and worth correcting. First vision-capable expert-offloaded MoE on this stack. ⚠️ **No registry slug yet** — launched via `docker compose -f models/qwen3.8-flash-next/llamacpp-club3090/compose/dual/unsloth-ud-q4kxl/moecache.yml`, not `switch.sh`. Mixed-type quant (q4_K / q5_1 / q8_0 / q5_K) ⇒ **3–4 pools per device; slot counts must be summed per device, never read from one `pool[0]` line**.

@@ -1,0 +1,111 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     DeepSeek-V4.1-Flash-1017 — unsloth's UD-IQ3_S GGUF (8 shards, 423.6 GB): routed experts IQ2_S /
+#              IQ3_XXS / IQ3_S / Q3_K / MXFP4 by layer, dense weights Q8_0 / BF16, the Engram tables Q6_K in the
+#              last shard (161.3 GB) (unsloth/DeepSeek-V4.1-Flash-1017-GGUF @8a6ec9cf, the revision Maya pins)
+#   Engine:    Project Maya's maya-ds4 (DeepSeek's engine in Project Maya, a Strata fork) —
+#              ghcr.io/noonghunna/strata-maya-club3090, built by club-3090 at the release commit
+#              (models/glm-5.3-flash/strata-maya/image/)
+#   Topology:  Dual 3090, layer split (--tp 1 on two GPUs): each card holds its own layers' dense part and an
+#              expert pool of whole experts. No NCCL, no P2P needed
+#   Drafter:   none (DSpark off: neither drafter build sped this quant up, see Caveats)
+#   KV:        fp16 latent cache (maya-ds4 has no other)
+#   Vision:    no (the image never fetches DeepSeek's vision tower: --vision off)
+#   Max ctx:   65536
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   Not gate-passing yet: quality unmeasured here (8-pack pending), one request at a time, and it needs
+#              a host with ~240 GB of RAM. ⚠️ Maya copies the CPU lane's 219 GB of experts into RAM only when they
+#              all fit with 8 GiB to spare beside 8 GiB for the system (--mmap-experts auto: MemAvailable at start
+#              >= ~236 GB); otherwise it reads them in place from the files, through the page cache, where the
+#              161 GB Engram shard's reads compete with them. On the reference rig at 241 GB of RAM it fell ~6 GB
+#              short and read a 4K prompt 7x slower than ISTA (8.3 vs 57.5 tok/s in Maya's logit-dump path). The
+#              Engram tables stay on the disk either way (read a row at a time, ~0.3 MB a token). The FIRST start
+#              SHA-256-checks the 8 files (~424 GB: ~4 min on the reference rig) and builds Maya's pack on the
+#              data volume (an index, no weights copied); later starts skip both.
+#              DSpark tested and left off (2026-11-02, 20-token prompt, 256 tokens, warm second pass, 230 W):
+#              no drafter 38.6 tok/s, Maya's pinned dspark.bin (MXFP4 experts) 39.5, peasantsmith's dspark-xs2
+#              (2-bit) 38.5: ~80% of drafts kept, no speedup, and 4-8 GB more RAM for the drafter's experts.
+#              Quality vs the ISTA IQ2_XXS slug (same 4,096-token sequence, logits from maya-ds4, 2026-11-02):
+#              ISTA's KL from this quant 0.151 (18x this quant's own run-to-run 0.008), ISTA's top token
+#              differs at 14.8% of positions (3.5% run to run), perplexity 4.56 here vs 4.97. Maya's own
+#              chart puts UD-IQ3_S at KL 0.061 from the full-precision model (Q8 0.047); that scorer isn't
+#              public, so ISTA isn't on it. Thinking: on by default (effort high, Maya's own for DeepSeek);
+#              a request's enable_thinking false or reasoning_effort none answers in DeepSeek's chat mode.
+#              Host needs NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only.
+#              MEASURED 2026-11-02 on two 3090s capped at 230 W (v1.1.48 image, through switch.sh, bench.sh on
+#              its own boot, 24 CPU threads, effort high, a 257.6 GB host): 34.68 / 33.44 tok/s decode
+#              (narrative / code), 557 tok/s prefill @10K (@90K is past the 65,536 context), TTFT 45 ms;
+#              verify-full all checks (Genesis, drafter and vision n/a); VRAM 24,102 / 24,104 MiB. First start
+#              ready in 352 s (the SHA-256 check of 424 GB included), a later one in 112 s. Against the ISTA slug
+#              (2026-10-25, v1.1.28, its drafter on, the same cap): decode -24% / -36%, prefill @10K -39%.
+# CPU-Offload-Host-RAM-GB: 229
+#   ⤷ MEASURED 2026-11-02 on this compose (v1.1.48): MemAvailable fell 228.1 GB (decimal) on the first start,
+#     228.7 GB on the bench boot; the CPU lane's 13,194 experts (218.2 GB) copied into RAM (--mmap-experts auto).
+#     Maya copies them only with ~237 GB available at start (see Caveats), so a host near this figure can pass
+#     preflight and still read them in place.
+#   Best for:  the closer-to-original DeepSeek-V4.1-Flash on two 24 GB cards, on a host with ~240 GB of RAM
+#              (the ISTA IQ2_XXS slug, strata-maya/deepseek41-flash-dual-ista-iq2-xxs, needs ~106 GB)
+# ---------------------------------------------------------------------------
+# Project Maya (github.com/mw00/project-maya) runs DeepSeek-V4.1-Flash-1017 on its own maya-ds4 engine: see
+# docs/engines/STRATA_MAYA.md. UD-IQ3_S is in Maya's own setup list (--ds4-quant gguf-iq3_s); this compose uses
+# the same files and SHA-256s.
+#   bash scripts/switch.sh --force strata-maya/deepseek41-flash-dual-ud-iq3-s
+# The launcher (../../../launcher/) checks the files' SHA-256 once, builds Maya's pack on the data volume, writes
+# the config and starts Maya's server. By hand: SETUP_ONLY=1 docker compose -f base.yml run --rm strata-maya,
+# then up -d.
+services:
+  strata-maya:
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:96abef954ec44ec99d4a2a494a01f36a9670d91f42df17562aa0375cddaaa56c}
+    container_name: ${ESTATE_CONTAINER:-strata-maya-deepseek41-flash-dual-ud-iq3-s}
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
+    # (the entrypoint sets umask 0002)
+    user: "0:${DOCKER_GID:-1000}"
+    entrypoint: ["/bin/sh", "/opt/club3090/ds4-entrypoint.sh", "ud-iq3-s"]
+    ulimits:
+      memlock: -1            # Maya pins (locks) the experts it copies into RAM for the GPUs
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8089}}:8080"
+    environment:
+      CONTEXT: "${CONTEXT:-65536}"
+      SETUP_ONLY: "${SETUP_ONLY:-0}"
+      REPACK: "${REPACK:-0}"
+      VERIFY: "${VERIFY:-1}"
+      MAYA_GPUS: "${MAYA_GPUS:-0,1}"
+      MAYA_TP: "${MAYA_TP:-1}"
+      # Maya's server defaults, written into maya-ds4.json at every boot by ds4_prepare.py
+      # (launcher/ds4_settings.py maps each); unset = effort high, sampling 1.0 / 1.0, the name deepseek-v4.1-flash,
+      # a CPU lane of half the CPUs (nproc / 2), the loop guard on (Maya's own)
+      REASONING_EFFORT:
+      ENABLE_THINKING:
+      THINKING_BUDGET:
+      TEMP:
+      TOP_P:
+      TOP_K:
+      MIN_P:
+      PRESENCE_PENALTY:
+      REPEAT_PENALTY:
+      SERVED_NAME:
+      LOOP_GUARD:
+      THREADS:
+      # Maya's model load/unload endpoints (/models/load, /models/unload, /models/sse), on by default from
+      # v1.1.47. These composes set no API key, so anyone who reaches the port can unload the model:
+      # MAYA_MODEL_MANAGEMENT=0 turns them off
+      MAYA_MODEL_MANAGEMENT:
+      # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
+    volumes:
+      # the quant's own folder (unsloth's repo layout: one folder a quant); no drafter is mounted, so the pack
+      # holds none (pack_gguf.py would otherwise take <model>/../dspark/)
+      - "${MODEL_DIR:-../../../../../../models-cache}/deepseek-v4.1-flash-1017-gguf/UD-IQ3_S:/gguf:ro"
+      # one folder per quant (Maya's pack, the config, the engine's log); the launchers put it under
+      # ~/.local/share/club-3090, beside the GLM-5.3-Flash quants' folders
+      - "${STRATA_MAYA_DATA_DIR:-${CLUB3090_DATA_DIR:-../../..}/strata-maya-data}:/data"
+      - "../../../launcher:/opt/club3090:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0,1}}']
+              capabilities: [gpu]

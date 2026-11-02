@@ -38,6 +38,7 @@ detected at boot, so you don't choose a compose for it.
 |  | `llamacpp/deepseek-flash-dual-q8` | 🧪 experimental | 204800 | [dual/unsloth-q8-kxl/offload.yml](../models/deepseek-v4-flash-0731/llama-cpp/compose/dual/unsloth-q8-kxl/offload.yml) | [#909](https://github.com/noonghunna/club-3090/discussions/909) | host RAM ≥ 146 GB |
 | **DeepSeek-V4-Flash-Vision-Exp (deepseek4 MoE)** | `llamacpp-club3090/deepseek-flash-vision-dual-q8-moecache` | 🧪 experimental | 204800 | [dual/unsloth-ud-q8kxl/moecache.yml](../models/deepseek-v4-flash-vision-exp/llamacpp-club3090/compose/dual/unsloth-ud-q8kxl/moecache.yml) | — | host RAM ≥ 156 GB |
 | **DeepSeek-V4.1-Flash-1017 (MoE with Engram tables)** | `strata-maya/deepseek41-flash-dual-ista-iq2-xxs` | 🐣 incubating | 65536 | [dual/ista-iq2-xxs/dspark.yml](../models/deepseek-v4.1-flash-1017/strata-maya/compose/dual/ista-iq2-xxs/dspark.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 106 GB |
+|  | `strata-maya/deepseek41-flash-dual-ud-iq3-s` | 🐣 incubating | 65536 | [dual/ud-iq3-s/base.yml](../models/deepseek-v4.1-flash-1017/strata-maya/compose/dual/ud-iq3-s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 229 GB |
 | **Gemma 4 12B (unified)** | `vllm/gemma-12b-dual-bf16-mtp` | ⚠️ caveats | 262144 | [dual/bf16/mtp.yml](../models/gemma-4-12b/vllm/compose/dual/bf16/mtp.yml) | [#412](https://github.com/noonghunna/club-3090/discussions/412) |  |
 | **Gemma 4 26B-A4B (MoE)** | `vllm/gemma-26ba4b-dual` | 🧪 experimental | 262144 | [dual/awq/mtp.yml](../models/gemma-4-26b-a4b/vllm/compose/dual/awq/mtp.yml) | — |  |
 | **Gemma 4 31B** | `vllm/gemma-31b-dual` ⭐ | ⚠️ caveats | 229376 | [dual/qat-awq-int4/base.yml](../models/gemma-4-31b/vllm/compose/dual/qat-awq-int4/base.yml) | [#67](https://github.com/noonghunna/club-3090/discussions/67) |  |
@@ -98,7 +99,7 @@ detected at boot, so you don't choose a compose for it.
 |  | `vllm/thinkingcap38-27b-dual-ultrafast` | 🧪 experimental | 262144 | [dual/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/dual/autoround-int4/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 |  | `vllm/thinkingcap38-27b-dual-ultramax` | 🧪 experimental | 262144 | [dual/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/dual/fp8/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 
-65 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+66 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table dual -->
 
 ## Launch
