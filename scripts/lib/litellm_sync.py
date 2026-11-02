@@ -68,6 +68,9 @@ class Live(NamedTuple):
     native_messages: bool
     responses: bool
     key: str
+    # The engine's own output ceiling, tri-state: -1 = it explicitly declared
+    # "no cap" (null), a positive int = its declared cap, None = it never said.
+    out_cap: "int | None" = None
 
 
 def bearer(req: urllib.request.Request, key: str) -> urllib.request.Request:
@@ -135,7 +138,18 @@ def probe(port: int) -> list[Live]:
             ml = int(ml) if isinstance(ml, int) and ml > 0 else None
             if ml is None:
                 ml = llamacpp_ctx(port, key)   # llama.cpp reports its window on /props instead
-            out.append(Live(port, m["id"], ml, native, responses, key))
+            # `max_output_tokens: null` is a declaration ("no server-side cap"),
+            # which is not the same as the field being absent: vLLM and SGLang omit
+            # it and DO reject prompt + max_tokens > max_model_len, so they must keep
+            # the conservative advertised cap. Send -1 for the explicit null.
+            oc = m.get("max_output_tokens")
+            if "max_output_tokens" in m and oc is None:
+                out_cap: "int | None" = -1
+            elif isinstance(oc, int) and oc > 0:
+                out_cap = int(oc)
+            else:
+                out_cap = None
+            out.append(Live(port, m["id"], ml, native, responses, key, out_cap))
         return out
     except Exception:
         return []
@@ -304,8 +318,11 @@ def live_routes(ports: list[int]) -> list[Live]:
     # a contributor's machine. `C3_LITELLM_FAKE_LIVE="8182=a,8091=b"` substitutes
     # the probe result wholesale; `8113=qwen@262144` adds the context window,
     # a trailing `+messages` marks a server that serves /v1/messages itself,
-    # `+noresponses` one without /v1/responses, and `+keyed=<key>` one that
-    # requires that key (flags combine: `+messages+noresponses+keyed=k`).
+    # `+noresponses` one without /v1/responses, `+keyed=<key>` one that requires
+    # that key, and `+outcap=none|<n>` the output ceiling the engine declares in
+    # its own /v1/models — `none` for the explicit null QEngine sends, a number to
+    # pin an engine that reports one (flags combine:
+    # `+messages+noresponses+keyed=k+outcap=none`).
     # Deliberately env-only and undocumented in --help: it is for tests, not
     # operators.
     fake = os.environ.get("C3_LITELLM_FAKE_LIVE")
@@ -318,11 +335,17 @@ def live_routes(ports: list[int]) -> list[Live]:
                 flags = {f.strip() for f in flags}
                 mid, _, ml = rest.partition("@")
                 key = next((f[len("keyed="):] for f in flags if f.startswith("keyed=")), "")
+                oc = next((f[len("outcap="):] for f in flags if f.startswith("outcap=")), None)
+                out_cap: "int | None" = None
+                if oc == "none":
+                    out_cap = -1          # the engine declared "no cap"
+                elif oc and oc.isdigit():
+                    out_cap = int(oc)
                 if p.strip().isdigit():
                     out.append(Live(int(p.strip()), mid.strip(),
                                     int(ml) if ml.strip().isdigit() else None,
                                     "messages" in flags, "noresponses" not in flags,
-                                    key))
+                                    key, out_cap))
         return out
     found: list[Live] = []
     with cf.ThreadPoolExecutor(max_workers=32) as ex:
@@ -396,7 +419,24 @@ ROUTE_PARAMS = ["      allowed_openai_params: [reasoning_effort]"]
 RESPONSES_BRIDGE = "      use_chat_completions_api: true"
 
 
-def model_info(ctx: "int | None", facts: dict, native_messages: bool = False) -> list[str]:
+def output_ceiling(ctx: int, out_cap: "int | None") -> int:
+    """The max_output_tokens worth advertising for a live route.
+
+    An engine that reports `max_output_tokens: null` truncates at ctx minus the
+    prompt instead of rejecting the request, so the honest advertisement is the
+    whole window — clamping that to 32768 is what silently cut long generations
+    short downstream. An engine that reports a number gets that number. Engines
+    that say nothing keep the historical cap: they hard-fail on over-budget
+    requests, and advertising more than they accept breaks them."""
+    if out_cap == -1:
+        return ctx
+    if out_cap:
+        return min(out_cap, ctx)
+    return min(32768, ctx // 2)
+
+
+def model_info(ctx: "int | None", facts: dict, native_messages: bool = False,
+               out_cap: "int | None" = None) -> list[str]:
     """What omp's `discovery: litellm` reads from /model_group/info. Without it
     an agent falls back to a default context window and output cap: compaction
     fires far too early and busts the prefix cache, and long file writes get
@@ -404,7 +444,7 @@ def model_info(ctx: "int | None", facts: dict, native_messages: bool = False) ->
     ctx = ctx or (facts.get("configured_ctx") if isinstance(facts.get("configured_ctx"), int) else None)
     lines = ["    model_info:", "      mode: chat", "      supports_function_calling: true"]
     if ctx:
-        lines += [f"      max_input_tokens: {ctx}", f"      max_output_tokens: {min(32768, ctx // 2)}"]
+        lines += [f"      max_input_tokens: {ctx}", f"      max_output_tokens: {output_ceiling(ctx, out_cap)}"]
     if "thinking" in facts:
         lines.append(f"      supports_reasoning: {'true' if facts['thinking'] else 'false'}")
     if facts.get("vision") not in (None, "", "no", False):
@@ -486,7 +526,7 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
             *ROUTE_PARAMS,
             *([] if r.responses else [RESPONSES_BRIDGE]),
         ]
-        lines += model_info(r.ctx, facts.get(r.port, {}), r.native_messages) + [""]
+        lines += model_info(r.ctx, facts.get(r.port, {}), r.native_messages, r.out_cap) + [""]
     if not live:
         lines.append("  # (nothing serving right now — no local routes)")
     return "\n".join(lines).rstrip() + "\n" + END + "\n", len(seen)

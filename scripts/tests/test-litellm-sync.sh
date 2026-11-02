@@ -163,8 +163,26 @@ done
 [[ "$(route_field qwen3.8-27b model_info.max_input_tokens)" == "262144" && "$(route_field sgl-live model_info.max_input_tokens)" == "163840" ]] \
   && ok "max_input_tokens comes from each server's own max_model_len" \
   || bad "max_input_tokens: qwen=$(route_field qwen3.8-27b model_info.max_input_tokens) sgl=$(route_field sgl-live model_info.max_input_tokens)"
+# --- 11b: the advertised ceiling follows what the ENGINE declares -------------
+# vLLM / SGLang / llama.cpp never send `max_output_tokens`, and they reject a
+# request whose prompt + max_tokens exceeds max_model_len — so an unreported
+# ceiling must stay conservative. QEngine sends an explicit null: it truncates at
+# ctx - prompt instead of rejecting, and advertising 32768 there cut every long
+# generation short downstream (a client asking for 262144 got 32768 back with
+# finish_reason=length, so 256K of context was reachable but unusable).
 [[ "$(route_field qwen3.8-27b model_info.max_output_tokens)" == "32768" ]] \
-  && ok "max_output_tokens capped at 32768" || bad "max_output_tokens: $(route_field qwen3.8-27b model_info.max_output_tokens)"
+  && ok "an engine that reports no output cap keeps the 32768 default" \
+  || bad "unreported outcap: $(route_field qwen3.8-27b model_info.max_output_tokens)"
+render "8113=qwen3.8-27b@262144+outcap=none,8142=sgl-live@163840+outcap=65536,8020=gguf-live@262144"
+[[ "$(route_field qwen3.8-27b model_info.max_output_tokens)" == "262144" ]] \
+  && ok "an engine that declares no output cap (null) advertises the whole window" \
+  || bad "outcap=none: $(route_field qwen3.8-27b model_info.max_output_tokens)"
+[[ "$(route_field sgl-live model_info.max_output_tokens)" == "65536" ]] \
+  && ok "an engine's declared output cap is advertised as-is" \
+  || bad "outcap=65536: $(route_field sgl-live model_info.max_output_tokens)"
+[[ "$(route_field gguf-live model_info.max_output_tokens)" == "32768" ]] \
+  && ok "a larger window alone does not raise the ceiling (32768 unless declared)" \
+  || bad "no declared outcap: $(route_field gguf-live model_info.max_output_tokens)"
 [[ "$(route_field qwen3.8-27b model_info.supports_reasoning)" == "True" && -z "$(route_field sgl-live model_info.supports_reasoning)" ]] \
   && ok "supports_reasoning only where a slug declares a thinking profile (unknown is omitted, never false)" \
   || bad "supports_reasoning: qwen=$(route_field qwen3.8-27b model_info.supports_reasoning) sgl='$(route_field sgl-live model_info.supports_reasoning)'"
