@@ -1,10 +1,11 @@
 # ===========================================================================
 # Profile (at-a-glance):
-#   Model:     Qwen3.8-Flash-Next — bpx03's QEngine layout of Intel's W4A16 AutoRound (routed
-#              experts INT4 bit-exact; shared expert and DeltaNet INT4 RTN; attention and lm_head
-#              INT8 at load), the INT8 n-gram table, its INT4 MTP head (128 GB)
-#   Engine:    QEngine 1.3.4 (bpx03): its second engine, libqflash.so, in the author's own image
-#              ghcr.io/bpx03/qengine (source 21517be6, the :vision image: PyTorch for the encoder)
+#   Model:     Qwen3.8-Flash-Next — bpx03's QEngine layout of Intel's W4A16 AutoRound, its revision for
+#              QEngine 1.3.4.1 and later (routed experts INT4 bit-exact; DeltaNet projections INT8; shared
+#              expert INT4 GPTQ; attention and lm_head INT8 at load), the INT8 n-gram table, its INT4 MTP
+#              head (129 GB)
+#   Engine:    QEngine 1.3.4.2 (bpx03): its second engine, libqflash.so, in the author's own image
+#              ghcr.io/bpx03/qengine (source d2a24bf8, the :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (experts split evenly over the two cards; GPU-to-GPU P2P when the
 #              driver grants it)
 #   Drafter:   MTP, up to 3 drafts a step (adaptive; SPEC_N sets the most, 0 turns MTP off) + lookup
@@ -17,8 +18,15 @@
 #   Genesis:   none
 #   Status:    🐣 Incubating
 #   Caveats:   ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
-#              QEngine 1.3.4's known issue: with vision on (the default here), agent workloads may
-#              briefly drop CUDA graphs under VRAM pressure; the engine recovers.
+#              QEngine 1.3.4's known issue (agent workloads briefly dropping CUDA graphs under VRAM
+#              pressure, seen in #1846's 8-pack gate) is fixed from 1.3.4.1: the engine keeps its own room
+#              for cached graphs (FLASH_GRAPH_MB) instead of growing into the expert cache's margin.
+#              From 1.3.4.2 the slug runs QEngine's new default weights (from 1.3.4.1: DeltaNet projections
+#              INT8, shared expert GPTQ; next-token KL to BF16 0.267 -> 0.119 upstream, ~1 GB more), which
+#              QEngine 1.3.4 and older can't load. They cost ~4% of decode upstream; 1.3.4.2 decodes
+#              faster (upstream on three cards: +7 to +12% single-stream, +14% with 8 agents, one
+#              conversation's output bit for bit 1.3.4.1's). The measurements below are QEngine 1.3's,
+#              on the earlier weights.
 #              Upstream calls this engine a preview: tested on one machine, no quality benchmark
 #              yet; quality isn't measured here either. On two cards about half the expert groups
 #              stay in pinned host RAM (~15 GB a card), next to the 51.8 GB INT8 n-gram table:
@@ -63,7 +71,7 @@
 #              Measured 2026-10-28 on two 3090s at 230 W (bench.sh on its own boot): 164.0 / 170.6
 #              decode, 1,921 prefill @10K (CV 15%), 2,373 @90K, MTP acceptance length 2.8, 24.1 GB
 #              a card. First start 113 s with the weights already in the page cache (a cold start
-#              reads 128 GB from disk first), later 64 s. From 1.3.4 QEngine caps thinking per request or by QE_THINKING_BUDGET (off by
+#              reads 129 GB from disk first), later 64 s. From 1.3.4 QEngine caps thinking per request or by QE_THINKING_BUDGET (off by
 #              default; our THINKING_BUDGET_* map isn't wired to it). The default effort is
 #              low, as on the other Qwen3.8 slugs, through QEngine's QE_REASONING_EFFORT (its
 #              template's own default is xhigh); a request's own effort wins, and maps high ->
@@ -79,6 +87,7 @@
 #     prompt, upstream), not at ready.
 #   ⤷ 2026-10-31 (1.3.2): MemAvailable fell 85.5 GiB at ready on the text-only image and 88.2 GiB with vision
 #     on (the default; the encoder's weights stay pinned in host RAM, plus PyTorch), so 88 still holds.
+#   ⤷ 2026-11-02 (1.3.4.2, the new default weights, vision on): MemAvailable fell 87.4 GiB at ready; 88 holds.
 # Requires-min-vram-gb: 24
 # Requires-min-gpu-count: 2
 # Tensor-parallel: 2
@@ -90,8 +99,8 @@
 # upstream (2026-10-26): short c=1 139 tok/s, agent c=8 264 tok/s through the server.
 # It needs P2P for its prefill exchanges or falls back to the copy engine or host memory.
 #
-#   bash scripts/setup.sh qengine/qwen38-flash-next-dual          # 128 GB, ready to run
-#   READY_TIMEOUT=1800 bash scripts/switch.sh --force qengine/qwen38-flash-next-dual   # a cold start reads 128 GB
+#   bash scripts/setup.sh qengine/qwen38-flash-next-dual          # 129 GB, ready to run
+#   READY_TIMEOUT=1800 bash scripts/switch.sh --force qengine/qwen38-flash-next-dual   # a cold start reads 129 GB
 #
 # The engine opens every .safetensors file in the model folder, so nothing else may sit in it.
 #
@@ -113,7 +122,19 @@
 #   FLASH_NGRAM_PIN      0 = disk mode: the n-gram table read through the file mapping, not pinned
 #   FLASH_EC_MARGIN_MB   VRAM per card left free next to the expert cache (256); a list sets each card
 #                        (1024 was #1846's workaround for a CUDA-graph out-of-memory on 1.3; 1.3.1
-#                        drops the cached graphs and retries instead, so the default is enough upstream)
+#                        drops the cached graphs and retries instead, and from 1.3.4.1 the graphs have
+#                        their own room, FLASH_GRAPH_MB, so the default is enough upstream)
+#   FLASH_GRAPH_MB       VRAM per card for cached CUDA graphs (256, from 1.3.4.1): 128 MB of it out of
+#                        FLASH_EC_MARGIN_MB, the rest on top; the least recently used graphs are freed to
+#                        stay in it. 0 = off (graphs share the margin, as in 1.3.4). Raise it if
+#                        /api/stats graphs.budget_evictions grows quickly under steady traffic. Upstream
+#                        cost: ~0.8% fewer expert groups on the GPU, decode within 1% (0.9% lower for one
+#                        conversation on two cards)
+#   FLASH_PFGRAPH_WINDOW a prompt-shaped CUDA graph is built only when its shape came back within the last
+#                        N prompt steps, and never frees a per-token graph (64, from 1.3.4.1; 0 = off:
+#                        every prompt shape gets a graph, as before)
+#   FLASH_ATTN_DMIN      decode attention of batched steps: a row uses one key split per N key tiles, at
+#                        most 8, so short contexts don't pay for 8 splits (16, from 1.3.4.2; 0 = always 8)
 #   FLASH_LOOKUP         0 turns lookup drafts off (1)
 #   FLASH_COMM           prefill transfers between the cards: auto (startup probe), p2p, pull, push,
 #                        ce, host
@@ -178,7 +199,7 @@
 #   bash scripts/settings.sh set FLASH_MAX_SEQS=4      # one user at a time: faster still (above)
 services:
   qengine-qwen38-flash-next-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:2b3f8fb5aa0c6c6706ead209a7fb55a744844e3a1f587f86ea534f32af540363}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:e7ef3c0e2c2c1aa319f3aaf67cac19e7ca1ccc633d3e7f4909d2b447910761eb}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-flash-next-dual}"
     user: "0:${DOCKER_GID:-1000}"
@@ -229,6 +250,9 @@ services:
       - FLASH_RUN_TIMEOUT_S
       - QE_HANG_S
       - FLASH_PAR
+      - FLASH_GRAPH_MB
+      - FLASH_PFGRAPH_WINDOW
+      - FLASH_ATTN_DMIN
       - QE_THINKING_BUDGET
       - QE_THINK_TAIL
       - QE_EMPTY_RETRY
@@ -320,5 +344,5 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      # 128 GB to read and about 64 GB to pin before the server answers
+      # 129 GB to read and about 64 GB to pin before the server answers
       start_period: 3600s
