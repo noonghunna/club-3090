@@ -458,15 +458,15 @@ weights:
   qengine-int4:
     path: qwen3.8-flash-next-qengine-int4
     local_subdir: qwen3.8-flash-next-qengine-int4
-    size_gb: 128.05
+    size_gb: 129.08
     format: qengine-int4
     status: community-experimental
     hf_repo: bpx03/Qwen3.8-Flash-Next-QEngine
-    revision: 31b777db86c45d9c6a9aef0b0f4b44ab4bb39710
+    revision: c002201804c49f746e5b21484c60bf4bfffcfb67
     engine: qengine
     kind: main
     verify_glob: '*.safetensors'
-    manual_note: 'bpx03''s ready-to-run folder for QEngine 1.3 (pinned to the revision of 2026-10-28), converted from Intel/Qwen3.8-Flash-Next-W4A16-AutoRound: base.safetensors and layer-00 … layer-47 (routed experts INT4 repacked bit-exact; shared expert, DeltaNet and n-gram projections INT4 RTN group 128; QSA attention and lm_head BF16, INT8 at load), mtp.safetensors / mtp-int4.safetensors, the 51.84 GB INT8 n-gram table (ngram_int8.safetensors), and token_rank.bin, expert_prior.bin, cold_experts.json. Only QEngine reads it (not Transformers, vLLM or llama.cpp). The engine opens every .safetensors file in the folder, so nothing else may sit in it. License qwen-community-1.0, the base model''s.'
+    manual_note: 'bpx03''s ready-to-run folder for QEngine 1.3.4.1 and later (pinned to the revision of 2026-11-02; QEngine 1.3.4 and older stop at load on it, and its earlier files are revision v1.3.4), converted from Intel/Qwen3.8-Flash-Next-W4A16-AutoRound: base.safetensors and layer-00 … layer-47 (routed experts INT4 repacked bit-exact; DeltaNet projections INT8 group 128; shared expert and n-gram key/value projections INT4 group 128, calibrated with GPTQ; QSA attention and lm_head BF16, INT8 at load), mtp.safetensors / mtp-int4.safetensors, the 51.84 GB INT8 n-gram table (ngram_int8.safetensors), and token_rank.bin, expert_prior.bin, cold_experts.json. Only QEngine reads it (not Transformers, vLLM or llama.cpp). The engine opens every .safetensors file in the folder, so nothing else may sit in it. License qwen-community-1.0, the base model''s.'
 
 default_weight_variant: unsloth-ud-q4kxl
 
