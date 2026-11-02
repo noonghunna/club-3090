@@ -25,13 +25,14 @@
 #              INT8, shared expert GPTQ; next-token KL to BF16 0.267 -> 0.119 upstream, ~1 GB more), which
 #              QEngine 1.3.4 and older can't load. They cost ~4% of decode upstream; 1.3.4.2 decodes
 #              faster (upstream on three cards: +7 to +12% single-stream, +14% with 8 agents, one
-#              conversation's output bit for bit 1.3.4.1's). The measurements below are QEngine 1.3's,
-#              on the earlier weights.
+#              conversation's output bit for bit 1.3.4.1's). The bench below is 1.3.4.2's on these weights
+#              (2026-11-02), with 1.3's on the earlier weights (2026-10-28) beside it.
 #              Upstream calls this engine a preview: tested on one machine, no quality benchmark
 #              yet; quality isn't measured here either. On two cards about half the expert groups
 #              stay in pinned host RAM (~15 GB a card), next to the 51.8 GB INT8 n-gram table:
-#              MemAvailable fell 88 GB at ready and up to 114 GB as the 48 GB archive filled
-#              (measured; FLASH_KV_ARCHIVE_GB=0 keeps it off). 8 sequence slots here (QEngine's own
+#              MemAvailable falls ~94 GB at ready with vision on (88 GB on the text-only image) and
+#              more as the 48 GB archive fills (114 GB in all on 2026-10-28, text only; measured;
+#              FLASH_KV_ARCHIVE_GB=0 keeps it off). 8 sequence slots here (QEngine's own
 #              default, and its most, is 16), and each card has ~0.3 GiB of VRAM left after loading.
 #              On another two-card rig, community PR #1836 (eddietheengineer) found a long-prefill
 #              NaN with FLASH_COMM=auto and an out-of-memory in the 8-pack's agent pack at 8 slots.
@@ -68,9 +69,11 @@
 #              an engine step stuck past FLASH_RUN_TIMEOUT_S (120 s) or a server with no progress
 #              for QE_HANG_S (180 s) logs a diagnosis and exits 75, and restart: unless-stopped
 #              brings it back.
-#              Measured 2026-10-28 on two 3090s at 230 W (bench.sh on its own boot): 164.0 / 170.6
-#              decode, 1,921 prefill @10K (CV 15%), 2,373 @90K, MTP acceptance length 2.8, 24.1 GB
-#              a card. First start 113 s with the weights already in the page cache (a cold start
+#              Measured 2026-11-02 on two 3090s at 230 W (1.3.4.2, these weights, 8 slots, vision on;
+#              bench.sh on its own boot): 165.5 / 158.4 decode, 1,879 prefill @10K (CV 12%), 3,615 @90K
+#              (n=1), decode at 90K depth 107.2, MTP acceptance length 2.9, 23.9 GB a card, ready in 55 s.
+#              On 2026-10-28 (1.3, the earlier weights, 16 slots, text only): 164.0 / 170.6, 1,921 (CV 15%)
+#              / 2,373, 71.5 at 90K depth, 2.8, 24.1 GB a card. First start 113 s with the weights already in the page cache (a cold start
 #              reads 129 GB from disk first), later 64 s. From 1.3.4 QEngine caps thinking per request or by QE_THINKING_BUDGET (off by
 #              default; our THINKING_BUDGET_* map isn't wired to it). The default effort is
 #              low, as on the other Qwen3.8 slugs, through QEngine's QE_REASONING_EFFORT (its
@@ -78,16 +81,19 @@
 #              xhigh but minimal and max -> medium.
 #   Best for:  Qwen3.8-Flash-Next on two 3090s at QEngine's decode speed, with host RAM to spare
 # ---------------------------------------------------------------------------
-# CPU-Offload-Host-RAM-GB: 88
+# CPU-Offload-Host-RAM-GB: 94
 #   ⤷ MEASURED 2026-10-28 on two 3090s: MemAvailable fell 88 GB at ready (the 51.8 GB INT8 n-gram
 #     table and ~30 GB of expert groups, pinned; upstream says ~85 GB with the archive off). The
 #     archive (48 GB by default) then grows to ~114 GB in all, but it's elastic: it stops at
 #     MemAvailable minus a margin and gives memory back, so it isn't part of the need. From 1.3.2,
 #     pinned system prompts add up to 8 GB as agent kinds appear (FLASH_PREFIX_GB; ~0.4 GB for a 20K-token
 #     prompt, upstream), not at ready.
-#   ⤷ 2026-10-31 (1.3.2): MemAvailable fell 85.5 GiB at ready on the text-only image and 88.2 GiB with vision
-#     on (the default; the encoder's weights stay pinned in host RAM, plus PyTorch), so 88 still holds.
-#   ⤷ 2026-11-02 (1.3.4.2, the new default weights, vision on): MemAvailable fell 87.4 GiB at ready; 88 holds.
+#   ⤷ 2026-10-31 (1.3.2): MemAvailable fell 85.5 GiB (91.8 GB) at ready on the text-only image and 88.2 GiB
+#     (94.7 GB) with vision on (the default; the encoder's weights stay pinned in host RAM, plus PyTorch).
+#   ⤷ 2026-11-02 (1.3.4.2, the new default weights, vision on): MemAvailable fell 87.4 GiB (93.8 GB) at ready on
+#     the boot test and 93.5 GB on the bench boot (104.7 GB after the bench). This header is 94 from 2026-11-02.
+#     It was 88, and the 10-31 and first 11-02 notes compared GiB readings with it, but the field is decimal GB:
+#     preflight converts MemAvailable to GB before comparing.
 # Requires-min-vram-gb: 24
 # Requires-min-gpu-count: 2
 # Tensor-parallel: 2
@@ -143,7 +149,7 @@
 #                        3090s: 4 x 64K-token conversations' follow-ups 232.7 -> 332.1 tok/s, about 12%
 #                        less on short agent requests
 #   FLASH_KV_RAM_TOKENS  with FLASH_KV=ram, the host-RAM pool of all conversations (1M; K / M / G):
-#                        13.5 GB per 1M tokens, pinned at start, on top of the header's 88 GB
+#                        13.5 GB per 1M tokens, pinned at start, on top of the header's 94 GB
 #   FLASH_PFB_BIG        rows of a large prefill batch (8192 on two cards from 1.3.2; 4096 on three or
 #                        with FLASH_KV=ram). Upstream on two 3090s against 4096: server prefill +5% at 10K
 #                        and +4% at 90K, decode and 8-agent throughput unchanged
