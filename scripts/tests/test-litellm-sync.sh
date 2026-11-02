@@ -327,6 +327,57 @@ if litellm_sync.serves_responses(dead) is not True:
 sys.exit(bad)
 PY2
 
+# --- 18b: the REAL probe reads the engine's declared output ceiling (#1911) -----
+# Section 11b drives the ceiling through the seam; this is the parse it stands
+# for. QEngine's /v1/models card says `max_output_tokens: null` ("no cap") and the
+# whole window becomes the advertised ceiling. A card WITHOUT the field (vLLM,
+# SGLang, llama.cpp) must stay "never said", or those engines would advertise
+# replies they reject.
+python3 - "$ROOT/scripts/lib" <<'PY2' && ok "output-ceiling probe: null → no cap, a number → that number, absent/0 → never said" || bad "output-ceiling probe decision wrong (see above)"
+import http.server, json, sys, threading
+sys.path.insert(0, sys.argv[1])
+import litellm_sync
+
+def stub(card):
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def _send(self, code, body):
+            data = json.dumps(body).encode()
+            self.send_response(code); self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(data))); self.end_headers(); self.wfile.write(data)
+        def do_GET(self):
+            if self.path == "/v1/models":
+                return self._send(200, {"object": "list", "data": [card]})
+            self._send(404, {"detail": "Not Found"})
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length") or 0))
+            self._send(422, {"detail": "stub"})
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+# the card QEngine 1.3.4.2 serves (server/app.py limits()), trimmed to the fields that matter
+qe = {"id": "qwen3.8-27b", "object": "model", "owned_by": "qengine", "max_model_len": 262144,
+      "max_num_seqs": 32, "max_output_tokens": None}
+vllm = {"id": "qwen3.8-27b", "object": "model", "owned_by": "vllm", "max_model_len": 262144}
+bad = 0
+for name, card, want_cap, want_adv in [("qengine null", qe, -1, 262144),
+                                       ("field absent", vllm, None, 32768),
+                                       ("declared 65536", dict(qe, max_output_tokens=65536), 65536, 65536),
+                                       ("declared 0", dict(qe, max_output_tokens=0), None, 32768)]:
+    srv = stub(card)
+    got = litellm_sync.probe(srv.server_address[1])
+    srv.shutdown()
+    if not got:
+        print(f"    {name}: no route", file=sys.stderr); bad = 1; continue
+    r = got[0]
+    adv = litellm_sync.output_ceiling(r.ctx, r.out_cap)
+    if r.out_cap != want_cap or adv != want_adv:
+        print(f"    {name}: out_cap={r.out_cap!r} advertised={adv}, want {want_cap!r} / {want_adv}", file=sys.stderr)
+        bad = 1
+sys.exit(bad)
+PY2
+
 # --- 19: tabbyAPI route names come from /v1/model, not the directory listing ----
 # With auth disabled every caller is admin, and an admin GET /v1/models lists every
 # directory in --model-dir (other engines' weights, .cache). Each became a route, and
