@@ -145,7 +145,9 @@
 #   QE_HANG_S            no scheduler progress for this many seconds: stacks to the log, open requests
 #                        fail, exit 75 (180; 0 = off)
 #   FLASH_PAR            parallel mode (1.3.4): auto (tensor parallel on 2 equal cards) | tp | pp (a layer
-#                        pipeline: faster long uncached prompts, ~0.6x one-conversation decode; no vision)
+#                        pipeline: faster long uncached prompts, ~0.6x one-conversation decode on 3090s; no
+#                        vision). A slow link narrows the cost: 2x CMP 170HX on PCIe Gen2 x8 measured pp
+#                        prefill 2.0-2.4x and one-conversation decode ~0.89x of tp (discussion #1841)
 #   QE_THINKING_BUDGET   default thinking budget in tokens for requests that send none (from 1.3.4;
 #                        0 = off, the default); at the budget the server closes </think> itself. A request
 #                        sets its own with thinking_budget (OpenAI) or thinking.budget_tokens (Anthropic)
