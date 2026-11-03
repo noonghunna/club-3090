@@ -14,8 +14,8 @@
 #   Max ctx:   65536
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   Not gate-passing yet: quality unmeasured here (8-pack pending), one request at a time, and it needs
-#              a host with ~240 GB of RAM. ⚠️ Maya copies the CPU lane's 219 GB of experts into RAM only when they
+#   Caveats:   Not gate-passing yet: one request at a time, no verify-stress or soak run, and it needs a host
+#              with ~240 GB of RAM. ⚠️ Maya copies the CPU lane's 219 GB of experts into RAM only when they
 #              all fit with 8 GiB to spare beside 8 GiB for the system (--mmap-experts auto: MemAvailable at start
 #              >= ~236 GB); otherwise it reads them in place from the files, through the page cache, where the
 #              161 GB Engram shard's reads compete with them. On the reference rig at 241 GB of RAM it fell ~6 GB
@@ -39,6 +39,12 @@
 #              verify-full all checks (Genesis, drafter and vision n/a); VRAM 24,102 / 24,104 MiB. First start
 #              ready in 352 s (the SHA-256 check of 424 GB included), a later one in 112 s. Against the ISTA slug
 #              (2026-10-25, v1.1.28, its drafter on, the same cap): decode -24% / -36%, prefill @10K -39%.
+#   Quality:   toolcall-15 13/15 (87%) · instructfollow-15 12/15 (80%) · structoutput-15 14/15 (93%) · dataextract-15 11/15 (73%) · reasonmath-15 13/15 (87%) · bugfind-15 14/15 (93%) · hermesagent-20 13/20 (65%) · cli-40 33/40 (82%) (--full, thinking OFF, sampling=server, validity=valid, packs tc1.0.1·if2.0.0·so2.1.0·de1.2.0·rm1.1.0·bf1.0.1·hm1.0.0·cli1.0.2, 2026-11-02)
+#              toolcall-15 13/15 (87%) · instructfollow-15 15/15 (100%) · structoutput-15 14/15 (93%) · dataextract-15 13/15 (87%) · reasonmath-15 13/15 (87%) · bugfind-15 15/15 (100%) · hermesagent-20 16/20 (80%) · cli-40 31/40 (78%) (--full, thinking ON, sampling=server, validity=CONTAMINATED, packs tc1.0.1·if2.0.0·so2.1.0·de1.2.0·rm1.1.0·bf1.0.1·hm1.0.0·cli1.0.2, 2026-11-03)
+#              Totals: thinking off 123/150 pass@1, 136/150 pass@3; thinking on (effort high) 130/150, 137/150.
+#              v1.1.50 image, each leg on its own boot, 230 W, the wrapper's budgets (4,096 an answer, 16,384 of
+#              thinking), the server's sampler (temperature 1.0, top_p 1.0). CONTAMINATED: in toolcall-15 only 7
+#              of 15 replies reasoned (DeepSeek skips thinking on short tool calls); every other pack thought.
 # CPU-Offload-Host-RAM-GB: 229
 #   ⤷ MEASURED 2026-11-02 on this compose (v1.1.48): MemAvailable fell 228.1 GB (decimal) on the first start,
 #     228.7 GB on the bench boot; the CPU lane's 13,194 experts (218.2 GB) copied into RAM (--mmap-experts auto).
