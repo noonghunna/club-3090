@@ -67,7 +67,7 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 # / `Ungültige Zahl` — and the launcher aborts at the budget print (#159).
 # Force C numeric parsing for the whole script; LC_CTYPE/encoding is left
 # untouched so UTF-8 UI glyphs (—, ×, ⚠) still render.
-export LC_NUMERIC=C
+[[ -z "${LC_ALL:-}" ]] || { for _lc in LANG LC_CTYPE LC_COLLATE LC_MESSAGES LC_TIME LC_MONETARY; do export "$_lc=$LC_ALL"; done; unset LC_ALL _lc; }; export LC_NUMERIC=C
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SWITCH="${SWITCH:-${ROOT_DIR}/scripts/switch.sh}"

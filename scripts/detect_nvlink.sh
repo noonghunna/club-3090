@@ -56,6 +56,9 @@
 # GPU COUNT — a single-card slug with `count: all` sees every card on the host,
 # which would claim an all-reduce that never runs. vLLM's default is 1.
 # Custom all-reduce operates over the TP group, so TP is the relevant width.
+# Dot decimals whatever the user's locale: under es_ES / de_DE mawk read "1.65" as 1 and bash printf rejected "9.0" (#1926, #159).
+# LC_ALL would override LC_NUMERIC, so its value moves to the other categories first. Guarded by test-numeric-locale.sh.
+[[ -z "${LC_ALL:-}" ]] || { for _lc in LANG LC_CTYPE LC_COLLATE LC_MESSAGES LC_TIME LC_MONETARY; do export "$_lc=$LC_ALL"; done; unset LC_ALL _lc; }; export LC_NUMERIC=C
 _world_size() {
   local i prev=""
   for i in "$@"; do

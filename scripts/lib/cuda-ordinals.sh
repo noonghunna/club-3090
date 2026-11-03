@@ -18,6 +18,9 @@
 # It never fails the boot: unset or already-numeric input is left alone, and anything
 # it cannot resolve is left exactly as it was, with a warning. Always returns 0.
 
+# Dot decimals whatever the user's locale: under es_ES / de_DE mawk read "1.65" as 1 and bash printf rejected "9.0" (#1926, #159).
+# LC_ALL would override LC_NUMERIC, so its value moves to the other categories first. Guarded by test-numeric-locale.sh.
+[[ -z "${LC_ALL:-}" ]] || { for _lc in LANG LC_CTYPE LC_COLLATE LC_MESSAGES LC_TIME LC_MONETARY; do export "$_lc=$LC_ALL"; done; unset LC_ALL _lc; }; export LC_NUMERIC=C
 club3090_cuda_ordinals() {
   local cvd="${CUDA_VISIBLE_DEVICES:-}" map entry idx out=""
   [ -n "$cvd" ] || return 0
