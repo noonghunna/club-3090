@@ -52,7 +52,7 @@
 # a 6K prompt -35%; not re-measured on this compose).
 services:
   strata-maya:
-    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:432274a7e04874091773f353a005690c152bd70ffbecaa29b1d35d83fae72eca}
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:86c574b7b02d109591b2c54ed876939612d8531b0db9a704e588dd47cf2d96c7}
     container_name: ${ESTATE_CONTAINER:-strata-maya-deepseek41-flash-dual-ista-iq2-xxs}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
@@ -90,6 +90,9 @@ services:
       # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
       # switch are refused from outside the container. MAYA_MODEL_MANAGEMENT=0 turns all of them off
       MAYA_MODEL_MANAGEMENT:
+      # maya-ds4's RAM headroom (from v1.1.51): the GiB its memory planning leaves to everything else when it
+      # sizes the expert copies, the warm-up and the prompt caches (0 to 4096). Unset = Maya's 8
+      DS4_RAM_MARGIN_GB:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/deepseek-v4.1-flash-1017-gsq-rco-gguf:/gguf:ro"

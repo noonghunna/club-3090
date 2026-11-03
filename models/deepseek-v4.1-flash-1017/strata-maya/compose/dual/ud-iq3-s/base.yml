@@ -17,7 +17,8 @@
 #   Caveats:   Not gate-passing yet: one request at a time, no verify-stress or soak run, and it needs a host
 #              with ~240 GB of RAM. ⚠️ Maya copies the CPU lane's 219 GB of experts into RAM only when they
 #              all fit with 8 GiB to spare beside 8 GiB for the system (--mmap-experts auto: MemAvailable at start
-#              >= ~236 GB); otherwise it reads them in place from the files, through the page cache, where the
+#              >= ~236 GB; DS4_RAM_MARGIN_GB sets the system's 8 GiB from v1.1.51, so a lower value lowers that
+#              figure by as much); otherwise it reads them in place from the files, through the page cache, where the
 #              161 GB Engram shard's reads compete with them. On the reference rig at 241 GB of RAM it fell ~6 GB
 #              short and read a 4K prompt 7x slower than ISTA (8.3 vs 57.5 tok/s in Maya's logit-dump path). The
 #              Engram tables stay on the disk either way (read a row at a time, ~0.3 MB a token). The FIRST start
@@ -62,7 +63,7 @@
 # then up -d.
 services:
   strata-maya:
-    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:432274a7e04874091773f353a005690c152bd70ffbecaa29b1d35d83fae72eca}
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:86c574b7b02d109591b2c54ed876939612d8531b0db9a704e588dd47cf2d96c7}
     container_name: ${ESTATE_CONTAINER:-strata-maya-deepseek41-flash-dual-ud-iq3-s}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
@@ -100,6 +101,9 @@ services:
       # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
       # switch are refused from outside the container. MAYA_MODEL_MANAGEMENT=0 turns all of them off
       MAYA_MODEL_MANAGEMENT:
+      # maya-ds4's RAM headroom (from v1.1.51): the GiB its memory planning leaves to everything else when it
+      # sizes the expert copies, the warm-up and the prompt caches (0 to 4096). Unset = Maya's 8
+      DS4_RAM_MARGIN_GB:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       # the quant's own folder (unsloth's repo layout: one folder a quant); no drafter is mounted, so the pack
