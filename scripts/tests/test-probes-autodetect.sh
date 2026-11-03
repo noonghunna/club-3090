@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# test-probes-autodetect — concurrency-probe.sh takes the URL from CONTAINER=, and deep-context-probe.sh
-# resolves MODEL from the endpoint, as the other serving scripts do (#1584, #372).
+# test-probes-autodetect — concurrency-probe.sh takes the URL from CONTAINER=, deep-context-probe.sh
+# resolves MODEL from the endpoint, and compaction-probe.sh / spec-sweep.sh (no SLUG) find the running
+# server, as the other serving scripts do (#1584, #372).
 #
 # Why this exists (2026-10-31): concurrency-probe.sh took its URL from URL= or the registry's default
 # port, never from CONTAINER=, though the repo guide says CONTAINER= sets it. A run told
@@ -13,7 +14,10 @@
 #      (fails on the pre-autodetect tree), and --url to another server binds NO local container
 #      (fails if autodetect runs before the argument loop — the #1590 class through the flag);
 #   4. deep-context-probe.sh with no MODEL= asks the endpoint (a stub server) for it, and with no URL= finds the
-#      running engine container's port, as the other serving scripts do.
+#      running engine container's port, as the other serving scripts do;
+#   5. compaction-probe.sh and spec-sweep.sh (no SLUG) with no URL= find that port too (they probed :8020
+#      whatever was up); PREFLIGHT_NO_AUTODETECT=1 keeps the old default, and spec-sweep refuses a vLLM
+#      server found that way (it needs SLUG) instead of sweeping it as llama.cpp.
 # ⚠️ Against the pre-fix tree this must FAIL.
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -36,7 +40,7 @@ if [[ "$1" == ps ]]; then
   f=""; for a in "$@"; do case "$a" in name=*) f="$a" ;; esac; done
   # preflight's scan of running containers: one engine container, publishing the stub server's port
   if [[ -z "$f" && -n "${STUB_DEEP_PORT:-}" && "$*" == *"{{.Names}}|{{.Ports}}"* ]]; then
-    echo "deep-x|0.0.0.0:${STUB_DEEP_PORT}->8000/tcp|vllm/vllm-openai:v0.32.0"; exit 0
+    echo "${STUB_DEEP_NAME:-deep-x}|0.0.0.0:${STUB_DEEP_PORT}->8000/tcp|vllm/vllm-openai:v0.32.0"; exit 0
   fi
   case "$f" in
     'name=^qengine-x$') echo "9393/tcp, 0.0.0.0:8198->8080/tcp, [::]:8198->8080/tcp" ;;
@@ -116,5 +120,25 @@ set -e
 [[ "$out" == *"[deep-context] model=stub-model (what http://localhost:$port serves"* ]] \
   || { echo "$out" >&2; fail "URL unset: the running container's port was not found"; }
 pass "deep-context-probe.sh: URL unset finds the running engine container's port"
+
+# --- 5. compaction-probe.sh and spec-sweep.sh: URL unset finds the running server ---------------
+# compaction-probe execs its python probe right after the url= line; the stub serves no chat, so it ends there.
+out="$(env -u MODEL -u URL -u CONTAINER PATH="$bin:$PATH" STUB_DEEP_PORT="$port" REPS=1 timeout 30 bash scripts/compaction-probe.sh 2>&1 || true)"
+[[ "$out" == *"[compaction] url=http://localhost:$port model=stub-model"* ]] \
+  || { echo "$out" | head -8 >&2; fail "compaction-probe.sh: URL unset did not find the running container's port"; }
+out="$(env -u MODEL -u URL -u CONTAINER PATH="$bin:$PATH" STUB_DEEP_PORT="$port" PREFLIGHT_NO_AUTODETECT=1 REPS=1 timeout 30 bash scripts/compaction-probe.sh 2>&1 || true)"
+[[ "$out" != *"localhost:$port"* ]] || fail "compaction-probe.sh: PREFLIGHT_NO_AUTODETECT=1 must keep the default port"
+pass "compaction-probe.sh: URL unset finds the running engine container's port; PREFLIGHT_NO_AUTODETECT=1 keeps the default"
+out="$(env -u URL -u CONTAINER -u SLUG PATH="$bin:$PATH" STUB_DEEP_PORT="$port" SWEEP_N="0 2" SWEEP_DRY=1 bash scripts/spec-sweep.sh 2>&1 || true)"
+[[ "$out" == *"[spec-sweep] engine=llamacpp url=http://localhost:$port "* ]] \
+  || { echo "$out" | head -8 >&2; fail "spec-sweep.sh (no SLUG): URL unset did not find the running container's port"; }
+set +e
+out="$(env -u URL -u CONTAINER -u SLUG PATH="$bin:$PATH" STUB_DEEP_PORT="$port" STUB_DEEP_NAME=vllm-x SWEEP_N="0 2" SWEEP_DRY=1 bash scripts/spec-sweep.sh 2>&1)"; rc=$?
+set -e
+[[ $rc -eq 2 && "$out" == *"vllm sweeps need SLUG"* ]] \
+  || { echo "$out" | head -8 >&2; fail "spec-sweep.sh (no SLUG) found a vLLM server: it must refuse, not sweep it as llama.cpp (rc=$rc)"; }
+out="$(env -u URL -u CONTAINER -u SLUG PATH="$bin:$PATH" STUB_DEEP_PORT="$port" PREFLIGHT_NO_AUTODETECT=1 SWEEP_N="0 2" SWEEP_DRY=1 bash scripts/spec-sweep.sh 2>&1 || true)"
+[[ "$out" == *"url=http://localhost:8020 "* ]] || fail "spec-sweep.sh: PREFLIGHT_NO_AUTODETECT=1 must keep :8020"
+pass "spec-sweep.sh (no SLUG): URL unset finds the running server and its family; PREFLIGHT_NO_AUTODETECT=1 keeps :8020"
 
 echo "test-probes-autodetect: ok"

@@ -62,12 +62,15 @@ else
     "engine_kind_from_owned_by tabbyAPI:exllamav3" \
     "engine_kind_from_owned_by qengine:qengine" \
     "engine_kind_from_owned_by openai:unknown" \
+    "engine_kind_from_build_info Strata:strata" \
+    "engine_kind_from_build_info b10454-4df29be4f:unknown" \
+    "engine_kind_from_build_info Stratagem:unknown" \
   ; do
     want="${probe##*:}"; call="${probe%:*}"
     got="$($call 2>/dev/null || true)"
     [[ "$got" == "$want" ]] || bad "resolver: $call" "$want" "$got"
   done
-  [[ $FAIL -eq 0 ]] && ok "canonical resolver maps every known engine id, container, image, fingerprint and owned_by"
+  [[ $FAIL -eq 0 ]] && ok "canonical resolver maps every known engine id, container, image, fingerprint, owned_by and build_info"
 fi
 
 # --- 2: spec-sweep.sh must classify an SGLang slug as sglang (#1282) ---------

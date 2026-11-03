@@ -230,6 +230,29 @@ if [[ -z "$CONTAINER" ]] && have docker && docker info >/dev/null 2>&1; then
   fi
 fi
 
+# A host engine (CONTAINER=none) has no container or image to name its family, so the sections below
+# read "unknown": the KV-math section ran vLLM's calibration table, and a host-run Strata or Project
+# Maya read as llama.cpp (#1915). Ask the endpoint once, here at the top level for the same reason as
+# above: /v1/models owned_by, then /props build_info (Strata and Maya send no owned_by). The decision is
+# scripts/lib/engine-kind.sh's. An ENGINE_KIND given by hand still wins.
+# report_endpoint_kind <base URL> — the engine family the endpoint names (vllm | … | unknown).
+report_endpoint_kind() {
+  local ep="${1%/}" k
+  ep="${ep%/v1}"
+  k="$(engine_kind_from_owned_by "$(curl -sf -m 5 "$ep/v1/models" 2>/dev/null \
+    | python3 -c "import sys,json; print(((json.load(sys.stdin).get('data') or [{}])[0] or {}).get('owned_by','') or '')" 2>/dev/null)")"
+  if [[ "$k" == unknown ]]; then
+    k="$(engine_kind_from_build_info "$(curl -sf -m 5 "$ep/props" 2>/dev/null \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('build_info','') or '')" 2>/dev/null)")"
+  fi
+  echo "$k"
+}
+if [[ "${CONTAINER:-}" == none && -z "${ENGINE_KIND:-}" && -n "${URL:-${ENDPOINT:-}}" ]] && have curl; then
+  _ep_kind="$(report_endpoint_kind "${URL:-${ENDPOINT:-}}")"
+  if [[ "$_ep_kind" != unknown ]]; then ENGINE_KIND="$_ep_kind"; fi
+  unset _ep_kind
+fi
+
 # gpu_power_caps — one "idx|limit_w|default_w|percent" row per GPU whose power
 # limit is BELOW its factory default. Empty output when nothing is capped.
 #
@@ -941,7 +964,7 @@ if have python3 && [[ -f tools/kv-calc.py ]]; then
   if [[ "$CALIB_ENGINE_KIND" == "llamacpp" ]]; then
     echo "- _kv-calc calibration is vLLM-specific — skipped on the llama.cpp / ik_llama engine (ggml uses a different allocator)._"
   elif [[ "$CALIB_ENGINE_KIND" == "strata" ]]; then
-    echo "- _kv-calc calibration is vLLM-specific — skipped on Strata (it sizes its own int8 KV and streams it to RAM)._"
+    echo "- _kv-calc calibration is vLLM-specific — skipped on Strata and Project Maya (they size their own KV cache)._"
   elif ! python3 -c 'import yaml' 2>/dev/null; then
     # Item 1: graceful-degrade when PyYAML is missing
     echo "- _kv-calc calibration skipped — PyYAML not installed (\`pip install pyyaml\`)._"
@@ -1086,26 +1109,31 @@ case "${ENGINE_KIND:-}" in
     # Prefix arms live in scripts/lib/engine-kind.sh (club-3090#1282).
     ENGINE_KIND="$(engine_kind_from_container "$CONTAINER")"
     if [[ "$ENGINE_KIND" == "unknown" ]]; then
-      # club3090-* and any other non-conventional name: fall back to the image.
-      container_image=$(docker ps --filter "name=$CONTAINER" --format '{{.Image}}' 2>/dev/null | head -1)
+      # club3090-* and any other non-conventional name: fall back to the image. Config.Image is the
+      # reference the container was started from; `docker ps` shows a digest-pinned one (every
+      # third-party engine here) as its short image id, which names no engine.
+      container_image=$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)
       ENGINE_KIND="$(engine_kind_from_image "$container_image")"
     fi ;;
 esac
 
 if [[ "$CONTAINER" == "none" && "$REPORT_CONTAINER_FROM_URL" == "1" ]]; then
   echo "_No local container serves the endpoint (CONTAINER=none) — a remote server or a host process; container-scoped probes skipped._"
+  if [[ "${ENGINE_KIND:-unknown}" != unknown ]]; then echo "- **Engine (from the endpoint):** \`${ENGINE_KIND}\`"; fi
 elif [[ "$CONTAINER" == "none" ]]; then
   # Host engine build: no container to introspect. Docker ships a built-in
   # network object named "none", so `docker inspect none` succeeds (exit 0) on
   # any Docker host (club-3090#1067) — guard it so the body can't inspect a phantom.
   echo "_Host engine build (CONTAINER=none) — no container to introspect; container-scoped probes skipped._"
+  if [[ "${ENGINE_KIND:-unknown}" != unknown ]]; then echo "- **Engine (from the endpoint):** \`${ENGINE_KIND}\`"; fi
 elif [[ -z "$CONTAINER" ]]; then
   echo "_No vLLM, llama.cpp, or estate container running. Start one with \`bash scripts/launch.sh\` and re-run for the full report._"
 else
   {
     status=$(docker ps --filter "name=$CONTAINER" --format '{{.Status}}' 2>/dev/null | head -1)
     ports=$(docker ps --filter "name=$CONTAINER" --format '{{.Ports}}' 2>/dev/null | head -1)
-    image=$(docker ps --filter "name=$CONTAINER" --format '{{.Image}}' 2>/dev/null | head -1)
+    # The reference it was started from (docker ps shows a digest-pinned one as its short id)
+    image=$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)
     # Digest + OCI labels (load-bearing when tag is rolling, e.g. llama.cpp
     # `:server-cuda`). Without these, a bug report can't reproduce the bytes.
     image_digest=$(docker inspect "$CONTAINER" --format '{{.Image}}' 2>/dev/null | head -1)
@@ -1239,19 +1267,33 @@ else
     # vLLM version + Torch CUDA build vs host driver mismatch is one of the
     # rare failure modes that image SHA pinning doesn't catch. Quick docker
     # exec to surface what the container actually sees.
-    py_versions=$(docker exec "$CONTAINER" python3 -c \
-      'import torch, sys; print(f"torch={torch.__version__} torch_cuda_build={torch.version.cuda} cudnn={torch.backends.cudnn.version()}")' \
-      2>&1)
-    if [[ -n "$py_versions" ]] && [[ "$py_versions" != *"Error"* ]] && [[ "$py_versions" != *"error"* ]]; then
+    # The interpreter is the SERVING process's own (its command line's first word, when that is a
+    # python): an image can keep its engine in a venv that isn't on PATH (HyperQwen:
+    # /app/venv/bin/python3), and a python3 on PATH can be one without the engine's packages.
+    # python3 / python on PATH are the fallback. Success is the exit code, not the text: "exec:
+    # python3: executable file not found" carries no "error" and used to print as a version.
+    py_bin=$(docker exec "$CONTAINER" sh -c '
+      for c in /proc/[0-9]*/cmdline; do
+        a=$(tr "\0" "\n" < "$c" 2>/dev/null | head -1)
+        case "$a" in */python|*/python3|*/python3.[0-9]*) [ -x "$a" ] && { echo "$a"; exit 0; } ;; esac
+      done
+      for c in python3 python; do command -v "$c" 2>/dev/null && exit 0; done
+      exit 1' 2>/dev/null) || py_bin=""
+    py_bin="${py_bin%%$'\n'*}"
+    if [[ -z "$py_bin" ]]; then
+      echo "- **PyTorch:** (no Python interpreter found in the container)"
+    elif py_versions=$(docker exec "$CONTAINER" "$py_bin" -c \
+        'import torch, sys; print(f"torch={torch.__version__} torch_cuda_build={torch.version.cuda} cudnn={torch.backends.cudnn.version()}")' \
+        2>/dev/null) && [[ -n "$py_versions" ]]; then
       echo "- **PyTorch:** \`${py_versions}\`"
     else
-      echo "- **PyTorch:** (could not query — \`docker exec\` failed or torch not importable)"
+      echo "- **PyTorch:** (not importable by \`${py_bin}\`)"
     fi
 
-    vllm_ver=$(docker exec "$CONTAINER" python3 -c 'import vllm; print(vllm.__version__)' 2>&1)
-    if [[ -n "$vllm_ver" ]] && [[ "$vllm_ver" != *"Error"* ]] && [[ "$vllm_ver" != *"error"* ]]; then
+    if [[ -n "$py_bin" ]] && vllm_ver=$(docker exec "$CONTAINER" "$py_bin" -c 'import vllm; print(vllm.__version__)' 2>/dev/null) \
+       && [[ -n "$vllm_ver" ]]; then
       echo "- **vLLM:** \`${vllm_ver}\`"
-    else
+    elif [[ "${ENGINE_KIND:-}" == "vllm" ]]; then
       echo "- **vLLM:** (could not query)"
     fi
 
@@ -1308,7 +1350,7 @@ else
       echo "**Interconnect verdict:** ℹ driver P2P capability is reported above; ExLlamaV3 layer-split transport does not use NCCL/custom all-reduce, so the shared engagement verdict is not applicable."
     elif [[ "$ENGINE_KIND" == "strata" ]]; then
       echo
-      echo "**Interconnect verdict:** ℹ driver P2P capability is reported above; Strata's layer split copies activations between cards itself (no NCCL/custom all-reduce), so the shared engagement verdict is not applicable."
+      echo "**Interconnect verdict:** ℹ driver P2P capability is reported above; Strata and Project Maya copy activations between cards themselves (no NCCL/custom all-reduce), so the shared engagement verdict is not applicable."
     elif [[ "$ENGINE_KIND" == "qengine" ]]; then
       echo
       echo "**Interconnect verdict:** ℹ driver P2P capability is reported above; QEngine runs its own collectives (no NCCL/custom all-reduce), so the shared engagement verdict is not applicable. Its own transport is the line above."

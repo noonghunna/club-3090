@@ -28,6 +28,7 @@
 #   engine_kind_from_image       <docker image ref>           e.g. lmsysorg/sglang:v0.5.19
 #   engine_kind_from_fingerprint <system_fingerprint>         e.g. b10920-4df29be4f
 #   engine_kind_from_owned_by    </v1/models owned_by>        e.g. llamacpp
+#   engine_kind_from_build_info  </props build_info>          e.g. Strata ds4-0.1
 #   engine_kind_from_slug        <catalog slug>               e.g. sgl/qwen38-27b-dual-max
 #
 # python3 here must not be locale-coerced (#779): a UTF-8 slug or engine id
@@ -159,7 +160,7 @@ engine_kind_from_fingerprint() {
 # "sglang", vLLM "vllm", tabbyAPI "tabbyAPI", QEngine "qengine". A proxy (LiteLLM) or cloud
 # endpoint answers something else, and callers must treat that "unknown" as
 # "cannot tell", not as any particular engine (#1383). Strata's /v1/models has no
-# owned_by at all, so it has no arm here either.
+# owned_by at all, so it has no arm here either: engine_kind_from_build_info names it.
 engine_kind_from_owned_by() {
   case "${1,,}" in
     vllm*)                               echo "vllm" ;;
@@ -167,6 +168,20 @@ engine_kind_from_owned_by() {
     tabby*|exllama*)                     echo "exllamav3" ;;
     llamacpp*|llama.cpp*|llama-cpp*)     echo "llamacpp" ;;
     qengine*)                            echo "qengine" ;;
+    *)                                   echo "unknown" ;;
+  esac
+  return 0
+}
+
+# GET /props → `build_info`. Strata's server, and Project Maya's (a Strata fork), answer
+# "Strata <engine version>" ("Strata ds4-0.1" from Maya's DeepSeek engine), where llama.cpp answers
+# its build string ("b10454-4df29be4f"). Their /v1/models has no owned_by and they set no
+# system_fingerprint, so for a host-run Strata or Maya (CONTAINER=none) this is the only name the
+# server gives itself; without it a /props answer read as llama.cpp (#1915). Only the Strata arm:
+# a llama.cpp build string stays "unknown" here, and the callers' /props fallback decides it.
+engine_kind_from_build_info() {
+  case "${1,,}" in
+    strata\ *|strata)                     echo "strata" ;;
     *)                                   echo "unknown" ;;
   esac
   return 0

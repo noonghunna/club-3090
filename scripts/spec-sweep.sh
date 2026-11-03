@@ -39,7 +39,7 @@
 #               running llama.cpp server (fast path only)
 #   URL         endpoint (default: derived from the slug's default_port,
 #               else http://localhost:8020)
-#   MODEL       served model name (default: first id from /v1/models)
+#   MODEL       served model name (default: the served model, scripts/lib/served-model.sh)
 #   GENS        measured gens per arm (default 3)  ·  GEN_TOKENS (default 800)
 #   TEMP        sampling temp for measured gens (default 0.6)
 #   SWEEP_DRY   1 = print the plan, boot/measure nothing
@@ -111,7 +111,19 @@ PY
     URL="http://localhost:${PORT}"
   fi
 elif [[ -z "$URL" ]]; then
-  URL="http://localhost:8020"
+  # No SLUG and no URL: the server that is running, found the way bench.sh finds it (preflight's
+  # autodetect: an engine container's published port; PREFLIGHT_NO_AUTODETECT=1 turns it off). This
+  # used to be :8020 whatever was up. The container it finds also names the family, so a vLLM or
+  # SGLang server is refused below (they need SLUG) instead of being swept as llama.cpp.
+  # shellcheck source=preflight.sh
+  source "${ROOT_DIR}/scripts/preflight.sh"
+  preflight_autodetect_endpoint || true
+  if [[ -n "${CONTAINER:-}" && "${CONTAINER}" != none ]]; then
+    _fam="$(engine_kind_from_container "$CONTAINER")"
+    [[ "$_fam" == unknown ]] && _fam="$(engine_kind_from_image "$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)")"
+    [[ "$_fam" == unknown ]] || ENGINE_FAMILY="$_fam"
+  fi
+  URL="${URL:-http://localhost:8020}"
 fi
 # Everything that is not llama.cpp reboots per arm, so it needs a SLUG. Written
 # as != llamacpp (not == vllm) so a newly added engine inherits the safe path.
@@ -134,7 +146,10 @@ fi
 # --- shared measurement -------------------------------------------------------
 _detect_model() {
   [[ -n "$MODEL" ]] && return 0
-  MODEL="$(curl -s -m 5 "$URL/v1/models" | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)"
+  # served-model.sh: TabbyAPI lists every model folder in /v1/models, so the first entry can be the wrong one (#1360)
+  # shellcheck source=lib/served-model.sh
+  source "${ROOT_DIR}/scripts/lib/served-model.sh"
+  MODEL="$(club_served_model_id "$URL")"
   [[ -n "$MODEL" ]] || { echo "no server at $URL (and MODEL unset)" >&2; exit 1; }
 }
 

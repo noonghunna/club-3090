@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -86,6 +87,28 @@ def write_override(slug: str, compose: Path, port: int | None, environ=None) -> 
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
     return path
+
+
+# Reading the port from the host: it isn't published unless asked for, so tools read it inside the
+# container. The image runs Python, so no curl is needed; QE_METRICS_PORT moves it, as the
+# entrypoint does. An unauthenticated port of the engine's own, not the API, so this is not an
+# engine request and carries no key (engine_http is for those).
+_READ_IN_CONTAINER = ("import os, sys, urllib.request; p = os.environ.get('QE_METRICS_PORT') or '9393'; "
+                      "sys.stdout.write(urllib.request.urlopen('http://127.0.0.1:' + p + '{path}', "
+                      "timeout=2).read().decode('utf-8', 'replace'))")
+
+
+def read_in_container(container: str, path: str = "/metrics", timeout: float = 5) -> str:
+    """QEngine's metrics-port page ``path`` read inside ``container``, or "" when it can't be read
+    (another engine, the metrics server off, no python3 in the image)."""
+    if not container:
+        return ""
+    try:
+        r = subprocess.run(["docker", "exec", container, "python3", "-c", _READ_IN_CONTAINER.format(path=path)],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except Exception:
+        return ""
+    return r.stdout if r.returncode == 0 else ""
 
 
 def main(argv=None) -> int:

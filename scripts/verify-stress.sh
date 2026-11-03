@@ -534,13 +534,17 @@ run_check() {
 detect_engine() {
   # /props is not llama.cpp's alone: TabbyAPI, Strata and QEngine (from 1.3.1) serve a compatible
   # one, so a container name or image that names a family wins, then what the server calls itself
-  # (/v1/models owned_by, the only name a host-run QEngine has), as in verify-full.sh.
-  if curl -sf -m 3 "${URL}/props" >/dev/null 2>&1; then
+  # (/v1/models owned_by, the only name a host-run QEngine has), then /props build_info ("Strata
+  # <version>": Strata and Project Maya send no owned_by, #1915), as in verify-full.sh.
+  local _props
+  if _props="$(curl -sf -m 3 "${URL}/props" 2>/dev/null)"; then
     local _props_kind
     _props_kind="$(engine_kind_from_container "$CONTAINER")"
     [[ "$_props_kind" == "unknown" ]] && _props_kind="$(engine_kind_from_image "$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null)")"
     [[ "$_props_kind" == "unknown" ]] && _props_kind="$(engine_kind_from_owned_by "$(curl -sf -m 5 "${URL}/v1/models" 2>/dev/null \
       | python3 -c "import sys,json; print(((json.load(sys.stdin).get('data') or [{}])[0] or {}).get('owned_by','') or '')" 2>/dev/null)")"
+    [[ "$_props_kind" == "unknown" ]] && _props_kind="$(engine_kind_from_build_info "$(printf '%s' "$_props" \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('build_info','') or '')" 2>/dev/null)")"
     [[ "$_props_kind" != "unknown" ]] && { echo "$_props_kind"; return 0; }
     echo "llamacpp"; return 0
   fi

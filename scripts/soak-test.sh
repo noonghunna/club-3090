@@ -60,7 +60,7 @@
 #                          mapping (8000/8080/30000) from `docker ps` — model-agnostic.
 #   ENDPOINT / URL         OpenAI endpoint. Default: mapped container port for
 #                          8000/tcp, falling back to http://localhost:8020.
-#   MODEL                  Served model. Default: first id from /v1/models.
+#   MODEL                  Served model. Default: the served model (scripts/lib/served-model.sh).
 #   SOAK_MODE              "fresh" (default) — each turn is an independent
 #                          conversation; tests raw VRAM accretion across
 #                          requests. "continuous" — each session is one
@@ -170,7 +170,7 @@ ENV (advanced — auto-detected by default)
                     host build).
   ENDPOINT / URL    OpenAI endpoint. Default: mapped container port → fallback
                     http://localhost:8020.
-  MODEL             Served model. Default: first id from /v1/models.
+  MODEL             Served model. Default: the served model (scripts/lib/served-model.sh).
   SOAK_SESSIONS     Override session count.
   SOAK_TURNS        Override turn count.
   SOAK_MAX_GROWTH_MIB   VRAM-growth fail threshold. Default: 200.
@@ -412,6 +412,10 @@ mkdir -p "$SOAK_OUTPUT"
 MODELS_JSON="${SOAK_OUTPUT}/models.json"
 curl -sf -m 10 "${ENDPOINT}/v1/models" -o "$MODELS_JSON" \
   || die "no response from ${ENDPOINT}/v1/models"
+# served-model.sh: TabbyAPI lists every model folder in /v1/models, so the first entry can be the wrong one (#1360)
+# shellcheck source=lib/served-model.sh
+source "${REPO_ROOT}/scripts/lib/served-model.sh"
+MODEL="${MODEL:-$(club_served_model_id "$ENDPOINT")}"
 MODEL="${MODEL:-$(python3 "$HELPER" model "$MODELS_JSON")}"
 
 # Which request field turns reasoning off is model-specific, and an unrecognised

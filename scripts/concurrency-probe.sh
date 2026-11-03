@@ -241,8 +241,12 @@ fi
 # shellcheck source=lib/engine-auth.sh
 source "${ROOT_DIR}/scripts/lib/engine-auth.sh"
 club_engine_auth_enable "${CONTAINER:-}"
-MODEL="${MODEL:-$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
-  | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || echo qwen3.6-27b)}"
+# The served model, the same way every serving script resolves it (scripts/lib/served-model.sh): TabbyAPI
+# answers /v1/models with every folder in its model directory, so the first entry can be the wrong one (#1360)
+# shellcheck source=lib/served-model.sh
+source "${ROOT_DIR}/scripts/lib/served-model.sh"
+MODEL="${MODEL:-$(club_served_model_id "$URL")}"
+MODEL="${MODEL:-qwen3.6-27b}"
 # A remote endpoint: no local container AND the URL is not this machine. This rig's GPUs are then
 # not the server's, so their VRAM and names must not land on its card — they used to, as
 # "2× GeForce RTX 3090" and a VRAM curve of whatever this host happened to be doing. A host-process
@@ -428,8 +432,7 @@ warmup_gate() {
   # Re-resolve the served model now that the server answers (skip if pinned).
   if [[ -z "$MODEL_PINNED" ]]; then
     local det
-    det="$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
-      | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)"
+    det="$(club_served_model_id "$URL")"
     if [[ -n "$det" && "$det" != "$MODEL" ]]; then
       echo "[sweep] WARMUP: served model re-resolved: $det (was: $MODEL)" >&2
       MODEL="$det"
@@ -723,8 +726,7 @@ if [[ -n "$SWEEP" ]]; then
     # the default — which 404s every request against any other model (the whole
     # arm reads as errors=N). Skip when the caller pinned MODEL explicitly.
     if [[ -z "$MODEL_PINNED" ]]; then
-      det="$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
-        | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)"
+      det="$(club_served_model_id "$URL")"
       if [[ -n "$det" && "$det" != "$MODEL" ]]; then
         echo "[sweep] served model: $det (re-resolved post-boot; was: $MODEL)"
         MODEL="$det"
