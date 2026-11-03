@@ -81,6 +81,15 @@ EOF
 
 MATRIX=0
 N_LIST_EXPLICIT=0
+# Same endpoint autodetect as bench.sh / rebench-full.sh: the running container
+# wins over the registry default, so a rig serving a non-default slug (any
+# engine, any port) is probed without hand-passing URL= (#1584's preflight seam).
+# Explicit URL=/CONTAINER= are honored by preflight itself; PREFLIGHT_NO_AUTODETECT=1 skips.
+if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
+  # shellcheck source=preflight.sh
+  source "${ROOT_DIR}/scripts/preflight.sh"
+  preflight_autodetect_endpoint || true
+fi
 # Default endpoint follows the registry's curated DEFAULTS walk for qwen3.6-27b
 # — the SAME source bench/verify derive their defaults from — instead of this
 # probe's lone :8010 literal. The trailing literal is only a last resort when
