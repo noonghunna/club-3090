@@ -2,7 +2,7 @@
 # Profile (at-a-glance):
 #   Model:     Qwen3.8-27B (Qwen3-Next hybrid GDN, arch `Qwen3_5ForConditionalGeneration`)
 #              Frozenlock AutoRound INT4 W4A16 g128 — the collapse-free checkpoint.
-#   Engine:    SGLang stock v0.5.22 (`lmsysorg/sglang:v0.5.22`) + vendored patches:
+#   Engine:    SGLang stock v0.5.23 (`lmsysorg/sglang:v0.5.23`) + vendored patches:
 #              `sglang-effort-thinking-budget` (per-effort reasoning budgets; THINKING_BUDGETS=off
 #              drops the budgets, strict thinking stays on) and the AutoRound W4A8 patch (ON by
 #              default; W4A8=0 reverts).

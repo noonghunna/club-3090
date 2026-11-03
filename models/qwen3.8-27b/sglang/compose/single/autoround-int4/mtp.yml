@@ -4,7 +4,7 @@
 #              Frozenlock AutoRound INT4 g128 — the checkpoint and recipe of
 #              sgl/qwen38-27b-dual-fast, on ONE card. Served W4A8 by default (vendored
 #              AutoRound W4A8 patch, mounted below; W4A8=0 for W4A16).
-#   Engine:    SGLang v0.5.22 (`lmsysorg/sglang:v0.5.22`) — engine profile `sglang-stable`
+#   Engine:    SGLang v0.5.23 (`lmsysorg/sglang:v0.5.23`) — engine profile `sglang-stable`
 #              + vendored `sglang-effort-thinking-budget` (per-effort reasoning budgets;
 #              THINKING_BUDGETS=off drops the budgets, strict thinking stays on)
 #   Topology:  Single card (TP=1), AUTO-SIZED at boot from the card's VRAM (see AUTO-SIZE)
@@ -77,7 +77,7 @@
 # ===========================================================================
 services:
   sglang-qwen38-27b-mtp-single:
-    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.22}
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.23}
     container_name: ${ESTATE_CONTAINER:-sglang-qwen38-27b-mtp-single}
     # Root inside the container with your group, as the vLLM composes run (validated so).
     user: "0:${DOCKER_GID:-1000}"

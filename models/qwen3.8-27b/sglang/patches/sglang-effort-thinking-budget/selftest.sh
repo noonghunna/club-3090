@@ -3,7 +3,7 @@
 #
 # The patches.yml drift_guard.check. Run it on every SGLang pin bump BEFORE booting the new
 # image: it needs Docker but no GPU and starts nothing that serves. In ONE throwaway container
-# (`docker run --rm --network none`, default lmsysorg/sglang:v0.5.22) it runs:
+# (`docker run --rm --network none`, default lmsysorg/sglang:v0.5.23) it runs:
 #   * scripts/tests/test-effort-budget.sh with the image's own python (the module's unit tests);
 #   * selftest_container.py — the stock-behaviour control, the negative controls (anchor
 #     removed / duplicated, half-patched tree, malformed map, module not mounted), install.sh
@@ -13,7 +13,7 @@
 set -euo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 
-IMAGE="${1:-lmsysorg/sglang:v0.5.22}"
+IMAGE="${1:-lmsysorg/sglang:v0.5.23}"
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$HERE/../../../../.." && pwd)"
 [ -f "$ROOT/scripts/lib/effort_budget.py" ] || { echo "selftest: repo root not found from $HERE" >&2; exit 2; }

@@ -51,7 +51,7 @@
 # ===========================================================================
 services:
   sglang-nanbeige43-33b-dual:
-    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.22}
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.23}
     container_name: ${ESTATE_CONTAINER:-sglang-nanbeige43-33b-dual}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     init: true
