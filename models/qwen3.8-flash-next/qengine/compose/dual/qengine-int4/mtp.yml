@@ -69,6 +69,15 @@
 #              an engine step stuck past FLASH_RUN_TIMEOUT_S (120 s) or a server with no progress
 #              for QE_HANG_S (180 s) logs a diagnosis and exits 75, and restart: unless-stopped
 #              brings it back.
+#              ⚠️ Single-stream decode after several conversations is ~20% slower than the fresh-boot bench
+#              below (#1928, measured here 2026-11-03 on 1.3.4.3). A conversation left in an idle slot keeps its
+#              KV in VRAM, and the expert cache lives in the KV pool's free tail, so it shrinks: after five
+#              conversations the cache's live slots went 8.4-8.9K -> 3.8-5.0K of 9,070, misses per step ~300 ->
+#              500-900, narrative decode 166.8 -> 134.0, and it stayed there. QEngine moves idle conversations to
+#              the archive after FLASH_EC_RECLAIM_S (30 s) only during batched steps (two or more requests at
+#              once), so a lone stream never gets the room back; concurrent traffic does. At FLASH_MAX_SEQS=1:
+#              174.6 -> 168.3, within noise. For one user at a time, FLASH_MAX_SEQS=1 or 2. Keep the archive
+#              on: the reclaim needs it. Filed upstream: docs/UPSTREAM.md, QEngine section (bpx03/QEngine#8).
 #              Measured 2026-11-02 on two 3090s at 230 W (1.3.4.2, these weights, 8 slots, vision on;
 #              bench.sh on its own boot): 165.5 / 158.4 decode, 1,879 prefill @10K (CV 12%), 3,615 @90K
 #              (n=1), decode at 90K depth 107.2, MTP acceptance length 2.9, 23.9 GB a card, ready in 55 s.
