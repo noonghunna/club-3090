@@ -230,6 +230,25 @@ if [[ -n "$SWEEP" && -z "$SLUG" ]]; then
   echo "SWEEP needs SLUG=<compose slug> — vLLM can't hot-change max-num-seqs, so each N is a reboot." >&2
   exit 2
 fi
+# The slot setting SLUG's own compose reads, so each N's boot really has N slots. The sweep used to set
+# MAX_NUM_SEQS for every engine; SGLang (MAX_RUNNING_REQUESTS), llama.cpp (NP / NPARALLEL) and QEngine
+# (QE_MAX_SEQS on the 27B, FLASH_MAX_SEQS on Flash-Next) never read it, so every N booted the same server
+# and the "knee" compared it with itself (#1931: QEngine logged 32 slots at N=1 and N=2). Read from the
+# compose (slot_setting_for_compose, scripts/lib/served-slots.sh), not a list of engines.
+SWEEP_SEQ_KNOB=""
+if [[ -n "$SWEEP" ]]; then
+  # shellcheck source=lib/served-slots.sh
+  source "${ROOT_DIR}/scripts/lib/served-slots.sh"
+  _slug_compose="$(registry_lookup_compose_path "$SLUG" 2>/dev/null || true)"
+  [[ -n "$_slug_compose" && "$_slug_compose" != /* ]] && _slug_compose="$ROOT_DIR/$_slug_compose"
+  SWEEP_SEQ_KNOB="$(slot_setting_for_compose "$_slug_compose")"
+  if [[ -z "$SWEEP_SEQ_KNOB" ]]; then
+    echo "SWEEP: ${SLUG}'s compose reads none of the slot settings the sweep sets (${SLOT_SETTINGS// /, })," \
+         "so every N would boot the same server. Set its slot count by hand per boot and probe each with" \
+         "CONCURRENCY=N instead." >&2
+    exit 2
+  fi
+fi
 
 # Remember whether the caller pinned MODEL — SWEEP re-resolves after each boot
 # and must not clobber an explicit pin.
@@ -725,11 +744,11 @@ if [[ -n "$SWEEP" ]]; then
   fi
   for N in $SWEEP; do
     if [[ "$SWEEP_DRY" == "1" ]]; then
-      echo "[sweep:dry] would: MAX_NUM_SEQS=$N switch.sh $SLUG  ->  wait ready  ->  probe N=$N"
+      echo "[sweep:dry] would: ${SWEEP_SEQ_KNOB}=$N switch.sh $SLUG  ->  wait ready  ->  probe N=$N"
       continue
     fi
-    echo "[sweep] boot $SLUG @ MAX_NUM_SEQS=$N ..."
-    if ! MAX_NUM_SEQS="$N" bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1; then
+    echo "[sweep] boot $SLUG @ ${SWEEP_SEQ_KNOB}=$N ..."
+    if ! env "${SWEEP_SEQ_KNOB}=$N" bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1; then
       echo "[sweep] N=$N: boot FAILED — skipping"; continue
     fi
     # The container this boot started and the port it publishes: a saved per-slug port can differ
@@ -760,6 +779,13 @@ if [[ -n "$SWEEP" ]]; then
         echo "[sweep] served model: $det (re-resolved post-boot; was: $MODEL)"
         MODEL="$det"
       fi
+    fi
+    # Did the setting reach the engine? A server with another slot count would put its own number in
+    # N's row. Nothing reported (e.g. vLLM omits max_num_seqs at its default) is no evidence either way.
+    got_slots="$(_detect_slots)"
+    if [[ -n "$got_slots" && "$got_slots" != "$N" ]]; then
+      echo "[sweep] N=$N: ⚠ the server reports $got_slots slots, not $N — ${SWEEP_SEQ_KNOB}=$N didn't reach it; skipping"
+      continue
     fi
     out="$(run_probe "$N" || true)"; echo "$out"
     line="$(printf '%s\n' "$out" | command grep -m1 '^RESULT ' || true)"

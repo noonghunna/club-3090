@@ -109,6 +109,24 @@ served_slots() {
   return 0
 }
 
+# slot_setting_for_compose <compose.yml> — the env setting that compose reads for its slot count, or
+# nothing: the first of these it reads as a setting, `${NAME…}` or a bare `- NAME` passthrough, with comment
+# lines ignored. concurrency-probe.sh's SWEEP sets it per N (#1931); it used to set MAX_NUM_SEQS for every
+# engine, which SGLang, llama.cpp and QEngine never read. MAX_NUM_SEQS comes first: HyperQwen's compose reads
+# it and maps it to its own MAX_SEQS. Strata, Project Maya and TabbyAPI composes read none of them.
+SLOT_SETTINGS="MAX_NUM_SEQS MAX_RUNNING_REQUESTS NPARALLEL NP FLASH_MAX_SEQS QE_MAX_SEQS"
+slot_setting_for_compose() {
+  local f="${1:-}" k body
+  [[ -n "$f" && -r "$f" ]] || return 0
+  body="$(command grep -vE '^[[:space:]]*#' "$f" || true)"
+  for k in $SLOT_SETTINGS; do
+    # single-quoted pieces: in double quotes `\$` would reach grep as `$`, an end-of-line anchor
+    if command grep -qE '\$\{'"$k"'(:-[^}]*)?\}|^[[:space:]]*-[[:space:]]*'"$k"'(=|[[:space:]]*$)' <<<"$body"; then
+      echo "$k"; return 0
+    fi
+  done
+}
+
 concurrency_slots_marker() {
   local file="$1" slots="$2" source="$3" rungs="$4" override="$5"
   {
