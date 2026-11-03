@@ -3,8 +3,9 @@
 #
 #   bash scripts/probe-effort-budget.sh <url> [--expect-off | --positive] [--model ID] [--spec-depth N]
 #
-# The boot probe for BOTH engines (vLLM patches vllm-effort-budget + vllm-default-thinking-budget;
-# SGLang strict thinking + its effort hook), and the real check at every engine upgrade. It reads the
+# The boot probe for vLLM (patches vllm-effort-budget + vllm-default-thinking-budget), SGLang (strict
+# thinking + its effort hook) and QEngine (its own per-effort map, QE_THINKING_BUDGET, from 1.3.4.3), and
+# the real check at every engine upgrade. It reads the
 # map the server booted with from the container's boot log (the `[effort-budget] v1` line printed by
 # scripts/lib/effort_budget.py shell-env), sends real requests, and measures the reasoning each one
 # produced. Modes:
@@ -28,6 +29,14 @@
 # (bonus token) + the forced end sequence (1 token, plain </think>) + 4 for re-tokenizing the text.
 # Drafter depth comes from the boot log (--spec-depth overrides). Reasoning length: the usage block's
 # reasoning tokens when the engine reports them, else the server's own /tokenize on the reasoning text.
+#
+# QEngine differs in three places. At the budget it closes the reasoning with a wrap-up sentence
+# (think_budget.py WRAP) before </think>, counted as reasoning, so its end sequence is QE_END_LEN (32)
+# tokens, not 1; its drafter depth is at most 7 a step when the boot log doesn't say. Its /v1/messages
+# reports no reasoning tokens and it serves no /tokenize, so the two /v1/messages cases check the
+# budget's SOURCE instead: /api/stats thinking.budget_from (read with docker exec on its metrics port,
+# QE_METRICS_PORT, 9393 in the container) must count the request's own budget or the server default's.
+# It serves no Responses API: that case is n/a.
 #
 # Environment: CONTAINER (default: the container publishing <url>, club_container_for_url), MODEL
 # (default: club_served_model_id), API_KEY (sent as a bearer token, never printed). Exit 0 = every
@@ -78,7 +87,8 @@ try: print((json.load(sys.stdin).get("data") or [{}])[0].get("owned_by") or "")
 except Exception: pass' 2>/dev/null || true)"
   KIND="$(engine_kind_from_owned_by "$owned")"
 fi
-[[ "$KIND" == vllm || "$KIND" == sglang ]] || die "engine kind '$KIND' for $CONTAINER — this probe covers vllm and sglang"
+[[ "$KIND" == vllm || "$KIND" == sglang || "$KIND" == qengine ]] \
+  || die "engine kind '$KIND' for $CONTAINER — this probe covers vllm, sglang and qengine"
 [[ -n "$MODEL" ]] || MODEL="$(club_served_model_id "$URL")"
 [[ -n "$MODEL" ]] || die "could not resolve the served model at $URL (is it up?) — pass --model"
 
@@ -110,6 +120,9 @@ hits = [(m.start(), m.group(1)) for p in pats for m in re.finditer(p, text)]
 last = max(hits)[1] if hits else ""
 print("0" if last == "OFF" else last)')"
   SPEC_SRC="boot log"
+  if [[ -z "$SPEC_DEPTH" && "$KIND" == qengine ]]; then
+    SPEC_DEPTH=7; SPEC_SRC="QEngine drafts at most 7 a step"
+  fi
   [[ -n "$SPEC_DEPTH" ]] || { SPEC_DEPTH=8; SPEC_SRC="not in the boot log; assumed"; }
 else
   SPEC_SRC="--spec-depth"
@@ -130,10 +143,11 @@ case "$MODE" in
     [[ "$DEFAULT_BUDGET" =~ ^[0-9]+$ ]] || die "--positive needs budgets on (readback: $DEFAULT_BUDGET)" ;;
 esac
 
-python3 - "$URL" "$MODEL" "$KIND" "$MODE" "$LOW" "$MEDIUM" "$XHIGH" "$DEFAULT_BUDGET" "${DEFAULT_EFFORT:-}" "$SPEC_DEPTH" <<'PY'
+python3 - "$URL" "$MODEL" "$KIND" "$MODE" "$LOW" "$MEDIUM" "$XHIGH" "$DEFAULT_BUDGET" "${DEFAULT_EFFORT:-}" "$SPEC_DEPTH" "$CONTAINER" <<'PY'
 import concurrent.futures as cf
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -141,7 +155,11 @@ import urllib.request
 URL, MODEL, KIND, MODE = sys.argv[1:5]
 LOW, MEDIUM, XHIGH, DEFAULT, DEFAULT_EFFORT = sys.argv[5:10]
 DEPTH = int(sys.argv[10])
-END_LEN = 1                      # plain </think>: one token on Qwen3.x (we keep it; vllm#58402/#54467)
+CONTAINER = sys.argv[11]
+QE = KIND == "qengine"
+# plain </think>: one token on Qwen3.x (we keep it; vllm#58402/#54467). QEngine closes with its wrap-up
+# sentence + </think> (think_budget.py WRAP, ~28 tokens; 26-31 over the budget measured on 1.3.4.3)
+END_LEN = int(os.environ.get("QE_END_LEN", "32")) if QE else 1
 SLACK = DEPTH + 1 + END_LEN + 4  # drafts past the crossing + bonus token + end sequence + re-tokenizing
 BELOW = 8
 TIMEOUT = 300
@@ -243,13 +261,48 @@ def safe(name, fn):
         report(name, False, f"request failed: {exc}")
 
 
+QE_STATS = ("import json, os, urllib.request; p = os.environ.get('QE_METRICS_PORT') or '9393'; "
+            "d = json.load(urllib.request.urlopen('http://127.0.0.1:' + p + '/api/stats', timeout=10)); "
+            "print(json.dumps((d.get('thinking') or {}).get('budget_from') or {}))")
+
+
+def qe_budget_from():
+    """QEngine's /api/stats thinking.budget_from counters, read inside the container: its metrics port
+    (QE_METRICS_PORT, 9393 there) is not published by default. None when it can't be read."""
+    try:
+        out = subprocess.run(["docker", "exec", CONTAINER, "python3", "-c", QE_STATS],
+                             capture_output=True, text=True, timeout=30)
+        return json.loads(out.stdout) if out.returncode == 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def qe_source(name, fn, want):
+    """QEngine's /v1/messages: run fn(), then check which source set the budget (budget_from's delta).
+    want(src) says whether a source is right. Unreadable counters are inconclusive, not a failure."""
+    before = qe_budget_from()
+    r = fn()
+    after = qe_budget_from()
+    ok_end = bool(r["content"].strip()) and r["finish"] == "stop"
+    if before is None or after is None:
+        print(f"  - {name}: inconclusive, /api/stats unreadable (QE_METRICS_PORT=0?); "
+              f"finish={r['finish']}, content: {bool(r['content'].strip())}")
+        return
+    grew = sorted(k for k in after if after.get(k, 0) > before.get(k, 0))
+    ok = len(grew) == 1 and want(grew[0]) and ok_end
+    report(name, ok, f"budget_from +1 {grew or 'nothing'} (QEngine's /v1/messages reports no reasoning "
+                     f"tokens), finish={r['finish']}, content: {bool(r['content'].strip())}")
+
+
 def messages(extra, max_tokens):
     body = {"model": MODEL, "max_tokens": max_tokens, "messages": [{"role": "user", "content": LONG}]}
     body.update(extra)
     r = post("/v1/messages", body)
     text = "".join(b.get("thinking") or "" for b in r.get("content") or [] if b.get("type") == "thinking")
     answer = "".join(b.get("text") or "" for b in r.get("content") or [] if b.get("type") == "text")
-    n, src = reasoning_len(text, None)
+    # QEngine's /v1/messages reports no reasoning tokens and it serves no /tokenize: its cases check the
+    # budget's source instead (qe_source), so the length is not counted here
+    n, src = (0, "not counted") if QE else reasoning_len(text, None)
     return {"n": n, "src": src, "finish": "stop" if r.get("stop_reason") == "end_turn" else r.get("stop_reason"),
             "content": answer, "text": text}
 
@@ -271,7 +324,8 @@ def responses(effort):
             "content": answer, "text": text}
 
 
-print(f"--- slack: +{SLACK} tokens (drafter depth {DEPTH} + bonus 1 + </think> {END_LEN} + tokenize 4), -{BELOW} below")
+END_NAME = "wrap-up + </think>" if QE else "</think>"
+print(f"--- slack: +{SLACK} tokens (drafter depth {DEPTH} + bonus 1 + {END_NAME} {END_LEN} + tokenize 4), -{BELOW} below")
 
 if MODE == "budgets":
     budgets = {"low": LOW, "medium": MEDIUM, "xhigh": XHIGH}
@@ -284,6 +338,8 @@ if MODE == "budgets":
     shapes = [("thinking_token_budget", {"thinking_token_budget": explicit})]
     if KIND == "sglang":
         shapes.insert(0, ("custom_params.thinking_budget", {"custom_params": {"thinking_budget": explicit}}))
+    if QE:  # QEngine's own name; thinking_token_budget is one of its aliases
+        shapes.insert(0, ("thinking_budget", {"thinking_budget": explicit}))
     for label, shape in shapes:
         safe(f"explicit {label}", lambda label=label, shape=shape: about(
             f"explicit {label}={explicit} wins over xhigh's {XHIGH}", chat({"reasoning_effort": "xhigh", **shape}), explicit))
@@ -316,8 +372,13 @@ if MODE == "budgets":
                 about("top_k off + top_p<1: the low budget", r, LOW)
     safe("top_k off + top_p<1 (vllm#58231)", topk_off)
 
-    safe("/v1/messages without budget_tokens", lambda: about(
-        "/v1/messages without budget_tokens -> the server default", messages({}, 6144), DEFAULT))
+    if QE:
+        safe("/v1/messages without budget_tokens", lambda: qe_source(
+            "/v1/messages without budget_tokens -> the server default", lambda: messages({}, 6144),
+            lambda src: src.startswith("effort:") or src == "default"))
+    else:
+        safe("/v1/messages without budget_tokens", lambda: about(
+            "/v1/messages without budget_tokens -> the server default", messages({}, 6144), DEFAULT))
 
     def msg_explicit():
         # 1024 is the floor of thinking.budget_tokens: vLLM validates ge=1024 and SGLang 400s below it.
@@ -326,11 +387,20 @@ if MODE == "budgets":
         ok = lo < r["n"] <= hi and r["finish"] == "stop" and r["content"].strip()
         report("/v1/messages budget_tokens=1024 wins over the map", bool(ok),
                f"reasoning {r['n']} tok ({r['src']}), want ({lo}..{hi}] (past xhigh's {XHIGH}, within 1024), finish={r['finish']}")
-    safe("/v1/messages budget_tokens", msg_explicit)
+    if QE:
+        safe("/v1/messages budget_tokens", lambda: qe_source(
+            "/v1/messages budget_tokens=1024 wins over the map",
+            lambda: messages({"thinking": {"type": "enabled", "budget_tokens": 1024}}, 8192),
+            lambda src: src == "request"))
+    else:
+        safe("/v1/messages budget_tokens", msg_explicit)
 
-    safe("Responses API -> the floor", lambda: about(
-        f"Responses API (reasoning.effort=xhigh) -> the floor ({DEFAULT_EFFORT or '?'}'s {DEFAULT}), not the map",
-        responses("xhigh"), DEFAULT))
+    if QE:
+        print("  - Responses API: n/a (QEngine serves no /v1/responses)")
+    else:
+        safe("Responses API -> the floor", lambda: about(
+            f"Responses API (reasoning.effort=xhigh) -> the floor ({DEFAULT_EFFORT or '?'}'s {DEFAULT}), not the map",
+            responses("xhigh"), DEFAULT))
 
     def concurrent():
         with cf.ThreadPoolExecutor(max_workers=2) as ex:
