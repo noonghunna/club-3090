@@ -497,7 +497,9 @@ HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 SGL2_PID=$!; STUB_PIDS+=("$SGL2_PID")
 for _ in $(seq 1 50); do curl -s -m 1 "http://127.0.0.1:$SGL2_PORT/get_server_info" >/dev/null 2>&1 && break; sleep 0.1; done
 got_kv="$(PATH="$KV_STUB:$PATH" CONTAINER= URL="http://127.0.0.1:$SGL2_PORT" python3 "$LIB" --detect-kv)"
-hdr="$(URL="http://127.0.0.1:$SGL2_PORT" N_LIST="1 2 4" CTX_SWEEP="1k" SWEEP_DRY=1 bash "$PROBE" --sweep 2>&1 | head -1)"
+# The probe autodetects its endpoint (like bench.sh), so a [autodetect] notice
+# can precede the sweep header on stderr: the header is the first line that isn't one.
+hdr="$(URL="http://127.0.0.1:$SGL2_PORT" N_LIST="1 2 4" CTX_SWEEP="1k" SWEEP_DRY=1 bash "$PROBE" --sweep 2>&1 | command grep -v '^\[autodetect\]' | head -1)"
 kill "$SGL2_PID" 2>/dev/null || true
 wait "$SGL2_PID" 2>/dev/null || true
 rm -rf "$KV_STUB"
@@ -583,8 +585,8 @@ SPORT="$(free_port)"; python3 -c "$ENGINE_STUB_PY" sglang "$SPORT" & SPID=$!; ST
 wait_up "$VPORT"; wait_up "$SPORT"
 got_v="$(URL="http://127.0.0.1:$VPORT" CONTAINER= python3 "$LIB" --served-max-len)"
 got_s="$(URL="http://127.0.0.1:$SPORT" CONTAINER= python3 "$LIB" --served-max-len)"
-hdr_v="$(URL="http://127.0.0.1:$VPORT" N_LIST="1 2" CTX_SWEEP="1k" SWEEP_DRY=1 bash "$PROBE" --sweep 2>&1 | head -1)"
-hdr_s="$(URL="http://127.0.0.1:$SPORT" N_LIST="1" CTX_SWEEP="1k" SWEEP_DRY=1 bash "$PROBE" --sweep 2>&1 | head -1)"
+hdr_v="$(URL="http://127.0.0.1:$VPORT" N_LIST="1 2" CTX_SWEEP="1k" SWEEP_DRY=1 bash "$PROBE" --sweep 2>&1 | command grep -v '^\[autodetect\]' | head -1)"
+hdr_s="$(URL="http://127.0.0.1:$SPORT" N_LIST="1" CTX_SWEEP="1k" SWEEP_DRY=1 bash "$PROBE" --sweep 2>&1 | command grep -v '^\[autodetect\]' | head -1)"
 kill "$VPID" "$SPID" 2>/dev/null || true
 wait "$VPID" "$SPID" 2>/dev/null || true
 [[ "$got_v" == "262144" ]] || fail "--served-max-len from vLLM's /v1/models max_model_len: got '$got_v', want 262144"

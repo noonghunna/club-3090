@@ -81,27 +81,6 @@ EOF
 
 MATRIX=0
 N_LIST_EXPLICIT=0
-# Default endpoint follows the registry's curated DEFAULTS walk for qwen3.6-27b
-# — the SAME source bench/verify derive their defaults from — instead of this
-# probe's lone :8010 literal. The trailing literal is only a last resort when
-# the registry can't be consulted.
-_DEFAULT_ENDPOINT_PORT=""
-if [[ -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
-  # shellcheck source=lib/registry-lookup.sh
-  source "${ROOT_DIR}/scripts/lib/registry-lookup.sh"
-  REGISTRY_LOOKUP_ROOT="${ROOT_DIR}"
-  _DEFAULT_ENDPOINT_PORT="$(registry_lookup_default_port qwen3.6-27b 2>/dev/null || true)"
-fi
-# CONTAINER= with no URL=: the URL is that container's own port (#1584), as preflight's autodetect
-# gives the other serving scripts. This used to fall back to the default port below, so a probe
-# told CONTAINER=<another slug> measured whatever answered on that port, or nothing.
-if [[ -z "${URL:-}" && -n "${CONTAINER:-}" && "${CONTAINER}" != none ]]; then
-  # shellcheck source=lib/club-containers.sh
-  source "${ROOT_DIR}/scripts/lib/club-containers.sh"
-  URL="$(club_url_for_container "$CONTAINER")"
-  if [[ -n "$URL" ]]; then echo "[concurrency-probe] URL=${URL} (the port ${CONTAINER} publishes; set URL= to choose)" >&2; fi
-fi
-URL="${URL:-http://localhost:${_DEFAULT_ENDPOINT_PORT:-8020}}"
 PROMPT_TOKENS="${PROMPT_TOKENS:-16000}"
 GEN_TOKENS="${GEN_TOKENS:-256}"
 # Sampler, names matching bench.sh. Default GREEDY -- unchanged probe behaviour and
@@ -157,6 +136,42 @@ while [[ $# -gt 0 ]]; do
       exit 2 ;;
   esac
 done
+
+# Same endpoint autodetect as bench.sh / rebench-full.sh: the running container
+# wins over the registry default, so a rig serving a non-default slug (any
+# engine, any port) is probed without hand-passing URL= (#1584's preflight seam).
+# Explicit URL=/CONTAINER= are honored by preflight itself; PREFLIGHT_NO_AUTODETECT=1 skips.
+# RESOLVED AFTER THE ARG LOOP, never before: --url sets URL here, and preflight
+# treats an env URL as explicit — autodetecting first would bind CONTAINER to a
+# locally running engine that doesn't serve the --url server (the #1590 class:
+# slots, VRAM scope, API key and logs read from the wrong container through the
+# flag). Same reason --help must not print an [autodetect] line first.
+if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
+  # shellcheck source=preflight.sh
+  source "${ROOT_DIR}/scripts/preflight.sh"
+  preflight_autodetect_endpoint || true
+fi
+# Default endpoint follows the registry's curated DEFAULTS walk for qwen3.6-27b
+# — the SAME source bench/verify derive their defaults from — instead of this
+# probe's lone :8010 literal. The trailing literal is only a last resort when
+# the registry can't be consulted.
+_DEFAULT_ENDPOINT_PORT=""
+if [[ -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
+  # shellcheck source=lib/registry-lookup.sh
+  source "${ROOT_DIR}/scripts/lib/registry-lookup.sh"
+  REGISTRY_LOOKUP_ROOT="${ROOT_DIR}"
+  _DEFAULT_ENDPOINT_PORT="$(registry_lookup_default_port qwen3.6-27b 2>/dev/null || true)"
+fi
+# CONTAINER= with no URL=: the URL is that container's own port (#1584), as preflight's autodetect
+# gives the other serving scripts. This used to fall back to the default port below, so a probe
+# told CONTAINER=<another slug> measured whatever answered on that port, or nothing.
+if [[ -z "${URL:-}" && -n "${CONTAINER:-}" && "${CONTAINER}" != none ]]; then
+  # shellcheck source=lib/club-containers.sh
+  source "${ROOT_DIR}/scripts/lib/club-containers.sh"
+  URL="$(club_url_for_container "$CONTAINER")"
+  if [[ -n "$URL" ]]; then echo "[concurrency-probe] URL=${URL} (the port ${CONTAINER} publishes; set URL= to choose)" >&2; fi
+fi
+URL="${URL:-http://localhost:${_DEFAULT_ENDPOINT_PORT:-8020}}"
 
 if [[ "$MATRIX" == "1" && "$VALIDATE" == "1" ]]; then
   echo "[concurrency-probe] --sweep and --validate / VALIDATE=1 cannot combine" \
