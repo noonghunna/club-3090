@@ -10,6 +10,8 @@
 # FP8 e4m3 (seen in #1870's report). The server's own name, /v1/models owned_by, now decides first.
 # Strata and Project Maya send no owned_by; their /props build_info ("Strata <version>") names them, so a
 # host-run Maya read as llama.cpp in verify-full and report.sh, and bench.sh gave it llama.cpp's f16 (#1915).
+# bench.sh names a host engine only from build_info (bench_endpoint_kind): its unknown paths were tuned for a
+# host-run llama.cpp and vLLM, so their owned_by is deliberately not read there.
 #
 # Drives the real functions against a stub server: detect_engine() extracted from both scripts with
 # CONTAINER=none, report.sh's report_endpoint_kind, and cap_kv_type from scripts/lib/capture.sh.
@@ -106,6 +108,17 @@ check "Maya, a URL ending in /v1 -> strata" strata "$(rk "http://127.0.0.1:$MAYA
 check "QEngine: owned_by -> qengine" qengine "$(rk "http://127.0.0.1:$QE")"
 check "llama.cpp: owned_by -> llamacpp" llamacpp "$(rk "http://127.0.0.1:$LC")"
 check "nothing names it -> unknown (no guess)" unknown "$(rk "http://127.0.0.1:$NONAME")"
+
+echo "== 4. bench.sh's bench_endpoint_kind (CONTAINER=none)"
+bk() {  # <url>
+  bash -c 'source "$1/scripts/lib/engine-kind.sh"
+    eval "$(sed -n "/^bench_endpoint_kind() {/,/^}/p" "$1/scripts/bench.sh")"
+    bench_endpoint_kind "$2"' _ "$ROOT" "$1" 2>/dev/null
+}
+check "Maya: /props build_info -> strata" strata "$(bk "http://127.0.0.1:$MAYA")"
+check "Maya, a URL ending in /v1 -> strata" strata "$(bk "http://127.0.0.1:$MAYA/v1")"
+check "llama.cpp (owned_by only) -> unknown, as before" unknown "$(bk "http://127.0.0.1:$LC")"
+check "a llama.cpp build string -> unknown, as before" unknown "$(bk "http://127.0.0.1:$LCBUILD")"
 
 if (( FAIL )); then echo "test-engine-detection-props: FAIL"; exit 1; fi
 echo "test-engine-detection-props: ok"

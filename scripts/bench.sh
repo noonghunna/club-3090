@@ -470,6 +470,20 @@ if [[ "$ENGINE_KIND" == "unknown" && "${CONTAINER:-}" != "none" ]] && command -v
   [[ "$ENGINE_KIND" == "unknown" ]] && ENGINE_KIND="$(engine_kind_from_image "${container_name}")"
   [[ "$ENGINE_KIND" == "unknown" ]] && ENGINE_KIND="$(engine_kind_from_container "${container_name#/}")"
 fi
+# bench_endpoint_kind <base URL> — strata when the endpoint's /props build_info says "Strata <version>"
+# (Strata and Project Maya: they send no /v1/models owned_by, #1915), else unknown. Only that one name:
+# a host-run llama.cpp or vLLM keeps the unknown this script's paths were tuned for (llama.cpp's
+# SERVER_LOG prefill read, for one, sits on the unknown path).
+bench_endpoint_kind() {
+  local ep="${1%/}"
+  ep="${ep%/v1}"
+  engine_kind_from_build_info "$(curl -sf -m 5 "$ep/props" 2>/dev/null \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('build_info','') or '')" 2>/dev/null)"
+}
+# A host engine (CONTAINER=none) has no container or image to name its family
+if [[ "$ENGINE_KIND" == "unknown" ]]; then
+  ENGINE_KIND="$(bench_endpoint_kind "$URL")"
+fi
 
 PP_MODE="log"
 # llama.cpp prints no aggregate prefill line; Strata logs to a file inside the container
@@ -695,10 +709,14 @@ if [[ "$CAPTURE" == "1" && -f "${ROOT_DIR}/scripts/lib/capture.sh" ]]; then
   CAP_OFFLOAD="$(cap_offload_detected "$CAP_ARGV" || true)"
   # Project Maya's GLM engine reports its RAM tier only in its own log file inside
   # the container (and in /metrics once a request has run): ask the Strata reader.
+  # A host run (CONTAINER=none) has no container to read it from: SERVER_LOG, when it is the engine's log
+  # (Maya writes its server's lines there too), carries the same lines (#1915).
   if [[ -z "$CAP_OFFLOAD" && "$ENGINE_KIND" == "strata" ]]; then
     _hr_c=()
     if [[ -n "${CONTAINER:-}" && "$CONTAINER" != none ]] && docker inspect --type container "$CONTAINER" >/dev/null 2>&1; then
       _hr_c=(--container "$CONTAINER")
+    elif [[ -n "${SERVER_LOG:-}" && -r "$SERVER_LOG" ]]; then
+      _hr_c=(--log-file "$SERVER_LOG")
     fi
     CAP_OFFLOAD="$(python3 "${ROOT_DIR}/scripts/lib/strata_metrics.py" host-ram "$URL" "${_hr_c[@]}" 2>/dev/null || true)"
   fi
@@ -2306,11 +2324,12 @@ bench_interconnect_block() {
   # Reporting them as "unknown" would incorrectly suggest that interconnect
   # setup failed (the same TabbyAPI-vs-llama.cpp classification trap as #1366).
   # Strata: no NCCL in its source either; its layer split copies activations between
-  # cards itself (cudaMemcpyPeer when peer access is on, else through host memory).
+  # cards itself (cudaMemcpyPeer when peer access is on, else through host memory). Project Maya
+  # (the same family) links no NCCL either, in its layer split or its own tensor parallel.
   if [[ "$ENGINE_KIND" == "strata" ]]; then
-    echo "  layer 2  NCCL use         : n/a — Strata's layer split does not use NCCL collectives"
-    echo "  layer 3  engine custom-AR : n/a — Strata's layer split; no custom all-reduce kernel"
-    echo "  verdict  : ℹ interconnect capability is reported above; Strata copies activations between cards itself and is not measured by the NCCL/custom-AR probes"
+    echo "  layer 2  NCCL use         : n/a — Strata and Project Maya use no NCCL collectives"
+    echo "  layer 3  engine custom-AR : n/a — no NCCL custom all-reduce; the engine moves data between cards itself"
+    echo "  verdict  : ℹ interconnect capability is reported above; Strata and Project Maya copy activations between cards themselves, which the NCCL/custom-AR probes don't measure"
     return 0
   fi
   if [[ "$ENGINE_KIND" == "exllamav3" ]]; then
