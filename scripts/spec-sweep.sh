@@ -39,7 +39,7 @@
 #               running llama.cpp server (fast path only)
 #   URL         endpoint (default: derived from the slug's default_port,
 #               else http://localhost:8020)
-#   MODEL       served model name (default: first id from /v1/models)
+#   MODEL       served model name (default: the served model, scripts/lib/served-model.sh)
 #   GENS        measured gens per arm (default 3)  ·  GEN_TOKENS (default 800)
 #   TEMP        sampling temp for measured gens (default 0.6)
 #   SWEEP_DRY   1 = print the plan, boot/measure nothing
@@ -134,7 +134,10 @@ fi
 # --- shared measurement -------------------------------------------------------
 _detect_model() {
   [[ -n "$MODEL" ]] && return 0
-  MODEL="$(curl -s -m 5 "$URL/v1/models" | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)"
+  # served-model.sh: TabbyAPI lists every model folder in /v1/models, so the first entry can be the wrong one (#1360)
+  # shellcheck source=lib/served-model.sh
+  source "${ROOT_DIR}/scripts/lib/served-model.sh"
+  MODEL="$(club_served_model_id "$URL")"
   [[ -n "$MODEL" ]] || { echo "no server at $URL (and MODEL unset)" >&2; exit 1; }
 }
 
