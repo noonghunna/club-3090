@@ -73,7 +73,9 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 # 1.3.4's parallel mode (tensor parallel / layer pipeline)
                 "FLASH_PAR", "FLASH_GRAPH_MB", "FLASH_PFGRAPH_WINDOW", "FLASH_ATTN_DMIN",
                 # Project Maya's serve/server.py reads it (model load/unload endpoints, on by default from v1.1.47)
-                "MAYA_MODEL_MANAGEMENT"}
+                "MAYA_MODEL_MANAGEMENT",
+                # Project Maya's DeepSeek engine (build/maya-ds4) reads it: its RAM headroom, from v1.1.51
+                "DS4_RAM_MARGIN_GB"}
 
 # DEBT REGISTER — each entry must name WHY the dead knob is deliberate.
 # Shrink it; never grow it silently. An entry here means a documented knob is
