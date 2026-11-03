@@ -9,7 +9,10 @@
 #
 #   1. club_url_for_container: the host port a container publishes on an engine port (docker stubbed);
 #   2. concurrency-probe.sh with CONTAINER= and no URL= announces and uses that port; URL= still wins;
-#   3. deep-context-probe.sh with no MODEL= asks the endpoint (a stub server) for it, and with no URL= finds the
+#   3. concurrency-probe.sh with NO URL=/CONTAINER= autodetects the running container and its port
+#      (fails on the pre-autodetect tree), and --url to another server binds NO local container
+#      (fails if autodetect runs before the argument loop — the #1590 class through the flag);
+#   4. deep-context-probe.sh with no MODEL= asks the endpoint (a stub server) for it, and with no URL= finds the
 #      running engine container's port, as the other serving scripts do.
 # ⚠️ Against the pre-fix tree this must FAIL.
 set -euo pipefail
@@ -61,7 +64,29 @@ out="$(PATH="$bin:$PATH" URL=http://127.0.0.1:1 CONTAINER=qengine-x MODEL=m time
 [[ "$out" != *"the port qengine-x publishes"* ]] || fail "an explicit URL= must win over CONTAINER="
 pass "concurrency-probe.sh: CONTAINER= with no URL= probes that container's port; URL= still wins"
 
-# --- 3. deep-context-probe.sh: MODEL from the endpoint ------------------------------------
+# --- 3. concurrency-probe.sh: endpoint autodetect, and --url outranks the running container ------
+# Both cases run against the stub container `deep-x` publishing an engine port. Autodetect must
+# run AFTER the argument loop: resolving it first made --url <other server> keep the locally
+# bound container (the #1590 class through the flag — slots, VRAM scope, API key, logs).
+free_port() { python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'; }
+# 3a. no URL=/CONTAINER= → the running container's port wins over the registry default.
+#     Fails on the pre-autodetect tree, which probes :8020 and dies on the #818 slot FATAL.
+APORT="$(free_port)"
+out="$(env -u URL -u CONTAINER PATH="$bin:$PATH" STUB_DEEP_PORT="$APORT" MODEL=m timeout 60 \
+  bash scripts/concurrency-probe.sh --sweep --dry --n 1 2>&1 || true)"
+[[ "$out" == *"[autodetect] using running container=deep-x url=http://localhost:$APORT"* ]] \
+  || { echo "$out" | head -20 >&2; fail "no URL=/CONTAINER=: the probe did not autodetect the running container and its port"; }
+pass "concurrency-probe.sh: no URL=/CONTAINER= autodetects the running container and its port"
+# 3b. --url to a server that container does NOT publish → host-only: no container bound.
+#     Fails if autodetect runs before the argument loop: URL= is not yet set, so preflight
+#     binds deep-x and the probe reads slots/VRAM/key from a container behind a different URL.
+out="$(env -u URL -u CONTAINER PATH="$bin:$PATH" STUB_DEEP_PORT="$APORT" MODEL=m timeout 60 \
+  bash scripts/concurrency-probe.sh --url "http://127.0.0.1:$(free_port)" --sweep --dry --n 1 2>&1 || true)"
+[[ "$out" == *"host-only mode"* && "$out" != *"using running container=deep-x"* ]] \
+  || { echo "$out" | head -20 >&2; fail "--url to another server must not bind the locally running container"; }
+pass "concurrency-probe.sh: --url to another server binds no local container (host-only)"
+
+# --- 4. deep-context-probe.sh: MODEL from the endpoint ------------------------------------
 python3 -c '
 import http.server, json, sys
 class H(http.server.BaseHTTPRequestHandler):
