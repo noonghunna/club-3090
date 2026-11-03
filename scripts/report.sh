@@ -1333,7 +1333,7 @@ else
       echo "**Interconnect verdict:** ℹ driver P2P capability is reported above; ExLlamaV3 layer-split transport does not use NCCL/custom all-reduce, so the shared engagement verdict is not applicable."
     elif [[ "$ENGINE_KIND" == "strata" ]]; then
       echo
-      echo "**Interconnect verdict:** ℹ driver P2P capability is reported above; Strata's layer split copies activations between cards itself (no NCCL/custom all-reduce), so the shared engagement verdict is not applicable."
+      echo "**Interconnect verdict:** ℹ driver P2P capability is reported above; Strata and Project Maya copy activations between cards themselves (no NCCL/custom all-reduce), so the shared engagement verdict is not applicable."
     elif [[ "$ENGINE_KIND" == "qengine" ]]; then
       echo
       echo "**Interconnect verdict:** ℹ driver P2P capability is reported above; QEngine runs its own collectives (no NCCL/custom all-reduce), so the shared engagement verdict is not applicable. Its own transport is the line above."
