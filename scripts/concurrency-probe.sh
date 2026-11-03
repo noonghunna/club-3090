@@ -149,7 +149,24 @@ done
 # locally running engine that doesn't serve the --url server (the #1590 class:
 # slots, VRAM scope, API key and logs read from the wrong container through the
 # flag). Same reason --help must not print an [autodetect] line first.
-if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
+# What the caller pinned (env, or --url above) is never re-resolved, here or after a SWEEP boot.
+URL_PINNED="${URL:+1}"
+CONTAINER_PINNED="${CONTAINER:+1}"
+if [[ -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
+  # shellcheck source=lib/registry-lookup.sh
+  source "${ROOT_DIR}/scripts/lib/registry-lookup.sh"
+  REGISTRY_LOOKUP_ROOT="${ROOT_DIR}"
+fi
+if [[ -n "$SWEEP" && -n "$SLUG" ]]; then
+  # SWEEP= + SLUG= reboots SLUG once per N, so the endpoint is SLUG's own port, not whatever runs now:
+  # switch.sh tears that down at the first boot. Autodetect used to bind it, or the default port
+  # stood, and every N then waited on, probed and measured an endpoint the sweep never booted. The
+  # container and its published port are re-read after each boot (below).
+  if [[ -z "${URL:-}" ]] && declare -F registry_lookup_port >/dev/null; then
+    _slug_port="$(registry_lookup_port "$SLUG" 2>/dev/null || true)"
+    [[ -n "$_slug_port" ]] && URL="http://localhost:${_slug_port}"
+  fi
+elif [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
   # shellcheck source=preflight.sh
   source "${ROOT_DIR}/scripts/preflight.sh"
   preflight_autodetect_endpoint || true
@@ -159,10 +176,7 @@ fi
 # probe's lone :8010 literal. The trailing literal is only a last resort when
 # the registry can't be consulted.
 _DEFAULT_ENDPOINT_PORT=""
-if [[ -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
-  # shellcheck source=lib/registry-lookup.sh
-  source "${ROOT_DIR}/scripts/lib/registry-lookup.sh"
-  REGISTRY_LOOKUP_ROOT="${ROOT_DIR}"
+if declare -F registry_lookup_default_port >/dev/null; then
   _DEFAULT_ENDPOINT_PORT="$(registry_lookup_default_port qwen3.6-27b 2>/dev/null || true)"
 fi
 # CONTAINER= with no URL=: the URL is that container's own port (#1584), as preflight's autodetect
@@ -690,7 +704,7 @@ fi
 # --- SWEEP: reboot per N, probe, find the throughput knee ----------------------
 if [[ -n "$SWEEP" ]]; then
   # SLUG presence already validated up top, before environment probing.
-  echo "[sweep] slug=$SLUG N in { $SWEEP } · floor=${TPS_FLOOR} tok/s/stream · reboots the server per N"
+  echo "[sweep] slug=$SLUG url=$URL N in { $SWEEP } · floor=${TPS_FLOOR} tok/s/stream · reboots the server per N"
   knee=""; knee_tps=""; knee_agg=""; sweep_rows=""
   # --force: SWEEP targets the user-named SLUG, which may be status-gated
   # (experimental/incubating) — switch.sh refuses it without --force, AFTER tearing
@@ -717,6 +731,18 @@ if [[ -n "$SWEEP" ]]; then
     echo "[sweep] boot $SLUG @ MAX_NUM_SEQS=$N ..."
     if ! MAX_NUM_SEQS="$N" bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1; then
       echo "[sweep] N=$N: boot FAILED — skipping"; continue
+    fi
+    # The container this boot started and the port it publishes: a saved per-slug port can differ
+    # from the registry's, and CONTAINER was resolved before anything booted (slots, VRAM scope and
+    # logs read it). A pinned URL= / --url / CONTAINER= stays.
+    _slug_c="$(registry_lookup_container "$SLUG" 2>/dev/null || true)"
+    if [[ -n "$_slug_c" ]]; then
+      _slug_u="$(club_url_for_container "$_slug_c")"
+      if [[ -z "$URL_PINNED" && -n "$_slug_u" && "$_slug_u" != "$URL" ]]; then
+        echo "[sweep] url=$_slug_u (the port $_slug_c publishes; was $URL)"
+        URL="$_slug_u"
+      fi
+      [[ -n "$CONTAINER_PINNED" ]] || CONTAINER="$_slug_c"
     fi
     ready=0
     for _ in $(seq 1 $(( BOOT_TIMEOUT / 2 )) ); do
