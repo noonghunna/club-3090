@@ -194,9 +194,11 @@ Shipped default. Halves per-slot state bytes, which **buys slots** (measured 26 
 A,B,A,B repeat-boot found ~+8% code decode; prefill ~−1%.
 
 ### Prefix-cache policy (opt-in, off by default)
-`SESSION_RADIX_CACHE=1` sets `SGLANG_ENABLE_UNIFIED_RADIX_TREE=1` **and**
-`--enable-session-radix-cache` together (upstream requires both; one alone is inert). It is also
-inert unless clients send a `session_id` — no OpenAI-compatible client does by default.
+`SESSION_RADIX_CACHE=1` passes `--enable-session-radix-cache`. Until v0.5.20 it also needed
+`SGLANG_ENABLE_UNIFIED_RADIX_TREE=1`; upstream dropped that variable in v0.5.21 (sgl-project/sglang#40780), so
+the composes no longer set it. From v0.5.23 the flag needs the unified radix cache: a model that selects another
+tree cache stops at startup with "--enable-session-radix-cache requires UnifiedRadixCache". It is inert unless
+clients send a `session_id` — no OpenAI-compatible client does by default.
 `RADIX_EVICTION_POLICY` accepts `lru` (default) / `lfu` / `slru` / `priority`.
 ⛔ `--radix-eviction-policy-config` is documented upstream but **does not exist in v0.5.19** —  ⚠️ RE-CHECK: verified on v0.5.19; pin moved to v0.5.20 2026-09-19 and this was NOT re-tested.
 passing it hard-fails the boot.
