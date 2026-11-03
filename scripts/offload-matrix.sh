@@ -50,6 +50,9 @@ set -uo pipefail
 # Python decodes reads/stdout/argv with the LOCALE codec; UTF-8 mode (PEP 540) overrides
 # that in one move. Defaulted, not forced, so a user setting PYTHONUTF8=0 keeps control.
 export PYTHONUTF8="${PYTHONUTF8:-1}"
+# Dot decimals whatever the user's locale: under es_ES / de_DE mawk read "1.65" as 1 and bash printf rejected "9.0" (#1926, #159).
+# LC_ALL would override LC_NUMERIC, so its value moves to the other categories first. Guarded by test-numeric-locale.sh.
+[[ -z "${LC_ALL:-}" ]] || { for _lc in LANG LC_CTYPE LC_COLLATE LC_MESSAGES LC_TIME LC_MONETARY; do export "$_lc=$LC_ALL"; done; unset LC_ALL _lc; }; export LC_NUMERIC=C
 
 die() { echo "ERROR: $*" >&2; exit 2; }
 

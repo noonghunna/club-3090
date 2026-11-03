@@ -32,6 +32,9 @@
 # So: capture the count, keep grep's no-match exit off `set -e`/pipefail, and
 # print one integer whatever happened. `command grep` because the interactive
 # shell shims grep to ugrep.
+# Dot decimals whatever the user's locale: under es_ES / de_DE mawk read "1.65" as 1 and bash printf rejected "9.0" (#1926, #159).
+# LC_ALL would override LC_NUMERIC, so its value moves to the other categories first. Guarded by test-numeric-locale.sh.
+[[ -z "${LC_ALL:-}" ]] || { for _lc in LANG LC_CTYPE LC_COLLATE LC_MESSAGES LC_TIME LC_MONETARY; do export "$_lc=$LC_ALL"; done; unset LC_ALL _lc; }; export LC_NUMERIC=C
 p2p_gpu_count() {
   local n
   n="$(nvidia-smi -L 2>/dev/null | command grep -c '^GPU ')" || true

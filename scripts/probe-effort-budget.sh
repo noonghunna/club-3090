@@ -43,6 +43,9 @@
 # check passed; 1 = a check failed (one ✗ line each); 2 = could not run (no server, no readback, …).
 set -uo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"
+# Dot decimals whatever the user's locale: under es_ES / de_DE mawk read "1.65" as 1 and bash printf rejected "9.0" (#1926, #159).
+# LC_ALL would override LC_NUMERIC, so its value moves to the other categories first. Guarded by test-numeric-locale.sh.
+[[ -z "${LC_ALL:-}" ]] || { for _lc in LANG LC_CTYPE LC_COLLATE LC_MESSAGES LC_TIME LC_MONETARY; do export "$_lc=$LC_ALL"; done; unset LC_ALL _lc; }; export LC_NUMERIC=C
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/engine-kind.sh
 source "$ROOT_DIR/scripts/lib/engine-kind.sh"

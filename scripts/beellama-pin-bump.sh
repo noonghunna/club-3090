@@ -12,6 +12,9 @@
 #   scripts/beellama-pin-bump.sh                 # track server-cuda-v0.3.0-*, bump + show diff
 #   scripts/beellama-pin-bump.sh --check         # dry-run: show latest vs current, no edit
 #   scripts/beellama-pin-bump.sh --channel server-cuda   # track a different tag prefix (e.g. a stable channel)
+# Dot decimals whatever the user's locale: under es_ES / de_DE mawk read "1.65" as 1 and bash printf rejected "9.0" (#1926, #159).
+# LC_ALL would override LC_NUMERIC, so its value moves to the other categories first. Guarded by test-numeric-locale.sh.
+[[ -z "${LC_ALL:-}" ]] || { for _lc in LANG LC_CTYPE LC_COLLATE LC_MESSAGES LC_TIME LC_MONETARY; do export "$_lc=$LC_ALL"; done; unset LC_ALL _lc; }; export LC_NUMERIC=C
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE="$HERE/lib/profiles/engines/beellama-local.yml"

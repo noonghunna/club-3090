@@ -25,6 +25,9 @@
 # set in the shell wins even when empty (the rule switch.sh's own loader already used).
 
 export PYTHONUTF8="${PYTHONUTF8:-1}"   # club_config_set/unset run python3 (#779)
+# Dot decimals whatever the user's locale: under es_ES / de_DE mawk read "1.65" as 1 and bash printf rejected "9.0" (#1926, #159).
+# LC_ALL would override LC_NUMERIC, so its value moves to the other categories first. Guarded by test-numeric-locale.sh.
+[[ -z "${LC_ALL:-}" ]] || { for _lc in LANG LC_CTYPE LC_COLLATE LC_MESSAGES LC_TIME LC_MONETARY; do export "$_lc=$LC_ALL"; done; unset LC_ALL _lc; }; export LC_NUMERIC=C
 
 club_config_dir() {
   if [[ -n "${CLUB3090_CONFIG_DIR:-}" ]]; then

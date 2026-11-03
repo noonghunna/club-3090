@@ -26,6 +26,9 @@
 #   CLUB3090_SHM_IMAGE         helper image (default: the first LOCAL one of alpine:3.20, alpine:3,
 #                              alpine:latest, busybox:latest; pulls alpine:3 only when none is present)
 
+# Dot decimals whatever the user's locale: under es_ES / de_DE mawk read "1.65" as 1 and bash printf rejected "9.0" (#1926, #159).
+# LC_ALL would override LC_NUMERIC, so its value moves to the other categories first. Guarded by test-numeric-locale.sh.
+[[ -z "${LC_ALL:-}" ]] || { for _lc in LANG LC_CTYPE LC_COLLATE LC_MESSAGES LC_TIME LC_MONETARY; do export "$_lc=$LC_ALL"; done; unset LC_ALL _lc; }; export LC_NUMERIC=C
 club_shm_cleanup() {
   [[ "${CLUB3090_SHM_CLEANUP:-1}" == "0" ]] && return 0
   local dir="${CLUB3090_SHM_DIR:-/dev/shm}" age="${CLUB3090_SHM_MIN_AGE_MIN:-5}"
