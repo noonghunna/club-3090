@@ -17,7 +17,9 @@
 #      running engine container's port, as the other serving scripts do;
 #   5. compaction-probe.sh and spec-sweep.sh (no SLUG) with no URL= find that port too (they probed :8020
 #      whatever was up); PREFLIGHT_NO_AUTODETECT=1 keeps the old default, and spec-sweep refuses a vLLM
-#      server found that way (it needs SLUG) instead of sweeping it as llama.cpp.
+#      server found that way (it needs SLUG) instead of sweeping it as llama.cpp;
+#   6. concurrency-probe.sh SWEEP= + SLUG= (it reboots SLUG per N) probes SLUG's own port, not the
+#      running container autodetect would bind (switch.sh tears that one down); URL= still wins.
 # ⚠️ Against the pre-fix tree this must FAIL.
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -140,5 +142,19 @@ set -e
 out="$(env -u URL -u CONTAINER -u SLUG PATH="$bin:$PATH" STUB_DEEP_PORT="$port" PREFLIGHT_NO_AUTODETECT=1 SWEEP_N="0 2" SWEEP_DRY=1 bash scripts/spec-sweep.sh 2>&1 || true)"
 [[ "$out" == *"url=http://localhost:8020 "* ]] || fail "spec-sweep.sh: PREFLIGHT_NO_AUTODETECT=1 must keep :8020"
 pass "spec-sweep.sh (no SLUG): URL unset finds the running server and its family; PREFLIGHT_NO_AUTODETECT=1 keeps :8020"
+
+# --- 6. concurrency-probe.sh SWEEP= + SLUG=: the slug's own port, not the running container -----
+# SWEEP reboots SLUG once per N, so whatever runs now is torn down at the first boot. Autodetect bound
+# it (or :8020 stood), and every N waited on and probed an endpoint the sweep never booted.
+# qengine/qwen38-27b-dual is on :8197 in the registry; the stub runs `deep-x` on another port.
+out="$(env -u URL -u CONTAINER PATH="$bin:$PATH" STUB_DEEP_PORT="$APORT" MODEL=m SWEEP="1 2" \
+  SLUG=qengine/qwen38-27b-dual SWEEP_DRY=1 timeout 60 bash scripts/concurrency-probe.sh 2>&1 || true)"
+[[ "$out" == *"[sweep] slug=qengine/qwen38-27b-dual url=http://localhost:8197 "* ]] \
+  || { echo "$out" | head -20 >&2; fail "SWEEP=+SLUG= must probe the slug's own port (:8197)"; }
+[[ "$out" != *"using running container=deep-x"* ]] || fail "SWEEP=+SLUG= must not bind the running container it will tear down"
+out="$(env -u CONTAINER PATH="$bin:$PATH" STUB_DEEP_PORT="$APORT" MODEL=m SWEEP="1" URL=http://127.0.0.1:9 \
+  SLUG=qengine/qwen38-27b-dual SWEEP_DRY=1 timeout 60 bash scripts/concurrency-probe.sh 2>&1 || true)"
+[[ "$out" == *"url=http://127.0.0.1:9 "* ]] || { echo "$out" | head -10 >&2; fail "SWEEP=+SLUG= with URL= must keep the pinned URL"; }
+pass "concurrency-probe.sh SWEEP=+SLUG=: the slug's registry port, not the running container; URL= still wins"
 
 echo "test-probes-autodetect: ok"

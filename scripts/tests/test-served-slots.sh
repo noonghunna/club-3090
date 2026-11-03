@@ -209,4 +209,24 @@ for s in scripts/rebench-full.sh scripts/concurrency-probe.sh; do
 done
 echo "  ✓ rebench-full.sh + concurrency-probe.sh use the one detector (no private copies)"
 
+# slot_setting_for_compose: the setting a compose reads for its slot count (#1931: concurrency-probe's
+# SWEEP set MAX_NUM_SEQS for every engine, which SGLang, llama.cpp and QEngine never read).
+CD="$(mktemp -d)"
+printf '%s\n' '    command: ["-np", "${NPARALLEL:-1}"]' > "$CD/nparallel.yml"
+printf '%s\n' '      - "--parallel"' '      - "${NP:-1}"' > "$CD/np.yml"
+printf '%s\n' '# MAX_NUM_SEQS reaches neither engine; set QE_MAX_SEQS' '    environment:' '      - QE_MAX_SEQS' > "$CD/qe.yml"
+printf '%s\n' '#   MAX_NUM_SEQS / MAX_RUNNING_REQUESTS are not read here' '    environment:' '      - STRATA_API_KEY' > "$CD/none.yml"
+printf '%s\n' '      - MAX_RUNNING_REQUESTS=${MAX_RUNNING_REQUESTS:-2}' > "$CD/sgl.yml"
+printf '%s\n' '      - MAX_NUM_SEQS' '        _args+=(--max-seqs "${MAX_SEQS:-8}")' > "$CD/hq.yml"
+st() { bash -c 'source scripts/lib/served-slots.sh; slot_setting_for_compose "$1"' _ "$1"; }
+[[ "$(st "$CD/nparallel.yml")" == NPARALLEL ]] || fail "\${NPARALLEL:-1} must read as NPARALLEL, got '$(st "$CD/nparallel.yml")'"
+[[ "$(st "$CD/np.yml")" == NP ]] || fail "\${NP:-1} must read as NP, got '$(st "$CD/np.yml")'"
+[[ "$(st "$CD/qe.yml")" == QE_MAX_SEQS ]] || fail "a comment naming MAX_NUM_SEQS must not count over a QE_MAX_SEQS passthrough, got '$(st "$CD/qe.yml")'"
+[[ -z "$(st "$CD/none.yml")" ]] || fail "settings named only in comments must not count, got '$(st "$CD/none.yml")'"
+[[ "$(st "$CD/sgl.yml")" == MAX_RUNNING_REQUESTS ]] || fail "MAX_RUNNING_REQUESTS, got '$(st "$CD/sgl.yml")'"
+[[ "$(st "$CD/hq.yml")" == MAX_NUM_SEQS ]] || fail "HyperQwen reads MAX_NUM_SEQS (mapped to its MAX_SEQS), got '$(st "$CD/hq.yml")'"
+[[ -z "$(st "$CD/missing.yml")" ]] || fail "a missing compose must give nothing"
+rm -rf "$CD"
+echo "  ✓ slot_setting_for_compose: NPARALLEL vs NP, passthroughs, comments ignored, HyperQwen's MAX_NUM_SEQS"
+
 echo "PASS test-served-slots"

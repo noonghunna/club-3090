@@ -92,6 +92,19 @@ if [[ -s "$COMPOSE_UP_LOG" ]]; then
 fi
 echo "  ✓ SWEEP_DRY plans 3 reboots without booting (asserted at the docker layer)"
 
+# 3b. SWEEP sets the slot setting the slug's compose reads (#1931: it set MAX_NUM_SEQS everywhere, and
+#     QEngine booted 32 slots at N=1 and N=2), and refuses a slug whose compose reads none.
+out="$(SWEEP="2" SLUG=qengine/qwen38-27b-dual SWEEP_DRY=1 MODEL=m URL=http://127.0.0.1:9 bash "$PROBE" 2>&1)"
+command grep -q 'would: QE_MAX_SEQS=2 switch.sh' <<<"$out" || fail "SWEEP on the QEngine 27B must set QE_MAX_SEQS: $(command grep 'would:' <<<"$out")"
+out="$(SWEEP="2" SLUG=sgl/qwen38-27b-dual-fast SWEEP_DRY=1 MODEL=m URL=http://127.0.0.1:9 bash "$PROBE" 2>&1)"
+command grep -q 'would: MAX_RUNNING_REQUESTS=2 switch.sh' <<<"$out" || fail "SWEEP on an SGLang slug must set MAX_RUNNING_REQUESTS"
+set +e
+out="$(SWEEP="1 2" SLUG=strata-maya/deepseek41-flash-dual-ista-iq2-xxs SWEEP_DRY=1 MODEL=m URL=http://127.0.0.1:9 bash "$PROBE" 2>&1)"; rc=$?
+set -e
+[[ "$rc" == 2 ]] && command grep -q "reads none of the slot settings" <<<"$out" \
+  || fail "SWEEP on a slug whose compose reads no slot setting must refuse (rc=$rc)"
+echo "  ✓ SWEEP sets each slug's own slot setting (QE_MAX_SEQS, MAX_RUNNING_REQUESTS), refuses one with none"
+
 # 4. --sweep --dry does NOT need SLUG and must not plan switch.sh reboots.
 out="$(bash "$PROBE" --sweep --dry --n 1,2,4,8 --ctx 1k,4k,16k 2>&1)"
 [[ $? == 0 ]] || fail "--sweep --dry should exit 0 without SLUG"
