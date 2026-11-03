@@ -127,6 +127,25 @@ assert_contains "$(cat "$tmp/err")" "neutral defaults apply"
 
 # ---------------------------------------------------------------- 4-5. SGLang
 echo "--- 4. SGLang: model generation_config + chat fallbacks; preferred params NOT in effect ---"
+# QEngine and Project Maya state their request-absent sampler in a start-up line of their own
+printf '%s\n' "QEngine 1.3.4.3 (build 5083e04)" \
+  "sampling defaults (when the request has none): temperature 0.70, top_p 0.80, top_k 40, min_p 0.05" \
+  "sampling defaults (when the request has none): temperature 1.00, top_p 0.95, top_k 20, min_p 0.00" > "$tmp/qe.log"
+got="$(rc --engine qengine --boot-log "$tmp/qe.log" 2>/dev/null | jq_py 'd["server_defaults"]')"
+assert_contains "$got" '"temperature": 1.0'          # the LAST boot's line (a restarted container)
+assert_contains "$got" '"top_p": 0.95'
+assert_contains "$got" '"top_k": 20'
+assert_contains "$got" '"source": "QEngine start-up line'
+echo "10:45:23 [maya] sampling defaults from the config: temperature=1.0, top_p=1.0" > "$tmp/maya.log"
+got="$(rc --engine strata --boot-log "$tmp/maya.log" 2>/dev/null | jq_py 'd["server_defaults"]')"
+assert_contains "$got" '"temperature": 1.0'
+assert_contains "$got" '"top_p": 1.0'
+assert_contains "$got" 'Strata / Project Maya start-up line'
+echo "[strata] loading" > "$tmp/strata-none.log"
+out="$(rc --engine strata --boot-log "$tmp/strata-none.log" 2>"$tmp/err")"
+assert_contains "$(jq_py 'd["server_defaults"]' <<<"$out")" "null"
+assert_contains "$(cat "$tmp/err") $(jq_py 'd["notes"]' <<<"$out")" "no sampling-defaults line in the boot log"
+
 out="$(rc --engine sglang --boot-log "$tmp/sglang.log" 2>"$tmp/err")"
 got="$(jq_py 'd["server_defaults"]' <<<"$out")"
 assert_contains "$got" '"temperature": 1.0'      # preferred said 0.7 — inert on chat

@@ -13,6 +13,8 @@
 #       1. container --max-num-seqs          (vLLM)
 #       2. container -np                     (llama.cpp)
 #       3. container --max-running-requests  (SGLang)
+#       3b. container log "non-default args: {... 'max_num_seqs': N ...}"  (a vLLM-family engine that
+#          starts vLLM from its own launcher: HyperQwen's MAX_SEQS, bucko's entrypoint)
 #       4. container log "N sequence slots"  (QEngine: an env setting, QE_MAX_SEQS on the 27B and
 #          FLASH_MAX_SEQS on Flash-Next, and none over HTTP; only its boot log says what it set, #1846)
 #       5. GET /get_server_info max_running_requests  (SGLang, set via env)
@@ -38,6 +40,25 @@ _slots_container_cmd() {
 # _slots_flag PATTERN CMD — the integer after a flag (space- or =-separated).
 _slots_flag() {
   command grep -oE -- "$1[ =]+[0-9]+" <<<"$2" | command grep -oE '[0-9]+$' | head -1 || true
+}
+
+# _slots_vllm_log CONTAINER — the max_num_seqs a vLLM-family container's own start-up dump states, or nothing.
+# A vLLM derivative that starts vLLM from its own launcher (HyperQwen from MAX_SEQS, bucko from a bash -c
+# entrypoint) leaves --max-num-seqs out of the container's Cmd, and vLLM reports no slot count over HTTP, so
+# the probe refused them. vLLM logs every non-default engine argument at start-up: "non-default args: {...
+# 'max_num_seqs': 8, ...}". Read only for a container the engine resolver calls vllm; the last such line wins
+# (a restarted container keeps its earlier boots' lines). A vLLM left at its default prints none: nothing.
+_slots_vllm_log() {
+  local c="${1:-}" kind
+  [[ -n "$c" && "$c" != "none" ]] || return 0
+  command -v docker >/dev/null 2>&1 || return 0
+  # shellcheck source=engine-kind.sh
+  declare -F engine_kind_from_container >/dev/null || source "$(dirname "${BASH_SOURCE[0]}")/engine-kind.sh"
+  kind="$(engine_kind_from_container "$c")"
+  [[ "$kind" == unknown ]] && kind="$(engine_kind_from_image "$(docker inspect "$c" --format '{{.Config.Image}}' 2>/dev/null || true)")"
+  [[ "$kind" == vllm ]] || return 0
+  docker logs "$c" 2>&1 | command grep -oE "non-default args: .*'max_num_seqs': [0-9]+" | tail -1 \
+    | command grep -oE '[0-9]+$' || true
 }
 
 # _slots_qengine_log CONTAINER — the slot count a QEngine container's boot log states, or nothing.
@@ -75,7 +96,9 @@ served_slots() {
     n="$(_slots_flag 'max-running-requests' "$cmd")"
     [[ -n "$n" ]] && { printf '%s\t%s\n' "$n" "container max-running-requests"; return 0; }
   fi
-  # Outside the block above: QEngine's compose sets an entrypoint and no command, so its Cmd is empty
+  # Outside the block above: these engines' composes set an entrypoint and no command, so their Cmd is empty
+  n="$(_slots_vllm_log "$container")"
+  [[ -n "$n" ]] && { printf '%s\t%s\n' "$n" "container log (vLLM non-default args)"; return 0; }
   n="$(_slots_qengine_log "$container")"
   [[ -n "$n" ]] && { printf '%s\t%s\n' "$n" "container log (QEngine)"; return 0; }
   [[ -n "$url" ]] || return 0

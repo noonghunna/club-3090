@@ -172,6 +172,26 @@ def sglang_context(text: str) -> tuple[dict | None, str | None, dict, list[str]]
     return defaults, source, meta, notes
 
 
+# QEngine: "sampling defaults (when the request has none): temperature 1.00, top_p 0.95, top_k 20, min_p 0.00"
+# Project Maya (a Strata fork): "[maya] sampling defaults from the config: temperature=1.0, top_p=1.0"
+_QE_SAMPLING = re.compile(r"sampling defaults \(when the request has none\): ([^\n]+)")
+_STRATA_SAMPLING = re.compile(r"\[(?:maya|strata)\] sampling defaults from the config: ([^\n]+)")
+
+
+def boot_line_sampling(engine: str, text: str) -> tuple[dict | None, str | None]:
+    """The sampler QEngine or Strata / Project Maya says it applies to requests that send none, from its
+    own start-up line; the last such line wins (a restarted container keeps its earlier boots')."""
+    pat, name = (_QE_SAMPLING, "QEngine") if engine == "qengine" else (_STRATA_SAMPLING, "Strata / Project Maya")
+    hits = pat.findall(text)
+    if not hits:
+        return None, None
+    pairs = re.findall(r"([a-z_]+)[ =](-?[0-9]+(?:\.[0-9]+)?)", hits[-1])
+    vals = {k: (float(v) if "." in v else int(v)) for k, v in pairs if k in SERVER_SETTABLE}
+    if not vals:
+        return None, None
+    return vals, f"{name} start-up line (sampling defaults for requests that send none)"
+
+
 def visible_gpu_selectors(inspect: dict) -> list[str] | None:
     """Host GPU indices/UUIDs the container's CUDA sees, in CUDA order; None = all."""
     base: list[str] | None = None
@@ -237,12 +257,15 @@ def build(engine: str, text: str, inspect: dict, smi_csv: str, nvlink_txt: str) 
         defaults, source, meta, notes = vllm_context(text)
     elif engine == "sglang":
         defaults, source, meta, notes = sglang_context(text)
+    elif engine in ("qengine", "strata"):
+        defaults, source = boot_line_sampling(engine, text)
+        meta = {}
+        if not defaults:
+            notes.append(f"{engine}: no sampling-defaults line in the boot log — the server's defaults are not recorded")
     else:
         defaults, source, meta = None, None, {}
         if engine in ("llamacpp", "exllamav3"):
             notes.append(f"{engine}: sampling is read from the endpoint itself; no engine dump parsed")
-        elif engine == "strata":
-            notes.append("strata: no engine dump parsed, and its endpoint does not expose sampling defaults")
     if engine in ("vllm", "sglang") and not meta.get("tp"):
         notes.append(f"{engine}: startup dump not found in the boot log — engine facts not recorded")
     run_meta: dict = {}

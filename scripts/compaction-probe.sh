@@ -55,10 +55,10 @@ club_engine_auth_enable_for_url "$URL"
 FILL_FRAC="${FILL_FRAC:-0.90}"
 REPS="${REPS:-5}"
 
-MODEL="${MODEL:-$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
-  | python3 -c 'import json,sys
-try: print(json.load(sys.stdin)["data"][0]["id"])
-except Exception: print("")' 2>/dev/null)}"
+# served-model.sh: TabbyAPI lists every model folder in /v1/models, so the first entry can be the wrong one (#1360)
+# shellcheck source=lib/served-model.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/served-model.sh"
+MODEL="${MODEL:-$(club_served_model_id "$URL")}"
 if [[ -z "$MODEL" ]]; then
   echo "[compaction] no model at ${URL} — is the engine up? (set MODEL= to override)" >&2
   exit 2

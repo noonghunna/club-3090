@@ -125,6 +125,16 @@ printf '%s\n' "[qflash] 16 sequence slots over a pool of 256 periods" "[qflash 4
 echo "vllm serve /model --port 8000" > "$STUB_CMDS_DIR/c-notqe"
 echo "vllm/vllm-openai:v0.32.0" > "$STUB_CMDS_DIR/c-notqe.image"
 echo "a user prompt that says 9 sequence slots" > "$STUB_CMDS_DIR/c-notqe.log"
+# A vLLM derivative that starts vLLM from its own entrypoint: no Cmd, vLLM's non-default-args line in the log.
+# The line is HyperQwen's own on the reference rig (2026-11-03), trimmed.
+HQ_IMG="ghcr.io/syv-ai/hyperqwen@sha256:57d8c784b6c5b9b8f3e0c2d1a4f6e8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d8e0f2"
+for c in c-hq c-hq-restart c-vllm-default; do : > "$STUB_CMDS_DIR/$c"; echo "$HQ_IMG" > "$STUB_CMDS_DIR/$c.image"; done
+echo "(APIServer pid=1) INFO 11-03 17:08:01 [api_utils.py:286] non-default args: {'model_tag': '/app/models/x', 'max_num_batched_tokens': 2048, 'max_num_seqs': 8, 'async_scheduling': True}" > "$STUB_CMDS_DIR/c-hq.log"
+printf '%s\n' "non-default args: {'max_num_seqs': 16}" "non-default args: {'max_num_seqs': 4, 'port': 8000}" > "$STUB_CMDS_DIR/c-hq-restart.log"
+echo "non-default args: {'model_tag': '/app/models/x', 'port': 8000}" > "$STUB_CMDS_DIR/c-vllm-default.log"
+# Not vLLM: the same words in another engine's log must not be read as its slot count
+: > "$STUB_CMDS_DIR/c-sgl-words"; echo "lmsysorg/sglang:v0.5.23" > "$STUB_CMDS_DIR/c-sgl-words.image"
+echo "a prompt quoting non-default args: {'max_num_seqs': 9}" > "$STUB_CMDS_DIR/c-sgl-words.log"
 export PATH="$SHIMDIR:$PATH"
 
 # shellcheck source=../lib/served-slots.sh
@@ -138,6 +148,10 @@ T=$'\t'
 expect "SGLang over --url → /get_server_info (the source rebench used to lack)" "4${T}server max_running_requests" "$SGL"
 expect "llama.cpp over --url → /props total_slots"                             "3${T}server /props total_slots"   "$LCPP"
 expect "vLLM over --url → nothing (it reports no slot count over HTTP)"         ""                                 "$VLLM"
+expect "vLLM derivative, no Cmd → its log's non-default args (HyperQwen)"     "8${T}container log (vLLM non-default args)" "$VLLM" c-hq
+expect "vLLM derivative restarted → the last boot's max_num_seqs"            "4${T}container log (vLLM non-default args)" "$VLLM" c-hq-restart
+expect "vLLM at its default → nothing (vLLM prints only non-default args)"   ""                                 "$VLLM" c-vllm-default
+expect "not vLLM → its log's words are not read as a vLLM slot count"        ""                                 "$VLLM" c-sgl-words
 expect "non-integers don't count (bool true, 0)"                                ""                                 "$BAD"
 expect "container --max-num-seqs wins over the endpoint"                        "8${T}container max-num-seqs"      "$SGL" c-vllm
 expect "container --max-num-seqs=N (= form)"                                    "6${T}container max-num-seqs"      "$VLLM" c-vllm-eq
