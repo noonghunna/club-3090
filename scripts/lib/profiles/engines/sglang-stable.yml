@@ -1,6 +1,6 @@
 schema_version: 1
 id: sglang-stable
-display_name: SGLang stable v0.5.22
+display_name: SGLang stable v0.5.23
 type: sglang
 # #1365: the compose env var this engine's image is injected as.
 image_env: SGLANG_IMAGE
@@ -9,9 +9,9 @@ stability: stable
 lineage:
   relation: "stock"
   base: "sglang"
-  base_version: "0.5.22"
+  base_version: "0.5.23"
   source: "https://github.com/sgl-project/sglang"
-  source_ref: "baa9befa381511cd4d56f83980951e5a45fffc6d"
+  source_ref: "297e54fd105e974cdf401e5b4d20253a22c16f90"
   chain: []
   delta: null
 # ⚠️ IMAGE PINNING: `install.spec` below IS the effective image as of #1365.
@@ -60,7 +60,11 @@ install:
   # BUMPED v0.5.21 -> v0.5.22 on 2026-10-19 (boot tests only, no bench): both
   # install-script patches apply unchanged (W4A8 + effort budget; selftest 54/54);
   # dual-fast + dual-superfast boot, verify-full 9/9 each. docs/UPSTREAM.md pin row.
-  spec: lmsysorg/sglang:v0.5.22
+  # BUMPED v0.5.22 -> v0.5.23 on 2026-11-03 (boot tests only, no bench): both
+  # install-script patches apply unchanged (W4A8 on 520 layers; effort budget hooks 3/3, selftest PASS);
+  # dual-fast boots, verify-full all pass, probe-effort-budget 15/15 + positive control. dual-superfast NOT
+  # booted: its z-lab DFlash2 drafter was deleted 2026-11-01. docs/UPSTREAM.md pin row.
+  spec: lmsysorg/sglang:v0.5.23
 min_sm: 8.0
 supported_drafters:            # ⚠️ keys on spec_method, NOT drafter id.
   - mtp                       # ⭐ native in-checkpoint MTP head — RIG-VALIDATED
