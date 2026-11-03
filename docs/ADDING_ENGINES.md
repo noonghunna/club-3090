@@ -161,7 +161,7 @@ What `unknown` costs, by consumer:
 |---|---|
 | `spec-sweep.sh` | refuses: "engine id is unrecognised — add it to scripts/lib/engine-kind.sh" |
 | `quality-test.sh` thinking budgets (`lib/thinking-budget.sh`) | refuses: "an unknown engine is a refusal, not a guess" |
-| `probe-effort-budget.sh` | dies: vllm and sglang only |
+| `probe-effort-budget.sh` | dies: vllm, sglang and qengine only |
 | `test-launch-knobs` | **fails** if the compose reads any catalogued knob (`SPEC_N`, `REASONING_EFFORT`, …) |
 | `health.sh` | no runtime details (KV usage, acceptance, throughput) |
 | `verify-full.sh`, `report.sh`, `bench.sh` | treat it as "might be vLLM": vLLM probes, vLLM log greps |
