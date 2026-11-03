@@ -355,13 +355,13 @@ sys.path.insert(0, sys.argv[1])
 import concurrency_probe as m
 with m.GaugePoller("http://127.0.0.1:9", interval=0.02, container="qe-fn") as g:
     time.sleep(0.8)
-print(g.available, g.run_max, g.wait_max, g.interval)
+print(g.available, g.run_max, g.wait_max, g.interval, g.run_last)
 with m.GaugePoller("http://127.0.0.1:9", interval=0.02, container="no-such") as g:
     time.sleep(0.1)
 print(g.available)
 PY
 )"
-[[ "$got" == $'True 3 1 0.5\nFalse' ]] || fail "GaugePoller via the container's metrics port: got '$got'"
+[[ "$got" == $'True 3 1 0.5 3\nFalse' ]] || fail "GaugePoller via the container's metrics port: got '$got'"
 
 # SGLang: the label comes from /get_server_info. A local stand-in serves the shape our MTP composes
 # report (EAGLE over the target's own checkpoint).

@@ -183,6 +183,7 @@ with m.GaugePoller(url, interval=0.02) as g:
     time.sleep(0.3)
 ck(g.available and g.samples >= 5, f"the poller must sample through the round (samples={g.samples})")
 ck((g.run_max, g.wait_max) == (2, 1), f"peaks running 2 / waiting 1 (got {g.run_max}, {g.wait_max})")
+ck((g.run_last, g.wait_last) == (0, 0), f"last sample running 0 / waiting 0 (got {g.run_last}, {g.wait_last})")
 
 pages["body"] = "sglang:num_requests_total 4\n"   # a metrics page with no running / waiting gauge
 with m.GaugePoller(url, interval=0.02) as g:

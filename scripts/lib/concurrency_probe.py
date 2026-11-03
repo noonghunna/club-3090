@@ -378,6 +378,7 @@ class GaugePoller:
         self.container = container
         self._via_container = False     # set once the API port's page has no gauges and the container's has
         self.run_max = self.wait_max = None
+        self.run_last = self.wait_last = None   # the round's last sample: the log line's stand-in where there is none
         self.samples = 0
         self.available = True
         self._stop = threading.Event()
@@ -409,6 +410,7 @@ class GaugePoller:
                     return
             else:
                 self.samples += 1
+                self.run_last, self.wait_last = run, wait
                 if run is not None:
                     self.run_max = run if self.run_max is None else max(self.run_max, run)
                 if wait is not None:
@@ -1048,6 +1050,8 @@ def run_probe():
         run, wait, run_max, wait_max, hit = engine_stats(CONTAINER, since=t0, until=t_end)
         if gauges.available:            # /metrics, polled through the round, beats the log lines' one sample
             run_max, wait_max = gauges.run_max, gauges.wait_max
+            if run is None and wait is None:    # no stats line in the log (SGLang, QEngine): the gauges' last sample
+                run, wait = gauges.run_last, gauges.wait_last
         run_by_round.append(run)
         wait_by_round.append(wait)
         runmax_by_round.append(run_max)
