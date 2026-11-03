@@ -53,6 +53,9 @@
 #                Multiplier for the two short scored checks' token budgets.
 #                Applied ONLY when no reasoning off-switch was detected
 #                (default 64); models with a working switch are unaffected.
+#   SERVER_LOG   A host-run Project Maya's engine log (CONTAINER=none), e.g.
+#                maya-ds4.log: Maya counts its drafts only there, so step 9
+#                reads them from it. Without it that check is skipped.
 #
 # Optional flag:
 #   --bench      After all correctness checks pass, run scripts/bench.sh
@@ -148,14 +151,19 @@ detect_engine() {
   # at ~0.69 acceptance the whole time. Prefer container/image evidence whenever
   # it names a family, then what the server calls itself (/v1/models owned_by):
   # QEngine serves a llama.cpp-style /props too from 1.3.1, and a host-run one has
-  # no container to name it. Fall back to llamacpp otherwise, so host builds and
-  # unconventional container names behave exactly as before.
-  if curl -sf -m 3 "${URL}/props" >/dev/null 2>&1; then
+  # no container to name it. Strata and Project Maya send no owned_by, so their /props
+  # build_info ("Strata <version>") names them (#1915: a host-run Maya read as llamacpp).
+  # Fall back to llamacpp otherwise, so host builds and unconventional container names
+  # behave exactly as before.
+  local _props
+  if _props="$(curl -sf -m 3 "${URL}/props" 2>/dev/null)"; then
     local _props_kind
     _props_kind="$(engine_kind_from_container "$CONTAINER")"
     [[ "$_props_kind" == "unknown" ]] && _props_kind="$(engine_kind_from_image "$CONTAINER")"
     [[ "$_props_kind" == "unknown" ]] && _props_kind="$(engine_kind_from_owned_by "$(curl -sf -m 5 "${URL}/v1/models" 2>/dev/null \
       | python3 -c "import sys,json; print(((json.load(sys.stdin).get('data') or [{}])[0] or {}).get('owned_by','') or '')" 2>/dev/null)")"
+    [[ "$_props_kind" == "unknown" ]] && _props_kind="$(engine_kind_from_build_info "$(printf '%s' "$_props" \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('build_info','') or '')" 2>/dev/null)")"
     [[ "$_props_kind" != "unknown" ]] && { echo "$_props_kind"; return 0; }
     echo "llamacpp"; return 0
   fi
@@ -782,8 +790,10 @@ check_mtp_acceptance() {
       # no drafts at all is a failure, and so is a /metrics we cannot read.
       local sm_dir sm_out sm_off sm_rate sm_c=()
       sm_dir="$(mktemp -d)"
-      # Project Maya (strata-maya) counts its drafts only in its engine log: the reader needs the container
-      if container_is_real; then sm_c=(--container "${CONTAINER}"); fi
+      # Project Maya (strata-maya) counts its drafts only in its engine log: the reader needs the container,
+      # or on a host run (CONTAINER=none) the log itself, given as SERVER_LOG (as bench.sh takes it)
+      if container_is_real; then sm_c=(--container "${CONTAINER}")
+      elif [[ -n "${SERVER_LOG:-}" && -r "${SERVER_LOG}" ]]; then sm_c=(--log-file "${SERVER_LOG}"); fi
       if ! python3 "${ROOT_DIR}/scripts/lib/strata_metrics.py" snapshot "${URL}" "${sm_c[@]}" > "${sm_dir}/before.json" 2> "${sm_dir}/err"; then
         fail "could not read ${URL}/metrics before the request" "$(cat "${sm_dir}/err")"; rm -rf "${sm_dir}"; return 1
       fi
@@ -798,6 +808,12 @@ check_mtp_acceptance() {
       # a missing field is not (Strata's document has none)
       if [[ "$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))["engine"].get("dspark"); print("off" if v is not None and v == 0 else "")' "${sm_dir}/before.json" 2>/dev/null)" == off ]]; then
         skip "the engine runs no drafter (engine.dspark off: DSPARK=off on MiniMax, no drafter in the pack on DeepSeek)"
+        rm -rf "${sm_dir}"; return 0
+      fi
+      # A Maya document read with neither the container nor its log carries no draft counts at all
+      # (strata_metrics.py), so the check below would fail a drafter that may be fine (#1915)
+      if [[ ${#sm_c[@]} -eq 0 && -n "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["engine"].get("maya_version") or "")' "${sm_dir}/before.json" 2>/dev/null)" ]]; then
+        skip "Project Maya counts its drafts only in its engine log: on a host run, set SERVER_LOG=<that log, e.g. maya-ds4.log> to check them"
         rm -rf "${sm_dir}"; return 0
       fi
       curl -sf -m 120 "${URL}/v1/chat/completions" \

@@ -351,8 +351,11 @@ cap_kv_type() {
   local argv="${1:-}" kind="${2:-unknown}" v
   if [[ -z "$kind" || "$kind" == unknown ]]; then
     # shellcheck source=engine-kind.sh
-    declare -F engine_kind_from_owned_by >/dev/null || source "$(dirname "${BASH_SOURCE[0]}")/engine-kind.sh"
+    declare -F engine_kind_from_build_info >/dev/null || source "$(dirname "${BASH_SOURCE[0]}")/engine-kind.sh"
     kind="$(engine_kind_from_owned_by "$(cap_owned_by || true)")"
+    # Strata and Project Maya send no owned_by; their /props build_info names them, so a host-run one
+    # isn't given llama.cpp's f16 default below (#1915)
+    [[ "$kind" == unknown ]] && kind="$(engine_kind_from_build_info "$(cap_props_get build_info || true)")"
   fi
   if [[ -n "$argv" ]]; then
     v="$(cap_argv_flag "$argv" -ct -ctk -ctv --cache-type-k --cache-type-v --kv-cache-dtype || true)"
