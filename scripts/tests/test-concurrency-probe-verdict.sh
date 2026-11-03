@@ -80,7 +80,11 @@ vllm:num_requests_running_total 7
 """
 ck(m.metrics_gauges(page) == (3, 3),
    f"gauges sum over engines, and _by_reason / _total are not the gauge: {m.metrics_gauges(page)}")
-ck(m.metrics_gauges("sglang:num_running_reqs 4\n") == (None, None), "a page without the gauges reads None, None")
+ck(m.metrics_gauges("sglang:num_running_reqs 4\n") == (4, None), "SGLang's own gauge names read too")
+ck(m.metrics_gauges('sglang:num_running_reqs{model_name="m"} 2.0\nsglang:num_queue_reqs{model_name="m"} 3.0\n') == (2, 3),
+   "SGLang running / queued")
+ck(m.metrics_gauges("qengine_active_sequences 4\nqengine_queued_requests 1\n") == (4, 1), "QEngine's gauges read too")
+ck(m.metrics_gauges("sglang:num_requests_total 9\nfoo 1\n") == (None, None), "a page without the gauges reads None, None")
 ck(m.metrics_gauges("vllm:num_requests_running 1\n") == (1, None), "an unlabelled sample still parses")
 
 if bad:
@@ -180,7 +184,7 @@ with m.GaugePoller(url, interval=0.02) as g:
 ck(g.available and g.samples >= 5, f"the poller must sample through the round (samples={g.samples})")
 ck((g.run_max, g.wait_max) == (2, 1), f"peaks running 2 / waiting 1 (got {g.run_max}, {g.wait_max})")
 
-pages["body"] = "sglang:num_running_reqs 4\n"
+pages["body"] = "sglang:num_requests_total 4\n"   # a metrics page with no running / waiting gauge
 with m.GaugePoller(url, interval=0.02) as g:
     time.sleep(0.1)
 ck(not g.available and g.run_max is None, "no gauges on the page: unavailable, so the log lines are used")
@@ -200,8 +204,8 @@ command grep -q 'clean_fit = (bad == 0) and vram_ok(leak, GROWTH)' "$LIB" \
 command grep -qE 'admitted_ok = admission_ok\(\s*runmax_by_round, N, waitmax_by_round\)' "$LIB" \
   || fail "admission_ok must be called with runmax_by_round (the PEAK list) and waitmax_by_round; \
 run_by_round is each round's LAST sample and reintroduces the race one level up"
-command grep -qE 'with GaugePoller\(URL\) as gauges, cf\.ThreadPoolExecutor' "$LIB" \
-  || fail "each round must poll /metrics while its requests run (#1782)"
+command grep -qE 'with GaugePoller\(URL, container=CONTAINER\) as gauges, cf\.ThreadPoolExecutor' "$LIB" \
+  || fail "each round must poll /metrics while its requests run (#1782), with the container for QEngine's metrics port"
 command grep -qE 'run_max, wait_max = gauges\.run_max, gauges\.wait_max' "$LIB" \
   || fail "the polled peaks must replace the log lines' sample when /metrics has the gauges"
 command grep -qE 'run_peak = max\(\[r for r in runmax_by_round' "$LIB" \

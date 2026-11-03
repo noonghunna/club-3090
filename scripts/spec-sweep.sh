@@ -111,7 +111,19 @@ PY
     URL="http://localhost:${PORT}"
   fi
 elif [[ -z "$URL" ]]; then
-  URL="http://localhost:8020"
+  # No SLUG and no URL: the server that is running, found the way bench.sh finds it (preflight's
+  # autodetect: an engine container's published port; PREFLIGHT_NO_AUTODETECT=1 turns it off). This
+  # used to be :8020 whatever was up. The container it finds also names the family, so a vLLM or
+  # SGLang server is refused below (they need SLUG) instead of being swept as llama.cpp.
+  # shellcheck source=preflight.sh
+  source "${ROOT_DIR}/scripts/preflight.sh"
+  preflight_autodetect_endpoint || true
+  if [[ -n "${CONTAINER:-}" && "${CONTAINER}" != none ]]; then
+    _fam="$(engine_kind_from_container "$CONTAINER")"
+    [[ "$_fam" == unknown ]] && _fam="$(engine_kind_from_image "$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)")"
+    [[ "$_fam" == unknown ]] || ENGINE_FAMILY="$_fam"
+  fi
+  URL="${URL:-http://localhost:8020}"
 fi
 # Everything that is not llama.cpp reboots per arm, so it needs a SLUG. Written
 # as != llamacpp (not == vllm) so a newly added engine inherits the safe path.

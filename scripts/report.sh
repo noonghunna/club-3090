@@ -1109,8 +1109,10 @@ case "${ENGINE_KIND:-}" in
     # Prefix arms live in scripts/lib/engine-kind.sh (club-3090#1282).
     ENGINE_KIND="$(engine_kind_from_container "$CONTAINER")"
     if [[ "$ENGINE_KIND" == "unknown" ]]; then
-      # club3090-* and any other non-conventional name: fall back to the image.
-      container_image=$(docker ps --filter "name=$CONTAINER" --format '{{.Image}}' 2>/dev/null | head -1)
+      # club3090-* and any other non-conventional name: fall back to the image. Config.Image is the
+      # reference the container was started from; `docker ps` shows a digest-pinned one (every
+      # third-party engine here) as its short image id, which names no engine.
+      container_image=$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)
       ENGINE_KIND="$(engine_kind_from_image "$container_image")"
     fi ;;
 esac
@@ -1130,7 +1132,8 @@ else
   {
     status=$(docker ps --filter "name=$CONTAINER" --format '{{.Status}}' 2>/dev/null | head -1)
     ports=$(docker ps --filter "name=$CONTAINER" --format '{{.Ports}}' 2>/dev/null | head -1)
-    image=$(docker ps --filter "name=$CONTAINER" --format '{{.Image}}' 2>/dev/null | head -1)
+    # The reference it was started from (docker ps shows a digest-pinned one as its short id)
+    image=$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)
     # Digest + OCI labels (load-bearing when tag is rolling, e.g. llama.cpp
     # `:server-cuda`). Without these, a bug report can't reproduce the bytes.
     image_digest=$(docker inspect "$CONTAINER" --format '{{.Image}}' 2>/dev/null | head -1)
@@ -1264,19 +1267,33 @@ else
     # vLLM version + Torch CUDA build vs host driver mismatch is one of the
     # rare failure modes that image SHA pinning doesn't catch. Quick docker
     # exec to surface what the container actually sees.
-    py_versions=$(docker exec "$CONTAINER" python3 -c \
-      'import torch, sys; print(f"torch={torch.__version__} torch_cuda_build={torch.version.cuda} cudnn={torch.backends.cudnn.version()}")' \
-      2>&1)
-    if [[ -n "$py_versions" ]] && [[ "$py_versions" != *"Error"* ]] && [[ "$py_versions" != *"error"* ]]; then
+    # The interpreter is the SERVING process's own (its command line's first word, when that is a
+    # python): an image can keep its engine in a venv that isn't on PATH (HyperQwen:
+    # /app/venv/bin/python3), and a python3 on PATH can be one without the engine's packages.
+    # python3 / python on PATH are the fallback. Success is the exit code, not the text: "exec:
+    # python3: executable file not found" carries no "error" and used to print as a version.
+    py_bin=$(docker exec "$CONTAINER" sh -c '
+      for c in /proc/[0-9]*/cmdline; do
+        a=$(tr "\0" "\n" < "$c" 2>/dev/null | head -1)
+        case "$a" in */python|*/python3|*/python3.[0-9]*) [ -x "$a" ] && { echo "$a"; exit 0; } ;; esac
+      done
+      for c in python3 python; do command -v "$c" 2>/dev/null && exit 0; done
+      exit 1' 2>/dev/null) || py_bin=""
+    py_bin="${py_bin%%$'\n'*}"
+    if [[ -z "$py_bin" ]]; then
+      echo "- **PyTorch:** (no Python interpreter found in the container)"
+    elif py_versions=$(docker exec "$CONTAINER" "$py_bin" -c \
+        'import torch, sys; print(f"torch={torch.__version__} torch_cuda_build={torch.version.cuda} cudnn={torch.backends.cudnn.version()}")' \
+        2>/dev/null) && [[ -n "$py_versions" ]]; then
       echo "- **PyTorch:** \`${py_versions}\`"
     else
-      echo "- **PyTorch:** (could not query — \`docker exec\` failed or torch not importable)"
+      echo "- **PyTorch:** (not importable by \`${py_bin}\`)"
     fi
 
-    vllm_ver=$(docker exec "$CONTAINER" python3 -c 'import vllm; print(vllm.__version__)' 2>&1)
-    if [[ -n "$vllm_ver" ]] && [[ "$vllm_ver" != *"Error"* ]] && [[ "$vllm_ver" != *"error"* ]]; then
+    if [[ -n "$py_bin" ]] && vllm_ver=$(docker exec "$CONTAINER" "$py_bin" -c 'import vllm; print(vllm.__version__)' 2>/dev/null) \
+       && [[ -n "$vllm_ver" ]]; then
       echo "- **vLLM:** \`${vllm_ver}\`"
-    else
+    elif [[ "${ENGINE_KIND:-}" == "vllm" ]]; then
       echo "- **vLLM:** (could not query)"
     fi
 

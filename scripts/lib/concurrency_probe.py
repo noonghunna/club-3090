@@ -319,15 +319,23 @@ def pct(xs, q):
     return ss[min(len(ss) - 1, int(q * len(ss)))]
 
 
-GAUGE_RUNNING = "vllm:num_requests_running"
-GAUGE_WAITING = "vllm:num_requests_waiting"
+# (running, waiting) gauge names, per engine that publishes them. The page itself says which engine it is:
+# only one family's names appear on it. SGLang serves them on the API port with --enable-metrics (every
+# shipped SGLang compose but the EAGLE3 experiments); QEngine on its metrics port (QEngineMetricsPage).
+GAUGE_PAIRS = (
+    ("vllm:num_requests_running", "vllm:num_requests_waiting"),
+    ("sglang:num_running_reqs", "sglang:num_queue_reqs"),
+    ("qengine_active_sequences", "qengine_queued_requests"),
+)
+GAUGE_RUNNING, GAUGE_WAITING = GAUGE_PAIRS[0]   # vLLM's, the names older callers and tests use
 
 
 def metrics_gauges(text):
     """(running, waiting) from a Prometheus text page: each gauge summed over its samples (one per engine),
     None for a gauge the page doesn't have. Names match exactly, so vllm:num_requests_waiting_by_reason is not
-    the waiting gauge."""
-    found = {GAUGE_RUNNING: None, GAUGE_WAITING: None}
+    the waiting gauge. The first engine family with a gauge on the page wins."""
+    names = {n for pair in GAUGE_PAIRS for n in pair}
+    found = dict.fromkeys(names)
     for line in text.splitlines():
         if not line or line.startswith("#"):
             continue
@@ -340,8 +348,19 @@ def metrics_gauges(text):
         except (IndexError, ValueError):
             continue
         found[name] = (found[name] or 0.0) + value
-    run, wait = found[GAUGE_RUNNING], found[GAUGE_WAITING]
-    return (None if run is None else int(run), None if wait is None else int(wait))
+    for run_name, wait_name in GAUGE_PAIRS:
+        run, wait = found[run_name], found[wait_name]
+        if run is not None or wait is not None:
+            return (None if run is None else int(run), None if wait is None else int(wait))
+    return (None, None)
+
+
+# QEngine publishes its gauges on a second port (9393 in the container, QE_METRICS_PORT when set),
+# which the composes don't publish; qengine_metrics owns that port and reads it inside the container.
+def container_metrics_page(container):
+    """QEngine's /metrics page read inside ``container``, or "" when it can't be read."""
+    import qengine_metrics
+    return qengine_metrics.read_in_container(container, "/metrics")
 
 
 class GaugePoller:
@@ -353,9 +372,11 @@ class GaugePoller:
     every stream ran. /metrics has the same gauges at any moment. ``available`` is False when the first page
     has neither gauge (an engine that doesn't publish them); the caller then falls back to the log lines."""
 
-    def __init__(self, url, interval=0.1):
+    def __init__(self, url, interval=0.1, container=""):
         self.url = url.rstrip("/") + "/metrics"
         self.interval = interval
+        self.container = container
+        self._via_container = False     # set once the API port's page has no gauges and the container's has
         self.run_max = self.wait_max = None
         self.samples = 0
         self.available = True
@@ -363,11 +384,21 @@ class GaugePoller:
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def _read(self):
+        if self._via_container:
+            return metrics_gauges(container_metrics_page(self.container))
         try:
             with engine_http.urlopen(self.url, timeout=2) as r:
-                return metrics_gauges(r.read().decode("utf-8", "replace"))
+                got = metrics_gauges(r.read().decode("utf-8", "replace"))
         except Exception:
-            return (None, None)
+            got = (None, None)
+        if got == (None, None) and self.samples == 0 and self.container:
+            # the API port has no gauges: QEngine's are on its own metrics port, read with docker exec,
+            # which costs a process per sample, so the interval goes up to 0.5 s
+            got = metrics_gauges(container_metrics_page(self.container))
+            if got != (None, None):
+                self._via_container = True
+                self.interval = max(self.interval, 0.5)
+        return got
 
     def _loop(self):
         while not self._stop.is_set():
@@ -506,6 +537,30 @@ def spec_label_from_vllm_log(txt):
     return f"{name} n={m.group(3)}" if m.group(3) else name
 
 
+_QE_BOOT = "==== qengine server start"
+
+
+def spec_label_from_qengine_log(txt):
+    """'MTP' / 'MTP + lookup' / 'lookup (MTP off)' / 'MTP off' from QEngine's own log, or None when it isn't
+    one. QEngine prints no drafter line at boot: MTP runs unless --mtp-k 0 is on its argv line. Lookup drafts are
+    on by default but fire only on repeated text, so they are named once its per-request SpecDecoding lines
+    ("MTP a/b, lookup c/d") show one, and "MTP off" never claims lookup is off. Only the LAST boot counts."""
+    txt = txt or ""
+    at = txt.rfind(_QE_BOOT)
+    if at < 0:
+        return None
+    boot = txt[at:]
+    argv = re.search(r"^argv: .*$", boot, re.M)
+    mtp_off = bool(argv and re.search(r"--mtp-k[ =]0\b", argv.group(0)))
+    mtp = lookup = 0
+    for m in re.finditer(r"\(MTP (\d+)/(\d+), lookup (\d+)/(\d+), \d+ steps\)", boot):
+        mtp += int(m.group(2))
+        lookup += int(m.group(4))
+    if mtp_off and not mtp:
+        return "lookup (MTP off)" if lookup else "MTP off"
+    return "MTP + lookup" if lookup else "MTP"
+
+
 def spec_label_from_sglang_info(info):
     """Same, from SGLang's /get_server_info JSON, or None when it carries no spec fields."""
     if not isinstance(info, dict) or "speculative_algorithm" not in info:
@@ -587,7 +642,12 @@ def spec_label(container, url):
         if lab:
             return lab
     if container:
-        lab = spec_label_from_vllm_log(_docker_logs_head(container))
+        head = _docker_logs_head(container)
+        lab = spec_label_from_vllm_log(head)
+        if lab:
+            return lab
+        # QEngine: its argv sits at the head, but the drafts it reports come per request, so read it all
+        lab = spec_label_from_qengine_log(head if _QE_BOOT not in head else (_docker_logs([container]) or head))
         if lab:
             return lab
     return ""
@@ -951,7 +1011,7 @@ def run_probe():
     hit_by_round = []
     for rnd in range(1, ROUNDS + 1):
         t0 = time.time()
-        with GaugePoller(URL) as gauges, cf.ThreadPoolExecutor(max_workers=N) as ex:
+        with GaugePoller(URL, container=CONTAINER) as gauges, cf.ThreadPoolExecutor(max_workers=N) as ex:
             res = list(ex.map(lambda s: one(s, rnd), range(N)))
         t_end = time.time()
         wall = t_end - t0

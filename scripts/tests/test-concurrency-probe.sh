@@ -302,6 +302,26 @@ case "$1" in
         echo "INFO [core.py:123] Initializing a V1 LLM engine (v0.30.0) with config: model='/m', speculative_config=SpeculativeConfig(method='mtp', model='/m', num_spec_tokens=4), tokenizer=/m"
         for i in $(seq 1 3000); do echo "INFO [loggers.py] Engine 000: Avg generation throughput: 80.0 tokens/s, Running: 1 reqs, Waiting: 0 reqs"; done ;;
       vllm-off) echo "INFO Initializing a V1 LLM engine (v0.30.0) with config: model='/m', speculative_config=None, tokenizer=/m" ;;
+      qe-fn)
+        # QEngine prints no drafter line at boot: MTP is on unless argv has --mtp-k 0, and lookup shows in
+        # the per-request SpecDecoding lines, which here come after the 6000-line head the vLLM read takes.
+        echo "==== qengine server start: QEngine 1.3.4.3, pid 1, build 5083e04 (/app), log /x.log"
+        echo "argv: server/app.py --host 127.0.0.1 --port 8080 --devices 0,1 --model /m --served-name q --think 1"
+        for i in $(seq 1 6500); do echo "[chat] 1 req, gen 64 @ 90.0 tok/s"; done
+        echo "[stats] SpecDecoding metrics: Mean acceptance length: 3.71, Accepted: 19 tokens, Drafted: 26 tokens, Avg Draft acceptance rate: 73.1% (MTP 15/18, lookup 4/8, 7 steps)" ;;
+      qe-restart)
+        # an earlier boot drafted with MTP and lookup; the current one runs --mtp-k 0 and has served nothing
+        echo "==== qengine server start: QEngine 1.3.4.2, pid 1, build x (/app), log /x.log"
+        echo "argv: server/app.py --model /m"
+        echo "[stats] SpecDecoding metrics: Avg Draft acceptance rate: 50.0% (MTP 3/6, lookup 2/4, 2 steps)"
+        echo "==== qengine server start: QEngine 1.3.4.3, pid 1, build 5083e04 (/app), log /x.log"
+        echo "argv: server/app.py --model /m --mtp-k 0" ;;
+      *) exit 1 ;;
+    esac ;;
+  exec)
+    # QEngine's metrics port, read inside the container (concurrency_probe.container_metrics_page)
+    case "$2" in
+      qe-fn) printf 'qengine_active_sequences 3\nqengine_queued_requests 1\n' ;;
       *) exit 1 ;;
     esac ;;
   *) exit 0 ;;
@@ -322,6 +342,26 @@ got="$(PATH="$SPEC_STUB:$PATH" CONTAINER=vllm-off URL=http://127.0.0.1:9 python3
 [[ "$got" == "spec off" ]] || fail "--spec-label for speculative_config=None: got '$got', want 'spec off'"
 got="$(PATH="$SPEC_STUB:$PATH" CONTAINER=no-such URL=http://127.0.0.1:9 python3 "$LIB" --spec-label)"
 [[ -z "$got" ]] || fail "--spec-label with nothing readable must be empty (the script then falls back to flags): got '$got'"
+# QEngine (#1926: the sweep card read "spec off" with MTP and lookup running)
+got="$(PATH="$SPEC_STUB:$PATH" CONTAINER=qe-fn URL=http://127.0.0.1:9 python3 "$LIB" --spec-label)"
+[[ "$got" == "MTP + lookup" ]] || fail "--spec-label from QEngine's log (lookup past the log head): got '$got', want 'MTP + lookup'"
+got="$(PATH="$SPEC_STUB:$PATH" CONTAINER=qe-restart URL=http://127.0.0.1:9 python3 "$LIB" --spec-label)"
+[[ "$got" == "MTP off" ]] || fail "--spec-label from QEngine's LAST boot (--mtp-k 0, nothing drafted yet): got '$got', want 'MTP off'"
+# QEngine's running / waiting gauges are on its own metrics port: the poller reads them inside the
+# container when the API port has none (#1926: the probe printed running=- waiting=-)
+got="$(PATH="$SPEC_STUB:$PATH" python3 - "$ROOT_DIR/scripts/lib" <<'PY'
+import sys, time
+sys.path.insert(0, sys.argv[1])
+import concurrency_probe as m
+with m.GaugePoller("http://127.0.0.1:9", interval=0.02, container="qe-fn") as g:
+    time.sleep(0.8)
+print(g.available, g.run_max, g.wait_max, g.interval)
+with m.GaugePoller("http://127.0.0.1:9", interval=0.02, container="no-such") as g:
+    time.sleep(0.1)
+print(g.available)
+PY
+)"
+[[ "$got" == $'True 3 1 0.5\nFalse' ]] || fail "GaugePoller via the container's metrics port: got '$got'"
 
 # SGLang: the label comes from /get_server_info. A local stand-in serves the shape our MTP composes
 # report (EAGLE over the target's own checkpoint).
@@ -354,7 +394,7 @@ command grep -qF -- 'club_container_for_url' "$PROBE" || fail "concurrency-probe
 if command grep -vE '^[[:space:]]*#' "$PROBE" | command grep -qE -- "vllm-\(qwen\|gemma\)"; then fail "concurrency-probe.sh still falls back to the vllm-(qwen|gemma) name heuristic"; fi
 command grep -qF -- '--spec-label' "$PROBE" || fail "concurrency-probe.sh's _spec_fp no longer asks the engine"
 rm -rf "$SPEC_STUB"
-echo "  ✓ container found by URL (any engine, this host only); spec label from the engine (vLLM log head, SGLang server info)"
+echo "  ✓ container found by URL (any engine, this host only); spec label from the engine (vLLM log head, SGLang server info, QEngine log); QEngine gauges from its metrics port"
 
 # #1584, end to end: the slot count the probe detects. A local vLLM container publishes a free port with
 # --max-num-seqs 4. For URL=<another machine>:<that port> the old port-only match bound it and the probe

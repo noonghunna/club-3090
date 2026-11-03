@@ -358,7 +358,8 @@ cap_kv_type() {
     [[ "$kind" == unknown ]] && kind="$(engine_kind_from_build_info "$(cap_props_get build_info || true)")"
   fi
   if [[ -n "$argv" ]]; then
-    v="$(cap_argv_flag "$argv" -ct -ctk -ctv --cache-type-k --cache-type-v --kv-cache-dtype || true)"
+    # --cache-mode is TabbyAPI's (exllamav3: FP16 / Q8 / Q6 / Q4); no other engine here has the flag
+    v="$(cap_argv_flag "$argv" -ct -ctk -ctv --cache-type-k --cache-type-v --kv-cache-dtype --cache-mode || true)"
     [[ -n "$v" ]] && { echo "$v (source: argv)"; return 0; }
   fi
   # QEngine has one KV format and no flag for it. Its /props (from 1.3.1) is llama.cpp-shaped but
@@ -489,6 +490,20 @@ cap_offload_detected() {
       echo "boot log (experts loaded into host RAM)"
       return 0
     fi
+    # QEngine (Flash-Next on 2-3 cards) keeps the expert groups that don't fit in pinned host RAM and
+    # says so per card at load: "[flash] GPU0 expert budget: … 30328 host-backed (15.37 GB)". Summed
+    # over the LAST boot's cards (a restarted container keeps its earlier boots' lines); a model that
+    # fits (the dense 27B) prints none, and 0 GB host-backed is not offload (#1926).
+    v="$(awk '
+      /^==== qengine server start/ { sum = 0; cards = 0; next }
+      /\[flash\] GPU[0-9]+ expert budget: .* host-backed \([0-9.]+ GB\)/ {
+        if (match($0, /host-backed \([0-9.]+ GB\)/)) {
+          sum += substr($0, RSTART + 13, RLENGTH - 17) + 0; cards++
+        }
+      }
+      END { if (cards > 0 && sum > 0) printf "%.2f GB of experts host-backed over %d card%s", sum, cards, (cards == 1 ? "" : "s") }
+    ' "$CAP_LOG" 2>/dev/null || true)"
+    if [[ -n "$v" ]]; then echo "boot log (QEngine: ${v})"; return 0; fi
   fi
   return 1
 }
@@ -771,8 +786,11 @@ elif mode == "acceptance":
     # TSV `accept` column has always meant exactly that — a per-arm boot ends with
     # its own last value — and swapping in the mean would silently redefine every
     # historical row. bench.sh quotes the mean; the sweep quotes last. Same scrape.
+    # Token counts only when the log carried them: SGLang logs a rate and a length per batch and no
+    # counts, and "accepted=0 drafted=0" next to accept_len 3.76 read as a drafter that never drafted.
+    _counts = f" accepted={accepted} drafted={drafted}" if drafted else ""
     print(f"fired={len(acc)} last={acc[-1]:.3f} mean={sum(acc)/len(acc):.3f} "
-          f"min={min(acc):.3f} max={max(acc):.3f} accepted={accepted} drafted={drafted}{_al}")
+          f"min={min(acc):.3f} max={max(acc):.3f}{_counts}{_al}")
 
 elif mode == "timings":
     # llama.cpp per-request print_timing. `prompt eval time` is PREFILL; the bare
