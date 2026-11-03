@@ -12,6 +12,10 @@
 #
 # ⚠️ Against the pre-fix verify-full this test must FAIL on the `false` case. If it passes there, it is asserting
 # the wrong thing.
+#
+# A host-run Maya (CONTAINER=none, #1915): its drafts are only in its engine log, so with neither the container nor
+# SERVER_LOG the check would read zero drafts and fail a working drafter. It skips then, naming SERVER_LOG, and runs
+# with SERVER_LOG set.
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
@@ -41,17 +45,18 @@ printf '{"engine": {"maya_version": "1.1.30", "dspark": 0}}' > "${TMP}/mm3-off.j
 printf '{"engine": {"maya_version": "1.1.48", "dspark": true}}' > "${TMP}/ds4-drafter.json"
 printf '{"engine": {"version": "0.1.55"}}' > "${TMP}/strata.json"
 
-# step 9 for one snapshot: prints which helper ended it
+# step 9 for one snapshot: prints which helper ended it. REAL=1: the container is real (a club-3090 slug);
+# LOG=<file>: SERVER_LOG for a host run
 run() {
   (
     source "${TMP}/fns.sh"
     pass() { echo "PASS: $1"; }
     fail() { echo "FAIL: $1"; }
     skip() { echo "SKIP: $1"; }
-    container_is_real() { return 1; }
+    container_is_real() { [[ "${REAL:-0}" == 1 ]]; }
     curl() { return 7; }            # a drafter that is on gets its trigger request, which fails here: not a skip
-    ENGINE_KIND=strata ROOT_DIR="${TMP}/root" URL=http://stub MODEL=m THINK_OFF_STD= THINK_OFF_KW='{}' \
-      SNAP="$1" check_mtp_acceptance 2>&1 | command grep -E '^(PASS|FAIL|SKIP):' | head -1
+    ENGINE_KIND=strata ROOT_DIR="${TMP}/root" URL=http://stub MODEL=m THINK_OFF_STD= THINK_OFF_KW='{}' CONTAINER=c \
+      SERVER_LOG="${LOG:-}" SNAP="$1" check_mtp_acceptance 2>&1 | command grep -E '^(PASS|FAIL|SKIP):' | head -1
   )
 }
 
@@ -61,9 +66,16 @@ got="$(run "${TMP}/ds4-nodrafter.json")"
 got="$(run "${TMP}/mm3-off.json")"
 [[ "$got" == SKIP:*"no drafter"* ]] && ok "maya-mm3, engine.dspark 0: skipped (DSPARK=off)" \
   || bad "maya-mm3 dspark 0" "SKIP: …no drafter…" "$got"
+got="$(REAL=1 run "${TMP}/ds4-drafter.json")"
+[[ "$got" == FAIL:*"acceptance-trigger request failed"* ]] && ok "engine.dspark true, in its container: not skipped (the trigger request runs)" \
+  || bad "maya-ds4 dspark true, container" "FAIL: acceptance-trigger request failed" "$got"
 got="$(run "${TMP}/ds4-drafter.json")"
-[[ "$got" == FAIL:*"acceptance-trigger request failed"* ]] && ok "engine.dspark true: not skipped (the trigger request runs)" \
-  || bad "maya-ds4 dspark true" "FAIL: acceptance-trigger request failed" "$got"
+[[ "$got" == SKIP:*SERVER_LOG* ]] && ok "engine.dspark true, host run without SERVER_LOG: skipped, naming SERVER_LOG" \
+  || bad "maya-ds4 dspark true, host, no log" "SKIP: …SERVER_LOG…" "$got"
+: > "${TMP}/maya-ds4.log"
+got="$(LOG="${TMP}/maya-ds4.log" run "${TMP}/ds4-drafter.json")"
+[[ "$got" == FAIL:*"acceptance-trigger request failed"* ]] && ok "engine.dspark true, host run with SERVER_LOG: not skipped" \
+  || bad "maya-ds4 dspark true, host, SERVER_LOG" "FAIL: acceptance-trigger request failed" "$got"
 got="$(run "${TMP}/strata.json")"
 [[ "$got" == FAIL:*"acceptance-trigger request failed"* ]] && ok "Strata, no engine.dspark field: not skipped" \
   || bad "strata, no dspark field" "FAIL: acceptance-trigger request failed" "$got"

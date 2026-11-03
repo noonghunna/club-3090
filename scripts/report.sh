@@ -230,6 +230,29 @@ if [[ -z "$CONTAINER" ]] && have docker && docker info >/dev/null 2>&1; then
   fi
 fi
 
+# A host engine (CONTAINER=none) has no container or image to name its family, so the sections below
+# read "unknown": the KV-math section ran vLLM's calibration table, and a host-run Strata or Project
+# Maya read as llama.cpp (#1915). Ask the endpoint once, here at the top level for the same reason as
+# above: /v1/models owned_by, then /props build_info (Strata and Maya send no owned_by). The decision is
+# scripts/lib/engine-kind.sh's. An ENGINE_KIND given by hand still wins.
+# report_endpoint_kind <base URL> — the engine family the endpoint names (vllm | … | unknown).
+report_endpoint_kind() {
+  local ep="${1%/}" k
+  ep="${ep%/v1}"
+  k="$(engine_kind_from_owned_by "$(curl -sf -m 5 "$ep/v1/models" 2>/dev/null \
+    | python3 -c "import sys,json; print(((json.load(sys.stdin).get('data') or [{}])[0] or {}).get('owned_by','') or '')" 2>/dev/null)")"
+  if [[ "$k" == unknown ]]; then
+    k="$(engine_kind_from_build_info "$(curl -sf -m 5 "$ep/props" 2>/dev/null \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('build_info','') or '')" 2>/dev/null)")"
+  fi
+  echo "$k"
+}
+if [[ "${CONTAINER:-}" == none && -z "${ENGINE_KIND:-}" && -n "${URL:-${ENDPOINT:-}}" ]] && have curl; then
+  _ep_kind="$(report_endpoint_kind "${URL:-${ENDPOINT:-}}")"
+  if [[ "$_ep_kind" != unknown ]]; then ENGINE_KIND="$_ep_kind"; fi
+  unset _ep_kind
+fi
+
 # gpu_power_caps — one "idx|limit_w|default_w|percent" row per GPU whose power
 # limit is BELOW its factory default. Empty output when nothing is capped.
 #
@@ -941,7 +964,7 @@ if have python3 && [[ -f tools/kv-calc.py ]]; then
   if [[ "$CALIB_ENGINE_KIND" == "llamacpp" ]]; then
     echo "- _kv-calc calibration is vLLM-specific — skipped on the llama.cpp / ik_llama engine (ggml uses a different allocator)._"
   elif [[ "$CALIB_ENGINE_KIND" == "strata" ]]; then
-    echo "- _kv-calc calibration is vLLM-specific — skipped on Strata (it sizes its own int8 KV and streams it to RAM)._"
+    echo "- _kv-calc calibration is vLLM-specific — skipped on Strata and Project Maya (they size their own KV cache)._"
   elif ! python3 -c 'import yaml' 2>/dev/null; then
     # Item 1: graceful-degrade when PyYAML is missing
     echo "- _kv-calc calibration skipped — PyYAML not installed (\`pip install pyyaml\`)._"
@@ -1094,11 +1117,13 @@ esac
 
 if [[ "$CONTAINER" == "none" && "$REPORT_CONTAINER_FROM_URL" == "1" ]]; then
   echo "_No local container serves the endpoint (CONTAINER=none) — a remote server or a host process; container-scoped probes skipped._"
+  if [[ "${ENGINE_KIND:-unknown}" != unknown ]]; then echo "- **Engine (from the endpoint):** \`${ENGINE_KIND}\`"; fi
 elif [[ "$CONTAINER" == "none" ]]; then
   # Host engine build: no container to introspect. Docker ships a built-in
   # network object named "none", so `docker inspect none` succeeds (exit 0) on
   # any Docker host (club-3090#1067) — guard it so the body can't inspect a phantom.
   echo "_Host engine build (CONTAINER=none) — no container to introspect; container-scoped probes skipped._"
+  if [[ "${ENGINE_KIND:-unknown}" != unknown ]]; then echo "- **Engine (from the endpoint):** \`${ENGINE_KIND}\`"; fi
 elif [[ -z "$CONTAINER" ]]; then
   echo "_No vLLM, llama.cpp, or estate container running. Start one with \`bash scripts/launch.sh\` and re-run for the full report._"
 else

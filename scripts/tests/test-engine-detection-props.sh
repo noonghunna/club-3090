@@ -8,9 +8,11 @@
 # capture (cap_kv_type) inferred llama.cpp's default KV type, "f16", from a /props answer, so every
 # QEngine bench from 1.3.1 on, container or not, reported f16 for an engine whose only KV format is
 # FP8 e4m3 (seen in #1870's report). The server's own name, /v1/models owned_by, now decides first.
+# Strata and Project Maya send no owned_by; their /props build_info ("Strata <version>") names them, so a
+# host-run Maya read as llama.cpp in verify-full and report.sh, and bench.sh gave it llama.cpp's f16 (#1915).
 #
 # Drives the real functions against a stub server: detect_engine() extracted from both scripts with
-# CONTAINER=none, and cap_kv_type from scripts/lib/capture.sh.
+# CONTAINER=none, report.sh's report_endpoint_kind, and cap_kv_type from scripts/lib/capture.sh.
 # ⚠️ Must FAIL against the pre-fix tree.
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -24,21 +26,23 @@ ok()  { printf "  \033[32m✓\033[0m %s\n" "$1"; }
 bad() { printf "  \033[31m✗\033[0m %s\n" "$1"; printf "    expected=%s got=%s\n" "$2" "$3"; FAIL=1; }
 check() { [[ "$2" == "$3" ]] && ok "$1" || bad "$1" "$2" "$3"; }
 
-# stub <var> <owned_by or ""> — start a server with a llama.cpp-style /props (QEngine 1.3.1's shape) and
-# /v1/models, and put its port in <var>. Runs in this shell (never as "$(stub …)"), so the PID reaches
+# stub <var> <owned_by or ""> [build_info] — start a server with a llama.cpp-style /props (QEngine 1.3.1's
+# shape; with build_info, Strata's and Maya's) and /v1/models, and put its port in <var>. Runs in this shell (never as "$(stub …)"), so the PID reaches
 # the EXIT trap (test-tests-stub-lifecycle).
 stub() {
   local port
   port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
-  python3 - "$port" "$2" <<'PY' >/dev/null 2>&1 &
+  python3 - "$port" "$2" "${3:-}" <<'PY' >/dev/null 2>&1 &
 import json, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
-port, owned = int(sys.argv[1]), sys.argv[2]
+port, owned, build = int(sys.argv[1]), sys.argv[2], sys.argv[3]
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
         if self.path == "/props":
             body = {"model_alias": "m", "total_slots": 32, "default_generation_settings": {"n_ctx": 262144}}
+            if build:
+                body["build_info"] = build
         elif self.path == "/v1/models":
             card = {"id": "m", "object": "model"}
             if owned:
@@ -59,10 +63,12 @@ PY
 }
 
 stub QE qengine; stub LC llamacpp; stub NONAME ""
+stub MAYA "" "Strata ds4-0.1"; stub LCBUILD "" "b10454-4df29be4f"
 
 echo "== 1. detect_engine, host-run (CONTAINER=none)"
 for script in verify-full.sh verify-stress.sh; do
-  for case in "qengine $QE qengine" "llamacpp $LC llamacpp" "no-owned_by $NONAME llamacpp"; do
+  for case in "qengine $QE qengine" "llamacpp $LC llamacpp" "no-owned_by $NONAME llamacpp" \
+              "maya-build_info $MAYA strata" "llamacpp-build_info $LCBUILD llamacpp"; do
     set -- $case
     got="$(bash -c 'source "$1/scripts/lib/engine-kind.sh"
       eval "$(sed -n "/^detect_engine() {/,/^}/p" "$1/scripts/$2")"
@@ -86,6 +92,20 @@ check "a family that names another engine -> no f16 guess" "UNAVAILABLE" \
   "$(kv "$NONAME" "python3 -m some.server" exllamav3)"
 check "an argv KV flag still wins" "q8_0 (source: argv)" \
   "$(kv "$QE" "llama-server -m x.gguf -ctk q8_0" "")"
+check "host-run Maya, kind from /props build_info -> no f16 guess" "UNAVAILABLE" \
+  "$(kv "$MAYA" "python3 serve/server.py --engine maya --config /data/x.json" "")"
+
+echo "== 3. report.sh's report_endpoint_kind (CONTAINER=none)"
+rk() {  # <url>
+  bash -c 'source "$1/scripts/lib/engine-kind.sh"
+    eval "$(sed -n "/^report_endpoint_kind() {/,/^}/p" "$1/scripts/report.sh")"
+    report_endpoint_kind "$2"' _ "$ROOT" "$1" 2>/dev/null
+}
+check "Maya: /props build_info -> strata" strata "$(rk "http://127.0.0.1:$MAYA")"
+check "Maya, a URL ending in /v1 -> strata" strata "$(rk "http://127.0.0.1:$MAYA/v1")"
+check "QEngine: owned_by -> qengine" qengine "$(rk "http://127.0.0.1:$QE")"
+check "llama.cpp: owned_by -> llamacpp" llamacpp "$(rk "http://127.0.0.1:$LC")"
+check "nothing names it -> unknown (no guess)" unknown "$(rk "http://127.0.0.1:$NONAME")"
 
 if (( FAIL )); then echo "test-engine-detection-props: FAIL"; exit 1; fi
 echo "test-engine-detection-props: ok"
