@@ -462,6 +462,8 @@ cat > "$TMP/acc-sgl.log" <<'EOF'
 EOF
 a_s=$(cap_moe_parse acceptance "$TMP/acc-sgl.log") || fail "SGLang wording regressed"
 command grep -q 'accept_len_mean=3.710' <<<"$a_s" || fail "SGLang length lost: $a_s"
+command grep -q 'mean=0.670' <<<"$a_s" || fail "SGLang rate lost: $a_s"
+! command grep -qE 'accepted=|drafted=' <<<"$a_s" || fail "SGLang logs no token counts; 'accepted=0 drafted=0' must not be printed: $a_s"
 echo "  ✓ acceptance: SGLang accept len/rate"
 
 # ⚠️ vLLM's "Drafted throughput: 9.00 tokens/s" must NOT be read as a ratio by
@@ -603,6 +605,24 @@ CAP_LOG="$TMP/strata-ram.log"; v="$(cap_offload_detected '' || true)"
 printf '%s\n' "[strata] starting the engine: reading the model's weights ..." > "$TMP/strata-start.log"
 CAP_LOG="$TMP/strata-start.log"; v="$(cap_offload_detected '' || true)"
 [[ -z "$v" ]] || fail "Strata's start line alone says nothing about RAM, got: '$v'"
+# QEngine (#1926): Flash-Next's expert groups that don't fit stay in pinned host RAM, said per card
+# at load. Only the LAST boot counts; the dense 27B (no such lines) and 0 GB are not offload.
+printf '%s\n' "==== qengine server start: QEngine 1.3.4.2, pid 1, build x (/app), log /x.log" \
+  "[flash] GPU0 expert budget: 9.00 GiB free -> 20000 of 61440 routed groups on the device, 41440 host-backed (20.99 GB)" \
+  "==== qengine server start: QEngine 1.3.4.3, pid 1, build 5083e04 (/app), log /x.log" \
+  "[flash] GPU0 expert budget: 16.12 GiB free -> 31112 of 61440 routed groups on the device, 30328 host-backed (15.37 GB)" \
+  "[flash] GPU1 expert budget: 15.42 GiB free -> 29623 of 61440 routed groups on the device, 31817 host-backed (16.13 GB)" \
+  > "$TMP/qe-fn.log"
+CAP_LOG="$TMP/qe-fn.log"; v="$(cap_offload_detected '' || true)"
+[[ "$v" == "boot log (QEngine: 31.50 GB of experts host-backed over 2 cards)" ]] \
+  || fail "QEngine's host-backed expert groups (last boot, summed over cards) must count, got: '$v'"
+cap_offload_is_llamacpp "$v" && fail "QEngine's host-backed experts print no [moe-cache] lines: '$v'"
+printf '%s\n' "==== qengine server start: QEngine 1.3.4.3, pid 1, build 5083e04 (/app), log /x.log" \
+  "MTP draft vocabulary: 65536 most frequent tokens" \
+  "[flash] GPU0 expert budget: 20.00 GiB free -> 61440 of 61440 routed groups on the device, 0 host-backed (0.00 GB)" \
+  > "$TMP/qe-27.log"
+CAP_LOG="$TMP/qe-27.log"; v="$(cap_offload_detected '' || true)"
+[[ -z "$v" ]] || fail "a QEngine boot with nothing host-backed is not offload, got: '$v'"
 CAP_LOG=""
 # Only llama.cpp-family reasons may open the [moe-cache] parser. The round trip
 # through cap_offload_detected catches a reason string renamed on one side only.

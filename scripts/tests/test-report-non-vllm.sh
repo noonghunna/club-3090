@@ -77,6 +77,10 @@ kv() { PATH="$bin:$PATH" bash -c 'source scripts/lib/capture.sh; URL=http://127.
   cap_kv_type "" "$2" 2>/dev/null || echo UNAVAILABLE' _ "$@"; }
 got="$(kv strata-x strata)"
 [[ "$got" == "int8, 32768 cells in VRAM (--kv-resident) (source: Strata engine argv)" ]] || fail "Strata KV capture: got '$got'"
+# TabbyAPI (exllamav3) takes its KV as --cache-mode on its own command line; bench said "unavailable"
+got="$(bash -c 'source scripts/lib/capture.sh; URL=http://127.0.0.1:9; CAP_LOG=""; CONTAINER=none
+  cap_kv_type "python3 main.py --port 5000 --backend exllamav3 --max-seq-len 204800 --cache-size 204800 --cache-mode Q4 --gpu-split-auto true" exllamav3 2>/dev/null || echo UNAVAILABLE')"
+[[ "$got" == "Q4 (source: argv)" ]] || fail "TabbyAPI KV capture from --cache-mode: got '$got'"
 pass "cap_kv_type reads Strata's KV off its engine child's command line"
 got="$(STUB_NO_ENGINE=1 kv strata-x strata)"
 [[ "$got" == UNAVAILABLE ]] || fail "no engine child yet: expected unavailable, got '$got' (never another engine's default)"

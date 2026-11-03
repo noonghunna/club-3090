@@ -29,7 +29,9 @@
 # the citable one. Requests are greedy + seeded so reps are comparable.
 #
 # Env:
-#   URL         endpoint. Default: the curated default port, like bench.sh
+#   URL         endpoint. Default: the running engine container's port, found as bench.sh finds it
+#               (preflight's autodetect; PREFLIGHT_NO_AUTODETECT=1 turns it off), else the curated
+#               default port
 #   MODEL       served model id. Default: auto-detected from /v1/models
 #   FILL_FRAC   fraction of max_ctx to fill before compacting. Default: 0.90
 #   REPS        generations per phase. Default: 5
@@ -45,6 +47,13 @@ cd "$ROOT_DIR"
 _DEFAULT_PORT=""
 if declare -F registry_lookup_default_port >/dev/null 2>&1; then
   _DEFAULT_PORT="$(registry_lookup_default_port qwen3.6-27b 2>/dev/null || true)"
+fi
+# The server that is running, as bench.sh finds it; the default port only when nothing is. This
+# used to be the default port whatever was up.
+if [[ -z "${URL:-}" ]]; then
+  # shellcheck source=preflight.sh
+  source scripts/preflight.sh
+  preflight_autodetect_endpoint || true
 fi
 URL="${URL:-http://localhost:${_DEFAULT_PORT:-8020}}"
 # The engine's API key (Strata 0.2+): the URL is the only input — club_container_for_url

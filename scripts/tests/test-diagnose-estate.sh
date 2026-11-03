@@ -183,6 +183,14 @@ case "${1:-}" in
     echo "build_info: fake llama.cpp"
     exit 0
     ;;
+  inspect)
+    # report.sh reads the image a container was started from as Config.Image (docker ps shows a
+    # digest-pinned one as its short id)
+    if [[ "$args" == *"{{.Config.Image}}"* && "$args" == *"club3090-llama-gpu0"* ]]; then
+      echo "ghcr.io/ggml-org/llama.cpp:server-cuda"
+    fi
+    exit 0
+    ;;
   *)
     exit 0
     ;;
