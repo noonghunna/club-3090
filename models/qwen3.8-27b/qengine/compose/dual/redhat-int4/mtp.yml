@@ -3,7 +3,7 @@
 #   Model:     Qwen3.8-27B — RedHatAI INT4 (compressed-tensors W4A16, group 128, symmetric) with
 #              its MTP head, plus QEngine's fine-tuned MTP head and draft vocabulary (its release
 #              assets, unchanged since v1.0; the server downloads them when they're missing)
-#   Engine:    QEngine 1.3.4.2 (bpx03): its own C++/CUDA engine and server, the author's own image
+#   Engine:    QEngine 1.3.4.3 (bpx03): its own C++/CUDA engine and server, the author's own image
 #              ghcr.io/bpx03/qengine (source d2a24bf8, the :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (tensor parallel 2; GPU-to-GPU P2P when the driver grants it)
 #   Drafter:   MTP, up to 7 drafts a step (adaptive; SPEC_N sets the most, 0 turns MTP off) + lookup
@@ -23,12 +23,13 @@
 #              The full gate passed on another rig, not this one: eddietheengineer's #1862 (QEngine 1.3,
 #              3090 + 3090 Ti at 260 / 240 W) ran verify-full, verify-stress 8/8 with the ceiling ladder
 #              filled to 240K, both soaks (PASS, 0 MB growth) and the 8-pack (108 / 132 of 150, thinking
-#              off / on); here it has bench and verify-full. 1.3.1 to 1.3.4.2 were boot-tested. From 1.3.4
-#              QEngine caps thinking per request or by QE_THINKING_BUDGET (off by default; our
-#              THINKING_BUDGET_* map isn't wired to it). The default effort is low, as on the other Qwen3.8 slugs, through QEngine's
+#              off / on); here it has bench and verify-full. 1.3.1 to 1.3.4.3 were boot-tested. From 1.3.4.3
+#              our THINKING_BUDGET_* map (4096 / 16384 / 32768 by effort, as on the vLLM and SGLang
+#              slugs) reaches QEngine's own per-effort QE_THINKING_BUDGET; a request's own budget wins.
+#              The default effort is low, as on the other Qwen3.8 slugs, through QEngine's
 #              QE_REASONING_EFFORT (its template's own default is xhigh); a request's own effort
-#              still wins, and QEngine's template maps high -> xhigh but minimal and max ->
-#              medium.
+#              still wins, and maps high and max -> xhigh, minimal -> low (1.3.4.3 on; other
+#              unknown efforts -> medium).
 #              Measured 2026-10-28 on two 3090s at 230 W (bench.sh on its own boot): 147.2 / 216.3
 #              decode, 2,430 prefill @10K, 1,786 @90K, MTP acceptance length 3.4, 23.4 GB a card
 #              (BENCHMARKS.md, Qwen3.8-27B); KV pool 374,784 tokens (289,792 with vision, the default from
@@ -67,6 +68,10 @@
 #   SPEC_N=<n>        --mtp-k, the most MTP drafts a step (default 7; the engine adapts below it);
 #                     0 = no MTP (lookup drafts stay on; QE_LOOKUP=0 turns them off)
 #   VISION            1 (default) | 0: --vision 1 | 0, image input (OpenAI image_url, Anthropic image blocks)
+#   THINKING_BUDGET_LOW / _MEDIUM / _XHIGH  thinking tokens per effort (unset = 4096 / 16384 / 32768, as
+#                     on the vLLM and SGLang slugs): QE_THINKING_BUDGET=low:N,medium:N,xhigh:N, QEngine's
+#                     own budget per effort (from 1.3.4.3; high and max use xhigh's, minimal low's).
+#                     THINKING_BUDGETS=off: no budget. A QE_THINKING_BUDGET set by hand wins.
 # QEngine's own settings, passed through when set (its defaults otherwise):
 #   QE_MAX_SEQS       sequence slots, up to 32 (32 here, the README's two-card setting)
 #   QE_RESERVE_GB     VRAM left outside the KV pool, per card (1.5); a list sets each card
@@ -92,8 +97,9 @@
 #                     the mapping); 0 turns the metrics server off
 #   QE_HANG_S         no scheduler progress for this many seconds: stacks to the log, open requests
 #                     fail, exit 75, and the restart policy restarts it (180, from 1.3.3; 0 = off)
-#   QE_THINKING_BUDGET  default thinking budget in tokens for requests that send none (from 1.3.4;
-#                     0 = off, the default); at the budget the server closes </think> itself. A request
+#   QE_THINKING_BUDGET  default thinking budget for requests that send none: a number (from 1.3.4; 0 =
+#                     off, the default) or a map per effort, low:N,medium:N,xhigh:N (from 1.3.4.3).
+#                     Unset here, the entrypoint sets the map from THINKING_BUDGET_*; at the budget the server closes </think> itself. A request
 #                     sets its own with thinking_budget (OpenAI) or thinking.budget_tokens (Anthropic)
 #   QE_THINK_TAIL     room kept for the answer when max_tokens would end inside <think> (auto =
 #                     1/8 of max_tokens, 64-2048; 0 = off, from 1.3.4)
@@ -107,7 +113,7 @@
 #   bash scripts/settings.sh set QE_KV_ARCHIVE_GB=8
 services:
   qengine-qwen38-27b-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:e7ef3c0e2c2c1aa319f3aaf67cac19e7ca1ccc633d3e7f4909d2b447910761eb}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:db64a5db94a72c437ed5d7fae937e6de876ab4ae9d7623c815c760c36c93ca11}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-27b-dual}"
     user: "0:${DOCKER_GID:-1000}"
@@ -134,6 +140,8 @@ services:
       # ~/.cache/qengine: the GEMM tune table, the KV split, stats, logs, the one-engine-per-GPU locks and
       # (1.3.2 on) the release assets it downloads
       - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/qengine:/root/.cache/qengine
+      # the effort -> thinking-budget map, the same file the vLLM and SGLang composes mount
+      - ../../../../../../scripts/lib/effort_budget.py:/etc/club3090/effort_budget.py:ro
     environment:
       # the cards as the container numbers them (device_ids above picks which)
       - QE_GPUS=0,1
@@ -169,6 +177,10 @@ services:
       - REASONING_EFFORT
       - SPEC_N
       - VISION
+      - THINKING_BUDGET_LOW
+      - THINKING_BUDGET_MEDIUM
+      - THINKING_BUDGET_XHIGH
+      - THINKING_BUDGETS
     entrypoint:
       - bash
       - -c
@@ -212,6 +224,16 @@ services:
         fi
         export QE_REASONING_EFFORT="$$_reff"
         echo "[reasoning] default reasoning_effort=$$_reff (QE_REASONING_EFFORT; a request's own effort wins)" >&2
+        # THINKING_BUDGET_LOW / _MEDIUM / _XHIGH (ours) -> QE_THINKING_BUDGET=low:N,medium:N,xhigh:N, QEngine's own
+        # thinking budget per effort (1.3.4.3 on: the server picks the entry from the effort the prompt is rendered
+        # with). Unset = 4096 / 16384 / 32768; THINKING_BUDGETS=off = none; a hand-set QE_THINKING_BUDGET wins; a bad
+        # value stops the boot. The boot log carries one [effort-budget] v1 readback line.
+        if ! grep -qF budget_from /app/server/think_budget.py; then
+          echo "[effort-budget] this image's server can't take a thinking budget per effort (QEngine 1.3.4.2 and older ignore the map)." >&2
+          echo "[effort-budget] Fix: QEngine 1.3.4.3 or later; see docs/engines/QENGINE.md." >&2
+          exit 1
+        fi
+        _eb="$$(python3 /etc/club3090/effort_budget.py shell-env --engine qengine --default-effort "$$_reff" --low 4096 --medium 16384 --xhigh 32768)" || exit 1; eval "$$_eb"
         # VISION (our knob) -> --vision 1|0: image input, the encoder on the last card. Needs the :vision image
         # (PyTorch); engines/qengine.yml pins it.
         _vis="$${VISION:-1}"

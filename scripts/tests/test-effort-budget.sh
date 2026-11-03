@@ -29,7 +29,7 @@ pass() { echo "  ✓ $1"; }
 
 # Knobs a developer's shell may carry must not leak into the assertions.
 unset THINKING_BUDGET_LOW THINKING_BUDGET_MEDIUM THINKING_BUDGET_XHIGH THINKING_BUDGETS REASONING_EFFORT \
-      CLUB3090_REASONING_EFFORT_BUDGETS CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET SGLANG_MAX_THINK_TOKENS
+      CLUB3090_REASONING_EFFORT_BUDGETS CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET SGLANG_MAX_THINK_TOKENS QE_THINKING_BUDGET
 
 echo "--- 1+2+4. library ---"
 python3 - "$EB" <<'PY'
@@ -149,6 +149,32 @@ off_out="$(THINKING_BUDGETS=off python3 "$EB" "${ARGS[@]}" 2>"${TMPDIR:-/tmp}/eb
   [[ -z "${CLUB3090_REASONING_EFFORT_BUDGETS:-}" && -z "${CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET:-}" ]] ) \
   || fail "off must unset the map and the floor"
 pass "THINKING_BUDGETS=off: stdout non-empty, unsets the map + floor, readback says off"
+
+echo "--- 3b. shell-env --engine qengine (QEngine 1.3.4.3's own per-effort map) ---"
+QA=(shell-env --engine qengine --default-effort low --low 4096 --medium 16384 --xhigh 32768)
+out="$(python3 "$EB" "${QA[@]}" 2>/tmp/eb-qe-err.$$)"; err="$(cat /tmp/eb-qe-err.$$)"; rm -f /tmp/eb-qe-err.$$
+[[ "$out" == "export QE_THINKING_BUDGET='low:4096,medium:16384,xhigh:32768'" ]] || fail "qengine must export QEngine's map syntax only, got: $out"
+[[ "$err" == "[effort-budget] v1 map="*"default_effort=low floor=4096 engine=qengine" ]] || fail "qengine readback line wrong: $err"
+( _eb="$(python3 "$EB" "${QA[@]}" 2>/dev/null)" || exit 1; eval "$_eb"
+  [[ "$QE_THINKING_BUDGET" == "low:4096,medium:16384,xhigh:32768" && -z "${CLUB3090_REASONING_EFFORT_BUDGETS:-}" && -z "${SGLANG_MAX_THINK_TOKENS:-}" ]] ) \
+  || fail "eval of qengine shell-env must set QE_THINKING_BUDGET and nothing of the vLLM/SGLang hooks"
+pass "qengine: QE_THINKING_BUDGET='low:4096,medium:16384,xhigh:32768', readback on stderr"
+[[ "$(THINKING_BUDGET_XHIGH=20000 THINKING_BUDGET_LOW= python3 "$EB" "${QA[@]}" 2>/dev/null)" == "export QE_THINKING_BUDGET='low:4096,medium:16384,xhigh:20000'" ]] \
+  || fail "qengine: a knob overrides its level and an EMPTY knob counts as unset"
+pass "qengine: THINKING_BUDGET_XHIGH overrides, an empty knob is unset"
+out="$(THINKING_BUDGETS=off python3 "$EB" "${QA[@]}" 2>/dev/null)"
+[[ "$out" == *"unset QE_THINKING_BUDGET"* ]] || fail "qengine off must unset QE_THINKING_BUDGET, got: $out"
+pass "qengine: THINKING_BUDGETS=off unsets QE_THINKING_BUDGET (QEngine's own default: no budget)"
+out="$(QE_THINKING_BUDGET=8192 python3 "$EB" "${QA[@]}" 2>/tmp/eb-qe-err.$$)"; err="$(cat /tmp/eb-qe-err.$$)"; rm -f /tmp/eb-qe-err.$$
+[[ "$out" == ": QE_THINKING_BUDGET set by hand, kept" && "$err" == *"set by hand"* ]] || fail "a hand-set QE_THINKING_BUDGET must be kept untouched, got: $out / $err"
+( export QE_THINKING_BUDGET=8192; _eb="$(python3 "$EB" "${QA[@]}" 2>/dev/null)" || exit 1; eval "$_eb"; [[ "$QE_THINKING_BUDGET" == 8192 ]] ) \
+  || fail "eval with a hand-set QE_THINKING_BUDGET must leave it as it was"
+[[ "$(python3 "$EB" readback-budget --line "$err")" == unknown ]] || fail "the hand-set notice must not parse as a v1 readback"
+pass "qengine: a hand-set QE_THINKING_BUDGET wins and is not read as a map readback"
+if THINKING_BUDGET_LOW=4k python3 "$EB" "${QA[@]}" >/tmp/eb-qe-out.$$ 2>/dev/null; then rm -f /tmp/eb-qe-out.$$; fail "qengine must refuse a bad knob"; fi
+[[ ! -s /tmp/eb-qe-out.$$ ]] || { rm -f /tmp/eb-qe-out.$$; fail "a refused qengine knob must print nothing on stdout"; }
+rm -f /tmp/eb-qe-out.$$
+pass "qengine: a bad knob exits non-zero with nothing on stdout"
 
 echo "--- 4. readback-budget (the wrapper's view) ---"
 log="$(printf '%s\n' "boot 1" \

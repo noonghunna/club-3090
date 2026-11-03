@@ -43,6 +43,11 @@ ALIASES = {"minimal": "low", "high": "xhigh", "max": "xhigh"}
 
 MAP_ENV = "CLUB3090_REASONING_EFFORT_BUDGETS"
 FLOOR_ENV = {"vllm": "CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET", "sglang": "SGLANG_MAX_THINK_TOKENS"}
+# QEngine (from 1.3.4.3) takes the whole map itself, in its own syntax, in one variable: the server picks the
+# entry from the effort the prompt is rendered with (high/max -> xhigh, minimal -> low, as here). It has no hook
+# of ours and no floor variable. A hand-set QE_THINKING_BUDGET (a number or a map) is kept as it is.
+QENGINE_ENV = "QE_THINKING_BUDGET"
+ENGINES = ("qengine", "sglang", "vllm")
 LEVEL_KNOBS = {"low": "THINKING_BUDGET_LOW", "medium": "THINKING_BUDGET_MEDIUM", "xhigh": "THINKING_BUDGET_XHIGH"}
 OFF_KNOB = "THINKING_BUDGETS"
 OFF_VALUES = ("off", "0", "false", "no", "none", "disabled")
@@ -221,10 +226,41 @@ def _shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
+def qengine_value(budgets: Mapping[str, int]) -> str:
+    """QEngine's --thinking-budget / QE_THINKING_BUDGET map: `low:N,medium:N,xhigh:N` (the canonical levels only;
+    QEngine folds the aliases the same way)."""
+    return ",".join(f"{level}:{budgets[level]}" for level in LEVELS)
+
+
+def _shell_env_qengine(args: argparse.Namespace, env: Mapping[str, str], budgets) -> int:
+    hand = (env.get(QENGINE_ENV) or "").strip()
+    if hand:
+        # The engine's own knob wins: QEngine validates it at start-up (from 1.3.4.3 a bad value stops the server).
+        print(f": {QENGINE_ENV} set by hand, kept")
+        print(f"{READBACK_TAG} {QENGINE_ENV}={hand} set by hand; the THINKING_BUDGET_* map is not applied",
+              file=sys.stderr)
+        return 0
+    if budgets is None:
+        print(": effort-budget off")
+        print(f"unset {QENGINE_ENV}")
+        print(readback_line(None, engine=args.engine), file=sys.stderr)
+        return 0
+    default_effort = _canonical_effort(args.default_effort or env.get("REASONING_EFFORT"))
+    if default_effort is None:
+        raise BudgetConfigError("no default effort: pass --default-effort (the compose's QE_REASONING_EFFORT)")
+    if default_effort not in budgets:
+        raise BudgetConfigError(f"default effort {default_effort!r} has no budget (map: {sorted(budgets)})")
+    print(f"export {QENGINE_ENV}={_shell_quote(qengine_value(budgets))}")
+    print(readback_line(budgets, default_effort, budgets[default_effort], engine=args.engine), file=sys.stderr)
+    return 0
+
+
 def cmd_shell_env(args: argparse.Namespace) -> int:
     env = os.environ
     defaults = {"low": args.low, "medium": args.medium, "xhigh": args.xhigh}
     budgets = build_map(env, defaults)
+    if args.engine == "qengine":
+        return _shell_env_qengine(args, env, budgets)
     floor_env = FLOOR_ENV[args.engine]
     if budgets is None:
         # Non-empty stdout keeps the entrypoint's `|| exit 1` + eval pattern honest.
@@ -267,7 +303,7 @@ def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(prog="effort_budget.py", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("shell-env", help="compose entrypoint: export the map + floor, print the readback line")
-    p.add_argument("--engine", choices=sorted(FLOOR_ENV), required=True)
+    p.add_argument("--engine", choices=ENGINES, required=True)
     p.add_argument("--default-effort", help="the compose's default effort (REASONING_EFFORT)")
     for level in LEVELS:
         p.add_argument(f"--{level}", help=f"default budget for '{level}' ({LEVEL_KNOBS[level]} overrides)")

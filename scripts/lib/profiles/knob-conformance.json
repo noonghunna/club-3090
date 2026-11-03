@@ -205,24 +205,6 @@
     "file": "docs/engines/STRATA_MAYA.md",
     "contains": "Maya's `--spec` is documented for its DFlash2 drafter"
    }
-  },
-  {
-   "knobs": [
-    "THINKING_BUDGET_LOW",
-    "THINKING_BUDGET_MEDIUM",
-    "THINKING_BUDGET_XHIGH",
-    "THINKING_BUDGETS"
-   ],
-   "match": {
-    "engine": [
-     "qengine"
-    ]
-   },
-   "why": "QEngine (from 1.3.4) has one default thinking budget (QE_THINKING_BUDGET) plus a per-request one, not a budget per effort level, so the effort map isn't wired; the slugs forward QE_THINKING_BUDGET as-is",
-   "source": {
-    "file": "docs/engines/QENGINE.md",
-    "contains": "QEngine has a single default budget, not one per effort level"
-   }
   }
  ],
  "not_wired": [
