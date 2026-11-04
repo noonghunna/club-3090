@@ -4158,7 +4158,9 @@ class CockpitData:
         "verify-stress": (["bash", "scripts/verify-stress.sh"], "verify-stress"),
         "bench": (["bash", "scripts/bench.sh"], "bench"),
         "quality-test": (["bash", "scripts/quality-test.sh", "--quick"], "quality"),
-        "soak-test": (["bash", "scripts/soak-test.sh"], "soak"),
+        # Continuous mode (5 sessions x 5 turns ramping to ~22-25K tokens) is the
+        # Cliff 2b detector; soak-test.sh's default fresh mode doesn't reach it.
+        "soak-test": (["bash", "scripts/soak-test.sh", "--continuous"], "soak"),
         "rebench-full": (["bash", "scripts/rebench-full.sh"], "rebench-full"),
         # Extra tools (no dedicated core parser → stream raw via NullParser):
         "quality-baseline": (["bash", "scripts/quality-baseline.sh"], None),
