@@ -120,7 +120,9 @@
 #                      captures all light up. Default: unset (docker log scrape,
 #                      or nothing).
 #   SERVER_PID         Pin the serving process for /proc inspection (argv fingerprint,
-#                      moe-cache env, RSS, swap). Default: auto (`pgrep -x`).
+#                      moe-cache env, RSS, swap). Default: auto: a process with a known
+#                      server name (`pgrep -x`) that owns URL's port on this machine, else
+#                      the container's largest process, else unknown (#1942).
 #                      SERVER_PID=none disables /proc inspection entirely.
 #   ENDPOINT           chat (default) drives /v1/chat/completions with the model's
 #                      chat template applied — the historical bench behaviour, kept

@@ -139,21 +139,68 @@ cap_gpu_count() {
 # cap_server_pid — pid of the local serving process.
 #   SERVER_PID=<n>     use it verbatim
 #   SERVER_PID=none    disable /proc inspection entirely (hermetic tests, docker)
-#   unset              pgrep -x for the known bare-metal server names, then the
-#                      container's largest process (cap_container_pid)
+#   unset              a process with a known bare-metal server name (pgrep -x) that
+#                      owns URL's listening port, when URL is on this machine; then the
+#                      container's largest process (cap_container_pid); else unknown
+# The port check is the point: any process with the name used to be taken, so over an
+# SSH tunnel (the port held by ssh) a bench reported an unrelated local llama-server's
+# argv, RSS and swap as the engine's (#1942). Unknown is honest; a wrong pid is not.
 # `pgrep -x` matches the executable NAME exactly. `pgrep -f` would match this
 # script's own command line and has killed the calling shell before — never use it.
 cap_server_pid() {
   local pinned="${SERVER_PID:-}"
   if [[ "$pinned" == "none" ]]; then echo ""; return 1; fi
   if [[ -n "$pinned" ]]; then echo "$pinned"; return 0; fi
-  local p name
-  for name in llama-server ik_llama-server sglang vllm; do
-    p="$(pgrep -x "$name" 2>/dev/null | head -1 || true)"
-    [[ -n "$p" ]] && { echo "$p"; return 0; }
-  done
+  local p name port
+  if port="$(cap_url_local_port "${URL:-}")"; then
+    for name in llama-server ik_llama-server sglang vllm; do
+      for p in $(pgrep -x "$name" 2>/dev/null || true); do
+        cap_pid_owns_port "$p" "$port" && { echo "$p"; return 0; }
+      done
+    done
+  fi
   if p="$(cap_container_pid)"; then echo "$p"; return 0; fi
   echo ""
+  return 1
+}
+
+# cap_url_local_port <url> — the URL's port when its host is this machine, else fails.
+# Local: localhost, 127.*, 0.0.0.0, ::1, this host's names and its addresses.
+cap_url_local_port() {
+  local u="${1:-}" hp host port a
+  u="${u#*://}"; hp="${u%%/*}"
+  case "$hp" in
+    \[*\]:*) host="${hp%%]*}"; host="${host#[}"; port="${hp##*]:}" ;;
+    *:*)     host="${hp%:*}"; port="${hp##*:}" ;;
+    *)       return 1 ;;
+  esac
+  [[ "$port" =~ ^[0-9]+$ ]] || return 1
+  case "$host" in
+    localhost|127.*|0.0.0.0|::1) echo "$port"; return 0 ;;
+  esac
+  for a in $(hostname 2>/dev/null) $(hostname -f 2>/dev/null) $(hostname -I 2>/dev/null); do
+    [[ "$host" == "$a" ]] && { echo "$port"; return 0; }
+  done
+  return 1
+}
+
+# cap_pid_owns_port <pid> <port> — whether <pid> holds a TCP socket LISTENing on <port>
+# (IPv4 or IPv6), matched by socket inode between /proc/net/tcp{,6} and /proc/<pid>/fd.
+# Another uid's fds can't be read, so its process never matches: that is unknown, not a guess.
+cap_pid_owns_port() {
+  local pid="$1" port="$2" hex inodes fd l ino x
+  hex="$(printf '%04X' "$port" 2>/dev/null)" || return 1
+  inodes="$(awk -v h=":${hex}" 'FNR > 1 && $4 == "0A" && substr($2, length($2) - 4) == h { print $10 }' \
+              /proc/net/tcp /proc/net/tcp6 2>/dev/null)"
+  [[ -n "$inodes" ]] || return 1
+  for fd in /proc/"$pid"/fd/*; do
+    l="$(readlink "$fd" 2>/dev/null)" || continue
+    case "$l" in
+      "socket:["*"]")
+        ino="${l#socket:[}"; ino="${ino%]}"
+        for x in $inodes; do [[ "$x" == "$ino" ]] && return 0; done ;;
+    esac
+  done
   return 1
 }
 
