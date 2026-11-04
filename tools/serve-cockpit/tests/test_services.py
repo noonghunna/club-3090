@@ -4935,3 +4935,149 @@ def test_exllamav3_container_is_an_engine_in_the_stack_list():
     # Controls: widening the prefixes must not sweep in non-engines.
     assert _classify_container_kind("open-webui") is None
     assert _classify_container_kind("some-flask-app") is None
+
+
+# ===========================================================================
+# #1939 — every model on the rig, and the verbs on one of them
+# ===========================================================================
+
+
+def _estate_state(instances, containers=(), ready=None, crashed=(), gpus=3):
+    return EstateState(
+        gpus=[GpuInfo(index=i, mem_used_mib=1) for i in range(gpus)],
+        containers=list(containers),
+        estate_report={"active_estate": {"present": True, "instances": list(instances)}},
+        model_ready=dict(ready or {}),
+        exited_pods=list(crashed),
+    )
+
+
+class TestRigModels:
+    def test_pods_then_models_that_are_not_pods(self):
+        from club3090_cockpit.data import rig_models
+        st = _estate_state(
+            [{"name": "alpha", "compose": "vllm/minimal", "gpus": [2], "port": 8041,
+              "running": True, "placement": {"placement": "ok"}},
+             {"name": "beta", "compose": "llamacpp/x", "gpus": [1], "port": 8042,
+              "running": False}],
+            containers=[ContainerInfo(name="vllm-qwen", kind="engine", host_port=8020,
+                                      slug="vllm/dual"),
+                        ContainerInfo(name="club3090-alpha", kind="estate", host_port=8041),
+                        ContainerInfo(name="comfyui", kind="service", host_port=8188)],
+            ready={"club3090-alpha": "qwen3.8-4b", "vllm-qwen": "qwen3.8-27b"},
+        )
+        rows = rig_models(st, {"vllm-qwen": {0, 1}, "club3090-alpha": {2}})
+        assert [(r.name, r.is_pod, r.state, r.cards) for r in rows] == [
+            ("alpha", True, "serving", [2]),
+            ("beta", True, "down", [1]),
+            ("vllm-qwen", False, "serving", [0, 1]),     # switch.sh's model, on its cards
+        ]
+        assert rows[0].container == "club3090-alpha" and rows[0].url == "http://localhost:8041"
+        assert rows[0].model == "qwen3.8-4b" and rows[0].placement == "ok"
+        assert rows[2].slug == "vllm/dual"
+
+    def test_states(self):
+        from club3090_cockpit.data import rig_models
+        st = _estate_state(
+            [{"name": "a", "gpus": [0], "port": 1, "running": True},
+             {"name": "b", "gpus": [1], "port": 2, "running": False},
+             {"name": "c", "gpus": [2], "port": 3, "running": None}],
+            crashed=["club3090-b"],
+        )
+        assert [r.state for r in rig_models(st)] == ["booting", "crashed", "unknown"]
+
+    def test_running_pod_counts_declared_and_seen_cards(self):
+        from club3090_cockpit.data import rig_models
+        st = _estate_state([{"name": "a", "gpus": [1], "port": 1, "running": True}])
+        assert rig_models(st, {"club3090-a": {2}})[0].cards == [1, 2]   # a placement mismatch
+
+    def test_busy_cards_counts_any_model_that_is_up(self):
+        from club3090_cockpit.data import busy_cards, rig_models
+        st = _estate_state(
+            [{"name": "a", "gpus": [2], "port": 1, "running": False}],
+            containers=[ContainerInfo(name="vllm-qwen", kind="engine", host_port=8020)],
+        )
+        assert busy_cards(rig_models(st, {"vllm-qwen": {0, 1}})) == {0, 1}
+
+
+class TestModelLiveness:
+    @pytest.mark.asyncio
+    async def test_ready_ids_and_crashed_pods(self):
+        st = _estate_state(
+            [{"name": "alpha", "gpus": [0], "port": 8041, "running": True},
+             {"name": "beta", "gpus": [1], "port": 8042, "running": True},
+             {"name": "gamma", "gpus": [2], "port": 8043, "running": False},
+             {"name": "delta", "gpus": [2], "port": 8044, "running": False}],
+            containers=[ContainerInfo(name="vllm-qwen", kind="engine", host_port=8020)],
+        )
+        runner = FakeRunner({
+            "127.0.0.1:8041/v1/models": ok('{"data": [{"id": "qwen3.8-4b"}]}'),
+            "127.0.0.1:8042/v1/models": RunResult(returncode=7, stdout="", stderr=""),
+            "127.0.0.1:8020/v1/models": ok('{"data": [{"id": "qwen3.8-27b"}]}'),
+            "status=exited": ok("club3090-gamma|exited|Exited (1) 2 minutes ago\n"
+                                "club3090-delta|exited|Exited (137) 1 minute ago\n"),
+        })
+        cd = CockpitData(ROOT, runner=runner)
+        ready, crashed = await cd._model_liveness(st)
+        assert ready == {"club3090-alpha": "qwen3.8-4b", "vllm-qwen": "qwen3.8-27b"}
+        assert crashed == ["club3090-gamma"]       # 137 = stopped, not crashed
+
+
+class TestPodPlans:
+    def test_up_is_gated_on_its_own_cards(self):
+        plan = CockpitData(ROOT, runner=full_runner()).pod_up_plan("alpha", [2])
+        assert plan.cmd == ["bash", "scripts/pod.sh", "up", "alpha"]
+        assert plan.requires_reconcile is True and plan.gpus == [2] and plan.target == ""
+
+    def test_down_targets_its_container(self):
+        plan = CockpitData(ROOT, runner=full_runner()).pod_down_plan("alpha")
+        assert plan.cmd == ["bash", "scripts/pod.sh", "down", "alpha"]
+        assert plan.requires_reconcile is True and plan.target == "club3090-alpha"
+
+    def test_rm_is_a_file_write(self):
+        plan = CockpitData(ROOT, runner=full_runner()).pod_rm_plan("alpha")
+        assert plan.cmd == ["bash", "scripts/pod.sh", "rm", "alpha"]
+        assert plan.requires_reconcile is False
+
+    def test_container_action_targets_the_container(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        assert cd.container_action("club3090-alpha", "restart").target == "club3090-alpha"
+
+
+class TestExplicitTarget:
+    """#1939: with several models up, Doctor and the Run ladder name the target
+    (URL + CONTAINER) so a script's own autodetect never chooses."""
+
+    @pytest.mark.asyncio
+    async def test_health_verify_and_verify_full_get_url_and_container(self):
+        runner = full_runner()
+        cd = CockpitData(ROOT, runner=runner)
+        await cd.doctor_read(url="http://localhost:8041", container="club3090-alpha")
+        await cd.verify_smoke(url="http://localhost:8041", container="club3090-alpha")
+        await cd.verify_full(url="http://localhost:8041", container="club3090-alpha")
+        want = ["env", "URL=http://localhost:8041", "CONTAINER=club3090-alpha", "bash"]
+        cmds = [c for c in runner.calls if c[:1] == ["env"]]
+        assert [c[:4] for c in cmds] == [want] * 3
+        assert [c[4] for c in cmds] == ["scripts/health.sh", "scripts/verify.sh",
+                                        "scripts/verify-full.sh"]
+
+    @pytest.mark.asyncio
+    async def test_no_target_keeps_the_plain_command(self):
+        runner = full_runner()
+        await CockpitData(ROOT, runner=runner).verify_smoke()
+        assert ["bash", "scripts/verify.sh"] in runner.calls
+
+    @pytest.mark.asyncio
+    async def test_run_validation_passes_container(self, monkeypatch):
+        seen = {}
+
+        class WR:
+            async def start_raw(self, cmd, env, run_type, parser):
+                seen.update(env=env, cmd=cmd)
+                return {"mock_state": True}
+
+        cd = CockpitData(ROOT, runner=full_runner(), write_runner=WR())
+        await cd.run_validation("bench", model="m", url="http://localhost:8041",
+                                container="club3090-alpha")
+        assert seen["env"]["CONTAINER"] == "club3090-alpha"
+        assert seen["env"]["URL"] == "http://localhost:8041"

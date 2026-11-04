@@ -106,6 +106,7 @@ from .data import (
     Measurement,
     MeasureVsBar,
     KvOption,
+    ModelRow,
     OptimizerReport,
     PowerCapState,
     PromoteScaffold,
@@ -120,9 +121,11 @@ from .data import (
     _canon_engine_family,
     _ctx_label,
     _human_gb,
+    busy_cards,
     downgrade_fit_glyph,
     measurement_from_explain_columns,
     parse_ctx_label,
+    rig_models,
     variant_quant,
 )
 from .services import CockpitData
@@ -4882,6 +4885,9 @@ class OperateOrchPane(Container):
         margin: 0 1 1 1;
         color: $text;
     }
+    OperateOrchPane #models-box {
+        height: auto;
+    }
     OperateOrchPane #scene-heading {
         text-style: bold;
         padding: 0 1;
@@ -4927,10 +4933,23 @@ class OperateOrchPane(Container):
                 yield Label("GPU1", classes="gpu-card-title")
                 yield Static("[dim]querying nvidia-smi…[/dim]", id="gpu1-bar")
             yield Static("[dim]reading estate…[/dim]", id="serving-line")
-            # C1 (#610 Phase C): pods (estate instances) grouped with their
-            # GPUs stacked + a placement health badge. Shown only when the
-            # estate file declares ≥1 pod; empty otherwise.
+            # #1939: every model on the rig — the estate's pods (up or down) and
+            # any engine started another way (switch.sh / the Catalog) — one row
+            # each, with its cards, port, state and (pods) placement badge.  ⏎ on
+            # a row opens its action card (up / down / restart / logs / remove /
+            # make it the target).  #pod-view is the header line above it.
             yield Static("", id="pod-view")
+            models_table: DataTable = DataTable(
+                id="models-table", zebra_stripes=True, show_cursor=True
+            )
+            models_table.cursor_type = "row"
+            models_table.display = False
+            # Its own box, so it is never a SIBLING of #scene-table: when this
+            # pane hides, Textual moves a focused table's focus to a focusable
+            # sibling, and focus landing in a hidden TabPane makes TabbedContent
+            # switch back to it (leaving Orchestration snapped back to it).
+            with Container(id="models-box"):
+                yield models_table
             yield Static("[dim]reading health.sh…[/dim]", id="doctor-line")
             yield Label("Scenes  [dim](⏎ to switch — gated)[/dim]", id="scene-heading")
             scene_table: DataTable = DataTable(
@@ -4948,7 +4967,7 @@ class OperateOrchPane(Container):
             )
             yield Label(
                 "[dim]\\[k] stop this model   \\[b] restart serving   \\[n] switch model   "
-                "\\[⏎] switch scene   \\[o] stop all   \\[c] power cap… "
+                "\\[⏎] a model: its card · a scene: switch   \\[o] stop all   \\[c] power cap… "
                 "(default / clear / custom) — all writes confirm-gated   "
                 "(per-service start/stop → Containers tab)[/dim]",
                 id="orch-hint",
@@ -4961,6 +4980,13 @@ class OperateOrchPane(Container):
         t = self.query_one("#scene-table", DataTable)
         t.add_columns("Scene", "Group", "GPUs", "Services")
         self._scenes: list[Scene] = []
+        mt = self.query_one("#models-table", DataTable)
+        mt.add_columns(" ", "Model", "Kind", "Slug", "GPUs", "Port", "State")
+        # #1939: the rows behind #models-table, the selected target's container,
+        # and the last rendered signature (skip-if-unchanged keeps the cursor).
+        self._model_rows: list[ModelRow] = []
+        self._target_container: str = ""
+        self._models_sig: Optional[tuple] = None
         # #11-ext — per-service running states for the HIGHLIGHTED scene, so the
         # preview can render a live status bullet (● running · ○ stopped) per
         # service.  Read-only for now (per-service actions live in the Containers
@@ -5136,52 +5162,124 @@ class OperateOrchPane(Container):
             return ""
         return "\n   " + "  ·  ".join(bits)
 
+    def card_map(self) -> dict[str, set[int]]:
+        """container -> the cards it holds, from the last telemetry read (#1939).
+        {} until telemetry has been read (or when its attribution failed)."""
+        tel = getattr(self, "_last_telemetry", None)
+        out: dict[str, set[int]] = {}
+        for idx, apps in (getattr(tel, "gpu_apps", None) or {}).items():
+            if idx is None:
+                continue
+            for app in apps or []:
+                name = getattr(app, "container", "") or ""
+                if name:
+                    out.setdefault(name, set()).add(int(idx))
+        return out
+
+    def set_target(self, container: str) -> None:
+        """Mark the selected target's row (#1939)."""
+        if container != getattr(self, "_target_container", ""):
+            self._target_container = container
+            if getattr(self, "_last_state", None) is not None:
+                try:
+                    self._populate_pods(self._last_state)
+                except Exception:
+                    pass
+
+    def selected_model(self) -> Optional[ModelRow]:
+        try:
+            t = self.query_one("#models-table", DataTable)
+        except Exception:
+            return None
+        rows = getattr(self, "_model_rows", []) or []
+        idx = t.cursor_row
+        if t.display and 0 <= idx < len(rows):
+            return rows[idx]
+        return None
+
+    _MODEL_STATE_CELL: dict[str, str] = {
+        "serving": "[green]● serving[/green]",
+        "booting": "[yellow]◐ booting[/yellow]",
+        "down": "[dim]○ down[/dim]",
+        "crashed": "[red]✗ crashed[/red]",
+        "unknown": "[yellow]? liveness unknown[/yellow]",
+    }
+
     def _populate_pods(self, state: EstateState) -> None:
-        """C1 (#610 Phase C): render the estate's PODS (instances) grouped —
-        each pod header (name · slug · :port · state · placement badge) with
-        its member GPUs stacked beneath, and a trailing 'free GPUs' line. Reads
-        the `active_estate.instances` block of the report-state poll (which now
-        carries the per-instance placement verdict, D3). With no pods yet it
-        still shows a one-line affordance ([N] new pod) so the feature is
-        discoverable on a fresh (empty-estate) setup."""
+        """#1939 (was C1, #610 Phase C): every model on the rig in one list — the
+        estate's pods (name · slug · cards · :port · state · placement badge),
+        then each engine container that isn't a pod, marked as such.  A header
+        line counts them and names the FREE cards: a card held by any model is
+        not free, whether or not a pod claims it.  With nothing on the rig it
+        still shows the create key ([N] new pod) so the feature is discoverable."""
         view = self.query_one("#pod-view", Static)
-        est = (getattr(state, "estate_report", None) or {}).get("active_estate") or {}
-        instances = est.get("instances") if isinstance(est, dict) else None
-        if not instances:
-            # Discoverability: no pods is the DEFAULT — surface the create key
-            # rather than rendering nothing (the feature was invisible before).
-            view.update("[bold]Pods[/bold]  [dim]none yet — [/dim][cyan]N[/cyan][dim] new pod (run several models on GPU subsets)[/dim]")
-            return
+        rows = rig_models(state, self.card_map())
+        self._model_rows = rows
+        try:
+            table = self.query_one("#models-table", DataTable)
+        except Exception:
+            table = None
         total_gpus = len(getattr(state, "gpus", []) or [])
-        claimed = {g for inst in instances for g in (inst.get("gpus") or [])}
-        free = sorted(i for i in range(total_gpus) if i not in claimed) if total_gpus else []
-        lines: list[str] = [f"[bold]Pods[/bold]  [dim]({len(instances)} · {len(claimed)}/{total_gpus or '?'} GPUs claimed)[/dim]"]
-        for inst in instances:
-            name = str(inst.get("name") or "?")
-            slug = str(inst.get("compose") or inst.get("slug") or "?")
-            port = inst.get("port")
-            running = inst.get("running")
-            gpus = inst.get("gpus") or []
-            placement = (inst.get("placement") or {}).get("placement", "unknown")
-            # State glyph + placement badge (the C1 health signal, fed by the
-            # Phase-A assertion via D3 — never renders requested-but-not-actual).
-            if running is True:
-                state_glyph = "[green]●[/green]"
-                badge = {
-                    "ok": "  [green]✓ placed[/green]",
-                    "mismatch": "  [red]⚠ PLACEMENT MISMATCH[/red]",
-                }.get(placement, "  [dim]placement …[/dim]")
-            elif running is False:
-                state_glyph, badge = "[dim]○[/dim]", "  [dim]down (plan)[/dim]"
-            else:
-                state_glyph, badge = "[yellow]◐[/yellow]", "  [yellow]liveness unknown[/yellow]"
-            port_s = f":{port}" if port else ""
-            lines.append(f"  {state_glyph} [bold]{name}[/bold]  [dim]{slug}{port_s}[/dim]{badge}")
-            # GPUs stacked under the pod header.
-            gpu_s = " ".join(f"GPU{g}" for g in gpus) if gpus else "[dim](none)[/dim]"
-            lines.append(f"      [dim]└─[/dim] {gpu_s}")
-        lines.append(f"  [dim]free: {('GPU' + ' GPU'.join(map(str, free))) if free else '(none)'}[/dim]")
-        view.update("\n".join(lines))
+        if not rows:
+            view.update("[bold]Models[/bold]  [dim]none yet — [/dim][cyan]N[/cyan][dim] new pod "
+                        "(run several models on GPU subsets)[/dim]")
+            if table is not None:
+                table.clear()
+                table.display = False
+            self._models_sig = None
+            return
+        pods = [r for r in rows if r.is_pod]
+        claimed = {c for r in pods for c in r.cards}
+        taken = claimed | busy_cards(rows)
+        free = sorted(i for i in range(total_gpus) if i not in taken) if total_gpus else []
+        up = sum(1 for r in rows if r.is_up)
+        free_s = ("GPU" + " GPU".join(map(str, free))) if free else "(none)"
+        target = getattr(self, "_target_container", "") or ""
+        trow = next((r for r in rows if target and r.container == target), None)
+        if up > 1:
+            # #1939: with several up, say which one the verbs act on.
+            tline = (f"\n  [cyan]▸ target:[/cyan] [bold]{trow.name}[/bold] [dim](:{trow.port}"
+                     f"{' · GPU ' + trow.cards_label if trow.cards else ''}) — k / b, Doctor, "
+                     f"the Run ladder and Evaluate act on it; ⏎ another model → t to change[/dim]"
+                     if trow is not None else
+                     "\n  [yellow]▸ no target[/yellow] [dim]— ⏎ a model → t makes it the one "
+                     "k / b, Doctor, the Run ladder and Evaluate act on[/dim]")
+        else:
+            tline = ""
+        view.update(
+            f"[bold]Models[/bold]  [dim]({len(rows)} · {up} up · {len(pods)} pod"
+            f"{'' if len(pods) == 1 else 's'} · free: {free_s})   "
+            f"⏎ act on a model · N new pod · o stop all[/dim]" + tline
+        )
+        if table is None:
+            return
+        sig = tuple((r.container, r.state, r.cards_label, r.port, r.placement, r.slug,
+                     r.container == target) for r in rows)
+        table.display = True
+        if sig == self._models_sig:
+            return
+        self._models_sig = sig
+        keep = table.cursor_row
+        table.clear()
+        for r in rows:
+            badge = ""
+            if r.is_pod and r.is_up:
+                badge = {"ok": "  [green]✓ placed[/green]",
+                         "mismatch": "  [red]⚠ PLACEMENT MISMATCH[/red]"}.get(r.placement, "")
+            table.add_row(
+                "[cyan]▸[/cyan]" if r.container == target else "",
+                r.name,
+                "pod" if r.is_pod else "[dim]not a pod[/dim]",
+                r.slug or "[dim]—[/dim]",
+                " ".join(f"GPU{c}" for c in r.cards) or "[dim]?[/dim]",
+                f":{r.port}" if r.port else "[dim]—[/dim]",
+                self._MODEL_STATE_CELL.get(r.state, r.state) + badge,
+            )
+        if 0 <= keep < len(rows):
+            try:
+                table.move_cursor(row=keep)
+            except Exception:
+                pass
 
     def populate_power_cap(self, st: PowerCapState) -> None:
         # #10(a): cache the active cap per GPU so the GPU cards can annotate it.
@@ -5218,6 +5316,11 @@ class OperateOrchPane(Container):
         if getattr(self, "_last_state", None) is not None:
             try:
                 self._populate_gpus(self._last_state)
+            except Exception:
+                pass
+            # #1939: the same map places models that aren't pods on their cards.
+            try:
+                self._populate_pods(self._last_state)
             except Exception:
                 pass
 
@@ -5784,6 +5887,17 @@ class OperateContainersPane(Container):
         if 0 <= idx < len(self._containers):
             return self._containers[idx]
         return None
+
+    def select_container(self, name: str) -> bool:
+        """Move the cursor onto ``name``'s row (#1939: a model card's Logs)."""
+        for i, c in enumerate(self._containers):
+            if c.name == name:
+                try:
+                    self.query_one("#containers-table", DataTable).move_cursor(row=i)
+                except Exception:
+                    return False
+                return True
+        return False
 
 
 # ── Validate panes (Phase 4 — wired to the data layer) ───────────────────────────
@@ -7682,6 +7796,120 @@ class PodCreateScreen(ModalScreen):
             )
             return
         self.dismiss({"name": name, "slug": slug, "gpus": gpus})
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class ModelActionScreen(ModalScreen):
+    """#1939: ⏎ on a row of Orchestration's models table — one model's card.
+
+    Says what the model is (pod or not, slug, cards, port, state, the id it
+    serves) and offers only the verbs that apply to it, as footer keys:
+      - ``u`` Up (a pod that is down or crashed — ``pod.sh up``);
+      - ``k`` Down (a pod, ``pod.sh down``) / Stop (anything else, docker stop);
+      - ``b`` Restart (an up model);
+      - ``l`` Logs (an up or crashed model);
+      - ``x`` Remove from the estate file (a pod that is down);
+      - ``t`` Make it the target (an up model that isn't the target yet).
+    Like every modal here it never touches the rig: it ``dismiss``es the chosen
+    verb and the app routes it through the confirm gate. dismiss: one of
+    ``"up" "down" "restart" "logs" "rm" "target"``, or None."""
+
+    DEFAULT_CSS = """
+    ModelActionScreen {
+        align: center middle;
+    }
+    ModelActionScreen > Vertical {
+        width: 84;
+        height: auto;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    ModelActionScreen .ma-title { text-style: bold; color: $accent; margin-bottom: 1; }
+    """
+
+    BINDINGS = [
+        Binding("u", "pick('up')", "Up", show=True, priority=True),
+        Binding("k", "pick('down')", "Down", show=True, priority=True),
+        Binding("b", "pick('restart')", "Restart", show=True, priority=True),
+        Binding("l", "pick('logs')", "Logs", show=True, priority=True),
+        Binding("x", "pick('rm')", "Remove", show=True, priority=True),
+        Binding("t", "pick('target')", "Make target", show=True, priority=True),
+        Binding("escape", "cancel", "Cancel", show=True),
+    ]
+
+    def __init__(self, row: ModelRow, *, is_target: bool = False, others: int = 0, **kwargs):
+        super().__init__(**kwargs)
+        self._row = row
+        self._is_target = is_target
+        self._others = others        # how many OTHER models are up
+
+    def verbs(self) -> list[str]:
+        """The verbs that apply to this model, in footer order."""
+        r = self._row
+        out: list[str] = []
+        if r.is_pod and r.state in ("down", "crashed"):
+            out.append("up")
+        if r.is_up:
+            out += ["down", "restart"]
+        if r.is_up or r.state == "crashed":
+            out.append("logs")
+        if r.is_pod and r.state in ("down", "crashed"):
+            out.append("rm")
+        if r.is_up and not self._is_target:
+            out.append("target")
+        return out
+
+    def compose(self) -> ComposeResult:
+        r = self._row
+        kind = "pod" if r.is_pod else "not a pod (started with switch.sh, the Catalog or by hand)"
+        lines = [
+            f"  [bold]Kind[/bold]     {kind}",
+            f"  [bold]Slug[/bold]     {r.slug or '—'}",
+            f"  [bold]GPUs[/bold]     {r.cards_label or 'not known yet'}",
+            f"  [bold]Endpoint[/bold] {r.url or '—'}",
+            f"  [bold]State[/bold]    {OperateOrchPane._MODEL_STATE_CELL.get(r.state, r.state)}",
+        ]
+        if r.model:
+            lines.append(f"  [bold]Serves[/bold]   {r.model}")
+        if r.is_pod and r.placement == "mismatch":
+            lines.append("  [red]⚠ placement mismatch: not on the cards the estate file gives it[/red]")
+        if self._is_target:
+            lines.append("")
+            lines.append("  [cyan]▸ the target[/cyan] — Stop/Restart on Orchestration, Doctor, "
+                         "the Run ladder and Evaluate act on it.")
+        elif r.is_up and self._others:
+            lines.append("")
+            lines.append("  [dim]t makes it the target: Stop/Restart on Orchestration, Doctor, "
+                         "the Run ladder and Evaluate then act on it.[/dim]")
+        lines.append("")
+        lines.append("  [dim]Each write opens a confirm that names what stops and what stays up.[/dim]")
+        if r.is_pod:
+            down_label = "Down"
+        else:
+            down_label = "Stop"
+        with Vertical():
+            yield Label(f"{r.name}", classes="ma-title")
+            yield Static("\n".join(lines))
+            yield Footer()
+        self._set_binding_label("down", down_label)
+
+    def _set_binding_label(self, action_arg: str, label: str) -> None:
+        for bindings in self._bindings.key_to_bindings.values():
+            for i, b in enumerate(bindings):
+                if b.action == f"pick('{action_arg}')" and b.description != label:
+                    bindings[i] = dataclasses.replace(b, description=label)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "pick":
+            return bool(parameters) and parameters[0] in self.verbs()
+        return True
+
+    def action_pick(self, verb: str) -> None:
+        if verb in self.verbs():
+            self.dismiss(verb)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -11530,6 +11758,15 @@ class CockpitApp(App):
         self._target_slug: str = ""
         self._target_model: str = ""
         self._target_url: str = ""
+        # #1939: the target's container (passed to the scripts as CONTAINER=, so
+        # their own autodetect never picks among several models), the container
+        # the user made the target (t on a model card; "" = automatic), the
+        # Catalog-served slug (switch.sh's model, which the Catalog marks running),
+        # and the models list from the last poll.
+        self._target_container: str = ""
+        self._picked_target: str = ""
+        self._catalog_serving_slug: str = ""
+        self._model_rows: list[ModelRow] = []
         # F9: the slug match GRADE ("identity" | "shape" | "") from the last
         # estate poll — a shape match must never be presented as an identity.
         self._target_confidence: str = ""
@@ -12467,14 +12704,11 @@ class CockpitApp(App):
         # re-render if this poll changed the count (refresh_enriched keeps the cursor).
         self._sync_catalog_gpu_count()
         # Capture the live target for profile-triage / validation launches.
-        self._target_slug = state.matched_slug or ""
-        tgt = state.target
-        self._target_model = getattr(tgt, "model", "") or ""
-        self._target_url = getattr(tgt, "url", "") or ""
-        self._target_confidence = getattr(tgt, "match_confidence", "") or ""
-        # Hold the SHARED ServingTarget object (by identity) for the c3t Evaluate
-        # hand-off — design §4/§6.6 requires passing the SAME dataclass instance.
-        self._target_obj = tgt
+        # #1939: with several models up it is the one the user picked (t on a
+        # model card), or the detected engine; with one, that one.
+        self._catalog_serving_slug = state.matched_slug or ""
+        self._catalog_confidence = getattr(state.target, "match_confidence", "") or ""
+        self._apply_target(state)
         # A7: look up the matched slug's CONFIGURED ctx so the serving panel can
         # badge a divergence between the probed running ctx and the catalog slug's
         # CONFIGURED ctx.  Both a display label (ctx_label, e.g. "262K") and the
@@ -12582,7 +12816,10 @@ class CockpitApp(App):
         # the Run marker fresh.
         try:
             cat = self.query_one("#catalog-pane", CatalogPane)
-            cat.set_serving_slug(self._target_slug, self._target_confidence)
+            # The Catalog marks what switch.sh serves (the detected engine), not
+            # the target: with pods up those differ (#1939).
+            cat.set_serving_slug(self._catalog_serving_slug,
+                                 getattr(self, "_catalog_confidence", ""))
             # A6: feed the Run catalog the LIVE per-GPU free-VRAM so a
             # "fits-clean" row that would OOM right now (e.g. GPU0 holding
             # ComfyUI) is downgraded.  Derived from THIS poll's GpuInfo
@@ -12638,7 +12875,8 @@ class CockpitApp(App):
         """Refresh the live Doctor health card (health.sh — READ-only).  The
         heavier verify / verify-full reads are on-demand ([v] / [V]); the
         estate + profile triage moved to the producer Bring & Validate lane."""
-        dr = await self._data.doctor_read(url=self._target_url or None)
+        dr = await self._data.doctor_read(url=self._target_url or None,
+                                          container=self._target_container or None)
         try:
             self.query_one("#doctor-pane", DoctorPane).populate_health(dr)
         except Exception:
@@ -12662,7 +12900,8 @@ class CockpitApp(App):
 
     @work(exclusive=True, group="doctor-verify")
     async def run_doctor_verify(self) -> None:
-        vs = await self._data.verify_smoke()
+        vs = await self._data.verify_smoke(url=self._target_url or None,
+                                           container=self._target_container or None)
         try:
             self.query_one("#doctor-pane", DoctorPane).populate_verify(vs)
         except Exception:
@@ -12685,7 +12924,8 @@ class CockpitApp(App):
 
     @work(exclusive=True, group="doctor-verify-full")
     async def run_doctor_verify_full(self) -> None:
-        vf = await self._data.verify_full()
+        vf = await self._data.verify_full(url=self._target_url or None,
+                                          container=self._target_container or None)
         try:
             self.query_one("#doctor-pane", DoctorPane).populate_verify_full(vf)
         except Exception:
@@ -14644,6 +14884,14 @@ class CockpitApp(App):
         widget_id = _TAB_PRIMARY_LIST.get(active_tab, "")
         if not widget_id:
             return None
+        if active_tab == "tab-orchestration":
+            # #1939: the models list leads Orchestration whenever it has rows.
+            try:
+                mt = self.query_one("#models-table", DataTable)
+                if mt.display and mt.row_count:
+                    return mt
+            except Exception:
+                pass
         try:
             return self.query_one(widget_id, DataTable)
         except Exception:
@@ -15132,9 +15380,9 @@ class CockpitApp(App):
         The card itself is rendered from ``entry``'s cached fields; this only picks
         the controls + the stop target.  ALL writes still flow through the modal's
         background detect + the lease (Stop dispatches its own gated plan)."""
-        serving = (self._target_slug or "").strip()
+        serving = (self._catalog_serving_slug or "").strip()
         if serving and entry.slug == serving:
-            con = self._serving_container()
+            con = self._catalog_container()
             if con is not None:
                 # A targeted stop of THE SERVING container would otherwise
                 # reconcile-UNSAFE against ITSELF (it holds the GPU → the gate
@@ -15789,6 +16037,7 @@ class CockpitApp(App):
             url=self._target_url or None,
             slug=slug,
             on_line=_on_line,
+            container=self._target_container or None,
         )
         # A9/MUST-FIX 4: run_validation returns the core run state RIGHT AFTER
         # spawning (verdict=='', exit_code=None) — the real verdict is written only
@@ -16111,6 +16360,8 @@ class CockpitApp(App):
         est = (getattr(st, "estate_report", None) or {}).get("active_estate") or {}
         instances = est.get("instances") if isinstance(est, dict) else None
         claimed = {g for inst in (instances or []) for g in (inst.get("gpus") or [])}
+        # #1939: a card a switch.sh model holds isn't free either.
+        claimed |= busy_cards(rig_models(st, self._models_card_map()))
         return [i for i in range(total) if i not in claimed]
 
     def action_new_pod(self) -> None:
@@ -16198,6 +16449,169 @@ class CockpitApp(App):
 
     # ── A4 · targeted serving verbs (Operate · Orchestration #serving-line) ────────
 
+    # ── #1939 · every model on the rig, and the one the verbs act on ───────────────
+
+    def _models_card_map(self) -> dict[str, set[int]]:
+        try:
+            return self.query_one("#operate-orch-pane", OperateOrchPane).card_map()
+        except Exception:
+            return {}
+
+    def _resolve_target_row(self, rows: list[ModelRow], state: EstateState) -> Optional[ModelRow]:
+        """The model the verbs act on: the one the user picked while it is up;
+        else the only model up; else the detected engine (switch.sh's model) when
+        it is up; else none (several up, none picked)."""
+        up = [r for r in rows if r.is_up]
+        if self._picked_target:
+            for r in up:
+                if r.container == self._picked_target:
+                    return r
+            self._picked_target = ""        # it went down: automatic again
+        if len(up) == 1:
+            return up[0]
+        det = (getattr(getattr(state, "target", None), "container", "") or "").strip()
+        for r in up:
+            if det and r.container == det:
+                return r
+        return None
+
+    def _apply_target(self, state: EstateState) -> None:
+        """Set the ``_target_*`` fields every verb reads (k / b, Doctor, the Run
+        ladder, Evaluate) from the models list (#1939).  Nothing up: today's
+        detected target, unchanged.  The target IS the detected engine: its
+        detected fields (with its match grade) plus its container.  Otherwise a
+        target built from the model's row: its port, container, slug and the id
+        its /v1/models reported."""
+        from club3090_tui_core.detect import ServingTarget as _ST
+
+        tgt = state.target
+        rows = rig_models(state, self._models_card_map())
+        self._model_rows = rows
+        row = self._resolve_target_row(rows, state)
+        det_container = (getattr(tgt, "container", "") or "").strip()
+        if row is None and any(r.is_up for r in rows):
+            # Several models up and none picked: no target, and say so where
+            # the verbs are (k / b refuse with a hint instead of guessing).
+            self._target_slug = self._target_model = self._target_url = ""
+            self._target_confidence = self._target_container = ""
+            self._target_obj = None
+        elif row is None or row.container == det_container or (
+                row.port and row.port == (getattr(tgt, "host_port", 0) or 0)):
+            # The target IS the detected engine (same container, or the same
+            # published port): keep its detected fields and match grade.
+            self._target_slug = state.matched_slug or ""
+            self._target_model = getattr(tgt, "model", "") or ""
+            self._target_url = getattr(tgt, "url", "") or ""
+            self._target_confidence = getattr(tgt, "match_confidence", "") or ""
+            self._target_container = row.container if row is not None else det_container
+            # Hold the SHARED ServingTarget object (by identity) for the c3t
+            # Evaluate hand-off — design §4/§6.6 requires the SAME instance.
+            self._target_obj = tgt
+        else:
+            self._target_slug = row.slug
+            self._target_model = row.model
+            self._target_url = row.url
+            # A pod's slug is what the estate file launched it as: an identity.
+            self._target_confidence = "identity" if row.is_pod else ""
+            self._target_container = row.container
+            self._target_obj = _ST(
+                url=row.url, model=row.model, container=row.container,
+                host_port=row.port, slug=row.slug,
+                match_confidence=self._target_confidence,
+                health="serving" if row.state == "serving" else "unreachable",
+            )
+        try:
+            self.query_one("#operate-orch-pane", OperateOrchPane).set_target(
+                row.container if row is not None else "")
+        except Exception:
+            pass
+
+    def _target_row(self) -> Optional[ModelRow]:
+        c = self._target_container
+        return next((r for r in self._model_rows if c and r.container == c), None)
+
+    def _several_up(self) -> bool:
+        return sum(1 for r in self._model_rows if r.is_up) > 1
+
+    def _open_model_card(self) -> None:
+        """⏎ on a models-table row → that model's action card (#1939)."""
+        try:
+            row = self.query_one("#operate-orch-pane", OperateOrchPane).selected_model()
+        except Exception:
+            row = None
+        if row is None:
+            return
+        others = sum(1 for r in self._model_rows if r.is_up and r.container != row.container)
+        self.push_screen(
+            ModelActionScreen(row, is_target=(row.container == self._target_container
+                                              and bool(self._target_container)),
+                              others=others),
+            lambda verb, _row=row: self._on_model_card(_row, verb),
+        )
+
+    def _on_model_card(self, row: ModelRow, verb: Optional[str]) -> None:
+        """A model card's verb → its write, through the confirm gate (or a read)."""
+        if not verb:
+            return
+        if verb == "target":
+            self._picked_target = row.container
+            st = self._last_estate_state
+            if st is not None:
+                self._apply_target(st)
+                self._refresh_gate_target_banner()
+                self.load_doctor()
+            self.notify(
+                f"{row.name} is the target: Stop/Restart here, Doctor, the Run ladder and "
+                "Evaluate act on it.", title="Target", timeout=5)
+            return
+        if verb == "logs":
+            self._show_logs_for(row.container)
+            return
+        if verb == "up":
+            plan = self._data.pod_up_plan(row.name, row.cards)
+        elif verb == "down":
+            plan = (self._data.pod_down_plan(row.name) if row.is_pod
+                    else self._data.container_action(row.container, "stop"))
+        elif verb == "restart":
+            plan = self._data.container_action(row.container, "restart")
+        elif verb == "rm":
+            plan = self._data.pod_rm_plan(row.name)
+        else:
+            return
+        self.push_screen(ConfirmActionScreen(plan))
+
+    def _show_logs_for(self, container: str) -> None:
+        """Open the Containers tab on ``container`` with its logs streaming."""
+        try:
+            self.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+        except Exception:
+            pass
+        try:
+            pane = self.query_one("#operate-containers-pane", OperateContainersPane)
+            pane.select_container(container)
+        except Exception:
+            pass
+        try:
+            self.query_one("#drill-tabs", TabbedContent).active = "drill-tab-logs"
+        except Exception:
+            pass
+        self.stream_container_logs(container)
+
+    def _catalog_container(self) -> Optional[ContainerInfo]:
+        """The engine container serving the Catalog's running slug (switch.sh's
+        model) — the serve card's Stop target, whichever model is the target."""
+        state = self._last_estate_state
+        if state is None:
+            return None
+        slug = (getattr(state, "matched_slug", "") or "").strip()
+        cons = [c for c in (getattr(state, "containers", []) or [])
+                if getattr(c, "kind", "") == "engine" and getattr(c, "is_running", True)]
+        for c in cons:
+            if slug and (getattr(c, "slug", "") or "").strip() == slug:
+                return c
+        name = (getattr(getattr(state, "target", None), "container", "") or "").strip()
+        return next((c for c in cons if name and c.name == name), None)
+
     def _serving_container(self) -> Optional[ContainerInfo]:
         """A4: resolve the container running the matched serving model.
 
@@ -16209,6 +16623,14 @@ class CockpitApp(App):
         state = self._last_estate_state
         if state is None:
             return None
+        # #1939: the target's container, whatever started it (a pod is kind
+        # "estate", a switch.sh model "engine").
+        if self._target_container:
+            for c in (getattr(state, "containers", []) or []):
+                if getattr(c, "name", "") == self._target_container and getattr(c, "is_running", True):
+                    return c
+        if self._several_up():
+            return None        # several up, none picked: never guess
         slug = (getattr(state, "matched_slug", "") or "").strip()
         cons = [c for c in (getattr(state, "containers", []) or []) if getattr(c, "kind", "") == "engine"]
         if slug:
@@ -16234,15 +16656,15 @@ class CockpitApp(App):
             return
         con = self._serving_container()
         if con is None:
-            self.notify(
-                "No model serving — nothing to "
-                f"{op}.",
-                title="Serving",
-                severity="warning",
-                timeout=3,
-            )
+            msg = ("Several models are up — ⏎ one in the Models list and press t to make it "
+                   "the target." if self._several_up() else f"No model serving — nothing to {op}.")
+            self.notify(msg, title="Serving", severity="warning", timeout=5)
             return
-        plan = self._data.container_action(con.name, op)
+        row = self._target_row()
+        if op == "stop" and row is not None and row.is_pod and row.container == con.name:
+            plan = self._data.pod_down_plan(row.name)     # a pod stops via pod.sh down
+        else:
+            plan = self._data.container_action(con.name, op)
         self.push_screen(ConfirmActionScreen(plan))
 
     def action_serving_stop(self) -> None:
@@ -16879,10 +17301,24 @@ class CockpitApp(App):
                 brought and self._identity_matches(self._norm_identity(brought), model or url)
             )
             src = "from ② Serve" if from_serve else "Catalog"
+            row = self._target_row()
+            if row is not None and row.is_pod:
+                src = f"pod {row.name}"
             who = model or slug or brought or "serving"
+            # #1939: name the container and cards too — with several models up
+            # that is what tells them apart, and what the scripts are handed.
+            where = ""
+            if self._target_container:
+                cards = f" · GPU {row.cards_label}" if (row is not None and row.cards) else ""
+                where = f" · {self._target_container}{cards}"
             pane.set_target_banner(
                 f"Target: [cyan]{who}[/cyan]  @  [green]{url or '—'}[/green]  "
-                f"[dim]· {src}[/dim]"
+                f"[dim]· {src}{where}[/dim]"
+            )
+        elif self._several_up():
+            pane.set_target_banner(
+                "[yellow]Target: none — several models are up.[/yellow] [dim]Orchestration → "
+                "⏎ a model → t makes it the target.[/dim]"
             )
         else:
             pane.set_target_banner(
@@ -17600,8 +18036,12 @@ class CockpitApp(App):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """DataTable emits RowSelected when the user presses Enter (select_cursor).
         Route it to the app's primary action so focusing a DataTable doesn't break
-        the ⏎ → primary_action contract that the tests (and help text) document."""
+        the ⏎ → primary_action contract that the tests (and help text) document.
+        Orchestration's models table (#1939) opens the model's card instead."""
         event.stop()
+        if getattr(event.data_table, "id", "") == "models-table":
+            self._open_model_card()
+            return
         self.action_primary_action()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:

@@ -2982,7 +2982,74 @@ class CockpitData:
         )
         state.estate_report = report or {}
 
+        # #1939: which models answer on their port, and which pods have exited, so
+        # the models list can say serving / booting / down / crashed for each.
+        try:
+            state.model_ready, state.exited_pods = await self._model_liveness(state)
+        except Exception:  # pragma: no cover - defensive
+            pass
+
         return state
+
+    async def _model_liveness(self, state: EstateState) -> tuple[dict[str, str], list[str]]:
+        """#1939: ``({container: served model id}, [crashed pod containers])``.
+
+        Every running model's port is asked ``/v1/models`` (curl, 2 s, through the
+        injected runner, all at once); one that answers is serving, with the id it
+        reports. Pods are the estate's instances; the others are running engine
+        containers. Best-effort: a failed read just leaves a model 'booting'."""
+        ports: dict[str, int] = {}
+        est = (state.estate_report or {}).get("active_estate") or {}
+        for inst in (est.get("instances") or []) if est.get("present") else []:
+            name = str(inst.get("name") or "").strip()
+            if name and inst.get("running") is True and inst.get("port"):
+                ports[f"club3090-{name}"] = int(inst["port"])
+        for c in state.containers:
+            if c.kind == "engine" and c.is_running and c.host_port:
+                ports.setdefault(c.name, c.host_port)
+
+        async def _ask(container: str, port: int) -> tuple[str, str]:
+            try:
+                res = await self._runner.run(
+                    ["curl", "-s", "-m", "2", f"http://127.0.0.1:{port}/v1/models"],
+                    cwd=str(self.repo_root), timeout=5.0,
+                )
+            except Exception:
+                return container, ""
+            if not res.ok or not res.stdout.strip():
+                return container, ""
+            try:
+                data = json.loads(res.stdout)
+                ids = [str(m.get("id") or "") for m in (data.get("data") or []) if isinstance(m, dict)]
+            except (ValueError, AttributeError):
+                return container, ""
+            return container, (ids[0] if ids and ids[0] else "")
+
+        ready: dict[str, str] = {}
+        if ports:
+            for container, mid in await asyncio.gather(*(_ask(c, p) for c, p in ports.items())):
+                if mid:
+                    ready[container] = mid
+        # A pod container that exited on its own (not 0, not a stop's SIGTERM 143
+        # or SIGKILL 137) crashed; one stopped cleanly is just down.
+        crashed: list[str] = []
+        try:
+            res = await self._runner.run(
+                ["docker", "ps", "-a", "--filter", "status=exited", "--filter",
+                 "name=club3090-", "--format", "{{.Names}}|{{.State}}|{{.Status}}"],
+                cwd=str(self.repo_root), timeout=10.0,
+            )
+            if res.ok:
+                for line in res.stdout.splitlines():
+                    parts = line.split("|")
+                    if len(parts) != 3 or parts[1] != "exited" or not parts[0].startswith("club3090-"):
+                        continue
+                    m = re.search(r"Exited \((-?\d+)\)", parts[2])
+                    if m and int(m.group(1)) not in (0, 137, 143):
+                        crashed.append(parts[0])
+        except Exception:  # pragma: no cover - defensive
+            pass
+        return ready, crashed
 
     # ── UX Batch 5: estate telemetry (disk / RAM / GPU-VRAM attribution) ──────────
 
@@ -3394,14 +3461,22 @@ class CockpitData:
         kept.sort(key=lambda s: rank.get(s.group, 3))   # list.sort is stable
         return kept
 
-    async def doctor_read(self, url: Optional[str] = None) -> DoctorRead:
-        """health.sh (text-only) → parsed DoctorRead."""
-        env_prefix: list[str] = []
-        cmd = ["bash", "scripts/health.sh"]
-        if url:
-            # health.sh reads URL from env; pass via a wrapper to keep the
-            # Runner protocol env-free.
-            cmd = ["bash", "-c", 'URL="$1" bash scripts/health.sh', "bash", url]
+    @staticmethod
+    def _targeted(script: str, url: Optional[str], container: Optional[str]) -> list[str]:
+        """``bash <script>`` with the target's ``URL`` / ``CONTAINER`` in its env
+        (#1939: with several models up, the script's own autodetect must never be
+        the one choosing). ``env K=V …`` keeps the Runner protocol env-free; only
+        the values given are set, so an unset one still autodetects."""
+        pairs = [f"URL={url}"] if url else []
+        if container:
+            pairs.append(f"CONTAINER={container}")
+        return (["env", *pairs] if pairs else []) + ["bash", script]
+
+    async def doctor_read(self, url: Optional[str] = None,
+                          container: Optional[str] = None) -> DoctorRead:
+        """health.sh (text-only) → parsed DoctorRead, against ``url`` /
+        ``container`` when given."""
+        cmd = self._targeted("scripts/health.sh", url, container)
         res = await self._runner.run(cmd, cwd=str(self.repo_root), timeout=30.0)
         return parse_health_text(res.stdout or res.stderr)
 
@@ -3883,6 +3958,40 @@ class CockpitData:
             requires_reconcile=False,
         )
 
+    def pod_up_plan(self, name: str, cards: list[int]) -> ActionPlan:
+        """#1939: boot ONE pod (``pod.sh up <name>``, estate_cli boot --only) on
+        its declared cards. Gated on exactly those cards, so other models on
+        other cards are neither collisions nor torn down by a forced up."""
+        return ActionPlan(
+            kind="pod_up",
+            cmd=["bash", "scripts/pod.sh", "up", name],
+            description=f"pod.sh up {name}",
+            requires_reconcile=True,
+            gpus=sorted({int(c) for c in cards}),
+        )
+
+    def pod_down_plan(self, name: str) -> ActionPlan:
+        """#1939: stop ONE pod (``pod.sh down <name>``). Its container is the
+        plan's target: the gate checks that pod's cards and leaves every other
+        model up."""
+        return ActionPlan(
+            kind="pod_down",
+            cmd=["bash", "scripts/pod.sh", "down", name],
+            description=f"pod.sh down {name}",
+            requires_reconcile=True,
+            target=f"club3090-{name}",
+        )
+
+    def pod_rm_plan(self, name: str) -> ActionPlan:
+        """#1939: remove a pod from the estate file (``pod.sh rm``, which refuses
+        a running pod). A file write: no GPU claimed, so no gate."""
+        return ActionPlan(
+            kind="pod_rm",
+            cmd=["bash", "scripts/pod.sh", "rm", name],
+            description=f"pod.sh rm {name}",
+            requires_reconcile=False,
+        )
+
     def scene_switch(self, mode: str) -> ActionPlan:
         return ActionPlan(
             kind="scene",
@@ -4330,6 +4439,7 @@ class CockpitData:
         slug: Optional[str] = None,
         on_event: Optional[Callable[[Any], None]] = None,
         on_line: Optional[Callable[[str], None]] = None,
+        container: Optional[str] = None,
     ) -> Any:
         """Launch a validation script via the core SubprocessRunner, streamed.
 
@@ -4354,6 +4464,10 @@ class CockpitData:
             env["MODEL"] = model
         if url:
             env["URL"] = url
+        if container:
+            # #1939: name the container too, so a script whose autodetect would
+            # otherwise pick among several running models never chooses.
+            env["CONTAINER"] = container
         parser = self._validation_parser(kind)
         # No reconcile gate (validation does not claim a GPU); straight to the
         # streamer.  In tests this is the FakeWriteRunner; live it is blocked.
@@ -4482,7 +4596,8 @@ class CockpitData:
             tri.error = (res.stderr.strip()[:200] or f"no triage output (rc={res.returncode})")
         return tri
 
-    async def verify_smoke(self) -> VerifySmoke:
+    async def verify_smoke(self, url: Optional[str] = None,
+                           container: Optional[str] = None) -> VerifySmoke:
         """Run ``scripts/verify.sh`` (the ~15s "is the model serving correctly?"
         smoke: server reachable → Genesis patch → basic completion → tool-call)
         and parse its ✓/✗ checks.  READ-only — it sends a couple of test queries
@@ -4493,7 +4608,8 @@ class CockpitData:
         injection is needed — when nothing is serving, check 1 fails and the
         result reports unreachable, which is the correct 'not serving' signal."""
         res = await self._runner.run(
-            ["bash", "scripts/verify.sh"], cwd=str(self.repo_root), timeout=90.0
+            self._targeted("scripts/verify.sh", url, container),
+            cwd=str(self.repo_root), timeout=90.0,
         )
         if res.timed_out:
             vs = VerifySmoke(raw=res.stdout or "")
@@ -4501,14 +4617,16 @@ class CockpitData:
             return vs
         return parse_verify_smoke(res.stdout or res.stderr, rc=res.returncode)
 
-    async def verify_full(self) -> VerifyFull:
+    async def verify_full(self, url: Optional[str] = None,
+                          container: Optional[str] = None) -> VerifyFull:
         """Run ``scripts/verify-full.sh`` (the ~1-2 min functional battery:
         9 steps incl. streaming / thinking / cascade / MTP-acceptance) and parse
         its ``[N/9]`` steps + final summary.  READ-only (queries the live model;
         no GPU claim).  Heavier than verify_smoke but still a read — step
         ``[4/9]`` tool-calling is expected to fail on the default compose."""
         res = await self._runner.run(
-            ["bash", "scripts/verify-full.sh"], cwd=str(self.repo_root), timeout=240.0
+            self._targeted("scripts/verify-full.sh", url, container),
+            cwd=str(self.repo_root), timeout=240.0,
         )
         if res.timed_out:
             vf = VerifyFull(raw=res.stdout or "")

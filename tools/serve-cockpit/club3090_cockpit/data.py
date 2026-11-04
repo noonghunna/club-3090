@@ -618,6 +618,12 @@ class EstateState:
     matched_slug: str = ""              # slug the running engine matched, if any
     served: ServedProbe = field(default_factory=ServedProbe)  # A7: probed running config
     error: str = ""
+    # #1939: container -> served model id for each running model whose port
+    # answered /v1/models this poll ("" absent = not answering yet).
+    model_ready: dict[str, str] = field(default_factory=dict)
+    # #1939: pod containers (club3090-<name>) that exited on their own (a
+    # non-zero exit that isn't a stop's 137 / 143): shown as crashed.
+    exited_pods: list[str] = field(default_factory=list)
 
     @property
     def api_booting(self) -> bool:
@@ -630,6 +636,105 @@ class EstateState:
         if self.doctor.reachable:
             return False
         return any(c.kind == "engine" and c.status == "running" for c in self.containers)
+
+
+# ── Every model on the rig (#1939) ──────────────────────────────────────────────
+
+
+@dataclass
+class ModelRow:
+    """One model on the rig, whatever started it: a pod (an estate instance,
+    container ``club3090-<name>``, up or down) or an engine container started
+    another way (``switch.sh`` / the Catalog, a launcher, ``docker compose``).
+
+    ``state``: ``serving`` (its port answers ``/v1/models``) · ``booting``
+    (running, port not answering yet) · ``down`` (a pod with no container) ·
+    ``crashed`` (a pod whose container exited) · ``unknown`` (liveness not read).
+    ``cards`` are the card indices it holds (a running model: nvidia-smi's card
+    map, joined with a pod's declared cards) or will hold (a down pod: the
+    estate file's)."""
+
+    name: str
+    container: str
+    is_pod: bool
+    slug: str = ""
+    cards: list[int] = field(default_factory=list)
+    port: int = 0
+    state: str = "unknown"
+    placement: str = ""             # ok | mismatch | unknown (pods) · "" (others)
+    model: str = ""                 # served model id, when its port answered
+
+    @property
+    def url(self) -> str:
+        return f"http://localhost:{self.port}" if self.port else ""
+
+    @property
+    def is_up(self) -> bool:
+        return self.state in ("serving", "booting")
+
+    @property
+    def cards_label(self) -> str:
+        return ",".join(str(c) for c in self.cards)
+
+
+def rig_models(
+    state: "EstateState",
+    card_map: Optional[dict[str, set[int]]] = None,
+) -> list[ModelRow]:
+    """#1939: every model on the rig in one list: the estate's pods first (in
+    estate-file order, up or down), then each running engine container that is
+    not a pod. Pure: reads the estate poll (``state``) and the card -> container
+    map from the telemetry read (``card_map``, None when not read yet)."""
+    card_map = card_map or {}
+    rows: list[ModelRow] = []
+    seen: set[str] = set()
+    ready = getattr(state, "model_ready", None) or {}
+    exited = set(getattr(state, "exited_pods", None) or [])
+    est = (getattr(state, "estate_report", None) or {}).get("active_estate") or {}
+    instances = est.get("instances") if isinstance(est, dict) else None
+    for inst in instances or []:
+        name = str(inst.get("name") or "").strip()
+        if not name:
+            continue
+        container = f"club3090-{name}"
+        declared = sorted({int(g) for g in (inst.get("gpus") or []) if str(g).strip().isdigit()})
+        running = inst.get("running")
+        port = int(inst.get("port") or 0)
+        if running is True:
+            st = "serving" if ready.get(container) else "booting"
+            cards = sorted(set(declared) | card_map.get(container, set()))
+        elif running is False:
+            st = "crashed" if container in exited else "down"
+            cards = declared
+        else:
+            st, cards = "unknown", declared
+        rows.append(ModelRow(
+            name=name, container=container, is_pod=True,
+            slug=str(inst.get("compose") or inst.get("slug") or ""),
+            cards=cards, port=port, state=st,
+            placement=str((inst.get("placement") or {}).get("placement", "unknown")),
+            model=str(ready.get(container) or ""),
+        ))
+        seen.add(container)
+    for c in getattr(state, "containers", None) or []:
+        if getattr(c, "kind", "") != "engine" or not getattr(c, "is_running", True):
+            continue
+        if c.name in seen:
+            continue
+        seen.add(c.name)
+        rows.append(ModelRow(
+            name=c.name, container=c.name, is_pod=False, slug=c.slug or "",
+            cards=sorted(card_map.get(c.name, set())), port=c.host_port or 0,
+            state="serving" if ready.get(c.name) else "booting",
+            model=str(ready.get(c.name) or ""),
+        ))
+    return rows
+
+
+def busy_cards(rows: list[ModelRow]) -> set[int]:
+    """The cards held by any model that is up (#1939: a card a switch.sh model
+    holds is not free just because no pod claims it)."""
+    return {c for r in rows if r.is_up for c in r.cards}
 
 
 # ── Reconcile gate ──────────────────────────────────────────────────────────────

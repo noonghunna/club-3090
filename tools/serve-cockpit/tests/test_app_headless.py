@@ -3896,9 +3896,10 @@ class TestBatch1OperateServingPanel:
 
     @pytest.mark.asyncio
     async def test_pod_view_groups_gpus_with_placement_badge(self):
-        """C1 (#610 Phase C): the pod-view groups estate instances with
-        their GPUs stacked and a placement health badge fed by the D3 verdict —
-        ✓ placed / ⚠ MISMATCH — and lists free GPUs. Empty when no pods."""
+        """C1 (#610 Phase C), now the #1939 models list: each pod is a row with
+        its GPUs, port and a placement health badge fed by the D3 verdict —
+        ✓ placed / ⚠ MISMATCH — and the header names the free GPUs. With nothing
+        on the rig the create key still shows."""
         app, _, _ = make_app(target=ServingTarget())
         async with app.run_test(size=(120, 40)) as pilot:
             await _enter_operate(pilot)
@@ -3909,6 +3910,7 @@ class TestBatch1OperateServingPanel:
             orch._populate_pods(EstateState(gpus=[GpuInfo(index=0, mem_used_mib=1)]))
             empty = str(app.query_one("#pod-view", Static).render())
             assert "none yet" in empty and "N" in empty
+            assert app.query_one("#models-table", DataTable).display is False
 
             # Two pods on a 3-GPU rig: one placed-ok, one placement-mismatch;
             # GPU 2 free.
@@ -3923,13 +3925,170 @@ class TestBatch1OperateServingPanel:
             )
             orch._populate_pods(state)
             view = str(app.query_one("#pod-view", Static).render())
-            assert "Pods" in view
-            assert "chat" in view and "coder" in view          # both pod headers
-            assert "vllm/minimal" in view and ":8020" in view   # slug + port
-            assert "GPU0" in view and "GPU1" in view            # GPUs stacked under pods
-            assert "✓ placed" in view                           # ok badge (chat)
-            assert "MISMATCH" in view                           # ⚠ badge (coder)
+            assert "Models" in view and "2 pods" in view
             assert "free: GPU2" in view                         # GPU 2 unassigned
+            table = app.query_one("#models-table", DataTable)
+            assert table.display is True and table.row_count == 2
+            rows = [" ".join(str(c) for c in table.get_row_at(i)) for i in range(2)]
+            assert "chat" in rows[0] and "vllm/minimal" in rows[0] and ":8020" in rows[0]
+            assert "GPU0" in rows[0] and "GPU1" in rows[1]      # each pod's GPUs
+            assert "✓ placed" in rows[0]                        # ok badge (chat)
+            assert "MISMATCH" in rows[1]                        # ⚠ badge (coder)
+
+
+def _models_state() -> EstateState:
+    """#1939 fixture: 3 cards — pod alpha up on card 0 (answering), pod beta
+    down (card 2), and vllm-qwen started with switch.sh (not a pod) on card 1."""
+    return EstateState(
+        gpus=[GpuInfo(index=i, mem_used_mib=20000 if i < 2 else 3) for i in range(3)],
+        containers=[
+            ContainerInfo(name="club3090-alpha", kind="estate", host_port=8041),
+            ContainerInfo(name="vllm-qwen", kind="engine", host_port=8020, slug="vllm/dual"),
+        ],
+        estate_report={"active_estate": {"present": True, "instances": [
+            {"name": "alpha", "compose": "vllm/minimal", "gpus": [0], "port": 8041,
+             "running": True, "placement": {"placement": "ok"}},
+            {"name": "beta", "compose": "vllm/minimal", "gpus": [2], "port": 8042,
+             "running": False},
+        ]}},
+        model_ready={"club3090-alpha": "qwen3.8-4b"},
+    )
+
+
+def _qwen_on_card1() -> EstateTelemetry:
+    return EstateTelemetry(gpu_apps={1: [GpuCompApp(pid=1, used_mib=20000,
+                                                   container="vllm-qwen", gpu_index=1)]})
+
+
+class TestModelsView1939:
+    """#1939: every model on the rig in one list, a card per model, and one
+    selected target for the verbs that act on "the model"."""
+
+    @pytest.mark.asyncio
+    async def test_lists_pods_and_a_switch_model_on_its_card(self):
+        app, _, _ = make_app(target=ServingTarget())
+        async with app.run_test(size=(140, 44)) as pilot:
+            await _enter_operate(pilot)
+            orch = app.query_one("#operate-orch-pane", OperateOrchPane)
+            orch._last_telemetry = _qwen_on_card1()
+            orch._populate_pods(_models_state())
+            table = app.query_one("#models-table", DataTable)
+            rows = [" ".join(str(c) for c in table.get_row_at(i)) for i in range(table.row_count)]
+            assert len(rows) == 3
+            assert "alpha" in rows[0] and "serving" in rows[0]
+            assert "beta" in rows[1] and "down" in rows[1]
+            assert "vllm-qwen" in rows[2] and "not a pod" in rows[2] and "GPU1" in rows[2]
+            # Free cards mean free: card 1 is held by the switch.sh model.
+            view = str(app.query_one("#pod-view", Static).render())
+            assert "free: (none)" in view
+
+    @pytest.mark.asyncio
+    async def test_free_gpu_hint_counts_cards_any_model_holds(self):
+        app, _, _ = make_app(target=ServingTarget())
+        async with app.run_test(size=(140, 44)) as pilot:
+            await _enter_operate(pilot)
+            app._last_estate_state = _models_state()
+            assert app._pod_free_gpus() == [1]           # card map not read yet
+            app.query_one("#operate-orch-pane", OperateOrchPane)._last_telemetry = _qwen_on_card1()
+            assert app._pod_free_gpus() == []            # qwen holds card 1
+
+    @pytest.mark.asyncio
+    async def test_enter_on_a_row_opens_its_card_with_its_verbs(self):
+        from club3090_cockpit.app import ModelActionScreen
+        app, _, _ = make_app(target=ServingTarget())
+        async with app.run_test(size=(140, 44)) as pilot:
+            await _enter_operate(pilot)
+            st = _models_state()
+            app._last_estate_state = st
+            app._apply_target(st)
+            orch = app.query_one("#operate-orch-pane", OperateOrchPane)
+            orch._populate_pods(st)
+            table = app.query_one("#models-table", DataTable)
+            table.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, ModelActionScreen)
+            assert app.screen.verbs() == ["down", "restart", "logs", "target"]
+            await pilot.press("escape")
+            await pilot.pause()
+            table.move_cursor(row=1)                      # beta, down
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, ModelActionScreen)
+            assert app.screen.verbs() == ["up", "rm"]
+
+    @pytest.mark.asyncio
+    async def test_several_up_none_picked_k_refuses_with_a_hint(self):
+        app, _, wr = make_app(target=ServingTarget())
+        async with app.run_test(size=(140, 44)) as pilot:
+            await _enter_operate(pilot)
+            st = _models_state()
+            app._last_estate_state = st
+            app._apply_target(st)
+            assert app._target_container == "" and app._several_up()
+            app._serving_write("stop")
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmActionScreen)
+
+    @pytest.mark.asyncio
+    async def test_picked_target_drives_k_b_doctor(self):
+        app, runner, wr = make_app(target=ServingTarget())
+        async with app.run_test(size=(140, 44)) as pilot:
+            await _enter_operate(pilot)
+            st = _models_state()
+            app._last_estate_state = st
+            app._apply_target(st)
+            alpha = next(r for r in app._model_rows if r.name == "alpha")
+            app._on_model_card(alpha, "target")
+            await pilot.pause()
+            assert app._target_container == "club3090-alpha"
+            assert app._target_url == "http://localhost:8041"
+            assert app._target_model == "qwen3.8-4b"
+            assert getattr(app._target_obj, "container", "") == "club3090-alpha"
+            # k on a pod target is pod.sh down, through the confirm gate.
+            app._serving_write("stop")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            assert app.screen._plan.cmd == ["bash", "scripts/pod.sh", "down", "alpha"]
+            app.pop_screen()
+            app._serving_write("restart")
+            await pilot.pause()
+            assert app.screen._plan.cmd == ["docker", "restart", "club3090-alpha"]
+            app.pop_screen()
+            await _settle(pilot)
+            # Doctor names the target: URL + CONTAINER, never autodetect.
+            assert any(c[:3] == ["env", "URL=http://localhost:8041", "CONTAINER=club3090-alpha"]
+                       and c[-1] == "scripts/health.sh" for c in runner.calls)
+            assert wr.started == []                       # nothing auto-fired
+
+    @pytest.mark.asyncio
+    async def test_card_up_is_gated_on_the_pods_cards(self):
+        app, _, wr = make_app(target=ServingTarget())
+        async with app.run_test(size=(140, 44)) as pilot:
+            await _enter_operate(pilot)
+            st = _models_state()
+            app._last_estate_state = st
+            app._apply_target(st)
+            beta = next(r for r in app._model_rows if r.name == "beta")
+            app._on_model_card(beta, "up")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            plan = app.screen._plan
+            assert plan.cmd == ["bash", "scripts/pod.sh", "up", "beta"] and plan.gpus == [2]
+            assert wr.started == []
+
+    @pytest.mark.asyncio
+    async def test_one_model_up_is_the_target_automatically(self):
+        app, _, _ = make_app(target=ServingTarget())
+        async with app.run_test(size=(140, 44)) as pilot:
+            await _enter_operate(pilot)
+            st = _models_state()
+            st.containers = [c for c in st.containers if c.name != "vllm-qwen"]
+            app._last_estate_state = st
+            app._apply_target(st)
+            assert app._target_container == "club3090-alpha"
+            assert app._target_url == "http://localhost:8041"
 
 
 class TestF9SlugMasquerade:
