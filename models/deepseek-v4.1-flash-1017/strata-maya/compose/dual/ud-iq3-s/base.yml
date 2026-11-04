@@ -104,6 +104,10 @@ services:
       # maya-ds4's RAM headroom (from v1.1.51): the GiB its memory planning leaves to everything else when it
       # sizes the expert copies, the warm-up and the prompt caches (0 to 4096). Unset = Maya's 8
       DS4_RAM_MARGIN_GB:
+      # maya-ds4's prompt reading on a layer split (MAYA_TP=1, from v1.1.53): DS4_FLOW_COPY_DMA=1 DMAs a
+      # streamed expert straight from its pinned RAM copy instead of copying it into staging first (the
+      # same bytes). Only with the experts copied into RAM; nothing under MAYA_TP=2. Unset = off
+      DS4_FLOW_COPY_DMA:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       # the quant's own folder (unsloth's repo layout: one folder a quant); no drafter is mounted, so the pack
