@@ -12723,9 +12723,12 @@ class CockpitApp(App):
         # unmatched or the registry row didn't carry the int.
         catalog_ctx_label = ""
         catalog_ctx = None
-        if self._target_slug:
+        # The serving panel probes the DETECTED engine, so compare it with that
+        # engine's slug — not the target's, which may be a pod (#1939).
+        serving_slug = self._catalog_serving_slug
+        if serving_slug:
             mrow = next(
-                (v for v in (self._variants or []) if getattr(v, "slug", "") == self._target_slug),
+                (v for v in (self._variants or []) if getattr(v, "slug", "") == serving_slug),
                 None,
             )
             if mrow is not None:
@@ -12733,7 +12736,7 @@ class CockpitApp(App):
                 catalog_ctx = getattr(mrow, "configured_ctx", None)
             # The enriched catalog entry is the authoritative source for the
             # configured int (it carries the registry row); prefer it when present.
-            mentry = self._catalog_entry_for(self._target_slug)
+            mentry = self._catalog_entry_for(serving_slug)
             if mentry is not None:
                 ent_cfg = mentry.configured_ctx
                 if ent_cfg is not None:
