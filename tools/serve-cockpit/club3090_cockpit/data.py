@@ -580,6 +580,9 @@ class DoctorRead:
     recent_errors: Optional[int] = None
     raw: str = ""
     parse_source: str = "health.sh-text"
+    # #1939: several models are up and none is the target, so there is no one
+    # model to check — Doctor says so instead of showing a script's own pick.
+    pick_target: bool = False
 
 
 @dataclass

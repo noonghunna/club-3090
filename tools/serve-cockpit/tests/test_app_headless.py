@@ -4032,6 +4032,33 @@ class TestModelsView1939:
             assert not isinstance(app.screen, ConfirmActionScreen)
 
     @pytest.mark.asyncio
+    async def test_several_up_none_picked_doctor_does_not_autodetect(self):
+        """With several models up and no target, Doctor must not show (or run) a
+        script's own pick: no plain health.sh / verify.sh, and the card says how
+        to pick a target."""
+        app, runner, _ = make_app(target=ServingTarget())
+        async with app.run_test(size=(140, 44)) as pilot:
+            await _enter_operate(pilot)
+            st = _models_state()
+            st.model_ready = {"club3090-alpha": "qwen3.8-4b", "vllm-qwen": "qwen3.8-27b"}
+            app._last_estate_state = st
+            app._apply_target(st)
+            assert app._needs_pick()
+            before = len(runner.calls)
+            app.load_doctor()
+            await _settle(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-doctor"
+            await pilot.pause()
+            app.action_doctor_verify()
+            app.action_doctor_verify_full()
+            await _settle(pilot)
+            new = [" ".join(c) for c in runner.calls[before:]]
+            assert not any(c.endswith(("scripts/health.sh", "scripts/verify.sh",
+                                       "scripts/verify-full.sh")) for c in new), new
+            body = str(app.query_one("#doctor-health-body", Static).render())
+            assert "several models are up" in body
+
+    @pytest.mark.asyncio
     async def test_picked_target_drives_k_b_doctor(self):
         app, runner, wr = make_app(target=ServingTarget())
         async with app.run_test(size=(140, 44)) as pilot:
@@ -4077,6 +4104,28 @@ class TestModelsView1939:
             plan = app.screen._plan
             assert plan.cmd == ["bash", "scripts/pod.sh", "up", "beta"] and plan.gpus == [2]
             assert wr.started == []
+
+    @pytest.mark.asyncio
+    async def test_force_keeps_the_plans_cards_and_target(self):
+        """The Force re-issue used to build a fresh ActionPlan, dropping the
+        plan's cards and target: a forced pod up then gated on EVERY card and its
+        teardown stopped every model on the rig."""
+        from club3090_cockpit.data import ReconcileResult
+        app, _, _ = make_app(target=ServingTarget())
+        async with app.run_test(size=(140, 44)) as pilot:
+            await _enter_operate(pilot)
+            sent = []
+            app.dispatch_action = lambda plan: sent.append(plan)
+            for plan in (app._data.pod_up_plan("beta", [2]),
+                         app._data.pod_down_plan("beta")):
+                screen = ConfirmActionScreen(plan)
+                app.push_screen(screen)
+                await pilot.pause()
+                screen.set_reconcile(ReconcileResult(safe=False, action="x"))
+                screen.action_force()
+                await pilot.pause()
+            assert [(p.force, p.gpus, p.target) for p in sent] == [
+                (True, [2], ""), (True, None, "club3090-beta")]
 
     @pytest.mark.asyncio
     async def test_one_model_up_is_the_target_automatically(self):
@@ -6166,23 +6215,36 @@ class TestEstateExtrasWired:
             await pilot.press("X")  # rm
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
-            assert app.screen._plan.cmd == ["docker", "rm", "vllm-qwen36-27b-dual"]
+            # A running container: docker refuses a plain rm, so -f up front,
+            # aimed at that container only (#1939).
+            assert app.screen._plan.cmd == ["docker", "rm", "-f", "vllm-qwen36-27b-dual"]
+            assert app.screen._plan.target == "vllm-qwen36-27b-dual"
             assert app.screen._plan.requires_reconcile is True  # frees a GPU → gated
 
     @pytest.mark.asyncio
     async def test_container_rm_refused_when_unsafe(self):
-        """rm of a live container → reconcile unsafe → refused (no write)."""
+        """rm is refused while another write is in flight on its cards (the one
+        collision a single-container write still has, #1939); without one it
+        reaches the runner, and its teardown stops nothing else."""
+        import time as _t
         wr = FakeWriteRunner()
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         gpus = [GpuInfo(index=0, mem_used_mib=22000), GpuInfo(index=1, mem_used_mib=1)]
-        app, _, _ = make_app(
+        app, runner, _ = make_app(
             responses=responses, gpus=gpus, target=ServingTarget(gpus=gpus), write_runner=wr
         )
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
+            app._data._pending_claims["in-flight"] = (frozenset({0, 1}), _t.monotonic() + 60)
             app.dispatch_action(app._data.container_rm("vllm-qwen36-27b-dual"))
             await _settle(pilot)
             assert wr.started == []  # refused at the gate
+            app._data._pending_claims.clear()
+            app.dispatch_action(app._data.container_rm(
+                "vllm-qwen36-27b-dual", force=True, force_reason="remove it"))
+            await _settle(pilot)
+            assert [s["cmd"] for s in wr.started] == [["docker", "rm", "-f", "vllm-qwen36-27b-dual"]]
+            assert not [c for c in runner.calls if c[:2] == ["docker", "stop"]]
 
 
 # ===========================================================================

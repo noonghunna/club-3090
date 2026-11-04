@@ -4237,8 +4237,9 @@ class TestPhase4RunValidation:
 class TestPhase4GatedWriteExecution:
     @pytest.mark.asyncio
     async def test_container_rm_unsafe_gate_refuses(self):
-        """container_rm requires_reconcile=True → refused when the gate is unsafe
-        (the target container is live), unless forced."""
+        """container_rm requires_reconcile=True. It acts on its own container
+        (#1939: the target), so a live container is no longer a collision with
+        itself; what still refuses it is an in-flight write on its cards."""
         write_runner = FakeWriteRunner()
         runner = full_runner(
             **{"docker ps": ok(DOCKER_PS_ENGINE), "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE)}
@@ -4249,10 +4250,11 @@ class TestPhase4GatedWriteExecution:
             detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
             get_gpu_info_fn=make_gpu_info(gpus),
         )
+        cd._pending_claims["in-flight"] = (frozenset({0, 1}), time.monotonic() + 60)
         plan = cd.container_rm("vllm-qwen36-27b-dual")
         executed, rec, _ = await cd.execute_action(plan)
         assert executed is False
-        assert rec is not None and rec.safe is False
+        assert rec is not None and rec.safe is False and rec.pending_claim_tokens
         assert write_runner.started == []  # destructive rm never reached the runner
 
     @pytest.mark.asyncio
@@ -5081,3 +5083,25 @@ class TestExplicitTarget:
                                 container="club3090-alpha")
         assert seen["env"]["CONTAINER"] == "club3090-alpha"
         assert seen["env"]["URL"] == "http://localhost:8041"
+
+
+class TestSingleContainerWritesTarget:
+    """#1939: every write that acts on ONE container names it, so 'no cards'
+    (= every card) never turns a forced single-container write into a teardown
+    of every model on the rig."""
+
+    def test_container_rm_targets_its_container(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        plan = cd.container_rm("club3090-alpha", force=True, force_reason="x")
+        assert plan.requires_reconcile is True and plan.target == "club3090-alpha"
+
+    @pytest.mark.asyncio
+    async def test_forced_rm_tears_down_nothing_else(self):
+        wr = FakeWriteRunner()
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]})
+        cd = _cards_cd(runner, gpus, wr)
+        plan = cd.container_rm("club3090-beta", force=True, force_reason="remove beta")
+        executed, rec, _ = await cd.execute_action(plan)
+        assert executed is True
+        assert [c for c in runner.calls if c[:2] == ["docker", "stop"]] == []
+        assert [c.name for c in rec.stays_up] == ["club3090-alpha"]

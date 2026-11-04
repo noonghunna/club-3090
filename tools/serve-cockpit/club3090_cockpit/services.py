@@ -2967,8 +2967,9 @@ class CockpitData:
         # scenes (gpu-mode --list-modes --json)
         state.scenes = await self.scenes()
 
-        # doctor (health.sh — text)
-        state.doctor = await self.doctor_read(url=target.url or None)
+        # doctor (health.sh — text), aimed at the detected engine when there is one
+        state.doctor = await self.doctor_read(url=target.url or None,
+                                              container=target.container or None)
 
         # Derived "booting" (EstateState.api_booting): an engine container is up but
         # the API isn't reachable yet → a model is mid-boot. Copy onto doctor.booting
@@ -5450,6 +5451,9 @@ class CockpitData:
             requires_confirm=True,
             force=force,
             force_reason=force_reason,
+            # #1939: it acts on this one container, so its gate checks that
+            # container's cards and a forced rm tears down nothing else.
+            target=name,
         )
 
     # ════════════════════════════════════════════════════════════════════════════

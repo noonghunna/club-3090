@@ -98,6 +98,7 @@ from .data import (
     ByoResult,
     CatalogEntry,
     ContainerInfo,
+    DoctorRead,
     EstateState,
     EstateTelemetry,
     EvidenceReport,
@@ -4772,11 +4773,11 @@ class ConfirmActionScreen(ModalScreen):
                 pairs += reset
                 tags.append("card-defaults-sampler")
         if pairs:
-            plan = ActionPlan(
-                kind=plan.kind, cmd=self._with_act8_env(plan.cmd, pairs),
+            # dataclasses.replace keeps every other field: the plan's cards and
+            # target (#1939), its env, its confirm / network flags.
+            plan = dataclasses.replace(
+                plan, cmd=self._with_act8_env(plan.cmd, pairs),
                 description=plan.description + " " + " ".join(tags),
-                is_write=plan.is_write, requires_reconcile=plan.requires_reconcile,
-                force=plan.force, force_reason=plan.force_reason,
             )
         if force and not plan.force:
             # Re-issue the plan as a forced one (with a surfaced reason) so the
@@ -4788,12 +4789,13 @@ class ConfirmActionScreen(ModalScreen):
                 if self._is_serve
                 else "user accepted teardown via Force override"
             )
-            plan = ActionPlan(
-                kind=plan.kind,
+            # dataclasses.replace, not a fresh ActionPlan: a rebuilt plan lost
+            # its cards and target (#1939), so a forced pod up gated on EVERY
+            # card and its teardown stopped every model on the rig.
+            plan = dataclasses.replace(
+                plan,
                 cmd=_with_force(plan),
                 description=plan.description + " (FORCED)",
-                is_write=plan.is_write,
-                requires_reconcile=plan.requires_reconcile,
                 force=True,
                 force_reason=reason,
             )
@@ -5503,6 +5505,9 @@ class OperateOrchPane(Container):
     def _populate_doctor(self, state: EstateState) -> None:
         dr = state.doctor
         line = self.query_one("#doctor-line", Static)
+        if getattr(dr, "pick_target", False):
+            line.update("[yellow]▸[/yellow] several models up — Doctor checks the target (⏎ a model → t)")
+            return
         if not dr.reachable:
             if dr.booting:
                 line.update("[yellow]⏳[/yellow] API booting — model loading")
@@ -6378,6 +6383,12 @@ class DoctorPane(Container):
 
     def _render_health(self, dr) -> None:
         body = self.query_one("#doctor-health-body", Static)
+        if getattr(dr, "pick_target", False):
+            body.update(
+                "[yellow]▸[/yellow]  several models are up — pick the one Doctor checks\n"
+                "   [dim]Orchestration → ⏎ a model → [cyan]t[/cyan] makes it the target.[/dim]"
+            )
+            return
         if not dr.reachable:
             if dr.booting:
                 # A model container is up but hasn't bound its port yet — mid-boot,
@@ -12709,6 +12720,10 @@ class CockpitApp(App):
         self._catalog_serving_slug = state.matched_slug or ""
         self._catalog_confidence = getattr(state.target, "match_confidence", "") or ""
         self._apply_target(state)
+        if self._needs_pick():
+            # The poll's health.sh read had no model to aim at and autodetected
+            # one: don't show a script's own pick as "the" model (#1939).
+            state.doctor = self._pick_target_read()
         # A7: look up the matched slug's CONFIGURED ctx so the serving panel can
         # badge a divergence between the probed running ctx and the catalog slug's
         # CONFIGURED ctx.  Both a display label (ctx_label, e.g. "262K") and the
@@ -12878,8 +12893,11 @@ class CockpitApp(App):
         """Refresh the live Doctor health card (health.sh — READ-only).  The
         heavier verify / verify-full reads are on-demand ([v] / [V]); the
         estate + profile triage moved to the producer Bring & Validate lane."""
-        dr = await self._data.doctor_read(url=self._target_url or None,
-                                          container=self._target_container or None)
+        if self._needs_pick():
+            dr = self._pick_target_read()
+        else:
+            dr = await self._data.doctor_read(url=self._target_url or None,
+                                              container=self._target_container or None)
         try:
             self.query_one("#doctor-pane", DoctorPane).populate_health(dr)
         except Exception:
@@ -12890,6 +12908,8 @@ class CockpitApp(App):
         (verify.sh) and render the per-check verdict.  READ-only (no GPU claim);
         no confirm gate — like [y] doctor_rerun, it only reads."""
         if self._active_mode != 0 or self._active_operate_tab() != "tab-doctor":
+            return
+        if self._refuse_without_target("Verify"):
             return
         try:
             self.query_one("#doctor-pane", DoctorPane).set_verify_running()
@@ -12914,6 +12934,8 @@ class CockpitApp(App):
         """[V] on Operate · Doctor: run the ~1-2 min functional battery
         (verify-full.sh) and render the per-step verdict.  READ-only."""
         if self._active_mode != 0 or self._active_operate_tab() != "tab-doctor":
+            return
+        if self._refuse_without_target("Verify-full"):
             return
         try:
             self.query_one("#doctor-pane", DoctorPane).set_verify_full_running()
@@ -15297,6 +15319,8 @@ class CockpitApp(App):
         # ③ used to open a full confirm dialog with an empty target — "GPUs —",
         # no model, no URL — and only fail once committed. Say so before the
         # dialog, and name the step that produces a target.
+        if self._refuse_without_target("③ Gate"):
+            return
         if not (self._target_model or self._target_url):
             self.notify(
                 "No serving model to validate — finish ② Serve (or start a "
@@ -15964,7 +15988,8 @@ class CockpitApp(App):
 
         Removing a container frees a GPU it held → the plan requires_reconcile,
         so it routes through the SAME ConfirmActionScreen → dispatch_action gate
-        as stop.  rm of a live container needs Force (which adds -f)."""
+        as stop.  The container is live here, so the plan is ``docker rm -f``,
+        targeted at that container: nothing else is torn down."""
         if self._active_mode != 0 or self._active_operate_tab() != "tab-containers":
             return
         con = self._selected_container()
@@ -15974,7 +15999,13 @@ class CockpitApp(App):
         if self._is_stopped_service(con):
             self.notify(f"{con.name} is not running.", title="Containers", severity="warning", timeout=3)
             return
-        plan = self._data.container_rm(con.name)
+        # The container is running, and docker refuses to rm a running one, so
+        # the plan says -f up front (#1939). It used to rely on the gate calling
+        # the container a collision with ITSELF, so Force docker-stopped it —
+        # and every other container on the wanted cards — before the rm.
+        plan = self._data.container_rm(
+            con.name, force=True,
+            force_reason="the container is running: docker rm -f stops and removes it")
         self.push_screen(ConfirmActionScreen(plan))
 
     def action_context_t(self) -> None:
@@ -16528,6 +16559,24 @@ class CockpitApp(App):
                 row.container if row is not None else "")
         except Exception:
             pass
+
+    def _needs_pick(self) -> bool:
+        """Several models up and none is the target (#1939)."""
+        return self._several_up() and not self._target_container
+
+    def _refuse_without_target(self, title: str) -> bool:
+        """With several models up and no target, a check would let the script
+        pick a model itself: say how to pick one instead (#1939)."""
+        if not self._needs_pick():
+            return False
+        self.notify("Several models are up — ⏎ one in Orchestration's Models list and "
+                    "press t to make it the target.", title=title, severity="warning", timeout=5)
+        return True
+
+    @staticmethod
+    def _pick_target_read() -> DoctorRead:
+        return DoctorRead(pick_target=True,
+                          summary="several models are up — pick a target")
 
     def _target_row(self) -> Optional[ModelRow]:
         c = self._target_container
