@@ -18,8 +18,8 @@ body:
 
         That captures rig hardware (GPUs, power caps, NVLink, driver, OS), stack
         version (commit, Genesis pin, vLLM image SHA), boot log highlights (engine
-        config, KV pool sizing, patches applied), runs **verify-full + verify-stress
-        7/7 + SOAK_MODE=continuous + canonical bench** — all in one ~35-min pass.
+        config, KV pool sizing, patches applied), runs **verify-full + verify-stress +
+        SOAK_MODE=continuous + canonical bench** — all in one ~35-min pass.
         Paste the file contents below.
 
         Soak-continuous is the only test that catches Cliff 2b (multi-turn

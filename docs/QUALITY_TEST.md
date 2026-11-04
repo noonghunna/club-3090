@@ -52,10 +52,21 @@ The **reasoning suite** is also separate from `--full`; run it with `--reasoning
 
 | Mode | Packs | Budget | When to run |
 |---|---|---|---|
-| `--quick` | ToolCall + InstructFollow (2) | ~10-15 min | Per-commit gate; pre-push smoke. The two packs that catch the highest-value regressions for IDE-agent users. No Docker. |
-| `--medium` (default) | + StructOutput + DataExtract + ReasonMath (5) | ~25-30 min | Pre-release; pin bumps; new compose authoring. Generates the `Quality:` line for the compose schema. No Docker. |
-| `--full` | + BugFind + HermesAgent + CLI (8) | ~45-60 min | Cross-rig comparison; quality A/B vs another quant. **The 3 added packs are Docker-sandboxed — needs Docker.** |
+| `--quick` | ToolCall + InstructFollow (2) | ~1-5 min | Per-commit gate; pre-push smoke. The two packs that catch the highest-value regressions for IDE-agent users. No Docker. |
+| `--medium` (default) | + StructOutput + DataExtract + ReasonMath (5) | ~4-40 min | Pre-release; pin bumps; new compose authoring. Generates the `Quality:` line for the compose schema. No Docker. |
+| `--full` | + BugFind + HermesAgent + CLI (8) | ~20 min to 3.5 h | Cross-rig comparison; quality A/B vs another quant. **The 3 added packs are Docker-sandboxed — needs Docker.** |
 | `--reasoning` | HumanEval+ + LiveCodeBench v6 + GSM-Symbolic + GPQA-Diamond metadata (4) | ~30-90+ min | Dedicated reasoning/code suite. Thinking defaults on for all 4 packs; HumanEval+ and LCB need Docker. |
+
+How long a mode takes depends mostly on two things: whether the model reasons, and whether it fits in VRAM. Wall times on the reference rig (2× RTX 3090), with the budgets in force since 2026-10-02:
+
+| Model and engine | Reasoning | `--full` | its first 2 packs (`--quick`) | its first 5 packs (`--medium`) |
+|---|---|---|---|---|
+| Qwen3.8-27B, vLLM (fits in VRAM) | off | 17–19 min (4 runs) | 0.4 min | 3.5 min |
+| Qwen3.8-Flash-Next Swift-1.5, bucko-vllm | on, xhigh | 101–108 min (2 runs) | 3 min | 13 min |
+| DeepSeek-V4.1-Flash UD-IQ3_S, Project Maya (CPU offload) | off | 81 min | 2 min | 10 min |
+| DeepSeek-V4.1-Flash UD-IQ3_S, Project Maya (CPU offload) | on | 213 min | 5 min | 35 min |
+
+The `--quick` and `--medium` columns are those packs' times inside the `--full` run. A run of its own adds the startup probe. With no thinking flag, each pack uses its own default: InstructFollow, ReasonMath, BugFind and HermesAgent reason, and the other four don't. Most of a `--full` run goes to hermesagent-20 and cli-40: 12 of the 17 minutes on Qwen3.8-27B, and 84 of the 101 on Swift-1.5.
 
 `--full` runs the sandbox packs by default. `--no-sandboxed` drops `--full` back to the 5-pack deterministic scope (no Docker); `--sandboxed-only` runs just the 3 sandbox packs. `--reasoning` is independent of `--full`; use it for the four reasoning packs, with GPQA skipped until gated data is available.
 

@@ -45,11 +45,13 @@ USAGE
 
 MODES
   --quick    2 packs:  toolcall-15, instructfollow-15
-             ~5-10 min, no Docker required
+             ~1-5 min, no Docker required
   --medium   5 packs:  + structoutput-15, dataextract-15, reasonmath-15  (DEFAULT)
-             ~15-25 min, no Docker required
+             ~4-40 min, no Docker required
   --full     8 packs:  + bugfind-15, hermesagent-20, cli-40
-             ~25-40 min, requires Docker (auto-starts sandbox containers)
+             ~20 min with reasoning off on a model that fits in VRAM, up to
+             ~3.5 h with reasoning on; requires Docker (auto-starts sandbox
+             containers). Measured times: docs/QUALITY_TEST.md "Modes"
   --reasoning
              Reasoning suite: humaneval-plus-30, lcb-v6-30, gpqa-diamond
              metadata gate, gsm-symbolic-30. Separate from --full; code
