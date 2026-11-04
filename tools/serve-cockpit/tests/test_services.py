@@ -3924,6 +3924,13 @@ class TestPhase4RunValidation:
         probe = cd.validation_plan("stream-toolcall-probe")
         assert probe.cmd[:2] == ["python3", "scripts/stream-toolcall-probe.py"]
 
+    def test_validation_plan_soak_runs_continuous_mode(self):
+        """The soak button is the Cliff 2b check, which only continuous mode runs;
+        soak-test.sh's default is fresh mode."""
+        cd = CockpitData(ROOT, runner=full_runner())
+        plan = cd.validation_plan("soak-test")
+        assert plan.cmd == ["bash", "scripts/soak-test.sh", "--continuous"]
+
     def test_validation_plan_probe_takes_url_model_as_cli_args(self):
         """stream-toolcall-probe.py reads --url/--model from the CLI, not env."""
         cd = CockpitData(ROOT, runner=full_runner())

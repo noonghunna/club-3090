@@ -5778,7 +5778,7 @@ _RUN_LADDER: list[tuple[str, str, str]] = [
     ("verify-stress", "verify-stress", "boundary matrix — long-ctx + tool-prefill OOM"),
     ("bench", "bench", "canonical TPS bench (3 warm + 5 measured)"),
     ("quality-test", "quality-test", "behavioral --quick — ToolCall + InstructFollow (2 packs)"),
-    ("soak-test", "soak-test", "fresh-mode soak, 20 × 5 turns — VRAM growth, TPS retention"),
+    ("soak-test", "soak-test", "continuous soak, 5 × 5 turns to ~25K ctx — catches Cliff 2b"),
     ("rebench-full", "rebench-full", "verify→bench→agentic→concurrency→stress→soak (no 8-pack)"),
 ]
 _RUN_EXTRAS: list[tuple[str, str, str]] = [
