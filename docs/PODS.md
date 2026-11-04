@@ -26,8 +26,8 @@ So the default is *one* model that spans the cards you pick — which you can lo
 
 ```bash
 # create — fit-checked against the SELECTED GPUs, written to the estate file
-bash scripts/pod.sh create chat  --gpus 0   --slug beellama/dflash   # TP=1 on GPU 0
-bash scripts/pod.sh create coder --gpus 1,2 --slug vllm/dual         # TP=2 on GPUs 1+2
+bash scripts/pod.sh create chat  --gpus 0   --slug llamacpp/mimo9b-single-vision --port 8094   # TP=1 on GPU 0
+bash scripts/pod.sh create coder --gpus 1,2 --slug vllm/dual --port 8010                       # TP=2 on GPUs 1+2
 
 bash scripts/pod.sh up coder      # boot just this pod (UUID-pinned + placement-asserted)
 bash scripts/pod.sh list          # pods + free GPUs      (--json for tooling)
@@ -36,7 +36,9 @@ bash scripts/pod.sh down coder    # stop just this pod
 bash scripts/pod.sh rm coder      # remove from the estate file (refuses while running)
 ```
 
-`up` / `down` / `rm` act on **one** pod; to boot the whole file at once use `bash scripts/launch.sh --estate-file <path>` (add `--parallel` to boot instances concurrently).
+`up` / `down` / `rm` act on **one** pod; to boot the whole file at once use `bash scripts/launch.sh --estate-file <path>` (add `--parallel` to boot instances concurrently), and `bash scripts/launch.sh --down-estate <path>` stops them all.
+
+**Ports.** Without `--port`, a pod takes its slug's default port plus 20 for each pod already in the file: `coder` above would get 8030. `create` refuses a port another pod uses, but it can't see ports held by anything else (see [next to a model started with `switch.sh`](#next-to-a-model-started-with-switchsh-or-launchsh)), so passing `--port` is the safe habit.
 
 ## Quickstart (c3 cockpit)
 
@@ -47,6 +49,11 @@ The **Operate · Orchestration** tab shows a live **pod view** — each pod with
 
 CLI and cockpit share **one estate file and one validation path** — a pod you make in either shows up in the other.
 
+> ⚠️ **Manage pods from the CLI for now.** Apart from the pod view, `[N]` and `[o]`, c3 still assumes one model on cards 0 and 1 ([#1939](https://github.com/noonghunna/club-3090/issues/1939)):
+> - **Its safety check doesn't know which card each model is on.** A forced stop or serve can stop other pods too.
+> - **With only pods running, it sees no serving model.** Stop / restart (`k` / `b`), the Run ladder and Evaluate have nothing to act on.
+> - **It can't boot or stop a single pod.** Use `pod.sh up` / `pod.sh down`.
+
 ---
 
 ## Two or more pods — a worked example
@@ -55,8 +62,8 @@ Say you have a 4-GPU box and want a fast chat model and a bigger coder running a
 
 ```bash
 # define two pods (writes the estate file; nothing boots yet)
-bash scripts/pod.sh create chat  --gpus 0   --slug beellama/dflash   # TP=1 on GPU 0
-bash scripts/pod.sh create coder --gpus 1,2 --slug vllm/dual         # TP=2 on GPUs 1+2
+bash scripts/pod.sh create chat  --gpus 0   --slug llamacpp/mimo9b-single-vision --port 8094   # TP=1 on GPU 0
+bash scripts/pod.sh create coder --gpus 1,2 --slug vllm/dual --port 8010                       # TP=2 on GPUs 1+2
 
 bash scripts/pod.sh list         # → 2 pods; GPU 3 free
 bash scripts/pod.sh up chat      # boot each (or `launch.sh --estate-file <path> --parallel` for all)
@@ -68,7 +75,7 @@ bash scripts/pod.sh down coder
 bash scripts/pod.sh rm coder     # (or leave it defined and `up` it again later)
 ```
 
-Each pod is its own endpoint (`chat` on `:8080`, `coder` on `:8010`) — point different clients at different ports, or front them with the LiteLLM gateway.
+Each pod is its own endpoint (`chat` on `:8094`, `coder` on `:8010`): point each client at its pod's port. Pods don't register with Open WebUI or the LiteLLM gateway; only `switch.sh` / `launch.sh` boots do.
 
 ### Heterogeneous rigs — one pod per card family
 
@@ -81,6 +88,15 @@ bash scripts/pod.sh create vision --gpus 3  --slug <a-6000-pro-slug>          # 
 ```
 
 Keep card families in **separate pods**, not mixed inside one TP group: tensor-parallel across mismatched cards makes NCCL wait on the slowest card and wastes the bigger card's VRAM. `create` *lets* you build a mixed-family pod (it estimates fit against the smallest card in the set), but a same-family pod is faster and its fit estimate is exact. `pod.sh create` also enforces per-slug `required_sm` — an NVFP4 slug won't land on your 3090s.
+
+### Next to a model started with `switch.sh` or `launch.sh`
+
+You can keep a model you started the usual way and add pods on the other cards. Checked on 2× RTX 3090 (2026-11-04): one model through `switch.sh` on GPU 0, a pod on GPU 1. Four things to know:
+
+- **The second model has to be a pod.** `switch.sh` and `launch.sh` bring down every model they started before they boot one, so starting a second model with them stops the first. Pods (containers named `club3090-<pod>`) are left alone: `switch.sh --down` stopped only its own model.
+- **Choose the pod's cards and port yourself.** `create` and `list` know only about pods. A model started with `switch.sh` isn't one, so its cards show as free and its port isn't checked. `bash scripts/gpu-mode.sh status` shows what's running where.
+- **Name the cards when you restart the other model.** While a pod holds a card, a plain `switch.sh <slug>` refuses to start, because its free-memory check looks at every card. Name the cards instead (e.g. `bash scripts/launch.sh --variant <slug> --gpus 0`), and only those are checked.
+- **Make both models pods** if you'd rather have `create` check cards and ports across all of them: `bash scripts/switch.sh --down`, then `pod.sh create` and `pod.sh up` each one. A dual slug works as a pod: `vllm/qwen38-27b-dual-fast` booted as one on GPUs 0+1, served, and placement verified.
 
 ---
 
@@ -114,25 +130,25 @@ ValueError: invalid literal for int() with base 10: 'GPU-1c6f148d-...'
   → container restart loop
 ```
 
-**Affected slugs** (all six on that engine): `vllm/gemma-mtp-tp1` · `vllm/gemma-bf16-mtp` · `vllm/gemma-int8-mtp` · `vllm/gemma-31b-dual` · `vllm/gemma-31b-qat-w4a16-dual` · `vllm/gemma-26ba4b-single`.
+**Affected slugs** (every slug on that engine): `vllm/gemma-26ba4b-single`, plus four deprecated ones (`vllm/gemma-mtp-tp1` · `vllm/gemma-bf16-mtp` · `vllm/gemma-int8-mtp` · `vllm/gemma-31b-qat-w4a16-dual`). `vllm/gemma-31b-dual` has since moved to `vllm-stable` and isn't affected.
 
-This is **not Gemma-specific and not a pod-tooling bug** — it's the engine pin. Upstream fixed the parse between v0.22.0 and v0.24.0, so `vllm-stable` slugs (v0.25.1) pin by UUID cleanly; only the un-bumped gemma engine trips it. The combination was never gate-tested because those slugs were last gated before #610 landed.
+This is **not Gemma-specific and not a pod-tooling bug** — it's the engine pin. Upstream fixed the parse between v0.22.0 and v0.24.0, so `vllm-stable` slugs (v0.32.0) pin by UUID cleanly; only the gemma engine, still on v0.22.0, trips it. The combination was never gate-tested because those slugs were last gated before #610 landed.
 
-**Until the pin bump lands** ([UPSTREAM.md](UPSTREAM.md#vllm-vllm-projectvllm) → `device_id_to_physical_device_id`, [#750](https://github.com/noonghunna/club-3090/issues/750)), run these slugs outside the pod path — e.g. `launch.sh` with plain Docker GPU selection, or `docker compose` directly with `--gpus device=N` and no `CUDA_VISIBLE_DEVICES` override.
+**Run these slugs outside the pod path** ([UPSTREAM.md](UPSTREAM.md#vllm-vllm-projectvllm) → `device_id_to_physical_device_id`; [#750](https://github.com/noonghunna/club-3090/issues/750) closed with this as the supported route): e.g. `launch.sh` with plain Docker GPU selection, or `docker compose` directly with `--gpus device=N` and no `CUDA_VISIBLE_DEVICES` override.
 
 > On a **classic** nvidia runtime you can instead keep `NVIDIA_VISIBLE_DEVICES` on UUIDs (it performs the card selection; the container renumbers the exposed set to `0..N-1`) and pass `CUDA_VISIBLE_DEVICES` in index form. **Don't do this on CDI** — there `NVIDIA_VISIBLE_DEVICES` is ignored and the UUID mask is the only thing pinning cards.
 
 ## The estate file
 
-Pods live in a YAML estate file (default `scripts/lib/profiles/estate.yml`; override with `--file`). GPU indices are stored **index-based**; they're resolved to UUIDs at boot so pods land on the right cards on both container runtimes. Hand-written files pass the same validation as `pod.sh create`.
+Pods live in a YAML estate file (default `~/.club3090/estate.yml`; override with `--file`). Booting from another file with `--file` also copies it to the default path, which is the file c3 and `report.sh` read. GPU indices are stored **index-based**; they're resolved to UUIDs at boot so pods land on the right cards on both container runtimes. Hand-written files pass the same validation as `pod.sh create`.
 
 ```yaml
 schema_version: 1
 estate:
   - name: chat
-    compose: beellama/dflash    # a registry slug (see `switch.sh --list`)
-    gpus: [0]                    # host GPU indices — count must equal the slug's TP
-    port: 8080
+    compose: llamacpp/mimo9b-single-vision   # a registry slug (see `switch.sh --list`)
+    gpus: [0]                                 # host GPU indices — count must equal the slug's TP
+    port: 8094
   - name: coder
     compose: vllm/dual
     gpus: [1, 2]
@@ -151,5 +167,6 @@ estate:
 | `pod.sh up <name>` / `down <name>` | boot / stop one pod |
 | `pod.sh rm <name>` | remove from the estate file (refuses while running) |
 | `launch.sh --estate-file <P> [--parallel]` | boot the whole estate file |
+| `launch.sh --down-estate <P>` | stop every pod in the estate file |
 
 Related: [HARDWARE.md](HARDWARE.md#pinning-specific-gpus-on-multi-gpu-rigs-and-cdi--nixos-runtimes) (GPU pinning / CDI runtimes) · [MULTI_CARD.md](MULTI_CARD.md) (TP scaling for a single model across cards) · [ARCHITECTURE.md](ARCHITECTURE.md) (services, ports).
