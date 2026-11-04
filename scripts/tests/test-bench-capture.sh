@@ -657,6 +657,33 @@ v="$(PATH="$TMP/stub:$PATH" CONTAINER=maya-x SERVER_PID=none cap_server_pid || t
 [[ -z "$v" ]] || fail "SERVER_PID=none must disable the container fallback too, got: '$v'"
 v="$(PATH="$TMP/stub:$PATH" CONTAINER=none SERVER_PID= cap_server_pid || true)"
 [[ -z "$v" ]] || fail "CONTAINER=none must not reach docker, got: '$v'"
+# #1942: a named server process counts only when it owns URL's port. Over an SSH
+# tunnel the port is ssh's, and an unrelated local llama-server used to be reported
+# as the engine (its argv, RSS and swap). Real processes, real pgrep: a decoy named
+# llama-server listening on one port, and a stand-in for the tunnel on another.
+if cap_have python3 && cap_have pgrep && [[ -r /proc/net/tcp ]]; then
+  mkdir -p "$TMP/bin"; ln -sf "$(command -v python3)" "$TMP/bin/llama-server"
+  _listen='import socket, sys, time
+s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen()
+print(s.getsockname()[1], flush=True); time.sleep(120)'
+  "$TMP/bin/llama-server" -c "$_listen" > "$TMP/decoy.port" & _decoy=$!
+  python3 -c "$_listen" > "$TMP/tunnel.port" & _tunnel=$!
+  for _ in $(seq 50); do [[ -s "$TMP/decoy.port" && -s "$TMP/tunnel.port" ]] && break; sleep 0.1; done
+  _dp="$(cat "$TMP/decoy.port")"; _tp="$(cat "$TMP/tunnel.port")"
+  [[ "$(cat "/proc/${_decoy}/comm" 2>/dev/null)" == "llama-server" ]] || fail "test setup: the decoy's comm isn't llama-server"
+  v="$(URL="http://127.0.0.1:${_dp}" CONTAINER=none SERVER_PID= cap_server_pid || true)"
+  [[ "$v" == "$_decoy" ]] || fail "a llama-server that owns URL's port must be the serving pid (want ${_decoy}), got: '$v'"
+  v="$(URL="http://127.0.0.1:${_tp}" CONTAINER=none SERVER_PID= cap_server_pid || true)"
+  [[ "$v" != "$_decoy" ]] || fail "a llama-server on ANOTHER port must not be taken for URL's server (#1942)"
+  [[ -z "$v" ]] || fail "with no named server on URL's port, the pid must be unknown, got: '$v'"
+  v="$(URL="http://10.255.255.1:${_dp}" CONTAINER=none SERVER_PID= cap_server_pid || true)"
+  [[ -z "$v" ]] || fail "a remote URL must never adopt a local process, got: '$v'"
+  [[ "$(cap_url_local_port 'http://localhost:8020')" == "8020" ]] || fail "localhost:8020 is local, port 8020"
+  [[ "$(cap_url_local_port 'http://[::1]:9393/v1')" == "9393" ]] || fail "[::1]:9393 is local, port 9393"
+  cap_url_local_port 'http://example.invalid:8020' >/dev/null && fail "example.invalid is not this machine"
+  kill "$_decoy" "$_tunnel" 2>/dev/null || true; wait "$_decoy" "$_tunnel" 2>/dev/null || true
+  echo "  ✓ host runs: only a named server that owns URL's port is adopted (#1942)"
+fi
 # The container command is read even when an argv was found: the adopted process
 # need not be the one the container command starts.
 v="$(PATH="$TMP/stub:$PATH" CONTAINER=exl3-x STUB_INSPECT='[{"Config":{"Cmd":["--cpu-moe-split-experts","144"]}}]' \
