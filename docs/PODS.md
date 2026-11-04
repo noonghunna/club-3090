@@ -42,17 +42,18 @@ bash scripts/pod.sh rm coder      # remove from the estate file (refuses while r
 
 ## Quickstart (c3 cockpit)
 
-The **Operate · Orchestration** tab shows a live **pod view** — each pod with its GPUs stacked beneath its header and a placement health badge — and:
+The **Operate · Orchestration** tab lists **every model on the rig** in its **Models** table: each pod (up or down) and any model started another way (`switch.sh`, the Catalog, by hand), marked *not a pod*. Each row shows the model's GPUs, port, state (serving / booting / down / crashed) and, for a pod, its placement badge. The header names the free GPUs; a card held by any model is not free.
 
-- **`[N]`** — open the **New-pod** modal: name · slug (catalog picker) · GPU set (prefilled with the free GPUs). It runs the same fit-checked, gated `pod.sh create`.
-- **`[o]`** — stop the whole estate (gated).
+- **`⏎` on a row** — that model's card, with only the verbs that apply: **`u`** up (`pod.sh up`), **`k`** down (`pod.sh down`, or `docker stop` for a model that isn't a pod), **`b`** restart, **`l`** logs, **`x`** remove a down pod from the estate file, **`t`** make it the target. Every write opens a confirm that names what stops and which models stay up.
+- **The target** — Stop / Restart (`k` / `b` on Orchestration), Doctor, the Run ladder and Evaluate act on one model. With one model up it is that one. With several, it is the one you pick with `t`, else the model `switch.sh` started; the Models header and the Run banner name it. Doctor and the Run ladder pass it to the scripts as `URL=` and `CONTAINER=`, so no script picks for itself.
+- **`[N]`** — open the **New-pod** modal: name · slug (catalog picker) · GPU set (prefilled with the free GPUs). It runs the same fit-checked, gated `pod.sh create`; then `⏎` on its row → `u` boots it.
+- **`[o]`** — stop everything (gated).
 
 CLI and cockpit share **one estate file and one validation path** — a pod you make in either shows up in the other.
 
-> ⚠️ **Manage pods from the CLI for now.** Apart from the pod view, `[N]` and `[o]`, c3 still assumes one model on cards 0 and 1 ([#1939](https://github.com/noonghunna/club-3090/issues/1939)):
-> - **Its safety check doesn't know which card each model is on.** A forced stop or serve can stop other pods too.
-> - **With only pods running, it sees no serving model.** Stop / restart (`k` / `b`), the Run ladder and Evaluate have nothing to act on.
-> - **It can't boot or stop a single pod.** Use `pod.sh up` / `pod.sh down`.
+**What c3 checks before a write.** It reads which card each container is on from `nvidia-smi` (each compute process, mapped to its container) and, for a pod, the estate file. Booting a pod checks only that pod's cards, and stopping or restarting one model collides with nothing else. If that card map can't be read, every container on a busy card counts as in the way, and the confirm says their cards are unknown.
+
+> ⚠️ **A Catalog serve still replaces the Catalog model, and checks every card.** `switch.sh` stops the model it last started, and most composes see every card, so with pods up a Catalog Start warns that it stops them. To run a second model next to the others, make it a pod (`N`, then `u`). Serving from the Catalog card as a pod is still to come ([#1939](https://github.com/noonghunna/club-3090/issues/1939)).
 
 ---
 
