@@ -2,9 +2,11 @@
 # Build ghcr.io/noonghunna/strata-maya-club3090 from one Project Maya release.
 #
 # Project Maya (github.com/mw00/project-maya, MIT) is a fork of Strata for GLM-5.3-Flash. It
-# publishes no image, no Dockerfile and no Linux engine (its setup compiles on the user's PC), so
-# we build each release with our own Dockerfile (next to this script) and publish the result (an
-# image-provenance exception, docs/ADDING_ENGINES.md). Maya releases several times a day; the
+# publishes no image and no Linux engine (its setup compiles on the user's PC). From v1.1.53 its
+# repository has a recipe for building an image yourself (docker/, docs/DOCKER.md; adapted from
+# this one, mw00/project-maya#808), but still no published image, so we build each release with
+# our own Dockerfile (next to this script) and publish the result (an image-provenance exception,
+# docs/ADDING_ENGINES.md). Maya releases several times a day; the
 # maintainer runs this on the reference rig for the release we want (GitHub CI built it until 2026-10-17):
 #
 #   bash models/glm-5.3-flash/strata-maya/image/build.sh                    # newest release: build + check, no push
