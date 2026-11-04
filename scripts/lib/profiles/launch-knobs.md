@@ -77,7 +77,7 @@ Knob (`knobs.<ENV_NAME>`):
 | `unset` | what the compose does when the knob is unset |
 | `engines` | engine kinds whose composes read it. The guard checks this equals what the scan finds. Kinds come from `scripts/lib/engine-kind.sh`. |
 | `variants` | the value domain, per engine and model (below). Every reader must match exactly one. |
-| `requires` | `{when, knob, then, why, source}`. `when`/`then` is `"set"` or `{"equals": v}`. Example: `KV_OFFLOAD_DISK` `{"equals":"1"}` requires `KV_OFFLOAD_GB` `"set"`. |
+| `requires` | `{when, knob, then, why, source, match?}`. `when`/`then` is `"set"` or `{"equals": v}`. Example: `KV_OFFLOAD_DISK` `{"equals":"1"}` requires `KV_OFFLOAD_GB` `"set"`. An optional `match` (the variants' form) limits the rule to the readers it covers: that one is `{"engine": ["sglang", "vllm"]}`, because QEngine's disk cache sits under QEngine's own host-RAM archive, not `KV_OFFLOAD_GB`. Without a slug to match against, every rule applies. |
 | `interacts` | `{knob, effect, source}`: other settings that change or override this one |
 | `caveats` | `{text, source}` |
 
