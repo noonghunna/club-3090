@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as cf
 import io
+import ipaddress
 import json
 import os
 import re
@@ -37,6 +38,8 @@ except ImportError:                     # imported as scripts.lib.litellm_sync
 BEGIN = "  # === BEGIN GENERATED LOCAL BLOCK"
 END = "  # === END GENERATED LOCAL BLOCK ==="
 LOCAL_BEGIN = "  # === BEGIN THIS RIG'S OWN ROUTES — {src} (not tracked) ==="
+# Every runtime view carries this in its generated block. A file without it is not ours to rewrite (#1945).
+RUNTIME_MARKER = "RUNTIME VIEW, rendered by scripts/lib/litellm-sync.sh"
 LOCAL_END = "  # === END THIS RIG'S OWN ROUTES ==="
 
 
@@ -500,7 +503,7 @@ def route_api_key(key: str, root: str, port: int, warnings: list) -> "str | None
 def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
                  root: str = "", warnings: "list | None" = None) -> tuple[str, int]:
     lines = [
-        BEGIN.rstrip() + " — RUNTIME VIEW, rendered by scripts/lib/litellm-sync.sh ===",
+        BEGIN.rstrip() + " — " + RUNTIME_MARKER + " ===",
         "  # Routes for endpoints that answered /v1/models at render time. Names come",
         "  # from each server's own model list, so a slug with no registry served_name",
         "  # still gets a route. Regenerated on every switch.sh launch and teardown.",
@@ -629,6 +632,75 @@ def gateway_env_names(container: str = "litellm") -> "set[str] | None":
     return {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
 
 
+def choose_runtime(checkout_runtime: str, mounted: "str | None", root: str = "") -> "tuple[str | None, str]":
+    """The file to render: the checkout's runtime view, or the one the gateway mounts when it
+    is another runtime view (a worktree run renders the main checkout's file). A mounted file
+    WITHOUT the marker is someone's own config: (None, why) — it is never rewritten, since the
+    render would replace every route it has that the template lacks (#1945)."""
+    if not mounted or os.path.abspath(mounted) == os.path.abspath(checkout_runtime):
+        return checkout_runtime, ""
+    shown = litellm_local.display_path(mounted, root or None)
+    try:
+        with io.open(mounted, encoding="utf-8") as f:
+            ours = RUNTIME_MARKER in f.read()
+    except (OSError, UnicodeDecodeError):
+        ours = False
+    if ours:
+        return mounted, ""
+    return None, (f"the gateway mounts {shown} as its config, and it is not a club-3090 runtime view "
+                  f"(no '{RUNTIME_MARKER}' line), so it was left untouched and nothing was rendered. "
+                  "Put this rig's own routes in ~/.config/club-3090/litellm/config.local.yaml (every "
+                  "render serves them), and mount services/litellm/config.runtime.yaml instead.")
+
+
+def _proc_net_addr(hexaddr: str) -> "ipaddress.IPv4Address | ipaddress.IPv6Address | None":
+    """A /proc/net/tcp{,6} local address (little-endian hex words) as an address."""
+    try:
+        raw = bytes.fromhex(hexaddr)
+    except ValueError:
+        return None
+    if len(raw) == 4:
+        return ipaddress.IPv4Address(raw[::-1])
+    if len(raw) == 16:
+        return ipaddress.IPv6Address(b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4)))
+    return None
+
+
+def loopback_only_ports(ports, tcp_files=("/proc/net/tcp", "/proc/net/tcp6")) -> "set[int]":
+    """The ports whose every LISTEN socket on this host is bound to loopback (127.0.0.0/8, ::1).
+    The probe asks 127.0.0.1, but the gateway container reaches the host at
+    host.docker.internal (Docker's bridge), so such a port answers the probe and not the
+    gateway (#1945). A port with no listening socket here (Docker's iptables-only publishing)
+    is not listed: that is unknown, not unreachable. Test seam: C3_LITELLM_FAKE_LOOPBACK."""
+    want = {int(p) for p in ports}
+    if os.environ.get("C3_LITELLM_FAKE_LIVE") is not None:
+        fake = os.environ.get("C3_LITELLM_FAKE_LOOPBACK", "")
+        return {int(x) for x in fake.split(",") if x.strip().isdigit()} & want
+    seen: "dict[int, set[bool]]" = {}
+    for path in tcp_files:
+        try:
+            lines = io.open(path, encoding="utf-8").read().splitlines()[1:]
+        except OSError:
+            continue
+        for ln in lines:
+            f = ln.split()
+            if len(f) < 4 or f[3] != "0A" or ":" not in f[1]:
+                continue
+            addr_hex, port_hex = f[1].rsplit(":", 1)
+            try:
+                port = int(port_hex, 16)
+            except ValueError:
+                continue
+            if port not in want:
+                continue
+            addr = _proc_net_addr(addr_hex)
+            if addr is None:
+                continue
+            mapped = getattr(addr, "ipv4_mapped", None)
+            seen.setdefault(port, set()).add(bool(addr.is_loopback or (mapped and mapped.is_loopback)))
+    return {p for p, flags in seen.items() if flags == {True}}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True)
@@ -653,10 +725,13 @@ def main() -> int:
     # main checkout's stale routes. Real renders follow the mount; the test seam
     # never does (a test must not rewrite a live gateway's config).
     if os.environ.get("C3_LITELLM_FAKE_LIVE") is None:
-        mounted = mounted_runtime_path()
-        if mounted and os.path.abspath(mounted) != os.path.abspath(runtime):
-            log(f"gateway mounts {mounted} — rendering that file")
-            runtime = mounted
+        chosen, why = choose_runtime(runtime, mounted_runtime_path(), a.root)
+        if chosen is None:
+            print(f"[litellm-sync] WARN: {why}", file=sys.stderr)
+            return 1 if a.check else 0
+        if chosen != runtime:
+            log(f"gateway mounts {litellm_local.display_path(chosen, a.root)} — rendering that file")
+        runtime = chosen
     if not os.path.exists(template):
         print(f"[litellm-sync] no template at {template}", file=sys.stderr)
         return 1
@@ -670,6 +745,11 @@ def main() -> int:
     variants = registry_variants(a.root)
     ports = registry_ports(variants)
     live = live_routes(ports)
+    for p in sorted(loopback_only_ports({r.port for r in live})):
+        print(f"[litellm-sync] WARN: :{p} answers on 127.0.0.1 only, so the gateway container can't reach it "
+              f"at host.docker.internal:{p}; it gets no route. Publish it on all interfaces "
+              "(BIND_HOST=0.0.0.0 for a club-3090 compose, or the server's own --host 0.0.0.0).", file=sys.stderr)
+        live = [r for r in live if r.port != p]
     reg_ports = {str(p) for p in ports}
     live_ports = {str(r[0]) for r in live}
 
@@ -708,7 +788,7 @@ def main() -> int:
     tmp = runtime + ".tmp"                       # temp + replace: a failed encode
     io.open(tmp, "w", encoding="utf-8").write(out)   # never truncates the original
     os.replace(tmp, runtime)
-    log(f"rendered {n_routes} live route(s) -> services/litellm/config.runtime.yaml")
+    log(f"rendered {n_routes} live route(s) -> {litellm_local.display_path(runtime, a.root)}")
 
     # LiteLLM has NO config-reload endpoint on the pinned image (POST
     # /config/reload -> 404), so a changed file needs a restart. Only on a real

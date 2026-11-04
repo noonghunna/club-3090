@@ -31,7 +31,26 @@ The gateway serves `services/litellm/config.runtime.yaml` (gitignored), which
 `scripts/lib/litellm-sync.sh` renders from the endpoints that answer `/v1/models`
 — on every `switch.sh` launch and teardown, restarting the gateway only when the
 route set changed. The tracked `config.yaml` is the registry catalog; the gateway
-does not serve it. Each live route gets:
+does not serve it. Three consequences of "only what answers, at render time":
+
+- **A model started another way** (a systemd unit, a plain `docker compose up`, a
+  reboot) has no route until the next render. For a container, have the unit run
+  `bash scripts/lib/post-ready-sync.sh --url http://localhost:<port> --container <name> --port <port>`
+  after it starts: it waits for the server to answer, then syncs (`switch.sh` uses it
+  after a `--no-wait` launch). For a server outside Docker, run
+  `bash scripts/lib/litellm-sync.sh` once it answers `/v1/models`. A later `switch.sh`
+  render while it's down drops its route again.
+- **A port that answers on 127.0.0.1 only** gets no route, with a warning. The probe
+  runs on the host, but the gateway container reaches the host through Docker's
+  bridge (`host.docker.internal`), which a loopback-only port doesn't listen on.
+  Publish it on all interfaces (`BIND_HOST=0.0.0.0`, or the server's `--host 0.0.0.0`).
+- **The sync rewrites only a runtime view.** It renders the file the gateway container
+  mounts when that file carries the `RUNTIME VIEW` marker (another checkout's
+  `config.runtime.yaml`, say). A config of your own mounted there is left untouched,
+  with a warning: put its routes in `config.local.yaml` (below), which every render
+  serves, and mount `services/litellm/config.runtime.yaml` instead (#1945).
+
+Each live route gets:
 
 | Field | Value | Why |
 |---|---|---|

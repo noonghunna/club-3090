@@ -677,5 +677,70 @@ else
   fi
 fi
 
+# --- #1945: a mounted config that isn't ours is never rewritten -----------------
+# The gateway may mount the user's own file at /app/config.yaml. Rendering over it
+# replaced every route the template lacked (16 → 2, a gateway serving 400s for hours).
+python3 - "$ROOT/scripts/lib" <<'PY2' && ok "#1945: the mount is followed only to a runtime view; a user's own config is left untouched" || bad "#1945: runtime-file choice wrong (see above)"
+import os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import litellm_sync as ls
+d = tempfile.mkdtemp()
+checkout = os.path.join(d, "config.runtime.yaml"); open(checkout, "w").write("x\n")
+ours = os.path.join(d, "other-checkout.yaml")
+open(ours, "w").write("model_list:\n" + ls.BEGIN.rstrip() + " — " + ls.RUNTIME_MARKER + " ===\n")
+mine = os.path.join(d, "my-own.yaml"); open(mine, "w").write("model_list:\n  - model_name: qwen3.8-max\n")
+errs = []
+def want(cond, msg):
+    if not cond: errs.append(msg)
+want(ls.choose_runtime(checkout, None) == (checkout, ""), "no mount -> the checkout's runtime view")
+want(ls.choose_runtime(checkout, checkout) == (checkout, ""), "mount == checkout file -> that file")
+want(ls.choose_runtime(checkout, ours) == (ours, ""), "another runtime view (worktree case) -> follow it")
+path, why = ls.choose_runtime(checkout, mine)
+want(path is None, "a mounted file without the marker must not be chosen (#1945)")
+want("config.local.yaml" in why and "left untouched" in why, f"the warning must say what to do, got: {why!r}")
+path, _ = ls.choose_runtime(checkout, d)            # a directory (docker made one): not ours either
+want(path is None, "a mount that isn't a readable file must not be chosen")
+for e in errs: print("   ", e, file=sys.stderr)
+sys.exit(1 if errs else 0)
+PY2
+
+# --- #1945: a port that answers on loopback only gets no route ---------------
+# The probe asks 127.0.0.1, the gateway asks host.docker.internal (the bridge). Fixture
+# /proc/net/tcp{,6}: 8092 on 127.0.0.1 only, 9000 on ::1 only, 8113 on 0.0.0.0, 8094 on
+# 127.0.0.1 AND :: (reachable), 8095 not listening at all (unknown, kept).
+python3 - "$ROOT/scripts/lib" <<'PY2' && ok "#1945: loopback-only ports (IPv4 + IPv6) are found; wildcard, mixed and unknown are kept" || bad "#1945: loopback-only detection wrong (see above)"
+import os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import litellm_sync as ls
+os.environ.pop("C3_LITELLM_FAKE_LIVE", None)
+d = tempfile.mkdtemp()
+hdr = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+row = lambda addr, port, st="0A": f"   0: {addr}:{port:04X} 00000000:0000 {st} 00000000:00000000 00:00000000 00000000  1000        0 1\n"
+open(os.path.join(d, "tcp"), "w").write(hdr + row("0100007F", 8092) + row("00000000", 8113) + row("0100007F", 8094)
+                                        + row("0100007F", 8096, st="01"))   # 8096: ESTABLISHED, not LISTEN
+open(os.path.join(d, "tcp6"), "w").write(hdr + row("00000000000000000000000001000000", 9000)
+                                         + row("00000000000000000000000000000000", 8094))
+got = ls.loopback_only_ports([8092, 8113, 8094, 8095, 8096, 9000],
+                             (os.path.join(d, "tcp"), os.path.join(d, "tcp6")))
+if got != {8092, 9000}:
+    print(f"    want {{8092, 9000}}, got {sorted(got)}", file=sys.stderr); sys.exit(1)
+PY2
+errf="$(mktemp)"
+C3_LITELLM_FAKE_LIVE="8182=alpha-model,8091=beta-model" C3_LITELLM_FAKE_LOOPBACK="8091" \
+  bash "$SYNC" --no-restart --quiet 2>"$errf"
+got="$(routes)"
+if [[ "$got" == *alpha-model* && "$got" != *beta-model* ]] && command grep -q ':8091 answers on 127.0.0.1 only' "$errf"; then
+  ok "#1945: a loopback-only live port gets no route, with a warning that names it"
+else
+  bad "#1945: loopback-only port still routed or not warned (routes: $got; stderr: $(tr '\n' ' ' < "$errf"))"
+fi
+rm -f "$errf"
+out="$(C3_LITELLM_FAKE_LIVE="8182=gamma-model" bash "$SYNC" --no-restart 2>/dev/null)"
+if [[ "$out" == *"-> services/litellm/config.runtime.yaml"* ]]; then
+  ok "#1945: the render log names the file it wrote"
+else
+  bad "#1945: render log doesn't name the written file: $out"
+fi
+
 [[ $fail -eq 0 ]] && echo "test-litellm-sync: ok" || echo "test-litellm-sync: FAIL"
 exit $fail
