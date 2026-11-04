@@ -1,28 +1,37 @@
 #!/usr/bin/env bash
 #
 # Full-functional test — fast functional smoke covering server reachability,
-# patch application, basic completion, tool calling, streaming, thinking
-# mode, output quality / cascade detection, and MTP acceptance verification.
+# patch application, basic completion, tool calling, streaming, streamed tool
+# calls with thinking on, thinking mode, output quality / cascade detection,
+# spec-decode acceptance, and vision.
 # Run before publishing or after any major patch / vLLM image bump.
 #
 # This is the FAST functional check (~1-2 min). It does NOT exercise long-
 # context recall or large prefill activation peaks — for those run
-# `bash scripts/verify-stress.sh` (5-10 min, KV-cache + prefill boundary tests).
+# `bash scripts/verify-stress.sh` (~5-40 min, KV-cache + prefill boundary tests).
 #
-# Checks (in order):
+# Checks (in order). A check that doesn't apply to the server SKIPS rather than
+# fails (2 without Genesis, 9 with no drafter, 10 on a text-only model), so the
+# pass mark is "no failures", not 10/10:
 #   1. Server reachable
-#   2. Genesis patches applied
+#   2. Genesis patches applied (vLLM; skipped where Genesis isn't loaded)
 #   3. Basic completion (Paris)
 #   4. Tool calling (KNOWN TO FAIL in default compose; PASS in tools variants)
 #   5. Streaming (SSE) — non-tool prompt, verify chunks add up to coherent text
-#   6. Thinking mode — reasoning prompt, verify reasoning + content both populated
-#   7. Output quality / cascade detection — 2K-token completion, scan for
+#   6. Streaming tool calls with thinking on — the call must arrive as
+#      delta.tool_calls, not leak into the content as <tool_call> text (#145)
+#   7. Thinking mode — reasoning prompt, verify reasoning + content both populated
+#   8. Output quality / cascade detection — 2K-token completion, scan for
 #      <tool_call> inline cascade and repetitive degeneracy
-#   8. MTP acceptance length — parse SpecDecoding metrics from docker logs,
+#   9. MTP acceptance length — parse SpecDecoding metrics from docker logs,
 #      assert mean AL >= 2.0 (sanity that spec-decode is contributing).
 #      llama.cpp: per-request draft acceptance rate >= LLAMACPP_ACCEPT_MIN
 #      (default 0.30), judged on at least LLAMACPP_DRAFT_MIN_SAMPLE drafted
-#      tokens (default 16); skipped when llama-server runs no drafter
+#      tokens (default 16); skipped when llama-server runs no drafter.
+#      SGLang, Strata, Project Maya and exl3 each read their own log line
+#  10. Vision — an image with known shapes, colours and a number, 4/4 to pass.
+#      Skipped on a text-only endpoint; fails when a projector (mmproj) is
+#      loaded but the image request doesn't work
 #
 # For boundary / stress validation (longctx needle ladder, ~25K-token tool
 # prefill OOM detection): see scripts/verify-stress.sh
@@ -37,7 +46,7 @@
 #   MODEL        Default: auto-detected from the endpoint's /v1/models, else
 #                qwen3.6-27b
 #   CONTAINER    Default: vllm-qwen36-27b
-#   SKIP_TOOLS   Set to 1 to skip the tool-call test entirely (useful when
+#   SKIP_TOOLS   Set to 1 to skip both tool-call tests (4 and 6; useful when
 #                running against the default config which is known to fail
 #                tool calls — see README "Known issue" section).
 #   VERIFY_THINK_OFF / VERIFY_THINK_ON
@@ -574,7 +583,7 @@ else:
 run_check "streaming_tools" check_streaming_tools
 
 # --------------------------------------------------------------------
-# 6. Thinking mode — reasoning + content both populated
+# 7. Thinking mode — reasoning + content both populated
 # --------------------------------------------------------------------
 check_thinking() {
   echo "[7/10] Thinking / reasoning mode ..."
@@ -630,7 +639,7 @@ print(f'{len(reasoning)}|{len(content)}|{finish}|{(reasoning[:60] or \"(empty)\"
 }
 run_check "thinking" check_thinking
 # --------------------------------------------------------------------
-# 9. Output quality / cascade detection — 2K-token completion, scan
+# 8. Output quality / cascade detection — 2K-token completion, scan
 #    for the silent <tool_call> inline cascade (MTP × TurboQuant bug)
 #    and for repetitive degeneracy (stale-draft / sampling collapse).
 # --------------------------------------------------------------------
@@ -709,10 +718,10 @@ except Exception as e:
 run_check "output_quality" check_output_quality
 
 # --------------------------------------------------------------------
-# 10. MTP acceptance length — assert spec-decode is contributing.
-#     The default floor is 2.0 (target_only baseline = 1.0); production Qwen
-#     profiles see AL 3.4-3.8 with n=3. MTP_ACCEPT_MIN permits a profile-specific
-#     measured floor when a shallower drafter is independently throughput-positive.
+# 9. MTP acceptance length — assert spec-decode is contributing.
+#    The default floor is 2.0 (target_only baseline = 1.0); production Qwen
+#    profiles see AL 3.4-3.8 with n=3. MTP_ACCEPT_MIN permits a profile-specific
+#    measured floor when a shallower drafter is independently throughput-positive.
 # --------------------------------------------------------------------
 check_mtp_acceptance() {
   echo "[9/10] MTP acceptance length threshold ..."

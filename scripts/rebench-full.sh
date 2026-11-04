@@ -15,19 +15,22 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/club-containers.
 #
 # Order matches docs/QUALITY_TEST.md "test pipeline":
 #   0. verify-full.sh          — functional preflight, FAIL-FAST (~2 min)
-#   1. bench.sh                — TPS narrative + code (~5 min)
+#   1. bench.sh                — TPS narrative + code (~5-15 min)
 #   1b. bench-agentic.sh       — multi-turn prefill curve (~8 min) [#805 parity]
 #   1c. concurrency-probe.sh   — N=1 control + N=2/4 rungs (~5 min) [#805 parity]
-#   2. verify-stress.sh        — long-context + boundary (~10-15 min)
+#   2. verify-stress.sh        — long-context + boundary (~5-40 min; its ceiling
+#                                ladder grows with the context size)
 #   3. 8-pack quality          — OPT-IN, skipped by default (#338). Enable with
 #      --with-8pack-thinking[=off|on|both]:
-#        =off  → quality-test.sh --full --no-thinking      (8 packs /150, reasoning OFF, ~45-60 min)
-#        =on   → quality-test.sh --full --enable-thinking   (8 packs /150, reasoning ON,  ~60-90 min)
+#        =off  → quality-test.sh --full --no-thinking      (8 packs /150, reasoning OFF, ~20-80 min)
+#        =on   → quality-test.sh --full --enable-thinking   (8 packs /150, reasoning ON,  ~1.5-3.5 h)
 #        =both → both passes (the production-promotion gate)
-#   4. soak-test.sh fresh-mode — stability over 50 turns (~15-20 min)
+#   4. soak-test.sh fresh-mode — stability over 50 turns (~5-20 min)
 #
-# DEFAULT (no --with-8pack-thinking) = fast structural gates only (verify +
-# bench + stress + soak, ~35-45 min). The long 8-pack is opt-in: new-model
+# DEFAULT (no --with-8pack-thinking) = the structural gates only (verify +
+# bench + bench-agentic + concurrency + stress + soak, ~30 min to 1.5 h; all six
+# took 70 min on Qwen3.8-Flash-Next, 2026-09-08). The 8-pack timings are from
+# docs/QUALITY_TEST.md "Modes". The long 8-pack is opt-in: new-model
 # promotion passes --with-8pack-thinking=both; a quick "does it boot / serve /
 # recall / soak" re-check needs no flag.
 #
@@ -131,12 +134,12 @@ localhost env, port, --resume idempotency). Artifacts land in results/rebench/<t
 
 PIPELINE
   0. verify-full     functional preflight, FAIL-FAST                      (~2 min)
-  1. bench           narrative + code TPS                                 (~5 min)
+  1. bench           narrative + code TPS                                 (~5-15 min)
   1b. bench-agentic  multi-turn prefill curve (agent workload)            (~8 min)
   1c. concurrency    N=1 control + N=2/4 rungs, capped at served slots    (~5 min)
-  2. verify-stress   long-context NIAH ladder + boundary                  (~10-15 min)
-  3. 8-pack quality  OPT-IN via --with-8pack-thinking (needs benchlocal)  (~45-90 min/pass)
-  4. soak            multi-turn VRAM stability                            (~15-20 min)
+  2. verify-stress   long-context NIAH ladder + boundary                  (~5-40 min)
+  3. 8-pack quality  OPT-IN via --with-8pack-thinking (needs benchlocal)  (~20 min-3.5 h/pass)
+  4. soak            multi-turn VRAM stability                            (~5-20 min)
   -> REPORT.md + REPORT-discuss.md synthesized at the end.
 
 USAGE
@@ -146,7 +149,7 @@ OPTIONS
   --with-8pack-thinking[=off|on|both]
                   Add the behavioral 8-pack (/150). off=reasoning-OFF,
                   on=reasoning-ON, both=both passes (production-promotion gate).
-                  Omit to run structural gates only (~35-45 min). Requires
+                  Omit to run structural gates only (~30 min-1.5 h). Requires
                   benchlocal-cli + sandbox images (see docs/QUALITY_TEST.md).
   --with-concurrency-deep
                   Add the mixed-regime rung to the concurrency step: N=4 x 10K
