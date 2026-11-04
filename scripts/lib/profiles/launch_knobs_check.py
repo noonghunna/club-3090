@@ -353,7 +353,7 @@ def catalogue_error(cat: dict, consumer: Consumer, env: dict) -> str | None:
         err = lk.value_error(knob, vs[0], v)
         if err:
             return f"{k}: {err}"
-    deps = lk.dependency_errors(cat, env)
+    deps = lk.dependency_errors(cat, env, consumer.engine_kind, consumer.model, consumer.text)
     return deps[0] if deps else None
 
 

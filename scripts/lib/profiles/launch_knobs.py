@@ -229,6 +229,11 @@ def catalogue_errors(data) -> list[str]:
                 errs.append(f"{rw}.when: must be \"set\" or {{\"equals\": <value>}}")
             if not (r.get("then") == "set" or isinstance(r.get("then"), dict) and "equals" in r["then"]):
                 errs.append(f"{rw}.then: must be \"set\" or {{\"equals\": <value>}}")
+            if "match" in r:
+                if not isinstance(r["match"], dict):
+                    errs.append(f"{rw}.match: must be an object (omit it to apply to every reader)")
+                else:
+                    errs += _match_errors(f"{rw}.match", r["match"])
             errs += _source_errors(rw, r.get("source"))
         for i, c in enumerate(k.get("caveats", []) or []):
             cw = f"{w}.caveats[{i}]"
@@ -245,6 +250,20 @@ def catalogue_errors(data) -> list[str]:
     return errs
 
 
+def _match_errors(w: str, m: dict) -> list[str]:
+    """Shape of a `match` object, shared by variants and `requires` rules."""
+    errs: list[str] = []
+    for key in ("engine", "model"):
+        if key in m and (not isinstance(m[key], list) or not m[key]):
+            errs.append(f"{w}.{key}: must be a non-empty list")
+    if "compose_contains" in m and not isinstance(m["compose_contains"], str):
+        errs.append(f"{w}.compose_contains: must be a string")
+    extra = set(m) - {"engine", "model", "compose_contains"}
+    if extra:
+        errs.append(f"{w}: unknown keys {sorted(extra)}")
+    return errs
+
+
 def _variant_errors(w: str, knob: dict, v) -> list[str]:
     errs: list[str] = []
     if not isinstance(v, dict):
@@ -253,14 +272,7 @@ def _variant_errors(w: str, knob: dict, v) -> list[str]:
     if not isinstance(m, dict):
         errs.append(f"{w}.match: required object ({{}} matches every consumer)")
     else:
-        for key in ("engine", "model"):
-            if key in m and (not isinstance(m[key], list) or not m[key]):
-                errs.append(f"{w}.match.{key}: must be a non-empty list")
-        if "compose_contains" in m and not isinstance(m["compose_contains"], str):
-            errs.append(f"{w}.match.compose_contains: must be a string")
-        extra = set(m) - {"engine", "model", "compose_contains"}
-        if extra:
-            errs.append(f"{w}.match: unknown keys {sorted(extra)}")
+        errs += _match_errors(f"{w}.match", m)
     if v.get("enforced") not in ENFORCED:
         errs.append(f"{w}.enforced: must be one of {ENFORCED}")
     t = knob.get("type")
@@ -359,17 +371,18 @@ def variant_for(knob: dict, engine_kind: str, model: str, compose_text: str = ""
     """The variants whose `match` covers (engine_kind, model, compose). A well-formed
     catalogue yields exactly one for every consuming slug; the guard enforces that.
     The engine KIND must come from scripts/lib/engine-kind.sh — never classify here."""
-    out = []
-    for v in knob["variants"]:
-        m = v["match"]
-        if "engine" in m and engine_kind not in m["engine"]:
-            continue
-        if "model" in m and model not in m["model"]:
-            continue
-        if "compose_contains" in m and m["compose_contains"] not in compose_text:
-            continue
-        out.append(v)
-    return out
+    return [v for v in knob["variants"] if match_covers(v["match"], engine_kind, model, compose_text)]
+
+
+def match_covers(m: dict, engine_kind: str, model: str, compose_text: str = "") -> bool:
+    """Whether a `match` object (variant or `requires` rule) covers this reader."""
+    if "engine" in m and engine_kind not in m["engine"]:
+        return False
+    if "model" in m and model not in m["model"]:
+        return False
+    if "compose_contains" in m and m["compose_contains"] not in compose_text:
+        return False
+    return True
 
 
 def value_error(knob: dict, variant: dict, value: str) -> str | None:
@@ -434,13 +447,21 @@ def _cond_holds(cond, value: str | None) -> bool:
     return value == cond["equals"]
 
 
-def broken_requires(catalogue: dict, values: dict[str, str | None]) -> list[tuple[str, dict]]:
+def broken_requires(catalogue: dict, values: dict[str, str | None], engine_kind: str | None = None,
+                    model: str = "", compose_text: str = "") -> list[tuple[str, dict]]:
     """(knob, rule) for every `requires` rule the effective values break (None/"" = unset).
     The resolver (scripts/lib/launch_settings.py) uses the pair to say where each
-    side's value came from; dependency_errors() words the same list."""
+    side's value came from; dependency_errors() words the same list.
+
+    A rule with a `match` applies only to the readers it covers (e.g. KV_OFFLOAD_DISK=1
+    needs KV_OFFLOAD_GB on vLLM and SGLang, whose disk tier stages through that RAM tier,
+    but not on QEngine, whose RAM archive is its own). Without a slug to match against
+    (engine_kind None) every rule applies: unknown context is checked, never skipped."""
     out = []
     for name, k in catalogue["knobs"].items():
         for r in k.get("requires", []) or []:
+            if "match" in r and engine_kind is not None and not match_covers(r["match"], engine_kind, model, compose_text):
+                continue
             if _cond_holds(r["when"], values.get(name)) and not _cond_holds(r["then"], values.get(r["knob"])):
                 out.append((name, r))
     return out
@@ -451,9 +472,12 @@ def requirement_text(name: str, rule: dict, values: dict[str, str | None]) -> st
     return f"{name}={values.get(name)} needs {rule['knob']}{want}: {rule.get('why', '')}".rstrip(": ")
 
 
-def dependency_errors(catalogue: dict, values: dict[str, str | None]) -> list[str]:
-    """Broken `requires` rules for a set of effective knob values (None/"" = unset)."""
-    return [requirement_text(name, r, values) for name, r in broken_requires(catalogue, values)]
+def dependency_errors(catalogue: dict, values: dict[str, str | None], engine_kind: str | None = None,
+                      model: str = "", compose_text: str = "") -> list[str]:
+    """Broken `requires` rules for a set of effective knob values (None/"" = unset), for one
+    reader when engine_kind is given (see broken_requires)."""
+    return [requirement_text(name, r, values)
+            for name, r in broken_requires(catalogue, values, engine_kind, model, compose_text)]
 
 
 # ---------------------------------------------------------------------------

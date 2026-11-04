@@ -61,6 +61,34 @@ Its own environment variables (the image's entrypoint passes `QE_EXTRA_ARGS` to 
 
 ⚠️ The loop guard is on by default, and it writes into the conversation: on a guarded turn, an agent finds the server's note in its latest tool result. A request with `"loop_guard": false` turns it off for that request.
 
+### Disk cache (27B): `KV_OFFLOAD_DISK=1`
+
+The 27B slug can keep its conversations on disk across restarts, with QEngine's own `--disk-cache`. It's off by default, and the Flash-Next engine has no disk cache.
+
+- **Turning it on:** `KV_OFFLOAD_DISK=1`, the same setting as the vLLM and SGLang disk tiers.
+  - **Where:** the files go in `qengine-qwen3.8-27b/` under `KV_OFFLOAD_DIR` (else `<data dir>/kv-offload`, `~/.local/share/club-3090/kv-offload`).
+  - **The cap:** `KV_OFFLOAD_DISK_GB` caps it, in GiB in total; unset, QEngine's own 200 GiB applies. QEngine removes the oldest files to stay under it and keeps no free-space margin, so size it to the volume.
+  - **No `KV_OFFLOAD_GB` needed:** unlike vLLM and SGLang, it's a tier under QEngine's own host-RAM archive (`QE_KV_ARCHIVE_GB`, on by default).
+- **What gets saved:** a conversation's KV and state, written in the background whenever it leaves VRAM, after 120 s idle (`--persist-idle`), and at shutdown.
+  - **Speed:** a 48K-token conversation is a 2.5 GB file, written in 1.8 s.
+  - **Safety:** each file is written as `.tmp` and renamed, and its fingerprint (model files, cards, KV split, per-card sizes) is checked on load, so a file from another setup is ignored.
+- **What it reuses:** a returning conversation is copied back instead of recomputed.
+  - **A new conversation with the same system prompt** starts from the checkpoint at that prompt's end, while a saved conversation still holds that checkpoint.
+  - **The limit:** a conversation that itself came from the cache is saved with its own end only (QEngine 1.3.4.3). Once it replaces the original, the system-prompt checkpoint is gone from disk.
+  - **Not any shared prefix:** Qwen3.8's DeltaNet state exists only at those checkpoints.
+
+Measured on the reference rig (2026-11-04, QEngine 1.3.4.3, `KV_OFFLOAD_DISK_GB=20`), a 48K-token system prompt, temperature 0:
+
+| Request | Disk cache | Reused | Time to first token |
+|---|---|---|---|
+| first conversation (cold) | on | 0 | 18.1 s |
+| after `docker restart`: same system prompt, new question | on | 48,168 | 0.33 s |
+| after `docker restart`: the first conversation continued | on | 48,229 | 0.22 s |
+| after `switch.sh` recreated the container: that conversation continued again | on | 48,281 | 0.30 s |
+| after `docker restart`: same system prompt, new question | off (control) | 0 | 20.2 s |
+
+verify-full passed on the disk-cache boot. The folder is made group-writable at start, so you can delete its files without root.
+
 ## Slugs
 
 | Slug | Model and weights | Port | |
@@ -97,7 +125,7 @@ QEngine serves its own copy of the Qwen3.8 chat template (`server/templates/qwen
 - container discovery (`qengine-` in the prefix set; port 8080 counts with that evidence);
 - the `QENGINE_IMAGE` arm in both launchers;
 - the label in `health.sh`, the Genesis skip in `verify-full.sh`, and the kind in `report.sh`, `run_context.py` and the local registration types;
-- the two slugs, their weights variants and the launch knobs above.
+- the two slugs, their weights variants and the launch knobs above, including the 27B's disk cache (`KV_OFFLOAD_DISK`, `KV_OFFLOAD_DISK_GB`).
 
 QEngine prints `[stats]` lines for log parsers, in llama.cpp's timing format and vLLM's `SpecDecoding metrics` format, so `bench.sh`'s engine-side timings and acceptance capture and `verify-full.sh`'s MTP acceptance check read it with no QEngine-specific code (checked on the 27B slug, 2026-10-28).
 

@@ -135,6 +135,7 @@ def check(cond, msg, extra=""):
 
 SGL, VLL, Q36, GLM = ("sgl/qwen38-27b-dual-fast", "vllm/qwen38-27b-dual-fast", "vllm/dual",
                       "llamacpp-club3090/glm53-flash-dual-iq3xxs-moecache")
+QEN = "qengine/qwen38-27b-dual"   # reads KV_OFFLOAD_DISK + _GB, not KV_OFFLOAD_GB
 cfg = T / "api"; cfg.mkdir()
 dotenv = fix / ".env"
 def files(club="", secrets="", legacy="", slugs=None, raw_slugs=None):
@@ -234,6 +235,18 @@ check("KV_OFFLOAD_DISK_GB=3 needs KV_OFFLOAD_DISK=1" in e and "KV_OFFLOAD_DISK=0
       "dependency: a disk cap without the disk tier is refused", e)
 files(slugs={SGL: {"KV_OFFLOAD_DISK_GB": "3", "KV_OFFLOAD_DISK": "1", "KV_OFFLOAD_GB": "16"}})
 check(not res(SGL).errors, "dependency met (RAM tier + disk tier + cap): nothing refused", str(res(SGL).errors))
+# The RAM-tier rule is scoped to vLLM and SGLang: QEngine's disk cache sits under its own RAM archive.
+files(club="KV_OFFLOAD_DISK=1\n")
+check(not res(QEN).errors, "dependency: QEngine takes KV_OFFLOAD_DISK=1 with no KV_OFFLOAD_GB (its archive is on by default)",
+      str(res(QEN).errors))
+e = " ".join(res(VLL).errors)
+check("KV_OFFLOAD_DISK=1 needs KV_OFFLOAD_GB set" in e,
+      "dependency: the same saved KV_OFFLOAD_DISK=1 is still refused on vLLM (the rule is scoped, not dropped)", e)
+files(slugs={QEN: {"KV_OFFLOAD_DISK_GB": "3"}})
+e = " ".join(res(QEN).errors)
+check("KV_OFFLOAD_DISK_GB=3 needs KV_OFFLOAD_DISK=1" in e, "dependency: QEngine refuses a disk cap without the disk tier", e)
+files(slugs={QEN: {"KV_OFFLOAD_DISK": "1", "KV_OFFLOAD_DISK_GB": "20"}})
+check(not res(QEN).errors, "QEngine: disk tier + cap, nothing refused", str(res(QEN).errors))
 
 # Host RAM: tier × factor + 28 GiB must fit in MemTotal (64 GiB here). vLLM factor 1.0, SGLang 74/64.
 for slug, gb, refused in ((VLL, "36", False), (VLL, "37", True), (SGL, "31", False), (SGL, "32", True)):

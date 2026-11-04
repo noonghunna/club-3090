@@ -257,6 +257,20 @@ expect(lk.value_error(cat["knobs"]["SPEC_N"], cat["knobs"]["SPEC_N"]["variants"]
        "values: an empty string is never a value (unset the knob instead)")
 expect(lk.dependency_errors(cat, {"KV_OFFLOAD_DISK_GB": "3", "KV_OFFLOAD_DISK": "1"}) != [],
        "values: KV_OFFLOAD_DISK_GB + KV_OFFLOAD_DISK=1 without KV_OFFLOAD_GB breaks the chain")
+# A `requires` rule with a `match` applies only to the readers it covers (KV_OFFLOAD_DISK -> KV_OFFLOAD_GB:
+# vLLM and SGLang). With no reader to match, every rule applies: unknown context is checked, not skipped.
+expect(lk.dependency_errors(cat, {"KV_OFFLOAD_DISK": "1"}, "qengine", "qwen3.8-27b") == [],
+       "values: QEngine's KV_OFFLOAD_DISK=1 needs no KV_OFFLOAD_GB (the rule is scoped to vllm/sglang)")
+expect(lk.dependency_errors(cat, {"KV_OFFLOAD_DISK": "1"}, "vllm", "qwen3.8-27b") != [],
+       "values: vLLM's KV_OFFLOAD_DISK=1 without KV_OFFLOAD_GB still breaks the rule")
+expect(lk.dependency_errors(cat, {"KV_OFFLOAD_DISK": "1"}) != [],
+       "values: without a reader, a scoped rule still applies")
+expect(lk.dependency_errors(cat, {"KV_OFFLOAD_DISK_GB": "3"}, "qengine", "qwen3.8-27b") != [],
+       "values: an unscoped rule (KV_OFFLOAD_DISK_GB needs KV_OFFLOAD_DISK=1) applies to QEngine too")
+_bad = copy.deepcopy(cat)
+_bad["knobs"]["KV_OFFLOAD_DISK"]["requires"][0]["match"] = {"engines": ["vllm"]}
+expect(any("requires[0].match: unknown keys" in e for e in lk.catalogue_errors(_bad)),
+       "shape: a requires.match with an unknown key is refused")
 
 
 def fx_consumer(f):

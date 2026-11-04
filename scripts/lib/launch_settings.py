@@ -443,7 +443,7 @@ def resolve(slug: str, root=ROOT, environ=None, loaded=None, force=False, catalo
             return f"{k} unset" + (f" (from {describe_source(s)})" if s.source != DEFAULT else "")
         return f"{k}={shown(s)} from {describe_source(s)}"
 
-    for name, rule in lk.broken_requires(cat, eff):
+    for name, rule in lk.broken_requires(cat, eff, kind, model, text):
         other = rule["knob"]
         if res.settings[name].source == DEFAULT and (other not in res.settings
                                                      or res.settings[other].source == DEFAULT):
