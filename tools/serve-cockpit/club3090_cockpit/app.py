@@ -5771,12 +5771,15 @@ _TUNE_GOTCHAS = (
 # The launchable ladder + extra tools, in display order.  Each row is
 # (kind, label, blurb).  ``kind`` is the CockpitData.run_validation kind.
 _RUN_LADDER: list[tuple[str, str, str]] = [
-    ("verify-full", "verify-full", "functional smoke (8/8) — does it serve + work"),
-    ("verify-stress", "verify-stress", "boundary matrix (7/7) — long-ctx + tool-prefill OOM"),
+    # Each blurb says what the button's command (services._VALIDATION_KINDS) runs.
+    # No check counts: they drifted (verify-full grew from 8 checks to 10, and
+    # several skip where they don't apply).
+    ("verify-full", "verify-full", "functional smoke — does it serve + work"),
+    ("verify-stress", "verify-stress", "boundary matrix — long-ctx + tool-prefill OOM"),
     ("bench", "bench", "canonical TPS bench (3 warm + 5 measured)"),
-    ("quality-test", "quality-test", "behavioral 8-pack (--quick) — tool / instruct / struct"),
-    ("soak-test", "soak-test", "stability (continuous) — catches Cliff 2b"),
-    ("rebench-full", "rebench-full", "the 5-step orchestrator (bench→stress→quality→soak→aider)"),
+    ("quality-test", "quality-test", "behavioral --quick — ToolCall + InstructFollow (2 packs)"),
+    ("soak-test", "soak-test", "fresh-mode soak, 20 × 5 turns — VRAM growth, TPS retention"),
+    ("rebench-full", "rebench-full", "verify→bench→agentic→concurrency→stress→soak (no 8-pack)"),
 ]
 _RUN_EXTRAS: list[tuple[str, str, str]] = [
     ("quality-baseline", "quality-baseline", "regression diff vs the curated baseline (#252)"),
