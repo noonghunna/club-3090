@@ -3558,6 +3558,17 @@ class ServeContext(NamedTuple):
 # ── Confirm modal (used for serve + scene + container writes) ────────────────────
 
 
+def _stays_up_text(rec: Optional[ReconcileResult], limit: int = 6) -> str:
+    """#1939: one line naming the running GPU containers a write leaves alone, so
+    a confirm says which models stay up, not only which ones stop. "" when none."""
+    ups = [c for c in (getattr(rec, "stays_up", None) or []) if getattr(c, "is_running", True)]
+    if not ups:
+        return ""
+    names = [f"{c.slug or c.name}" + (f" (GPU {c.gpus})" if c.gpus else "") for c in ups]
+    more = f" +{len(names) - limit} more" if len(names) > limit else ""
+    return "  [green]stays up:[/green] " + ", ".join(names[:limit]) + more
+
+
 class ConfirmActionScreen(ModalScreen):
     """The reconcile-gated confirm modal (design §7 #8 / §3.2).
 
@@ -4096,7 +4107,13 @@ class ConfirmActionScreen(ModalScreen):
             return
         # Re-run the gate (fresh detect) before enabling any commit affordance.
         self._set_force_binding_label(self._force_label())   # footer override label
-        self.app.run_reconcile_for_modal(self, self._plan)  # type: ignore[attr-defined]
+        # Gate the plan this card would DISPATCH: in stop mode that is the targeted
+        # Stop (#1939), so the card can say which models stay up.
+        gate_plan = self._plan
+        ctx = self._serve_ctx
+        if self._is_serve and ctx is not None and ctx.mode == "stop" and ctx.stop_plan is not None:
+            gate_plan = ctx.stop_plan
+        self.app.run_reconcile_for_modal(self, gate_plan)  # type: ignore[attr-defined]
         self.refresh_bindings()
 
     def _serve_slug(self) -> str:
@@ -4369,22 +4386,29 @@ class ConfirmActionScreen(ModalScreen):
         ctx = self._serve_ctx
         if rec is None:
             return "  [dim]checking rig state…[/dim]"
+        stays = _stays_up_text(rec)
         if ctx is not None and ctx.mode == "stop":
             con = ctx.serving_container or self._serve_slug() or "the running model"
-            return f"  [yellow]⏹ stops[/yellow] container [red]{con}[/red] (frees its GPUs)"
+            frees = f"GPU {', '.join(map(str, rec.pending_gpus))}" if (
+                rec.target and rec.pending_gpus) else "its GPUs"
+            return (f"  [yellow]⏹ stops[/yellow] container [red]{con}[/red] (frees {frees})"
+                    + (f"\n{stays}" if stays else ""))
         if rec.safe:
-            return "  [green]● gate clear[/green] — GPU free, nothing to tear down."
+            return ("  [green]● gate clear[/green] — GPU free, nothing to tear down."
+                    + (f"\n{stays}" if stays else ""))
         # START with a conflict → warn that Start performs teardown-then-serve.
         parts: list[str] = []
         for c in rec.conflicts:
-            g = f" on GPU {c.gpus}" if c.gpus else ""
+            g = f" on GPU {c.gpus}" if c.gpus else (
+                "" if rec.card_map_ok else " (cards unknown)")
             parts.append(f"[red]{c.slug or c.name}[/red]{g}")
         for gc in rec.gpu_conflicts:
             parts.append(f"[red]GPU{gc.gpu_index}[/red] ({gc.mem_used_mib} MiB)")
         for inst in rec.estate_claims:
             parts.append(f"estate [red]{inst.get('name', '?')}[/red] (GPU {inst.get('gpus', [])})")
         who = ", ".join(parts) if parts else "the running model"
-        return f"  [yellow]⚠ Starting this will STOP[/yellow] {who} — then serve."
+        return (f"  [yellow]⚠ Starting this will STOP[/yellow] {who} — then serve."
+                + (f"\n{stays}" if stays else ""))
 
     def _primary_conflict_name(self) -> str:
         """A SHORT, markup-free name for the model a warned-Start would stop —
@@ -4461,15 +4485,26 @@ class ConfirmActionScreen(ModalScreen):
         lines: list[str] = [f"  [bold]Command[/bold]  {' '.join(self._plan.cmd)}"]
         wanted = ", ".join(str(g) for g in rec.pending_gpus) if rec.pending_gpus else "—"
         lines.append(f"  [bold]GPUs[/bold]     {wanted}")
+        stays = _stays_up_text(rec)
 
         if rec.safe:
             lines.append("")
-            lines.append("  [green]● gate clear[/green] — nothing live overlaps the requested GPUs.")
+            if rec.target:
+                # A stop / restart of ONE container (#1939): say what it does to
+                # that one, and that the rest stay up.
+                op = self._plan.cmd[1] if len(self._plan.cmd) > 1 else ""
+                verb = {"stop": "⏹ stops", "restart": "↻ restarts"}.get(op, "acts on")
+                lines.append(f"  [yellow]{verb}[/yellow] container [red]{rec.target}[/red] only.")
+            else:
+                lines.append("  [green]● gate clear[/green] — nothing live overlaps the requested GPUs.")
+            if stays:
+                lines.append(stays)
         else:
             lines.append("")
             lines.append("  [yellow]⚠ this will tear down / collide with:[/yellow]")
             for c in rec.conflicts:
-                g = f" (GPU {c.gpus})" if c.gpus else ""
+                g = f" (GPU {c.gpus})" if c.gpus else (
+                    "" if rec.card_map_ok else " (cards unknown)")
                 slug = f"  [{c.slug}]" if c.slug else ""
                 lines.append(f"    • container [red]{c.name}[/red]{g}{slug}")
             for gc in rec.gpu_conflicts:
@@ -4482,6 +4517,8 @@ class ConfirmActionScreen(ModalScreen):
                 lines.append(f"    • estate instance [red]{name}[/red] (GPU {gpus})")
             if rec.note:
                 lines.append(f"  [dim]{rec.note}[/dim]")
+            if stays:
+                lines.append(stays)
             lines.append("")
             lines.append(
                 f"  [dim]Confirm is disabled — press [cyan]f[/cyan] to "
@@ -13552,6 +13589,7 @@ class CockpitApp(App):
             f"{plan.kind}:{plan.description}",
             pending_gpus=pending,
             variants=self._variants or None,
+            target=getattr(plan, "target", "") or "",
         )
         try:
             screen.set_reconcile(rec)
@@ -13559,10 +13597,11 @@ class CockpitApp(App):
             pass
 
     def _pending_gpus_for(self, plan: ActionPlan) -> Optional[list[int]]:
-        """Best-effort GPUs a write wants.  Conservative None → both cards for
-        serve / scene; container ops target whatever the named container holds
-        (unknown → conservative None)."""
-        return None
+        """The GPUs a write wants: the plan's own (a pod's up names its cards).
+        None → the gate checks EVERY card, or a target container's own cards
+        (#1939: the confirm and execute_action read the same plan fields, so the
+        verdict shown is the verdict acted on)."""
+        return list(plan.gpus) if getattr(plan, "gpus", None) is not None else None
 
     # ── Write dispatch (GATED · execution mocked in tests, NEVER live this phase) ────
 
@@ -15113,6 +15152,9 @@ class CockpitApp(App):
                     requires_reconcile=True,
                     force=True,
                     force_reason=f"user chose Stop for the serving model {entry.slug}",
+                    # #1939: the stop's subject, so its gate checks this
+                    # container's cards and its teardown stops nothing else.
+                    target=con.name,
                 )
                 return ServeContext(
                     mode="stop",

@@ -662,6 +662,16 @@ class ReconcileResult:
     estate_claims: list[dict[str, Any]] = field(default_factory=list)  # estate instances in the way
     pending_claim_tokens: list[str] = field(default_factory=list)  # in-flight writes (HARD block, non-forceable)
     note: str = ""
+    # #1939: the one container a stop / restart acts on ("" for a serve, a scene,
+    # stop-all). It is the action's subject, never one of its collisions.
+    target: str = ""
+    # Every other running GPU container the write leaves alone, so a confirm can
+    # say which models stay up, not only which ones stop.
+    stays_up: list[ContainerInfo] = field(default_factory=list)
+    # False when the card -> container map (nvidia-smi compute apps) couldn't be
+    # read: no container's cards are known, and the gate falls back to treating
+    # every container on a busy wanted card as a collision (fail closed).
+    card_map_ok: bool = True
 
     @property
     def conflict_summary(self) -> str:
@@ -832,6 +842,13 @@ class ActionPlan:
     # / GPU_MEMORY_UTILIZATION / SERVED_NAME to `docker compose up` — the compose
     # interpolates ${VAR}, so no compose rewrite per serve.
     env: Optional[dict[str, str]] = None
+    # #1939: the GPU indices this write needs. None = not known, which the gate
+    # reads as EVERY detected card (never "0 and 1"): a serve whose compose takes
+    # `count: all`, a scene, stop-all. A pod's up names its own cards.
+    gpus: Optional[list[int]] = None
+    # #1939: the one container a stop / restart acts on. Set, the gate checks the
+    # cards that container holds, and nothing else running is a collision.
+    target: str = ""
 
 
 # ── Phase 4: Doctor (estate + profile triage reads) ──────────────────────────────
