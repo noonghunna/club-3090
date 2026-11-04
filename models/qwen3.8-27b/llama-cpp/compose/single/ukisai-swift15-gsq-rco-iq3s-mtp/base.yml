@@ -116,7 +116,7 @@
 
 services:
   llama-cpp-qwen38-27b-swift15-single:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:4ccae195bf542f7844301ae06891baa32a7551cb16de8428af6e929403d4292c}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:a2963b4817f03eea7e0d6065ea576252322792441ef97aaae178b924520547d6}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-qwen38-27b-swift15-single}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
