@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 #
 # ghcr.io/noonghunna/strata-maya-club3090: Project Maya (github.com/mw00/project-maya, MIT), a fork of
-# Strata for GLM-5.3-Flash, built by club-3090 from one release. Upstream ships no Dockerfile, no
-# image and no Linux engine (its setup compiles on the user's PC), so this file is ours. build.sh
+# Strata for GLM-5.3-Flash, built by club-3090 from one release. Upstream publishes no image and no
+# Linux engine (its setup compiles on the user's PC); from v1.1.53 it has a recipe for building an
+# image yourself (docker/, adapted from this file, mw00/project-maya#808). This file is ours. build.sh
 # fetches the release's commit into the build context and runs it; see README.md.
 #
 # What it builds, the way maya.py's compile_engine does, with two differences:

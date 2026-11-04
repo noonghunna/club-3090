@@ -3,8 +3,10 @@
 `ghcr.io/noonghunna/strata-maya-club3090` is [Project Maya](https://github.com/mw00/project-maya) (MIT),
 a fork of [Strata](https://github.com/Niko1221/Strata) for GLM-5.3-Flash (and, with engines of their own,
 DeepSeek-V4.1-Flash-1017 on `maya-ds4` and MiniMax-M3.1-Flash on `maya-mm3`), built by us for each release.
-Maya publishes no image, no Dockerfile and no Linux engine (its `maya.sh` compiles on the user's PC),
-so this image is an exception to the image-provenance contract
+Maya publishes no image and no Linux engine (its `maya.sh` compiles on the user's PC). From v1.1.53 its
+repository has a recipe for building an image yourself ([`docs/DOCKER.md`](https://github.com/mw00/project-maya/blob/main/docs/DOCKER.md),
+adapted from this one in [mw00/project-maya#808](https://github.com/mw00/project-maya/pull/808)), but no published
+image, so this image is an exception to the image-provenance contract
 ([`docs/ADDING_ENGINES.md`](../../../../docs/ADDING_ENGINES.md)) by maintainer decision (2026-10-15).
 
 | File | What it does |
