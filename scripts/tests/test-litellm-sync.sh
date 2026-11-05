@@ -75,7 +75,8 @@ got="$(routes)"
 # --- 4: NOTHING live → zero local routes, cloud intact -----------------------
 render ""
 got="$(routes)"
-if [[ "$got" == *rig-cloud-model* ]] && ! command grep -q "host.docker.internal" "$RUNTIME"; then
+if [[ "$got" == *rig-cloud-model* ]] && ! command grep -q "host.docker.internal" "$RUNTIME" \
+   && [[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "0" ]]; then
   ok "with nothing serving: no engine routes, this rig's own routes intact"
 else
   bad "empty-rig render wrong" "this rig's own routes only" "$got"
@@ -158,6 +159,28 @@ for r in qwen3.8-27b sgl-live gguf-live; do
     bad "$r route shape: model=$prov allowed_openai_params=$allowed drop_params=$drop"
   fi
 done
+
+# --- 10b: the `live` alias route (the club-live omp alias, #1949) -------------
+# omp's compaction and skill-compression dispatch bypass the extension's
+# before_provider_request hook, so a request can reach the gateway still named
+# `live`; it must resolve here or those requests 400. The alias mirrors the
+# FIRST route (the one the extension names) and must never BE the first route:
+# the extension's parser reads only the first route of the generated block.
+[[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "1" ]] \
+  && ok "a live alias route is rendered when something serves" \
+  || bad "live alias route missing or duplicated: $(routes)"
+[[ "$(route_field live litellm_params.api_base)" == "$(route_field gguf-live litellm_params.api_base)" \
+   && "$(route_field live litellm_params.model)" == "openai/gguf-live" ]] \
+  && ok "the live alias mirrors the first route's deployment" \
+  || bad "live alias: model=$(route_field live litellm_params.model) api_base=$(route_field live litellm_params.api_base)"
+first_gen=$(python3 -c "
+import io, re
+t = io.open('$RUNTIME', encoding='utf-8').read()
+b = re.search(r'BEGIN GENERATED LOCAL BLOCK[\s\S]*?END GENERATED LOCAL BLOCK', t).group(0)
+print(re.search(r'- model_name:\s*(\S+)', b).group(1))")
+[[ "$first_gen" != "live" ]] \
+  && ok "the live alias never shadows the first real route (first is $first_gen)" \
+  || bad "the live alias is the first route — the extension's parser would name it"
 
 # --- 11: model_info from the LIVE server (what omp's discovery: litellm reads) -
 [[ "$(route_field qwen3.8-27b model_info.max_input_tokens)" == "262144" && "$(route_field sgl-live model_info.max_input_tokens)" == "163840" ]] \

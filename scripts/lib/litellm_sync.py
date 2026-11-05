@@ -510,6 +510,7 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
         "  # DO NOT EDIT — edit services/litellm/config.yaml (the catalog view) instead.",
     ]
     seen: set[str] = set()
+    first: "list[str] | None" = None
     facts = facts or {}
     warnings = warnings if warnings is not None else []
     for r in sorted(live, key=lambda t: (t.model, t.port)):
@@ -520,7 +521,7 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
         if ak is None:   # a saved key the container does not use: no route, warned
             continue
         seen.add(r.model)
-        lines += [
+        route = [
             f"  - model_name: {r.model}",
             "    litellm_params:",
             f"      model: openai/{r.model}",
@@ -528,10 +529,21 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
             f"      api_key: {ak}",
             *ROUTE_PARAMS,
             *([] if r.responses else [RESPONSES_BRIDGE]),
-        ]
-        lines += model_info(r.ctx, facts.get(r.port, {}), r.native_messages, r.out_cap) + [""]
+        ] + model_info(r.ctx, facts.get(r.port, {}), r.native_messages, r.out_cap)
+        if first is None:
+            first = route
+        lines += route + [""]
     if not live:
         lines.append("  # (nothing serving right now — no local routes)")
+    elif first is not None:
+        # The club-live omp alias (services/omp/extensions/club-live.ts) registers a
+        # virtual model named `live`. Agent turns reach the real slug through the
+        # extension's rewrite hook, but omp's compaction and skill-compression
+        # dispatch bypass that hook — such a request arrives here still named
+        # `live` and must resolve, not 400. The alias mirrors the FIRST route (the
+        # same one the extension names) and sits after every real route, so the
+        # extension's parser — which reads only the first route — never sees it.
+        lines += ["  - model_name: live", *first[1:]] + [""]
     return "\n".join(lines).rstrip() + "\n" + END + "\n", len(seen)
 
 

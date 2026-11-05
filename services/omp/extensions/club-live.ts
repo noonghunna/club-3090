@@ -42,6 +42,11 @@
 //    moved to the new registration with pi.setModel — the only API that
 //    re-points a healthy session. Sessions on other providers (a cloud
 //    orchestrator) are left exactly as they are.
+//    A backstop covers dispatch that skips the rewrite hook (omp's compaction
+//    and skill-compression paths send the wire model as-is): the rendered
+//    block carries a `live` alias route mirroring the first serving route, so
+//    the gateway resolves the alias name itself. Rig down means no alias
+//    route — a `live` request then 400s honestly at the gateway.
 //
 // SETTINGS — one JSON file next to this extension, written by
 // scripts/omp-setup.sh (its --auto-switching step; re-run it after a
@@ -318,9 +323,11 @@ export default function (pi: PiLike): void {
 		console.error(`club-live: initial registration failed: ${err instanceof Error ? err.message : String(err)}`);
 	}
 
-	// The only place the alias is resolved to a concrete upstream model. While
-	// nothing has resolved the request passes through as-is and the gateway
-	// 400s honestly ("model 'live' not found") instead of hitting a stale slug.
+	// The alias's own resolution for agent turns. omp's compaction and
+	// skill-compression dispatch skip this hook and send the wire model as-is —
+	// the gateway's `live` alias route (litellm_sync.render_block) resolves
+	// those. While nothing has resolved AND no alias route exists (rig down),
+	// the request passes through and the gateway 400s honestly.
 	pi.on("before_provider_request", (event: unknown) => {
 		const payload = asRecord(asRecord(event)?.["payload"]);
 		if (!payload) return undefined;
