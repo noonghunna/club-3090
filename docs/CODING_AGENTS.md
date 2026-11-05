@@ -220,12 +220,14 @@ bash scripts/omp-setup.sh                 # adds a `club` provider to ~/.omp/age
 bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast   # experimental slug: --force
 omp models club                           # the live model, with its real context window
 cp services/omp/extensions/tps-meter.ts ~/.omp/agent/extensions/   # optional: speed + cache share in the statusline
+bash scripts/omp-setup.sh --auto-switching   # installs the alias extension + its club-live.json settings, and prints the role block to paste
 ```
 
-The last line installs the *Statusline meter (omp and pi)*.
+The last two lines install the *Statusline meter (omp and pi)* and *The live alias (club-live/live)*.
 
 Then put the settings below in your `~/.omp/agent/config.yml` — `omp-setup.sh`
-never touches that file.
+never touches that file; `--auto-switching` PRINTS the live-alias `modelRoles`
+block for you to paste.
 
 Always name models with the `club/` prefix. omp matches bare names fuzzily across
 every provider it knows: `--model qwen3.8-27b` resolved to a *cloud* provider's
@@ -430,6 +432,79 @@ About the budget where it does apply (vLLM, chat completions): it caps the
 *thinking* field, not the reply — with a 512 budget the model sometimes kept
 reasoning in the visible answer until the reply cap. Keep it generous; SGLang
 0.5.20 has no such field at all (sglang#36750 would add one).
+
+### The live alias (club-live/live) — roles that survive every switch
+
+`club/<id>` roles name one slug. A switch.sh that retires that slug kills every
+running session on it ("No model selected") and every subagent spawn after it:
+the ids the gateway lists change with the scene — `qwen3.8-27b` on the vLLM
+tiers, `qwen3.8-flash-next-iq3_s` on Strata, and so on. The `club-live`
+extension (the `--auto-switching` line in the setup block) registers one virtual model,
+`club-live/live`, that never goes stale:
+
+```yaml
+modelRoles:
+  default: club-live/live:medium   # whatever is in VRAM, on every switch
+  task: club-live/live:low
+```
+
+- The wire request carries the slug the gateway is serving: the extension reads
+  the litellm-sync rendered config — the same file the gateway loads, so only
+  answering backends appear in it — and re-tags requests naming the alias. It
+  resolves from that view ONLY: the gateway's `/v1/models` also lists your own
+  `config.local.yaml` routes (possibly cloud), and the alias must never drift
+  to one of those when the rig is down. A file watcher plus a 30 s poll
+  *notice* a switch.sh within ~2 seconds (the session move lands at the turn
+  boundary). If the rig is down, the alias keeps its last registration and
+  requests fail honestly at the gateway until a scene is back. With SEVERAL
+  different local models serving at once, the first route in the rendered
+  block wins — an arbitrary pick; point roles at `club/<id>` explicitly if you
+  care which one answers.
+- A running session moves to the new slug once its current turn completes
+  (`setModel`) — only a session whose current model is a club-live one; roles
+  pointed at cloud providers are never touched.
+- The context window follows the serving slug (rendered `model_info`), so
+  compaction sizing stays right after a switch.
+- All configuration lives in one file the setup script writes:
+  `~/.omp/agent/extensions/club-live.json` — the rendered config's host path
+  (resolved from the running litellm container's mount, so a checkout outside
+  `~/club-3090` just works), the gateway URL, the gateway key (resolved
+  through the `club_config` loader), and the per-family wire settings (effort
+  ladder, reply cap, compat) generated from the same lists `omp-setup.sh`
+  writes into `models.yml`. After `gateway-key.sh rotate` or a `--gateway`
+  change, re-run `bash scripts/omp-setup.sh --auto-switching` — the extension
+  re-reads the file on its next refresh; no omp restart. The alias needs the
+  gateway on the same machine as omp, since it reads the gateway's rendered
+  config from disk: with `--gateway` pointing at another machine,
+  `--auto-switching` stops and says so. A gateway reached through a tunnel
+  (a loopback URL to another machine) can't be told apart that way; with no
+  litellm container on this machine, `--auto-switching` warns that the alias
+  won't follow it.
+  (`CLUB_LIVE_JSON` / `CLUB_LIVE_CFG` relocate those two files; that's how the
+  tests point them at scratch fixtures.)
+- `/club-live` inside a session re-checks and re-applies the alias.
+- `test-omp-club-live.sh` pins the extension's parser to
+  `litellm_sync.render_block`'s real output and drives the whole
+  register/resolve/watcher/rewrite chain against a stub omp host;
+  `test-omp-setup.sh` compares the settings file's families against
+  `models.yml`'s `modelOverrides` so the two can't drift.
+- If your `config.yml` sets `enabledModels`, it must list `club-live/*` too —
+  an allow-list that omits the alias makes every `club-live/live` role fall
+  back to another provider with only a startup warning.
+- Effort suffixes clamp to the SERVING family's ladder: the extension
+  registers the serving slug's own levels (GLM: `low/high/max`; the Qwen3.8
+  family: `low/medium/xhigh`), and omp sends the nearest lower rung when a
+  role's suffix isn't one of them — a `club-live/live:medium` role runs at
+  `low` while GLM serves, `:xhigh` at `high`. Never an error, and an effort
+  the serving engine has never heard of never reaches it.
+- `scripts/omp-setup.sh --auto-switching` does the install for you: it copies
+  the extension into the agent dir, writes `club-live.json` beside it (mode
+  600 — the gateway key is in it), and prints the `modelRoles` block above to
+  paste. Your `config.yml` stays yours. If it sets `enabledModels`, remember
+  to add `club-live/*` yourself.
+
+Always write `club-live/live`, like `club/<id>` — a bare `live` is
+fuzzy-matching territory.
 
 ### Cloud fallback to OpenRouter's free models — how it's set up
 
