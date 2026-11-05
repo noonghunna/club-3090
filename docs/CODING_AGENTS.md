@@ -476,7 +476,10 @@ modelRoles:
   re-reads the file on its next refresh; no omp restart. The alias needs the
   gateway on the same machine as omp, since it reads the gateway's rendered
   config from disk: with `--gateway` pointing at another machine,
-  `--auto-switching` stops and says so.
+  `--auto-switching` stops and says so. A gateway reached through a tunnel
+  (a loopback URL to another machine) can't be told apart that way; with no
+  litellm container on this machine, `--auto-switching` warns that the alias
+  won't follow it.
   (`CLUB_LIVE_JSON` / `CLUB_LIVE_CFG` relocate those two files; that's how the
   tests point them at scratch fixtures.)
 - `/club-live` inside a session re-checks and re-applies the alias.

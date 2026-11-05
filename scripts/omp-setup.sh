@@ -292,6 +292,13 @@ if auto:
         pass
     if not rendered:
         rendered = os.path.join(root, "services", "litellm", "config.runtime.yaml")
+        # Not fatal (a local gateway can be down while this runs), but say it: the
+        # gateway check above passes a loopback URL, and that can be a tunnel to
+        # another machine's gateway, which this file would never follow.
+        print(f"[omp-setup] warning: no litellm container runs on this machine, so the live alias "
+              f"will read {rendered}. It only follows a gateway whose container runs here: not one "
+              "reached through a tunnel, nor one that later starts from another checkout. Re-run "
+              "--auto-switching once the gateway is up.", file=sys.stderr)
     gw = gateway.rstrip("/")
     if gw.endswith("/v1"):
         gw = gw[:-len("/v1")]

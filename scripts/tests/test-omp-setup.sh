@@ -320,6 +320,23 @@ else
   echo "  (no LAN address on this machine: the LAN-address control is skipped)"
 fi
 
+# 10. No litellm container on this machine (a docker stub that finds none): the
+#     run still installs, falls back to this checkout's rendered view, and WARNS
+#     that the alias only follows a gateway whose container runs here (a loopback
+#     tunnel to another machine passes check 9). Hermetic: the stub, not the rig.
+export PI_CODING_AGENT_DIR="$T/agent-nocontainer"
+mkdir -p "$T/stub"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$T/stub/docker"; chmod +x "$T/stub/docker"
+out="$(PATH="$T/stub:$PATH" bash "$ROOT/scripts/omp-setup.sh" --auto-switching 2>&1)" \
+  || bad "--auto-switching must still install when no litellm container runs here"
+printf '%s\n' "$out" | grep -q 'no litellm container runs on this machine' \
+  || bad "--auto-switching must warn when no litellm container runs here"
+python3 - "$PI_CODING_AGENT_DIR/extensions/club-live.json" "$ROOT/services/litellm/config.runtime.yaml" <<'PY' \
+  || bad "without a litellm container, renderedCfg must be this checkout's rendered view"
+import io, json, sys
+sys.exit(0 if json.load(io.open(sys.argv[1], encoding="utf-8"))["renderedCfg"] == sys.argv[2] else 1)
+PY
 
-[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served ids, Flash-Next + GLM keys and ladders, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine)"
+
+[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served ids, Flash-Next + GLM keys and ladders, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container)"
 exit "$fail"
