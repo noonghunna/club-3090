@@ -220,9 +220,10 @@ bash scripts/omp-setup.sh                 # adds a `club` provider to ~/.omp/age
 bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast   # experimental slug: --force
 omp models club                           # the live model, with its real context window
 cp services/omp/extensions/tps-meter.ts ~/.omp/agent/extensions/   # optional: speed + cache share in the statusline
+cp services/omp/extensions/club-live.ts ~/.omp/agent/extensions/   # optional: roles that survive every switch (the live alias)
 ```
 
-The last line installs the *Statusline meter (omp and pi)*.
+The last two lines install the *Statusline meter (omp and pi)* and *The live alias (club-live/live)*.
 
 Then put the settings below in your `~/.omp/agent/config.yml` — `omp-setup.sh`
 never touches that file.
@@ -430,6 +431,44 @@ About the budget where it does apply (vLLM, chat completions): it caps the
 *thinking* field, not the reply — with a 512 budget the model sometimes kept
 reasoning in the visible answer until the reply cap. Keep it generous; SGLang
 0.5.20 has no such field at all (sglang#36750 would add one).
+
+### The live alias (club-live/live) — roles that survive every switch
+
+`club/<id>` roles name one slug. A switch.sh that retires that slug kills every
+running session on it ("No model selected") and every subagent spawn after it:
+the ids the gateway lists change with the scene — `qwen3.8-27b` on the vLLM
+tiers, `qwen3.8-flash-next-iq3_s` on Strata, and so on. The `club-live`
+extension (the `cp` line in the setup block) registers one virtual model,
+`club-live/live`, that never goes stale:
+
+```yaml
+modelRoles:
+  default: club-live/live:medium   # whatever is in VRAM, on every switch
+  task: club-live/live:low
+```
+
+- The wire request carries the slug the gateway is serving: the extension reads
+  the litellm-sync rendered config — the same file the gateway loads, so only
+  answering backends appear in it — and re-tags requests naming the alias. The
+  gateway's `/v1/models` is the fallback; a file watcher plus a 30 s poll
+  notice a switch.sh within ~2 seconds.
+- A running session moves to the new slug once its current turn completes
+  (`setModel`) — only a session whose current model is a club-live one; roles
+  pointed at cloud providers are never touched.
+- The context window follows the serving slug (rendered `model_info`), so
+  compaction sizing stays right after a switch.
+- Paths and the gateway key come from your settings, never baked in:
+  `CLUB_LIVE_CFG` / `CLUB3090_ROOT` locate a checkout outside `~/club-3090`;
+  the key follows the `club_config.py` precedence (shell env > club3090.env >
+  secrets.env > legacy repo .env > public default), so `gateway-key.sh rotate`
+  needs no omp restart.
+- `/club-live` inside a session re-checks and re-applies the alias.
+- `test-omp-club-live.sh` pins the extension's parser to
+  `litellm_sync.render_block`'s real output and its wire policies to the
+  `omp-setup.sh` pins.
+
+Always write `club-live/live`, like `club/<id>` — a bare `live` is
+fuzzy-matching territory.
 
 ### Cloud fallback to OpenRouter's free models — how it's set up
 

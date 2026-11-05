@@ -219,6 +219,12 @@ Next:
      ⚠️ Set modelRoles either way: with none, omp picks a model on its own from every
      gateway route, and a route you can't use can win.
 
+  4. Optional, recommended — keep roles pointed at whatever is serving, across
+     every switch.sh and inside running sessions:
+                      cp "$ROOT_DIR/services/omp/extensions/club-live.ts" ~/.omp/agent/extensions/
+     then write modelRoles as club-live/live (docs/CODING_AGENTS.md, "The live alias").
+     (checkout not at ~/club-3090? the extension finds it via CLUB3090_ROOT="$ROOT_DIR")
+
   Optional: decode speed + prompt-cache share in the statusline:
                       cp "$ROOT_DIR/services/omp/extensions/tps-meter.ts" ~/.omp/agent/extensions/
 
