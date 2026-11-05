@@ -451,7 +451,9 @@ modelRoles:
   the litellm-sync rendered config — the same file the gateway loads, so only
   answering backends appear in it — and re-tags requests naming the alias. The
   gateway's `/v1/models` is the fallback; a file watcher plus a 30 s poll
-  notice a switch.sh within ~2 seconds.
+  *notice* a switch.sh within ~2 seconds (the session move lands at the turn
+  boundary). If the rig is down, the alias keeps its last registration and
+  requests fail honestly at the gateway until a scene is back.
 - A running session moves to the new slug once its current turn completes
   (`setModel`) — only a session whose current model is a club-live one; roles
   pointed at cloud providers are never touched.

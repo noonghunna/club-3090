@@ -22,9 +22,11 @@
 // 2. The live slug comes from the GENERATED LOCAL BLOCK of the litellm-sync
 //    rendered config — only local answering backends appear inside those
 //    markers, never the user's own cloud routes from config.local.yaml. An
-//    empty block means nothing local is serving: the alias stays unresolved
-//    rather than pointing at a cloud route. A file watcher plus a slow poll
-//    notice switch.sh within ~2 seconds.
+//    empty block means nothing local is serving: the alias keeps its last
+//    registration (requests then fail honestly at the gateway until the rig
+//    is back) rather than pointing at a cloud route. A file watcher plus a
+//    slow poll notice switch.sh within ~2 seconds; a RUNNING session moves
+//    at its next turn boundary — never mid-turn.
 // 3. When the slug, its window, or the gateway key changes, the provider is
 //    re-registered (fresh context window, fresh key — a gateway-key rotate
 //    lands without restarting omp) and a session whose CURRENT model is a
@@ -224,7 +226,9 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 // each route's model_info — the endpoint omp's `discovery: litellm` reads —
 // and /v1/models covers older gateways. With no rendered view there are no
 // config.local.yaml routes in the gateway either, so its first route is a
-// local one.
+// local one. Caveat: if the rendered view EXISTS but its markers are
+// unrecognized, resolveLive still consults the gateway, whose first route
+// could then be a config.local.yaml entry — a last resort, not a guarantee.
 async function fromGateway(): Promise<LiveInfo | null> {
 	for (const path of ["/model_group/info", "/v1/models"]) {
 		try {
@@ -277,7 +281,7 @@ export default function (pi: PiLike): void {
 	let registeredKey = "";
 	let boundCtx: CtxLike | undefined;
 	let agentBusy = false;
-	let watcherInstalled = false;
+	let pendingMove = false; // a change landed while busy: move at agent_end
 	let refreshInFlight = false;
 	let refreshPending = false;
 	{
@@ -348,6 +352,12 @@ export default function (pi: PiLike): void {
 	});
 	pi.on("agent_end", async () => {
 		agentBusy = false;
+		// A switch that landed mid-turn registered the new provider but
+		// deferred the session move; apply it now, at the boundary.
+		if (pendingMove) {
+			pendingMove = false;
+			void tick(true);
+		}
 	});
 
 	async function tick(force = false): Promise<void> {
@@ -370,7 +380,10 @@ export default function (pi: PiLike): void {
 				if (!changed && !keyMoved && !force) continue;
 				live = next;
 				register(); // fresh window, ladder, and key
-				if (agentBusy) continue; // don't yank mid-turn; the next round retries
+				if (agentBusy) {
+					pendingMove = true; // don't yank mid-turn; agent_end applies it
+					continue;
+				}
 				// Move sessions that are ON the alias to the new registration —
 				// never a session whose model is someone else's (cloud orchestrators).
 				const current = boundCtx?.models?.current?.();
@@ -385,6 +398,13 @@ export default function (pi: PiLike): void {
 					boundCtx?.ui?.notify?.(`club-live: live model is now ${next.slug}`);
 				}
 			} while (refreshPending);
+		} catch (err) {
+			// A throwing host call (register/setModel) must not escape as an
+			// unhandled rejection from `void tick()`; state stays last-known-good.
+			boundCtx?.ui?.notify?.(
+				`club-live: refresh failed (${err instanceof Error ? err.message : String(err)})`,
+				"warning",
+			);
 		} finally {
 			refreshInFlight = false;
 		}
@@ -413,7 +433,8 @@ export default function (pi: PiLike): void {
 		description: "Re-check the live club-3090 model and re-apply the alias",
 		handler: async (_args: string, ctx: CtxLike) => {
 			boundCtx = ctx;
-			agentBusy = false;
+			// No agentBusy clobber: a manual /club-live during a turn defers
+			// the move to agent_end like any other change.
 			await tick(true);
 			ctx.ui?.notify?.(`club-live: serving ${live?.slug ?? "nothing resolved yet"}`, "info");
 		},

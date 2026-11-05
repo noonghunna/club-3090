@@ -144,6 +144,8 @@ if (before !== "original" || after !== "rotated-live")
 # 3. Pin pairs. The extension re-registers its provider with the SAME wire
 #    policies omp-setup.sh pins for the `club` provider; if either side moves
 #    without the other, thinking stops reaching the engine's chat template.
+#    Presence-grep is a drift floor, not a wire proof: it catches a pin being
+#    dropped on either side, not a host-side rename of the payload field.
 for pin in 'supportsDeveloperRole: false' 'supportsReasoningEffort: true' \
            'qwenTemplateReasoningEffort: true' 'thinking_token_budget: 8192'; do
   grep -qF "$pin" "$EXT"                        || bad "extension lost $pin"
