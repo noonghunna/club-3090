@@ -17,8 +17,9 @@
 # roles survive a switch between them. The ThinkingCap slugs serve
 # `thinkingcap38-27b` instead: use club/thinkingcap38-27b in the roles there.
 # With the club-live extension installed (services/omp/extensions/club-live.ts
-# — the cp step scripts/omp-setup.sh prints), every role below can instead read
-# club-live/live:<effort>: the alias follows whatever scene is serving, so a
+# — scripts/omp-setup.sh --auto-switching installs it, with its club-live.json
+# settings), every role below can instead read club-live/live:<effort>: the
+# alias follows whatever scene is serving, so a
 # switch to a non-Qwen3.8 slug (Strata's iq3_s, GLM, a teardown) never strands
 # the session. Without the extension, club-live/live does not exist — keep the
 # pinned ids below.

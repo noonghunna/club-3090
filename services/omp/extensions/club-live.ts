@@ -15,6 +15,13 @@
 //     # a cloud orchestrator role stays literal and is NEVER touched:
 //     # advisor: anthropic/claude-opus-4-5
 //
+// Effort suffixes resolve against the LADDER OF THE SERVING FAMILY: the
+// extension registers the serving slug's own ladder (GLM has no `medium`, the
+// Qwen3.8 family has no `max`), and omp CLAMPS a role's suffix to it — a
+// `:medium` role on GLM runs at `low`, `:xhigh` runs at `high` (verified
+// against omp's wire: the nearest lower rung is sent; no error, and an
+// effort the server has never heard of never reaches it).
+//
 // Three mechanisms, each scoped to the club-live provider alone:
 // 1. before_provider_request rewrites the wire `model` from "live" to the slug
 //    the gateway is serving, so the stable id always routes correctly. No
@@ -24,33 +31,42 @@
 //    markers, never the user's own cloud routes from config.local.yaml. An
 //    empty block means nothing local is serving: the alias keeps its last
 //    registration (requests then fail honestly at the gateway until the rig
-//    is back) rather than pointing at a cloud route. A file watcher plus a
-//    slow poll notice switch.sh within ~2 seconds; a RUNNING session moves
-//    at its next turn boundary — never mid-turn.
-// 3. When the slug, its window, or the gateway key changes, the provider is
-//    re-registered (fresh context window, fresh key — a gateway-key rotate
-//    lands without restarting omp) and a session whose CURRENT model is a
-//    club-live model is moved to the new registration with pi.setModel — the
-//    only API that re-points a healthy session. Sessions on other providers (a
-//    cloud orchestrator) are left exactly as they are.
+//    is back) rather than pointing at a cloud route. The alias NEVER asks the
+//    gateway which model is live — /v1/models also lists config.local.yaml
+//    routes, and a fallback there could point at the cloud exactly when the
+//    rig is down. If the rendered view can't be read, nothing resolves.
+//    A file watcher plus a slow poll notice switch.sh within ~2 seconds; a
+//    RUNNING session moves at its next turn boundary — never mid-turn.
+// 3. When the slug, its window, or the settings change, the provider is
+//    re-registered and a session whose CURRENT model is a club-live model is
+//    moved to the new registration with pi.setModel — the only API that
+//    re-points a healthy session. Sessions on other providers (a cloud
+//    orchestrator) are left exactly as they are.
 //
-// PATHS AND KEY — the same sources the repo's own clients use, never baked:
-//   config:  $CLUB_LIVE_CFG, else $CLUB3090_ROOT/services/litellm/config.runtime.yaml,
-//            else ~/club-3090/services/litellm/config.runtime.yaml
-//   gateway: $CLUB_LIVE_GATEWAY, else http://127.0.0.1:4000
-//   key:     $CLUB_LIVE_KEY, else $LITELLM_MASTER_KEY, else the club config dir
-//            (club3090.env then secrets.env), else the legacy repo .env, else
-//            the public compose default — the precedence of
-//            scripts/lib/club_config.py.
-// The key is re-read on every refresh, so `gateway-key.sh rotate` needs no omp
-// restart. A checkout outside ~/club-3090 sets CLUB3090_ROOT (the cp step
-// scripts/omp-setup.sh prints says where).
-//
-// Subagents need no special handling: their role patterns resolve to the
-// stable `club-live/live` id, which always exists.
+// SETTINGS — one JSON file next to this extension, written by
+// scripts/omp-setup.sh (its --auto-switching step; re-run it after a
+// gateway-key rotate or a --gateway change, exactly as for the `club`
+// provider):
+//   renderedCfg  host path of the file the litellm container mounts (from
+//                litellm_sync.mounted_runtime_path() — a worktree setup's
+//                file can live outside the checkout)
+//   gateway      the gateway URL omp-setup.sh was given
+//   key          the gateway key, resolved through the club_config loader —
+//                the extension never re-implements that precedence
+//   families     the per-family wire settings (ids, effort ladder, reply cap,
+//                compat) generated from the SAME lists omp-setup.sh writes
+//                into models.yml, so the alias and the `club` provider cannot
+//                drift. A slug in none of the families registers WITHOUT
+//                thinking — the same as a `club/<id>` route discovery reports
+//                no override for.
+// $CLUB_LIVE_JSON overrides the settings file's path, $CLUB_LIVE_CFG the
+// rendered config's (both are how test-omp-club-live.sh points the extension
+// at scratch files). Without a settings file the defaults are the documented
+// clone location, http://127.0.0.1:4000, and the public compose default key.
 import { readFileSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PROVIDER = "club-live";
 const MODEL_ID = "live";
@@ -61,94 +77,68 @@ const DEBOUNCE_MS = 1_500;
 // alias still lists, and the next successful tick replaces it.
 const DEFAULT_CTX = 131_072;
 const DEFAULT_MAX_OUT = 32_768;
-// The reply cap scripts/omp-setup.sh pins for every id it knows (thinking +
-// answer; a small cap cuts a file write off mid-file, and omp's own catalog
-// fallback would be the whole window of the smallest slug).
-const REPLY_CAP = 32_768;
 // The compose default every install shares — the same last resort
 // scripts/omp-setup.sh uses when no key is stored.
 const PUBLIC_DEFAULT_KEY = "sk-litellm-master-key";
 
-// The served-id families, mirroring the QWEN38_IDS / FLASH_NEXT_IDS / GLM53_IDS
-// lists in scripts/omp-setup.sh (test-omp-club-live.sh fails the pair if one
-// side moves). They decide the effort ladder: GLM-5.3-Flash has no `medium`;
-// the Qwen3.8 family has no `max`.
-const GLM53_IDS: Record<string, true> = { "glm-5.3-flash": true };
-const QWEN_LADDER = { efforts: ["low", "medium", "xhigh"], defaultLevel: "medium" };
-const GLM_LADDER = { efforts: ["low", "high", "max"], defaultLevel: "max" };
-function ladderFor(slug: string | undefined): { efforts: string[]; defaultLevel: string } {
-	return slug && GLM53_IDS[slug] ? GLM_LADDER : QWEN_LADDER;
-}
+// Provider-level compat: every club engine reads thinking off the chat
+// template, takes the effort through chat_template_kwargs (#1690 — without
+// those pins every request ran at the server's default, the slowest rung),
+// and none of them takes a developer role. Per-family additions come from
+// the settings file.
+const PROVIDER_COMPAT: Record<string, unknown> = {
+	supportsDeveloperRole: false,
+	thinkingFormat: "qwen-chat-template",
+	reasoningDisableMode: "none-effort",
+};
 
 function env(name: string): string | undefined {
 	const v = process.env[name];
 	return v && v.length > 0 ? v : undefined;
 }
 
-// The checkout: CLUB3090_ROOT names it; the documented clone location is the
-// default. The rendered runtime view lives inside it.
-function repoRoot(): string {
-	return env("CLUB3090_ROOT") ?? join(env("HOME") ?? homedir(), "club-3090");
+interface Family {
+	ids: string[];
+	ladder: { efforts: string[]; defaultLevel: string };
+	maxTokens: number;
+	compat: Record<string, unknown>;
+}
+interface Settings {
+	renderedCfg: string;
+	gateway: string;
+	key: string;
+	families: Family[];
 }
 
-// The rendered runtime view litellm-sync writes for the gateway, regenerated
-// on every switch.sh launch and teardown. CLUB_LIVE_CFG overrides the file
-// directly.
-const RUNTIME_CFG =
-	env("CLUB_LIVE_CFG") ?? join(repoRoot(), "services", "litellm", "config.runtime.yaml");
-const GATEWAY = env("CLUB_LIVE_GATEWAY") ?? "http://127.0.0.1:4000";
-
-function configDir(): string {
-	return (
-		env("CLUB3090_CONFIG_DIR") ??
-		join(env("XDG_CONFIG_HOME") ?? join(env("HOME") ?? homedir(), ".config"), "club-3090")
-	);
+// The settings file sits beside the installed extension; CLUB_LIVE_JSON
+// relocates it (tests). Re-read on every tick, so a re-run of omp-setup.sh
+// (rotate, --gateway change, new family) lands without restarting omp.
+function settingsPath(): string {
+	return env("CLUB_LIVE_JSON") ?? join(dirname(fileURLToPath(import.meta.url)), "club-live.json");
 }
-
-// KEY=value lines, `#` comments and the optional `export ` prefix skipped
-// (both accepted by club_config.py's parse_env_file), surrounding quotes
-// stripped — the shape settings.sh writes (compose_env_quote single-quotes
-// what needs it).
-function readEnvFile(path: string, key: string): string | undefined {
-	let text: string;
+function loadSettings(): Settings {
+	let raw: Record<string, unknown> = {};
 	try {
-		text = readFileSync(path, "utf8");
+		raw = JSON.parse(readFileSync(settingsPath(), "utf8")) as Record<string, unknown>;
 	} catch {
-		return undefined;
+		/* no settings file — the documented defaults below */
 	}
-	for (const raw of text.split("\n")) {
-		const line = raw.trim();
-		if (!line || line.startsWith("#")) continue;
-		const eq = line.indexOf("=");
-		if (eq < 0) continue;
-		let lhs = line.slice(0, eq).trim();
-		if (lhs.startsWith("export ")) lhs = lhs.slice(7).trim();
-		if (lhs !== key) continue;
-		let value = line.slice(eq + 1).trim();
-		if (
-			(value.startsWith('"') && value.endsWith('"')) ||
-			(value.startsWith("'") && value.endsWith("'"))
-		)
-			value = value.slice(1, -1);
-		return value.length ? value : undefined;
-	}
-	return undefined;
+	const rendered =
+		env("CLUB_LIVE_CFG") ??
+		(typeof raw.renderedCfg === "string"
+			? raw.renderedCfg
+			: join(env("HOME") ?? homedir(), "club-3090", "services", "litellm", "config.runtime.yaml"));
+	return {
+		renderedCfg: rendered,
+		gateway: env("CLUB_LIVE_GATEWAY") ?? (typeof raw.gateway === "string" ? raw.gateway : "http://127.0.0.1:4000"),
+		key: typeof raw.key === "string" && raw.key ? raw.key : PUBLIC_DEFAULT_KEY,
+		families: Array.isArray(raw.families) ? (raw.families as Family[]) : [],
+	};
 }
 
-// Same precedence as scripts/lib/club_config.py: shell env > club3090.env >
-// secrets.env > the legacy repo .env, then the public default. (club_config
-// counts an env var set to "" as set; here an empty value counts as unset, the
-// way the compose `${LITELLM_MASTER_KEY:-…}` default treats it.) Read at every
-// use, so a rotate lands on the next refresh without restarting omp.
-export function resolveGatewayKey(): string {
-	return (
-		env("CLUB_LIVE_KEY") ??
-		env("LITELLM_MASTER_KEY") ??
-		readEnvFile(join(configDir(), "club3090.env"), "LITELLM_MASTER_KEY") ??
-		readEnvFile(join(configDir(), "secrets.env"), "LITELLM_MASTER_KEY") ??
-		readEnvFile(join(repoRoot(), ".env"), "LITELLM_MASTER_KEY") ??
-		PUBLIC_DEFAULT_KEY
-	);
+function familyFor(settings: Settings, slug: string | undefined): Family | undefined {
+	if (!slug) return undefined;
+	return settings.families.find((f) => Array.isArray(f.ids) && f.ids.includes(slug));
 }
 
 interface LiveInfo {
@@ -184,6 +174,20 @@ export function parseRenderedConfig(text: string): LiveInfo | null {
 	};
 }
 
+// FAIL CLOSED: the rendered view is the only source. The gateway's /v1/models
+// also lists the user's config.local.yaml routes, so falling back to it could
+// point the alias at a CLOUD model exactly when the rig is down. Unresolved
+// instead: the request passes through and the gateway 400s honestly.
+async function resolveLive(settings: Settings): Promise<LiveInfo | null> {
+	let text = "";
+	try {
+		text = readFileSync(settings.renderedCfg, "utf8");
+	} catch {
+		return null;
+	}
+	return parseRenderedConfig(text);
+}
+
 // ---- minimal shapes of the omp surfaces this extension touches -------------
 // Deliberately structural rather than importing @oh-my-pi/pi-coding-agent:
 // the extension runs under omp's loader, and these are exactly the calls it
@@ -192,11 +196,17 @@ export function parseRenderedConfig(text: string): LiveInfo | null {
 
 interface ModelLike {
 	id: string;
-	provider: string;
+	name: string;
+	reasoning: boolean;
+	input: string[];
+	thinking?: { mode: string; efforts: string[]; defaultLevel: string };
+	cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	contextWindow: number;
+	maxTokens: number;
 }
 interface ModelFacade {
-	current(): ModelLike | undefined;
-	resolve(spec: string): ModelLike | undefined;
+	current(): { provider: string; id: string } | undefined;
+	resolve?(selector: string): string | undefined;
 }
 interface UiLike {
 	notify?(message: string, level?: string): void;
@@ -204,72 +214,18 @@ interface UiLike {
 interface CtxLike {
 	models?: ModelFacade;
 	ui?: UiLike;
-	setInterval?(callback: () => void, ms: number): unknown;
+	setInterval?(fn: () => void, ms: number): void;
 }
 interface PiLike {
-	on(event: string, handler: (event: unknown, ctx: CtxLike) => unknown): void;
-	setModel(model: ModelLike | string): Promise<boolean>;
-	registerProvider(name: string, config: Record<string, unknown>): void;
-	unregisterProvider?(name: string): void;
-	registerCommand(
-		name: string,
-		def: { description: string; handler: (args: string, ctx: CtxLike) => unknown },
-	): void;
+	on(event: string, handler: (...args: unknown[]) => unknown): void;
+	registerProvider(id: string, config: Record<string, unknown>): void;
+	unregisterProvider?(id: string): void;
+	registerCommand(name: string, spec: { description: string; handler: (args: string, ctx: CtxLike) => Promise<void> }): void;
+	setModel(model: string): Promise<boolean>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
-}
-
-// Last-resort resolution for when the rendered config file is missing (never
-// synced, or deleted after the gateway started): /model_group/info carries
-// each route's model_info — the endpoint omp's `discovery: litellm` reads —
-// and /v1/models covers older gateways. With no rendered view there are no
-// config.local.yaml routes in the gateway either, so its first route is a
-// local one. Caveat: if the rendered view EXISTS but its markers are
-// unrecognized, resolveLive still consults the gateway, whose first route
-// could then be a config.local.yaml entry — a last resort, not a guarantee.
-async function fromGateway(): Promise<LiveInfo | null> {
-	for (const path of ["/model_group/info", "/v1/models"]) {
-		try {
-			const res = await fetch(`${GATEWAY}${path}`, {
-				headers: { Authorization: `Bearer ${resolveGatewayKey()}` },
-				signal: AbortSignal.timeout(4_000),
-			});
-			if (!res.ok) continue;
-			const data = asRecord(await res.json())?.["data"];
-			if (!Array.isArray(data)) continue;
-			for (const entry of data) {
-				const e = asRecord(entry);
-				const slug = typeof e?.model_name === "string" ? e.model_name : typeof e?.id === "string" ? e.id : "";
-				if (!slug) continue;
-				const info = asRecord(e?.model_info);
-				const mi = Number(info?.max_input_tokens);
-				const mo = Number(info?.max_output_tokens);
-				return {
-					slug,
-					ctxWindow: Number.isFinite(mi) && mi > 0 ? mi : DEFAULT_CTX,
-					maxOut: Number.isFinite(mo) && mo > 0 ? mo : DEFAULT_MAX_OUT,
-				};
-			}
-		} catch {
-			// gateway unreachable — keep the current registration
-		}
-	}
-	return null;
-}
-
-async function resolveLive(): Promise<LiveInfo | null> {
-	let text = "";
-	try {
-		text = readFileSync(RUNTIME_CFG, "utf8");
-	} catch {
-		/* rendered config missing — ask the gateway */
-	}
-	const parsed = parseRenderedConfig(text);
-	if (parsed) return parsed;
-	if (BLOCK.test(text)) return null; // rendered view present, nothing local serving
-	return fromGateway();
 }
 
 export default function (pi: PiLike): void {
@@ -278,18 +234,20 @@ export default function (pi: PiLike): void {
 	// broken rig; an unresolved alias passes the request through and the
 	// gateway 400s honestly ("model 'live' not found").
 	let live: LiveInfo | null = null;
+	let settings = loadSettings();
 	let registeredKey = "";
 	let boundCtx: CtxLike | undefined;
 	let agentBusy = false;
 	let pendingMove = false; // a change landed while busy: move at agent_end
 	let refreshInFlight = false;
 	let refreshPending = false;
+	let watcherInstalled = false;
 	{
 		let text = "";
 		try {
-			text = readFileSync(RUNTIME_CFG, "utf8");
+			text = readFileSync(settings.renderedCfg, "utf8");
 		} catch {
-			/* the 2 s tick(true) below covers the gateway path */
+			/* the 2 s tick(true) below retries */
 		}
 		live = parseRenderedConfig(text);
 	}
@@ -297,39 +255,30 @@ export default function (pi: PiLike): void {
 	function register(): void {
 		// Re-registering the same provider id replaces the registration; drop
 		// the old one first when the host exposes the teardown hook.
-		registeredKey = resolveGatewayKey();
+		registeredKey = settings.key;
+		const fam = familyFor(settings, live?.slug);
 		pi.unregisterProvider?.(PROVIDER);
 		pi.registerProvider(PROVIDER, {
-			baseUrl: `${GATEWAY}/v1`,
+			baseUrl: `${settings.gateway}/v1`,
 			apiKey: registeredKey,
 			api: "openai-completions",
-			// The same wire policies scripts/omp-setup.sh pins for the `club`
-			// provider (test-omp-club-live.sh tripwires the pair): vLLM /
-			// SGLang / llama.cpp read thinking off the chat template, take the
-			// effort through chat_template_kwargs (#1690 — without those two
-			// pins every request ran at the server's default, the slowest
-			// rung), and none of them take a developer role.
-			compat: {
-				supportsDeveloperRole: false,
-				thinkingFormat: "qwen-chat-template",
-				reasoningDisableMode: "none-effort",
-				supportsReasoningEffort: true,
-				qwenTemplateReasoningEffort: true,
-				extraBody: { thinking_token_budget: 8192 },
-			},
+			compat: { ...PROVIDER_COMPAT, ...(fam?.compat ?? {}) },
 			models: [
 				{
 					// Stable id: roles written as `club-live/live` survive every
 					// switch; before_provider_request maps it to the live slug.
 					id: MODEL_ID,
 					name: live ? `club-3090 live (${live.slug})` : "club-3090 live (not resolved yet)",
-					reasoning: true,
+					// A slug in no family registers WITHOUT thinking — the same
+					// as a `club/<id>` route that has no override: omp goes by
+					// what discovery reports, which is nothing.
+					reasoning: fam !== undefined,
 					input: ["text"],
-					thinking: { mode: "effort", ...ladderFor(live?.slug) },
+					thinking: fam ? { mode: "effort", ...fam.ladder } : undefined,
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 					contextWindow: live?.ctxWindow ?? DEFAULT_CTX,
-					maxTokens: REPLY_CAP,
-				},
+					maxTokens: fam?.maxTokens ?? live?.maxOut ?? DEFAULT_MAX_OUT,
+				} satisfies ModelLike,
 			],
 		});
 	}
@@ -369,15 +318,16 @@ export default function (pi: PiLike): void {
 		try {
 			do {
 				refreshPending = false;
-				const next = await resolveLive();
+				settings = loadSettings(); // rotate / --gateway / families land here
+				const next = await resolveLive(settings);
 				if (!next) continue; // keep the last-known-good; the next round retries
 				const changed =
 					!live ||
 					next.slug !== live.slug ||
 					next.ctxWindow !== live.ctxWindow ||
 					next.maxOut !== live.maxOut;
-				const keyMoved = resolveGatewayKey() !== registeredKey;
-				if (!changed && !keyMoved && !force) continue;
+				const settingsMoved = settings.key !== registeredKey;
+				if (!changed && !settingsMoved && !force) continue;
 				live = next;
 				register(); // fresh window, ladder, and key
 				if (agentBusy) {
@@ -417,8 +367,8 @@ export default function (pi: PiLike): void {
 		watcherInstalled = true;
 		try {
 			let debounce: NodeJS.Timeout | undefined;
-			watch(dirname(RUNTIME_CFG), (_event2, filename) => {
-				if (filename && !RUNTIME_CFG.endsWith(filename)) return;
+			watch(dirname(settings.renderedCfg), (_event2, filename) => {
+				if (filename && !settings.renderedCfg.endsWith(filename)) return;
 				clearTimeout(debounce);
 				debounce = setTimeout(() => void tick(), DEBOUNCE_MS);
 			});
