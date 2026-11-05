@@ -221,12 +221,14 @@ bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast   # experimental slug: 
 omp models club                           # the live model, with its real context window
 cp services/omp/extensions/tps-meter.ts ~/.omp/agent/extensions/   # optional: speed + cache share in the statusline
 cp services/omp/extensions/club-live.ts ~/.omp/agent/extensions/   # optional: roles that survive every switch (the live alias)
+bash scripts/omp-setup.sh --auto-switching   # same cp, plus it writes the club-live/live modelRoles block for you
 ```
 
 The last two lines install the *Statusline meter (omp and pi)* and *The live alias (club-live/live)*.
 
 Then put the settings below in your `~/.omp/agent/config.yml` — `omp-setup.sh`
-never touches that file.
+never touches that file, except that `--auto-switching` adds the marked
+live-alias `modelRoles` block (it refuses to touch a hand-written one).
 
 Always name models with the `club/` prefix. omp matches bare names fuzzily across
 every provider it knows: `--model qwen3.8-27b` resolved to a *cloud* provider's
@@ -471,6 +473,12 @@ modelRoles:
 - If your `config.yml` sets `enabledModels`, it must list `club-live/*` too —
   an allow-list that omits the alias makes every `club-live/live` role fall
   back to another provider with only a startup warning.
+- `scripts/omp-setup.sh --auto-switching` does the install for you: it copies
+  the extension into the agent dir and writes the role block above as a
+  MARKED block in config.yml — idempotent on re-run, and it refuses to touch
+  a hand-written `modelRoles` (rewrite those roles to `club-live/live:<effort>`
+  yourself). If your config.yml has an `enabledModels` block list, it gains
+  `club-live/*` automatically.
 
 Always write `club-live/live`, like `club/<id>` — a bare `live` is
 fuzzy-matching territory.

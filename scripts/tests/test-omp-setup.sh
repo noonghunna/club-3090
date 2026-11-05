@@ -242,5 +242,43 @@ if block != overlay:
     sys.exit(1)
 PY
 
-[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served ids, Flash-Next + GLM keys and ladders)"
+# 8. --auto-switching: installs the extension and writes the alias role block —
+#    fresh agent dir: the refusal tests above left a hand-written `club:` in the
+#    first scratch models.yml, which the setup guard (correctly) refuses to pass.
+#    same roles/efforts as the shipped overlay (tripwired), idempotent refresh,
+#    refuses a hand-written modelRoles, and patches an enabledModels allow-list.
+export PI_CODING_AGENT_DIR="$T/agent-auto"
+bash "$ROOT/scripts/omp-setup.sh" --auto-switching >/dev/null || bad "--auto-switching run failed"
+[ -f "$PI_CODING_AGENT_DIR/extensions/club-live.ts" ] \
+  || bad "--auto-switching must install the club-live extension into the agent dir"
+python3 - "$PI_CODING_AGENT_DIR/config.yml" "$ROOT/services/omp/omp-club.yml" <<'PY' || bad "--auto-switching wrote a bad alias block"
+import io, sys, yaml
+d = yaml.safe_load(io.open(sys.argv[1], encoding="utf-8"))
+o = yaml.safe_load(io.open(sys.argv[2], encoding="utf-8"))
+got = {r: v.split(":")[-1] for r, v in d["modelRoles"].items()}
+want = {r: v.split(":")[-1] for r, v in o["modelRoles"].items()}
+if got != want:
+    print(f"  alias efforts drifted from the overlay: {got} vs {want}", file=sys.stderr); sys.exit(1)
+if not all(v.startswith("club-live/live") for v in d["modelRoles"].values()):
+    print(f"  roles must name the alias: {d['modelRoles']}", file=sys.stderr); sys.exit(1)
+PY
+bash "$ROOT/scripts/omp-setup.sh" --auto-switching >/dev/null || bad "--auto-switching re-run failed"
+[ "$(grep -c 'club-3090 live alias' "$PI_CODING_AGENT_DIR/config.yml")" = 2 ] \
+  || bad "--auto-switching re-run must replace the marked block, not duplicate it"
+printf 'modelRoles:\n  default: some/provider\n' > "$PI_CODING_AGENT_DIR/config.yml"
+bash "$ROOT/scripts/omp-setup.sh" --auto-switching 2>/dev/null \
+  && bad "--auto-switching must refuse to touch a hand-written modelRoles"
+grep -q 'default: some/provider' "$PI_CODING_AGENT_DIR/config.yml" \
+  || bad "the guard run modified the user's modelRoles"
+printf 'enabledModels:\n  - club/*\n' > "$PI_CODING_AGENT_DIR/config.yml"
+bash "$ROOT/scripts/omp-setup.sh" --auto-switching >/dev/null || bad "--auto-switching with enabledModels failed"
+python3 - "$PI_CODING_AGENT_DIR/config.yml" <<'PY' || bad "enabledModels must gain club-live/* and stay valid YAML"
+import io, sys, yaml
+d = yaml.safe_load(io.open(sys.argv[1], encoding="utf-8"))
+assert "club-live/*" in d["enabledModels"], d["enabledModels"]
+assert all(v.startswith("club-live/live") for v in d["modelRoles"].values()), d["modelRoles"]
+PY
+
+
+[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served ids, Flash-Next + GLM keys and ladders, auto-switching alias install)"
 exit "$fail"
