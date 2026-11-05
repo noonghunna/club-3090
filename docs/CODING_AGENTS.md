@@ -468,6 +468,9 @@ modelRoles:
 - `test-omp-club-live.sh` pins the extension's parser to
   `litellm_sync.render_block`'s real output and its wire policies to the
   `omp-setup.sh` pins.
+- If your `config.yml` sets `enabledModels`, it must list `club-live/*` too —
+  an allow-list that omits the alias makes every `club-live/live` role fall
+  back to another provider with only a startup warning.
 
 Always write `club-live/live`, like `club/<id>` — a bare `live` is
 fuzzy-matching territory.
