@@ -242,5 +242,59 @@ if block != overlay:
     sys.exit(1)
 PY
 
-[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served ids, Flash-Next + GLM keys and ladders)"
+# 8. --auto-switching: installs the extension AND writes its club-live.json
+#    settings beside it — and never touches config.yml, which stays the user's.
+#    The settings file must carry the gateway (minus /v1), a key, the rendered
+#    view path, and families that MATCH the modelOverrides written into
+#    models.yml: one source, two renderings; this is the drift tripwire.
+export PI_CODING_AGENT_DIR="$T/agent-auto"
+bash "$ROOT/scripts/omp-setup.sh" --auto-switching --gateway http://127.0.0.1:4100/v1 >/dev/null \
+  || bad "--auto-switching run failed"
+[ -f "$PI_CODING_AGENT_DIR/extensions/club-live.ts" ] \
+  || bad "--auto-switching must install the club-live extension into the agent dir"
+[ -f "$PI_CODING_AGENT_DIR/extensions/club-live.json" ] \
+  || bad "--auto-switching must write the club-live settings file"
+[ ! -e "$PI_CODING_AGENT_DIR/config.yml" ] \
+  || bad "--auto-switching wrote config.yml — the roles stay the user's"
+[[ "$(stat -c '%a' "$PI_CODING_AGENT_DIR/extensions/club-live.json")" == "600" ]] \
+  || bad "club-live.json holds the gateway key and must be mode 600"
+bash "$ROOT/scripts/omp-setup.sh" --auto-switching --gateway http://127.0.0.1:4100/v1 2>&1 \
+  | grep -q 'club-live/live:medium' || bad "--auto-switching must print the modelRoles block to paste"
+python3 - "$PI_CODING_AGENT_DIR/extensions/club-live.json" "$PI_CODING_AGENT_DIR/models.yml" <<'PY' || bad "--auto-switching settings drifted from models.yml or are malformed"
+import io, json, sys, yaml
+j = json.load(io.open(sys.argv[1], encoding="utf-8"))
+ov = yaml.safe_load(io.open(sys.argv[2], encoding="utf-8"))["providers"]["club"]["modelOverrides"]
+if j["gateway"] != "http://127.0.0.1:4100":
+    print(f"  gateway {j['gateway']!r} != the --gateway arg minus /v1", file=sys.stderr); sys.exit(1)
+if not j["key"]:
+    print("  settings file carries no gateway key", file=sys.stderr); sys.exit(1)
+if not j["renderedCfg"].endswith("config.runtime.yaml"):
+    print(f"  renderedCfg {j['renderedCfg']!r} is not the rendered view", file=sys.stderr); sys.exit(1)
+seen = set()
+for fam in j["families"]:
+    ladder, cap = fam["ladder"], fam["maxTokens"]
+    for mid in fam["ids"]:
+        seen.add(mid)
+        if mid not in ov:
+            print(f"  {mid}: in the settings families but not in models.yml", file=sys.stderr); sys.exit(1)
+        o, t = ov[mid], ov[mid]["thinking"]
+        if t["efforts"] != ladder["efforts"] or t["defaultLevel"] != ladder["defaultLevel"]:
+            print(f"  {mid}: ladder {t} != settings {ladder}", file=sys.stderr); sys.exit(1)
+        if o["maxTokens"] != cap:
+            print(f"  {mid}: maxTokens {o['maxTokens']} != settings {cap}", file=sys.stderr); sys.exit(1)
+        for k, want in fam["compat"].items():
+            if o["compat"].get(k) != want:
+                print(f"  {mid}: compat {k}={o['compat'].get(k)!r} != settings {want!r}", file=sys.stderr); sys.exit(1)
+if set(ov) - seen:
+    print(f"  models.yml overrides with no settings family: {sorted(set(ov) - seen)}", file=sys.stderr); sys.exit(1)
+PY
+bash "$ROOT/scripts/omp-setup.sh" --auto-switching >/dev/null || bad "--auto-switching re-run failed"
+[ "$(grep -c 'club-3090 local models' "$PI_CODING_AGENT_DIR/models.yml")" = 2 ] \
+  || bad "--auto-switching re-run must keep exactly one marked provider block"
+python3 -c "import io, json, sys; json.load(io.open(sys.argv[1], encoding='utf-8'))" \
+  "$PI_CODING_AGENT_DIR/extensions/club-live.json" \
+  || bad "club-live.json must stay valid JSON across re-runs"
+
+
+[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served ids, Flash-Next + GLM keys and ladders, auto-switching installs extension + settings and leaves config.yml alone)"
 exit "$fail"

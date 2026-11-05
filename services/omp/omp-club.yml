@@ -16,6 +16,13 @@
 # All Qwen3.8 slugs (vLLM/SGLang, fast/max/superfast) serve the same id, so these
 # roles survive a switch between them. The ThinkingCap slugs serve
 # `thinkingcap38-27b` instead: use club/thinkingcap38-27b in the roles there.
+# With the club-live extension installed (services/omp/extensions/club-live.ts
+# — scripts/omp-setup.sh --auto-switching installs it, with its club-live.json
+# settings), every role below can instead read club-live/live:<effort>: the
+# alias follows whatever scene is serving, so a
+# switch to a non-Qwen3.8 slug (Strata's iq3_s, GLM, a teardown) never strands
+# the session. Without the extension, club-live/live does not exist — keep the
+# pinned ids below.
 # Start the slug BEFORE omp: if the default role's model isn't served at startup,
 # omp picks one itself from any provider you hold a key for (with only
 # OPENROUTER_API_KEY set: openrouter/openai/gpt-5.5, a paid model). Launch with
