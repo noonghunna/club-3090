@@ -50,7 +50,9 @@
 #   ...
 #
 # Env knobs read here (all optional):
-#   SERVER_LOG   path to a bare-metal server log (the CONTAINER=none case)
+#   SERVER_LOG   path to a bare-metal server log (the CONTAINER=none case): the file the server is
+#                writing during the run. It wins over CONTAINER, so a copy saved before the run reads
+#                as a log with none of the run's requests in it (#1942)
 #   CONTAINER    docker container to scrape with `docker logs` (or "none")
 #   SERVER_PID   pin the serving process; "none" disables /proc inspection
 #   URL          endpoint base, for /props
@@ -544,14 +546,21 @@ cap_offload_detected() {
     # says so per card at load: "[flash] GPU0 expert budget: … 30328 host-backed (15.37 GB)". Summed
     # over the LAST boot's cards (a restarted container keeps its earlier boots' lines); a model that
     # fits (the dense 27B) prints none, and 0 GB host-backed is not offload (#1926).
+    # The start line that separates boots comes from QEngine's persistent log, which `--log-file off`
+    # (or a log folder it can't write) leaves out. Without it every boot in the log was summed: 210
+    # lines, "1606.38 GB … over 210 cards" on four cards (#1942). So each card's LAST line counts, once.
+    # (A card listed twice in QEngine's device list, its SM-partition test layout, also counts once.)
     v="$(awk '
-      /^==== qengine server start/ { sum = 0; cards = 0; next }
+      /^==== qengine server start/ { split("", gb); next }
       /\[flash\] GPU[0-9]+ expert budget: .* host-backed \([0-9.]+ GB\)/ {
-        if (match($0, /host-backed \([0-9.]+ GB\)/)) {
-          sum += substr($0, RSTART + 13, RLENGTH - 17) + 0; cards++
-        }
+        if (match($0, /GPU[0-9]+ expert budget/)) dev = substr($0, RSTART + 3, RLENGTH - 17)
+        if (match($0, /host-backed \([0-9.]+ GB\)/)) gb[dev] = substr($0, RSTART + 13, RLENGTH - 17) + 0
       }
-      END { if (cards > 0 && sum > 0) printf "%.2f GB of experts host-backed over %d card%s", sum, cards, (cards == 1 ? "" : "s") }
+      END {
+        sum = 0; cards = 0
+        for (d in gb) { sum += gb[d]; cards++ }
+        if (cards > 0 && sum > 0) printf "%.2f GB of experts host-backed over %d card%s", sum, cards, (cards == 1 ? "" : "s")
+      }
     ' "$CAP_LOG" 2>/dev/null || true)"
     if [[ -n "$v" ]]; then echo "boot log (QEngine: ${v})"; return 0; fi
   fi
