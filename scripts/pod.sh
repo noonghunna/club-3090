@@ -14,10 +14,12 @@
 #   bash scripts/pod.sh down <name>      # stop just this pod
 #   bash scripts/pod.sh rm <name>        # remove from the estate file
 #
-# The artifact is the estate file (default scripts/lib/profiles/estate.yml;
-# override with --file). GPU indices stay index-based in the file and are
-# resolved to UUIDs at boot (#610 Phase A) so pods land on the cards they
-# claimed on both container runtimes (classic nvidia + CDI/NixOS).
+# The artifact is the estate file (default ~/.club3090/estate.yml; override
+# with --file). Booting another file with --file also copies it to the
+# default path, which c3 and report.sh read. GPU indices stay index-based
+# in the file and are resolved to UUIDs at boot (#610 Phase A) so pods land
+# on the cards they claimed on both container runtimes (classic nvidia +
+# CDI/NixOS).
 set -euo pipefail
 
 # Force Python's UTF-8 mode (PEP 540) for every python3 this script runs.
