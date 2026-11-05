@@ -169,10 +169,8 @@ done
 [[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "1" ]] \
   && ok "a live alias route is rendered when something serves" \
   || bad "live alias route missing or duplicated: $(routes)"
-[[ "$(route_field live litellm_params.api_base)" == "$(route_field gguf-live litellm_params.api_base)" \
-   && "$(route_field live litellm_params.model)" == "openai/gguf-live" ]] \
-  && ok "the live alias mirrors the first route's deployment" \
-  || bad "live alias: model=$(route_field live litellm_params.model) api_base=$(route_field live litellm_params.api_base)"
+# The mirror must track WHICHEVER route is first — the fixture's sort order is
+# an accident; the invariant is "alias == the first route of the block".
 first_gen=$(python3 -c "
 import io, re
 t = io.open('$RUNTIME', encoding='utf-8').read()
@@ -181,6 +179,45 @@ print(re.search(r'- model_name:\s*(\S+)', b).group(1))")
 [[ "$first_gen" != "live" ]] \
   && ok "the live alias never shadows the first real route (first is $first_gen)" \
   || bad "the live alias is the first route — the extension's parser would name it"
+[[ "$(route_field live litellm_params.api_base)" == "$(route_field "$first_gen" litellm_params.api_base)" \
+   && "$(route_field live litellm_params.model)" == "openai/$first_gen" ]] \
+  && ok "the live alias mirrors the first route's deployment (first is $first_gen)" \
+  || bad "live alias: model=$(route_field live litellm_params.model) api_base=$(route_field live litellm_params.api_base) (want a mirror of $first_gen)"
+
+# --- 10c: a real slug literally named `live` — no alias on top of it ----------
+# Two routes named `live` are one LiteLLM load-balancing group: the
+# hook-bypassed traffic the alias exists to save would land nondeterministically
+# on the real slug or the mirrored route. The real route resolves `live` itself.
+render "8020=live"
+[[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "1" \
+   && "$(route_field live litellm_params.api_base)" == "http://host.docker.internal:8020/v1" ]] \
+  && ok "a real slug named live renders once, without the alias duplicating it" \
+  || bad "slug named live: routes=$(routes) api_base=$(route_field live litellm_params.api_base)"
+
+# --- 10d: the alias follows the first SURVIVING route -------------------------
+# A saved key no container uses skips its route entirely (section 21). When the
+# skipped route would have sorted first, the alias must mirror the survivor —
+# the same route the extension's parser reads and names.
+STRATA_API_KEY=other-saved-key-999 C3_LITELLM_FAKE_LIVE="8018=aaa-skipped+keyed=seam-key-1794,8020=bbb-live" bash "$SYNC" --no-restart --quiet 2>/dev/null
+[[ "$(route_field live litellm_params.api_base)" == "$(route_field bbb-live litellm_params.api_base)" \
+   && "$(route_field live litellm_params.model)" == "openai/bbb-live" ]] \
+  && ok "with the first route key-skipped, the alias mirrors the survivor" \
+  || bad "key-skip mirror: model=$(route_field live litellm_params.model) api_base=$(route_field live litellm_params.api_base)"
+
+# --- 10e: every route key-skipped — marker present, no alias ------------------
+# `first` stays None while the live list is non-empty: the block must say so
+# (not render silent nothing) and must not alias a deployment that is not there.
+STRATA_API_KEY=other-saved-key-999 C3_LITELLM_FAKE_LIVE="8018=aaa-skipped+keyed=seam-key-1794,8020=bbb-skipped+keyed=seam-key-1794" bash "$SYNC" --no-restart --quiet 2>/dev/null
+if command grep -q "no local routes right now" "$RUNTIME" \
+   && [[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "0" ]] \
+   && ! command grep -q "host.docker.internal" "$RUNTIME"; then
+  ok "all routes key-skipped: marker present, no alias, no engine routes"
+else
+  bad "all-key-skipped render: routes=$(routes)"
+fi
+
+# restore the section-10 fixture for every section below
+render "8113=qwen3.8-27b@262144,8142=sgl-live@163840,8020=gguf-live"
 
 # --- 11: model_info from the LIVE server (what omp's discovery: litellm reads) -
 [[ "$(route_field qwen3.8-27b model_info.max_input_tokens)" == "262144" && "$(route_field sgl-live model_info.max_input_tokens)" == "163840" ]] \

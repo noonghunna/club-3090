@@ -533,9 +533,11 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
         if first is None:
             first = route
         lines += route + [""]
-    if not live:
-        lines.append("  # (nothing serving right now — no local routes)")
-    elif first is not None:
+    if not seen:
+        # `live` may be non-empty with every route skipped (a saved key no
+        # container uses): something serves, yet the block has no local routes.
+        lines.append("  # (no local routes right now — nothing serving, or no key matched)")
+    elif first is not None and "live" not in seen:
         # The club-live omp alias (services/omp/extensions/club-live.ts) registers a
         # virtual model named `live`. Agent turns reach the real slug through the
         # extension's rewrite hook, but omp's compaction and skill-compression
@@ -543,6 +545,9 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
         # `live` and must resolve, not 400. The alias mirrors the FIRST route (the
         # same one the extension names) and sits after every real route, so the
         # extension's parser — which reads only the first route — never sees it.
+        # A real slug literally named `live` already resolves that name; a second
+        # route with it would make LiteLLM load-balance `live` traffic between the
+        # real model and the mirrored one, so the alias stands down (seen check).
         lines += ["  - model_name: live", *first[1:]] + [""]
     return "\n".join(lines).rstrip() + "\n" + END + "\n", len(seen)
 

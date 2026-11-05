@@ -183,7 +183,7 @@ export function parseRenderedConfig(text: string): LiveInfo | null {
 	const block = BLOCK.exec(text);
 	if (!block) return null; // not a litellm-sync rendered view
 	const starts = [...block[0].matchAll(/^ {2}- model_name:/gm)].map((m) => m.index);
-	if (starts.length === 0) return null; // "(nothing serving right now)"
+	if (starts.length === 0) return null; // "(no local routes right now)"
 	// The window comes from THIS route's own model_info — a route whose engine
 	// reports no context must not inherit the next route's window.
 	const route = block[0].slice(starts[0], starts.length > 1 ? starts[1] : block[0].length);
