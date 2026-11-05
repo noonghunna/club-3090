@@ -3563,7 +3563,7 @@ class ServeContext(NamedTuple):
     force_required: bool = False
     weights_state: str = ""                     # present|partial|absent|downloading|unknown
     # #1939 §4: what [p] "Add as pod" would do — cards, port, name, or why it
-    # can't (start mode only; None elsewhere, and the key stays hidden).
+    # can't (start and stop modes; None elsewhere, and the key stays hidden).
     pod_offer: Optional[PodOffer] = None
 
 
@@ -3679,7 +3679,8 @@ class ConfirmActionScreen(ModalScreen):
         Binding("T", "persist_thinking", "save as default", show=True),
         # #1939 §4: [p] serves the slug as a POD next to what's running, on the
         # free cards the card names, instead of replacing the Catalog model. Start
-        # mode only, and only when the card has an offer (see _render_serve_card).
+        # and stop (the serving slug: a second copy) modes, only when the card has
+        # an offer (see _render_serve_card).
         Binding("p", "add_as_pod", "Add as pod", show=True, priority=True),
         Binding("escape", "cancel", "Cancel", show=True),
     ]
@@ -4387,7 +4388,7 @@ class ConfirmActionScreen(ModalScreen):
             )
         # #1939 §4: the other way to serve it — a pod next to what's running. The
         # reconcile line below says what Start stops; this says what a pod would.
-        off = ctx.pod_offer if ctx is not None and ctx.mode == "start" else None
+        off = ctx.pod_offer if ctx is not None and ctx.mode in ("start", "stop") else None
         if off is not None:
             if off.blocked:
                 lines.append(f"  [bold]p[/bold] Add as pod  [dim]unavailable: {off.blocked}[/dim]")
@@ -4648,9 +4649,10 @@ class ConfirmActionScreen(ModalScreen):
                 return bool(resolved and mode == "start")
             # #1939 §4: [p] opens the pod's own modal and then its own gated
             # confirm on the pod's cards, so it needs no resolved detect here.
+            # On the serving slug's card (stop) it adds a second copy as a pod.
             if action == "add_as_pod":
                 off = ctx.pod_offer if ctx is not None else None
-                return bool(mode == "start" and off is not None and not off.blocked)
+                return bool(mode in ("start", "stop") and off is not None and not off.blocked)
             # W4A8 int8-activation toggle — only where the card binds [a]:
             # the classic opt-in OR the inverted ship-int8 toggle (#609/#1010).
             if action == "toggle_act8":
@@ -4734,7 +4736,7 @@ class ConfirmActionScreen(ModalScreen):
         then goes through its own confirm, gated on the pod's cards."""
         ctx = self._serve_ctx
         off = ctx.pod_offer if ctx is not None else None
-        if ctx is None or ctx.mode != "start" or off is None or off.blocked:
+        if ctx is None or ctx.mode not in ("start", "stop") or off is None or off.blocked:
             return
         self.app.pop_screen()
         self.app.open_add_as_pod(off)  # type: ignore[attr-defined]
@@ -15501,6 +15503,8 @@ class CockpitApp(App):
                     entry=entry,
                     stop_plan=stop_plan,
                     serving_container=con.name,
+                    # #1939 §4: a second copy of the serving model, as a pod.
+                    pod_offer=self._pod_offer_for(entry),
                 )
             # Serving slug matched but we couldn't resolve the container — fall
             # back to a Start presentation (no stop target to offer).

@@ -781,10 +781,12 @@ def pod_card_block(tp: int, free: list[int]) -> list[int]:
 def host_port_free(port: int) -> bool:
     """True when nothing on this host holds ``port``: a TCP bind on every
     interface fails while a container publishes it or any process listens on it,
-    on any address."""
+    on any address. SO_REUSEADDR so connections still closing (TIME_WAIT, e.g. a
+    model stopped seconds ago) don't count; a listener still does."""
     import socket
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(("0.0.0.0", port))
         return True
     except OSError:

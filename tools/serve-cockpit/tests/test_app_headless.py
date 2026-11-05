@@ -4280,25 +4280,47 @@ class TestCatalogAddAsPod1939:
             assert app._pod_offer_for(e).blocked == "needs 2 free GPUs; free now: 2"
 
     @pytest.mark.asyncio
-    async def test_p_only_in_start_mode(self, monkeypatch):
+    async def test_p_on_start_and_stop_cards_only(self, monkeypatch):
+        """Start (not serving) and stop (the serving slug: a second copy as a pod)
+        offer [p]; the download cards and the generic confirm never do."""
         from club3090_cockpit.data import PodOffer
         app, _, _ = make_app(target=ServingTarget())
         e = _addpod_entry()
         off = PodOffer(slug=e.slug, name="minimal", cards=(2,), port=8040)
         async with app.run_test(size=(140, 44)) as pilot:
             await self._setup(app, pilot, monkeypatch, entries=(e,))
-            for mode in ("stop", "download", "downloading"):
+            for mode, want in (("start", True), ("stop", True),
+                               ("download", False), ("downloading", False)):
                 screen = ConfirmActionScreen(app._data.serve(e.slug),
                                              serve_ctx=ServeContext(mode=mode, entry=e, pod_offer=off))
                 app.push_screen(screen)
                 await pilot.pause()
-                assert screen.check_action("add_as_pod", ()) is False, mode
+                assert screen.check_action("add_as_pod", ()) is want, mode
+                if want:
+                    assert "Add as pod" in str(screen.query_one("#confirm-body", Static).render()), mode
                 app.pop_screen()
                 await pilot.pause()
             legacy = ConfirmActionScreen(app._data.pod_up_plan("alpha", [0]))
             app.push_screen(legacy)
             await pilot.pause()
             assert legacy.check_action("add_as_pod", ()) is False
+
+    @pytest.mark.asyncio
+    async def test_the_serving_slugs_card_offers_a_second_copy(self, monkeypatch):
+        """Found live: on the card of the slug switch.sh is serving, c3 shows Stop
+        (mode "stop"), and the first build left [p] off it, so a second copy of
+        the serving model couldn't be added as a pod."""
+        app, _, _ = make_app(target=ServingTarget())
+        e = _addpod_entry()
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, monkeypatch, entries=(e,))
+            app._catalog_serving_slug = e.slug
+            app._catalog_container = lambda: ContainerInfo(
+                name="vllm-qwen", kind="engine", host_port=8020, slug=e.slug)
+            ctx = app._serve_context_for(e)
+            assert ctx.mode == "stop"
+            assert ctx.pod_offer is not None and ctx.pod_offer.cards == (2,)
+            assert ctx.pod_offer.port == 8040          # past alpha's 8041 and qwen's 8020
 
     @pytest.mark.asyncio
     async def test_new_pod_with_a_blank_port_gets_a_free_one(self, monkeypatch):
