@@ -473,7 +473,10 @@ modelRoles:
   ladder, reply cap, compat) generated from the same lists `omp-setup.sh`
   writes into `models.yml`. After `gateway-key.sh rotate` or a `--gateway`
   change, re-run `bash scripts/omp-setup.sh --auto-switching` — the extension
-  re-reads the file on its next refresh; no omp restart.
+  re-reads the file on its next refresh; no omp restart. The alias needs the
+  gateway on the same machine as omp, since it reads the gateway's rendered
+  config from disk: with `--gateway` pointing at another machine,
+  `--auto-switching` stops and says so.
   (`CLUB_LIVE_JSON` / `CLUB_LIVE_CFG` relocate those two files; that's how the
   tests point them at scratch fixtures.)
 - `/club-live` inside a session re-checks and re-applies the alias.

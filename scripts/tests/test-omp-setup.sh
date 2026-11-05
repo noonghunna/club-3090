@@ -295,6 +295,31 @@ python3 -c "import io, json, sys; json.load(io.open(sys.argv[1], encoding='utf-8
   "$PI_CODING_AGENT_DIR/extensions/club-live.json" \
   || bad "club-live.json must stay valid JSON across re-runs"
 
+# 9. --auto-switching with the gateway on ANOTHER machine stops before writing
+#    anything: the alias reads the rendered config from this machine's disk, so
+#    it could only follow a stale local file or this machine's own gateway.
+#    192.0.2.1 is TEST-NET-1 (RFC 5737): never an address of this machine, and a
+#    literal, so no DNS. Positive control: this machine's own LAN address (not
+#    loopback) is allowed, so the check isn't a loopback-only rule.
+export PI_CODING_AGENT_DIR="$T/agent-remote"
+if out="$(bash "$ROOT/scripts/omp-setup.sh" --auto-switching --gateway http://192.0.2.1:4000/v1 2>&1)"; then
+  bad "--auto-switching must refuse a gateway on another machine"
+fi
+printf '%s\n' "$out" | grep -q 'not on this machine' \
+  || bad "--auto-switching must say why it refused a gateway on another machine"
+[ ! -e "$PI_CODING_AGENT_DIR/models.yml" ] && [ ! -e "$PI_CODING_AGENT_DIR/extensions" ] \
+  || bad "--auto-switching with a gateway on another machine must write nothing"
+lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+if [[ -n "$lan_ip" && "$lan_ip" != 127.* ]]; then
+  export PI_CODING_AGENT_DIR="$T/agent-lan"
+  bash "$ROOT/scripts/omp-setup.sh" --auto-switching --gateway "http://$lan_ip:4000/v1" >/dev/null 2>&1 \
+    || bad "--auto-switching must accept this machine's own LAN address ($lan_ip)"
+  [ -f "$PI_CODING_AGENT_DIR/extensions/club-live.json" ] \
+    || bad "--auto-switching with this machine's LAN address must write club-live.json"
+else
+  echo "  (no LAN address on this machine: the LAN-address control is skipped)"
+fi
 
-[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served ids, Flash-Next + GLM keys and ladders, auto-switching installs extension + settings and leaves config.yml alone)"
+
+[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served ids, Flash-Next + GLM keys and ladders, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine)"
 exit "$fail"
