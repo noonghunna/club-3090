@@ -3,7 +3,7 @@
  "engines": {
   "strata": {
    "engine_profile": "scripts/lib/profiles/engines/strata.yml",
-   "verified_image": "ghcr.io/niko1221/strata@sha256:83e37db8625c67b61c579fd7c0f9068f2d831037a937f139c569502b54290998",
+   "verified_image": "ghcr.io/niko1221/strata@sha256:871e1e79c063b240184b08075ba0676b6cd2585eac11f76a9d179f4739d2c857",
    "render": "strata_config",
    "programs": [
     "models/qwen3.8-flash-next/strata/launcher/strata_config.py"
@@ -85,12 +85,12 @@
     "cfg"
    ],
    "config_scopes": [
-    "main",
+    "_main",
     "sampling_defaults_from_config"
    ],
    "reads": {
-    "reasoning_effort": "main(): the server's default effort for requests that name none (logged 'thinking level: ...')",
-    "reasoning_budget_tokens": "main(): Service.reasoning_budget_tokens, the thinking cap for every request",
+    "reasoning_effort": "_main(): the server's default effort for requests that name none (logged 'thinking level: ...'); since 0.2.11 main() only wraps _main() (activity lease, bounded console queue)",
+    "reasoning_budget_tokens": "_main(): Service.reasoning_budget_tokens, the thinking cap for every request",
     "sampling.temperature": "sampling_defaults_from_config(): a default for requests that leave the field out",
     "sampling.top_p": "sampling_defaults_from_config()",
     "sampling.top_k": "sampling_defaults_from_config()",
@@ -100,7 +100,7 @@
     "args:--spec": "the engine's own flag: the MTP drafter's verify window",
     "args:--rope-scaling": "the engine's own flag: RoPE extension past the trained 262144 (none | linear | yarn; `strata --help`)",
     "args:--rope-scale": "the engine's own flag: the linear/yarn extension factor (`strata --help`)",
-    "aliases": "main(): svc.set_aliases(), other names the model answers to (Strata #297), each listed in /v1/models"
+    "aliases": "_main(): svc.set_aliases(), other names the model answers to (Strata #297), each listed in /v1/models"
    }
   },
   "strata-maya": {
