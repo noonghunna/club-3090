@@ -735,7 +735,10 @@ def boot_instance_parallel(index: int, total: int, inst: InstanceSpec, timeout: 
     except Exception as exc:
         elapsed_s = int(time.monotonic() - start)
         summary = summarize_error(str(exc))
-        append_log(log_path, f"[estate] ERROR after {elapsed_s}s: {summary}")
+        # The summary is one line for the parallel summary on stdout; the
+        # instance log gets the whole error (a crash's log tail and how to stop
+        # it, #1936), since that log is where the summary points.
+        append_log(log_path, f"[estate] ERROR after {elapsed_s}s: {str(exc).strip() or summary}")
         return BootOutcome(index=index, total=total, inst=inst, ok=False, elapsed_s=elapsed_s, log_path=log_path, error=summary)
 
 

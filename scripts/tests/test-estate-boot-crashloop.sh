@@ -169,6 +169,37 @@ fast "quiet crash-loop" "$out"
 out="$(run_case quietkept wait_ready_quiet 60 3 "running 5 0")"
 expect "quiet kept container boots" "$out" "RESULT=ok"
 
+echo "[8] --parallel: the instance log gets the whole error, stdout the one-line summary"
+printf '%s\n' "running 0 0" "restarting 1 1" > "$TMP_DIR/states.par"
+rm -f "$TMP_DIR/counter.par"
+out="$(
+  cd "$ROOT_DIR"
+  PATH="$TMP_DIR/bin:$PATH" \
+  FAKE_STATES="$TMP_DIR/states.par" FAKE_COUNTER="$TMP_DIR/counter.par" \
+  CLUB3090_ESTATE_POLL_INTERVAL=0.05 \
+  python3 - "$TMP_DIR/crashy.log" <<'PY' 2>&1
+import sys
+from pathlib import Path
+
+from scripts.lib.profiles import estate_cli as ec
+
+ec.run_compose = lambda inst, action, log_path=None: None
+ec.endpoint_ready = lambda port: False
+log_path = Path(sys.argv[1])
+log_path.touch()
+inst = ec.InstanceSpec(name="crashy", compose_name="vllm/gemma-12b-qat-w4a16-single", gpu_indices=(2,), port=8040)
+outcome = ec.boot_instance_parallel(1, 1, inst, 60, log_path)
+print(f"OK={outcome.ok}")
+print(f"SUMMARY_LINES={len(outcome.error.splitlines())}")
+print("SUMMARY=" + outcome.error)
+log = log_path.read_text(encoding="utf-8")
+print(f"LOG_TAIL={'invalid literal for int()' in log}")
+print(f"LOG_HINT={'bash scripts/pod.sh down crashy' in log}")
+PY
+)"
+expect "parallel outcome fails with a one-line summary" "$out" "OK=False" "SUMMARY_LINES=1" "SUMMARY=container club3090-crashy is not coming up (state=restarting, exit=1)"
+expect "parallel instance log has the log tail and the stop hint" "$out" "LOG_TAIL=True" "LOG_HINT=True"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 [[ "$FAIL" -eq 0 ]]
