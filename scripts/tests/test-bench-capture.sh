@@ -617,6 +617,20 @@ CAP_LOG="$TMP/qe-fn.log"; v="$(cap_offload_detected '' || true)"
 [[ "$v" == "boot log (QEngine: 31.50 GB of experts host-backed over 2 cards)" ]] \
   || fail "QEngine's host-backed expert groups (last boot, summed over cards) must count, got: '$v'"
 cap_offload_is_llamacpp "$v" && fail "QEngine's host-backed experts print no [moe-cache] lines: '$v'"
+# #1942: with `--log-file off` QEngine prints no start line, so a restarted container's log holds every
+# boot's per-card lines with nothing between them. Three 4-card boots: only each card's last line counts.
+: > "$TMP/qe-nostart.log"
+for boot in "7.00 7.00 7.00 7.00" "7.50 7.50 7.50 7.50" "7.65 7.70 7.60 7.66"; do
+  i=0
+  for gb in $boot; do
+    printf '[flash] GPU%d expert budget: 6.10 GiB free -> 9000 of 15360 routed groups on the device, 6360 host-backed (%s GB)\n' \
+      "$i" "$gb" >> "$TMP/qe-nostart.log"
+    i=$((i + 1))
+  done
+done
+CAP_LOG="$TMP/qe-nostart.log"; v="$(cap_offload_detected '' || true)"
+[[ "$v" == "boot log (QEngine: 30.61 GB of experts host-backed over 4 cards)" ]] \
+  || fail "QEngine boots with no start line between them must count each card once (its last line), got: '$v'"
 printf '%s\n' "==== qengine server start: QEngine 1.3.4.3, pid 1, build 5083e04 (/app), log /x.log" \
   "MTP draft vocabulary: 65536 most frequent tokens" \
   "[flash] GPU0 expert budget: 20.00 GiB free -> 61440 of 61440 routed groups on the device, 0 host-backed (0.00 GB)" \

@@ -119,6 +119,12 @@
 #                      writes and the engine-side TPS, expert-cache and drafter
 #                      captures all light up. Default: unset (docker log scrape,
 #                      or nothing).
+#                      It must be the file the server is writing DURING the run:
+#                      it wins over CONTAINER, and a copy saved before the run
+#                      holds none of the run's requests, so every engine-side leg
+#                      comes back empty. For an engine in a container leave it
+#                      unset: URL= finds the container that publishes it, or
+#                      name it with CONTAINER=<name> (#1942).
 #   SERVER_PID         Pin the serving process for /proc inspection (argv fingerprint,
 #                      moe-cache env, RSS, swap). Default: auto: a process with a known
 #                      server name (`pgrep -x`) that owns URL's port on this machine, else
