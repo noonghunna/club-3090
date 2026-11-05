@@ -1492,12 +1492,25 @@ def run_prefill_probe():
     def salt():
         return "".join(random.choices(string.ascii_lowercase, k=8))
 
+    # The warm-up asks for PP_MAX_TOKENS; the measured runs ask for DEPTH_DECODE_TOKENS
+    # (the decode-at-depth leg; 0 falls back to PP_MAX_TOKENS). FORCE_TOKENS overrides
+    # both. The header prints what each actually asks for: it used to print only
+    # PP_MAX_TOKENS, so a 128-token measured run read as a 16-token one (#1942).
+    try:
+        _depth_toks = int(os.environ.get("DEPTH_DECODE_TOKENS", "128"))
+    except ValueError:
+        _depth_toks = 128
+    _gen_cap = _depth_toks if _depth_toks > 0 else PP_MAX_TOKENS
+    _warm_mt = FORCE if FORCE > 0 else PP_MAX_TOKENS
+    _meas_mt = FORCE if FORCE > 0 else _gen_cap
+    _mt_label = (f"max_tokens={_meas_mt}" if _warm_mt == _meas_mt
+                 else f"max_tokens={_warm_mt} warm-up / {_meas_mt} measured")
     for _di, target in enumerate(depths):
         n = _runs_for(_di)
         label = f"prefill-{target // 1000}k"
         print(
             f"\n========== {label.upper()} (target={target} prompt tokens, "
-            f"max_tokens={PP_MAX_TOKENS}, cache-busted: fresh haystack per run) =========="
+            f"{_mt_label}, cache-busted: fresh haystack per run) =========="
         )
         print("=== warmups (1) ===")
         # The warmup doubles as the TOKEN CALIBRATOR: the word-count heuristic
@@ -1523,11 +1536,6 @@ def run_prefill_probe():
         pps, ttfts, ptoks_seen = [], [], []
         dtps = []          # decode-at-depth: the leg this probe used to discard
         phase_t0 = phase_start()
-        try:
-            _depth_toks = int(os.environ.get("DEPTH_DECODE_TOKENS", "128"))
-        except ValueError:
-            _depth_toks = 128
-        _gen_cap = _depth_toks if _depth_toks > 0 else PP_MAX_TOKENS
         for i in range(n):
             try:
                 w, t, _k, ptoks = run_once(prefill_prompt(request_tokens, salt()), _gen_cap, force=_depth_toks)
