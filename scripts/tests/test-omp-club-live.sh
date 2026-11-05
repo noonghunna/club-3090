@@ -16,6 +16,7 @@
 # Leg 1 feeds the parser the real renderer's output; leg 2 is the only way to
 # exercise the host-facing half (register / rewrite / move) without a rig.
 set -euo pipefail
+export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"   # test-locale-utf8.sh: every python3 caller
 cd "$(dirname "$0")/../.."
 EXT=services/omp/extensions/club-live.ts
