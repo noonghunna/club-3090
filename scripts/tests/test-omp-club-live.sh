@@ -107,7 +107,7 @@ const block = (slug, ctx) =>
   "  # === END GENERATED LOCAL BLOCK ===\n";
 const EMPTY_BLOCK =
   "  # === BEGIN GENERATED LOCAL BLOCK (scripts/lib/litellm_sync.py render_block) ===\n" +
-  "  # (no local routes right now)\n" +
+  "  # (no local routes right now — nothing serving, or no key matched)\n" +
   "  # === END GENERATED LOCAL BLOCK ===\n";
 const SETTINGS = {
   renderedCfg: RENDERED,

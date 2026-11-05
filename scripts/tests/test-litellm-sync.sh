@@ -190,6 +190,15 @@ print(re.search(r'- model_name:\s*(\S+)', b).group(1))")
   && ok "the live alias mirrors the first route's deployment (first is $first_gen)" \
   || bad "live alias: model=$(route_field live litellm_params.model) api_base=$(route_field live litellm_params.api_base) (want a mirror of $first_gen)"
 
+# The count the sync reports counts DEPLOYMENTS; the alias is not one. Round-1
+# adjudication: the alias mirrors a deployment, never adds one — these log
+# lines are its only consumers. Pin it so a future edit can't silently drift.
+rm -f "$RUNTIME"
+cnt_out=$(C3_LITELLM_FAKE_LIVE="8113=qwen3.8-27b@262144,8142=sgl-live@163840,8020=gguf-live" bash "$SYNC" --no-restart 2>&1)
+[[ "$cnt_out" == *"rendered 3 live route(s)"* ]] \
+  && ok "the reported route count excludes the alias (3 real, not 4)" \
+  || bad "count pin: $(printf '%s\n' "$cnt_out" | command grep 'live route(s)' | tail -1)"
+
 # --- 10c: a real slug literally named `live` — no alias on top of it ----------
 # Two routes named `live` are one LiteLLM load-balancing group: the
 # hook-bypassed traffic the alias exists to save would land nondeterministically
@@ -199,6 +208,17 @@ render "8020=live"
    && "$(route_field live litellm_params.api_base)" == "http://host.docker.internal:8020/v1" ]] \
   && ok "a real slug named live renders once, without the alias duplicating it" \
   || bad "slug named live: routes=$(routes) api_base=$(route_field live litellm_params.api_base)"
+
+# --- 10f: `live` coexisting with other routes — suppression, not just sole ----
+# The load-balance hazard is coexistence: one name, one deployment group. With
+# `live` sorting SECOND, `first` is another route — the guard must still refuse
+# to mirror it, or hook-bypassed `live` traffic lands on the real slug or the
+# mirror nondeterministically.
+render "8018=aaa,8020=live"
+[[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "1" \
+   && "$(route_field live litellm_params.api_base)" == "http://host.docker.internal:8020/v1" ]] \
+  && ok "a real live beside other routes stays alone — no mirror of the first" \
+  || bad "live coexisting: routes=$(routes) api_base=$(route_field live litellm_params.api_base)"
 
 # --- 10d: the alias follows the first SURVIVING route -------------------------
 # A saved key no container uses skips its route entirely (section 21). When the
