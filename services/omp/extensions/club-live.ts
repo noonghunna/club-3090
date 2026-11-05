@@ -130,7 +130,7 @@ function loadSettings(): Settings {
 			: join(env("HOME") ?? homedir(), "club-3090", "services", "litellm", "config.runtime.yaml"));
 	return {
 		renderedCfg: rendered,
-		gateway: env("CLUB_LIVE_GATEWAY") ?? (typeof raw.gateway === "string" ? raw.gateway : "http://127.0.0.1:4000"),
+		gateway: typeof raw.gateway === "string" ? raw.gateway : "http://127.0.0.1:4000",
 		key: typeof raw.key === "string" && raw.key ? raw.key : PUBLIC_DEFAULT_KEY,
 		families: Array.isArray(raw.families) ? (raw.families as Family[]) : [],
 	};
@@ -235,7 +235,11 @@ export default function (pi: PiLike): void {
 	// gateway 400s honestly ("model 'live' not found").
 	let live: LiveInfo | null = null;
 	let settings = loadSettings();
-	let registeredKey = "";
+	// Fingerprint of the settings the running registration was built from —
+	// gateway, key, families. MUST stay in lockstep with register()'s
+	// fingerprint line: any of them changing re-registers, so a --gateway
+	// change lands on the next tick like a rotate does (what the docs promise).
+	let registeredFrom = "";
 	let boundCtx: CtxLike | undefined;
 	let agentBusy = false;
 	let pendingMove = false; // a change landed while busy: move at agent_end
@@ -256,12 +260,12 @@ export default function (pi: PiLike): void {
 	function register(): void {
 		// Re-registering the same provider id replaces the registration; drop
 		// the old one first when the host exposes the teardown hook.
-		registeredKey = settings.key;
+		registeredFrom = JSON.stringify([settings.gateway, settings.key, settings.families]);
 		const fam = familyFor(settings, live?.slug);
 		pi.unregisterProvider?.(PROVIDER);
 		pi.registerProvider(PROVIDER, {
 			baseUrl: `${settings.gateway}/v1`,
-			apiKey: registeredKey,
+			apiKey: settings.key,
 			api: "openai-completions",
 			compat: { ...PROVIDER_COMPAT, ...(fam?.compat ?? {}) },
 			models: [
@@ -328,10 +332,11 @@ export default function (pi: PiLike): void {
 					next.slug !== live.slug ||
 					next.ctxWindow !== live.ctxWindow ||
 					next.maxOut !== live.maxOut;
-				const settingsMoved = settings.key !== registeredKey;
+				const settingsMoved =
+					JSON.stringify([settings.gateway, settings.key, settings.families]) !== registeredFrom;
 				if (!changed && !settingsMoved && !force) continue;
 				live = next;
-				register(); // fresh window, ladder, and key
+				register(); // fresh window, gateway, ladder, and key
 				if (agentBusy) {
 					pendingMove = true; // don't yank mid-turn; agent_end applies it
 					continue;

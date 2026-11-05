@@ -220,7 +220,6 @@ bash scripts/omp-setup.sh                 # adds a `club` provider to ~/.omp/age
 bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast   # experimental slug: --force
 omp models club                           # the live model, with its real context window
 cp services/omp/extensions/tps-meter.ts ~/.omp/agent/extensions/   # optional: speed + cache share in the statusline
-cp services/omp/extensions/club-live.ts ~/.omp/agent/extensions/   # optional: roles that survive every switch (the live alias)
 bash scripts/omp-setup.sh --auto-switching   # installs the alias extension + its club-live.json settings, and prints the role block to paste
 ```
 

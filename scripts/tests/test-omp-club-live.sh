@@ -8,7 +8,9 @@
 #      change through the WATCHER (the poll is 30 s, so anything caught in ~2 s
 #      is the watcher — this is the watcherInstalled regression guard), keeps
 #      unknown slugs thinking-free, and fails CLOSED (no gateway call, request
-#      passes through) when nothing resolves;
+#      passes through) when nothing resolves, applies a settings-file gateway
+#      change, defers a mid-turn move to agent_end, and keeps the last
+#      registration when nothing is serving;
 #   3. structural pairings that must not drift.
 # Leg 1 feeds the parser the real renderer's output; leg 2 is the only way to
 # exercise the host-facing half (register / rewrite / move) without a rig.
@@ -73,7 +75,7 @@ const c = mod.parseRenderedConfig(switched[1] + "  - model_name: anthropic/claud
 if (!c || c.slug !== "glm-5.3-flash") throw new Error("post-END route leaked: " + JSON.stringify(c));
 const d = mod.parseRenderedConfig("  # === BEGIN GENERATED LOCAL BLOCK (scripts/lib/litellm_sync.py render_block) ===\n" +
   "  - model_name: no-info-slug\n    litellm_params:\n      api_base: http://127.0.0.1:9/v1\n" +
-  "  - model_name: other-slug\n    litellm_params:\n      api_base: http://127.0.0.1:9/v1\n    model_info:\n      max_input_tokens: 131072\n" +
+  "  - model_name: other-slug\n    litellm_params:\n      api_base: http://127.0.0.1:9/v1\n    model_info:\n      max_input_tokens: 262144\n" +
   "  # === END GENERATED LOCAL BLOCK ===\n");
 if (!d || d.slug !== "no-info-slug" || d.ctxWindow !== 131072)
   throw new Error("no-model_info route inherited the next route window: " + JSON.stringify(d));
@@ -101,6 +103,10 @@ const block = (slug, ctx) =>
   `  - model_name: ${slug}\n    litellm_params:\n      api_base: http://127.0.0.1:9/v1\n` +
   `    model_info:\n      max_input_tokens: ${ctx}\n      max_output_tokens: 32768\n` +
   "  # === END GENERATED LOCAL BLOCK ===\n";
+const EMPTY_BLOCK =
+  "  # === BEGIN GENERATED LOCAL BLOCK (scripts/lib/litellm_sync.py render_block) ===\n" +
+  "  # (nothing serving right now)\n" +
+  "  # === END GENERATED LOCAL BLOCK ===\n";
 const SETTINGS = {
   renderedCfg: RENDERED,
   gateway: "http://127.0.0.1:4100",
@@ -122,11 +128,12 @@ const waitFor = async (pred, ms) => {
 const registered = [];
 const moved = [];
 const events = {};
+const commands = {};
 const pi = {
   on: (ev, h) => { events[ev] = h; },
   registerProvider: (id, cfg) => { registered.push(cfg); },
   unregisterProvider: () => {},
-  registerCommand: () => {},
+  registerCommand: (name, spec) => { commands[name] = spec; },
   setModel: async (target) => { moved.push(target); return true; },
 };
 const mod = await import(pathToFileURL(process.cwd() + "/services/omp/extensions/club-live.ts").href);
@@ -175,6 +182,15 @@ writeFileSync(RENDERED, block("qwen3.8-flash-next-iq3_s", 524288)); // nudge the
 await waitFor(() => registered.at(-1).apiKey === "sk-rotated", 6000);
 if (registered.at(-1).apiKey !== "sk-rotated")
   throw new Error("rotated key not picked up on the next tick: " + registered.at(-1).apiKey);
+// A --gateway change must land like a rotate: the registration is compared
+// by its full settings fingerprint (gateway + key + families), not the key
+// alone — this leg rewrites the key to the SAME value, so a gateway-only
+// change is the only thing that can explain a new baseUrl.
+writeFileSync(process.env.CLUB_LIVE_JSON, JSON.stringify({ ...SETTINGS, key: "sk-rotated", gateway: "http://127.0.0.1:4200" }));
+writeFileSync(RENDERED, block("qwen3.8-flash-next-iq3_s", 524288)); // nudge the watcher
+await waitFor(() => registered.at(-1).baseUrl === "http://127.0.0.1:4200/v1", 6000);
+if (registered.at(-1).baseUrl !== "http://127.0.0.1:4200/v1")
+  throw new Error("gateway change never re-registered (stale baseUrl): " + registered.at(-1).baseUrl);
 
 // Rewrite leg: resolved alias maps the wire model to the live slug.
 const out = events.before_provider_request({ payload: { model: "live", input: "x" } });
@@ -182,9 +198,34 @@ if (out?.model !== "qwen3.8-flash-next-iq3_s") throw new Error("wire rewrite wro
 // Someone else model passes through untouched.
 const other = events.before_provider_request({ payload: { model: "gpt-5", input: "x" } });
 if (other !== undefined) throw new Error("foreign request modified");
+// Mid-turn deferral: a switch landing while a turn runs registers the new
+// provider but must NOT yank the session — agent_end applies the deferred
+// move (the round-1 regression: a deferred move used to be dropped for good).
+await events.agent_start({});
+const busyMoved = moved.length;
+writeFileSync(RENDERED, block("glm-5.3-flash", 204800));
+await waitFor(() => registered.at(-1).models[0].name.includes("glm-5.3-flash"), 6000);
+if (moved.length !== busyMoved)
+  throw new Error("mid-turn switch moved the session instead of deferring: " + JSON.stringify(moved));
+await events.agent_end({});
+await waitFor(() => moved.length > busyMoved, 6000);
+if (moved.at(-1) !== "club-live/live")
+  throw new Error("deferred move not applied at agent_end: " + JSON.stringify(moved));
+
+// Keep-last-known-good: an empty generated block (nothing serving) resolves
+// to nothing; the last registration must stand — no re-register as
+// "not resolved", no session move — and the wire rewrite keeps mapping to
+// the last slug so the gateway can fail honestly until a scene is back.
+writeFileSync(RENDERED, EMPTY_BLOCK);
+await commands["club-live"].handler("", ctx);
+if (!registered.at(-1).models[0].name.includes("glm-5.3-flash"))
+  throw new Error("empty block did not keep the last registration: " + registered.at(-1).models[0].name);
+const kept = events.before_provider_request({ payload: { model: "live", input: "x" } });
+if (kept?.model !== "glm-5.3-flash")
+  throw new Error("keep-last rewrite wrong: " + JSON.stringify(kept));
 if (fetchTouched) throw new Error("extension called the gateway — the fallback must stay removed");
 rmSync(T, { recursive: true, force: true });
-console.log("stub host: register / resolve / watcher / rewrite / fail-closed OK");
+console.log("stub host: register / resolve / watcher / rewrite / gateway change / deferral / keep-last / fail-closed OK");
 // fs.watch keeps the event loop alive by design — end the leg explicitly.
 process.exit(0);
 '
