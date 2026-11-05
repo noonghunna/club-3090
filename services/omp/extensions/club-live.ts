@@ -108,6 +108,9 @@ interface Settings {
 	gateway: string;
 	key: string;
 	families: Family[];
+	// Set when the settings file exists but is unreadable/corrupt; an absent
+	// file is not a problem — that is the documented defaults path.
+	problem?: string;
 }
 
 // The settings file sits beside the installed extension; CLUB_LIVE_JSON
@@ -118,10 +121,16 @@ function settingsPath(): string {
 }
 function loadSettings(): Settings {
 	let raw: Record<string, unknown> = {};
+	let problem: string | undefined;
 	try {
 		raw = JSON.parse(readFileSync(settingsPath(), "utf8")) as Record<string, unknown>;
-	} catch {
-		/* no settings file — the documented defaults below */
+	} catch (err) {
+		// An absent file means the documented defaults. A file that IS there
+		// but is unreadable or corrupt must be said out loud, not silently
+		// downgraded to the public default key — the alias would 401 at the
+		// gateway with nothing to point at. tick() surfaces `problem`.
+		if ((err as NodeJS.ErrnoException).code !== "ENOENT")
+			problem = `settings file is unreadable or corrupt (${err instanceof Error ? err.message : String(err)}); running on defaults`;
 	}
 	const rendered =
 		env("CLUB_LIVE_CFG") ??
@@ -132,7 +141,17 @@ function loadSettings(): Settings {
 		renderedCfg: rendered,
 		gateway: typeof raw.gateway === "string" ? raw.gateway : "http://127.0.0.1:4000",
 		key: typeof raw.key === "string" && raw.key ? raw.key : PUBLIC_DEFAULT_KEY,
-		families: Array.isArray(raw.families) ? (raw.families as Family[]) : [],
+		// A malformed family entry degrades like an unknown slug (registers
+		// without thinking) instead of handing the host a half-built model.
+		families: Array.isArray(raw.families)
+			? (raw.families as Family[]).filter(
+					(f) =>
+						!!f && Array.isArray(f.ids) && Array.isArray(f.ladder?.efforts) &&
+						typeof f.ladder?.defaultLevel === "string" && typeof f.maxTokens === "number" &&
+						!!f.compat && typeof f.compat === "object",
+				)
+			: [],
+		problem,
 	};
 }
 
@@ -243,6 +262,8 @@ export default function (pi: PiLike): void {
 	let boundCtx: CtxLike | undefined;
 	let agentBusy = false;
 	let pendingMove = false; // a change landed while busy: move at agent_end
+	let servingNow = false; // the last resolve saw a route; false = last-known-good
+	let warnedProblem = ""; // the settings problem already surfaced (warn once per change)
 	let refreshInFlight = false;
 	let refreshPending = false;
 	let watcher: FSWatcher | undefined;
@@ -255,6 +276,7 @@ export default function (pi: PiLike): void {
 			/* the 2 s tick(true) below retries */
 		}
 		live = parseRenderedConfig(text);
+		servingNow = live !== null;
 	}
 
 	function register(): void {
@@ -287,7 +309,14 @@ export default function (pi: PiLike): void {
 			],
 		});
 	}
-	register();
+	try {
+		register();
+	} catch (err) {
+		// A host-side rejection here must not break omp startup: the alias
+		// simply does not list until the first tick retries, and tick's catch
+		// surfaces the error once a session exists.
+		console.error(`club-live: initial registration failed: ${err instanceof Error ? err.message : String(err)}`);
+	}
 
 	// The only place the alias is resolved to a concrete upstream model. While
 	// nothing has resolved the request passes through as-is and the gateway
@@ -326,6 +355,11 @@ export default function (pi: PiLike): void {
 				settings = loadSettings(); // rotate / --gateway / families land here
 				installWatcher(); // the settings may have moved the rendered file
 				const next = await resolveLive(settings);
+				servingNow = next !== null;
+				if (settings.problem && settings.problem !== warnedProblem) {
+					warnedProblem = settings.problem;
+					boundCtx?.ui?.notify?.(`club-live: ${settings.problem}`, "warning");
+				}
 				if (!next) continue; // keep the last-known-good; the next round retries
 				const changed =
 					!live ||
@@ -403,7 +437,14 @@ export default function (pi: PiLike): void {
 			// No agentBusy clobber: a manual /club-live during a turn defers
 			// the move to agent_end like any other change.
 			await tick(true);
-			ctx.ui?.notify?.(`club-live: serving ${live?.slug ?? "nothing resolved yet"}`, "info");
+			ctx.ui?.notify?.(
+				live
+					? servingNow
+						? `club-live: serving ${live.slug}`
+						: `club-live: nothing serving now — the alias still names ${live.slug} (requests fail at the gateway until a scene is back)`
+					: "club-live: nothing resolved yet",
+				live && servingNow ? "info" : "warning",
+			);
 		},
 	});
 }

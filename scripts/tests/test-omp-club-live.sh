@@ -10,7 +10,8 @@
 #      unknown slugs thinking-free, and fails CLOSED (no gateway call, request
 #      passes through) when nothing resolves, applies a settings-file gateway
 #      change, defers a mid-turn move to agent_end, and keeps the last
-#      registration when nothing is serving;
+#      registration when nothing is serving, reports rig-down honestly in
+#      /club-live, and warns on a corrupt settings file;
 #   3. structural pairings that must not drift.
 # Leg 1 feeds the parser the real renderer's output; leg 2 is the only way to
 # exercise the host-facing half (register / rewrite / move) without a rig.
@@ -111,7 +112,12 @@ const SETTINGS = {
   renderedCfg: RENDERED,
   gateway: "http://127.0.0.1:4100",
   key: "sk-test-key",
-  families: [{ name: "glm53", ids: ["glm-5.3-flash"],
+  // The first entry is deliberately malformed (no ladder/maxTokens/compat)
+  // and claims the SAME slug as the good glm53 family below: the extension
+  // must drop it at load, so the ladder/compat assertions after session_start
+  // can only pass if the good family won.
+  families: [{ name: "broken", ids: ["glm-5.3-flash"] },
+    { name: "glm53", ids: ["glm-5.3-flash"],
     ladder: { efforts: ["low", "high", "max"], defaultLevel: "max" },
     maxTokens: 32768, compat: { supportsReasoningSummary: false } }],
 };
@@ -129,6 +135,7 @@ const registered = [];
 const moved = [];
 const events = {};
 const commands = {};
+const notices = [];
 const pi = {
   on: (ev, h) => { events[ev] = h; },
   registerProvider: (id, cfg) => { registered.push(cfg); },
@@ -150,7 +157,7 @@ writeFileSync(RENDERED, block("glm-5.3-flash", 204800));
 // session_start: discovery settles, the 2 s tick resolves the GLM route.
 const ctx = {
   models: { current: () => ({ provider: "club-live", id: "live" }), resolve: (s) => s },
-  ui: { notify: () => {} },
+  ui: { notify: (m, l) => { notices.push([m, l]); } },
   setInterval: () => {},
 };
 await events.session_start({}, ctx);
@@ -223,9 +230,21 @@ if (!registered.at(-1).models[0].name.includes("glm-5.3-flash"))
 const kept = events.before_provider_request({ payload: { model: "live", input: "x" } });
 if (kept?.model !== "glm-5.3-flash")
   throw new Error("keep-last rewrite wrong: " + JSON.stringify(kept));
+// /club-live must report rig-down honestly: nothing is serving (empty
+// block), so the command may not claim it is.
+if (!notices.some(([m]) => m.includes("nothing serving now")))
+  throw new Error("/club-live claimed serving while nothing serves: " + JSON.stringify(notices));
+
+// Corrupt settings file: an unreadable/corrupt club-live.json must warn —
+// never silently downgrade to the public default key — and the alias must
+// keep running on defaults with its last registration.
+writeFileSync(process.env.CLUB_LIVE_JSON, "{ not json");
+await commands["club-live"].handler("", ctx);
+if (!notices.some(([m, l]) => l === "warning" && m.includes("settings file")))
+  throw new Error("corrupt settings file never warned: " + JSON.stringify(notices));
 if (fetchTouched) throw new Error("extension called the gateway — the fallback must stay removed");
 rmSync(T, { recursive: true, force: true });
-console.log("stub host: register / resolve / watcher / rewrite / gateway change / deferral / keep-last / fail-closed OK");
+console.log("stub host: register / resolve / watcher / rewrite / gateway change / deferral / keep-last / honest status / corrupt settings / fail-closed OK");
 // fs.watch keeps the event loop alive by design — end the leg explicitly.
 process.exit(0);
 '
