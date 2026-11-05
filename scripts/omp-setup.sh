@@ -269,9 +269,14 @@ if auto:
     os.makedirs(ext_dir, exist_ok=True)
     jpath = os.path.join(ext_dir, "club-live.json")
     jtmp = jpath + ".tmp"
-    io.open(jtmp, "w", encoding="utf-8").write(json.dumps(settings, indent=2) + "\n")
-    os.chmod(jtmp, 0o600)          # the gateway key sits in it: the tmp never
-    os.replace(jtmp, jpath)        # lands world-readable, not even briefly
+    # The gateway key sits in it: create at 0600, and re-assert the mode
+    # before writing (a tmp an older run left behind could predate the create
+    # mode), so the key never lands world-readable, not even briefly.
+    fd = os.open(jtmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.chmod(jtmp, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as jf:
+        jf.write(json.dumps(settings, indent=2) + "\n")
+    os.replace(jtmp, jpath)
     print(f"[omp-setup] wrote the club-live settings -> {jpath}")
 PY
 
