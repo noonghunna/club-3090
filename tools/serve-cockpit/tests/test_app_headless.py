@@ -3885,7 +3885,9 @@ class TestBatch1OperateServingPanel:
             screen.query_one("#cc-slug", Select).value = "vllm/dual"
             screen.action_save()
             await pilot.pause()
-            assert captured["result"] == {"name": "coder", "slug": "vllm/dual", "gpus": "1,2"}
+            # #1939 §4: port (blank = the app picks a free one) and boot (False: [N] creates only).
+            assert captured["result"] == {"name": "coder", "slug": "vllm/dual", "gpus": "1,2",
+                                          "port": "", "boot": False}
 
         # The plan builder: a file write, no reconcile, correct cmd.
         plan = app._data.pod_create_plan("coder", "1,2", "vllm/dual")
@@ -4138,6 +4140,192 @@ class TestModelsView1939:
             app._apply_target(st)
             assert app._target_container == "club3090-alpha"
             assert app._target_url == "http://localhost:8041"
+
+
+def _addpod_state(pods=True) -> EstateState:
+    """#1939 §4 fixture: 4 cards. Pod alpha up on card 0 (port 8041); vllm-qwen,
+    a switch.sh model of vllm/minimal (not a pod) on card 1 at 8020, the slug's
+    default port; cards 2 and 3 free. pods=False drops alpha."""
+    instances = [{"name": "alpha", "compose": "vllm/minimal", "gpus": [0], "port": 8041,
+                  "running": True, "placement": {"placement": "ok"}}] if pods else []
+    containers = [ContainerInfo(name="vllm-qwen", kind="engine", host_port=8020,
+                                slug="vllm/minimal")]
+    if pods:
+        containers.insert(0, ContainerInfo(name="club3090-alpha", kind="estate", host_port=8041))
+    return EstateState(
+        gpus=[GpuInfo(index=i, mem_used_mib=20000 if i < 2 else 3) for i in range(4)],
+        containers=containers,
+        estate_report={"active_estate": {"present": bool(pods), "instances": instances}},
+        model_ready={"club3090-alpha": "qwen3.8-4b"} if pods else {},
+    )
+
+
+def _addpod_entry(slug="vllm/minimal", engine="vllm-stable", port=8020):
+    from club3090_cockpit.data import CatalogEntry
+    from club3090_tui_core.registry import VariantRow
+    return CatalogEntry(row=VariantRow(
+        slug=slug, switch_engine="vllm", launch_engine="vllm", compose_dir="x",
+        file="mtp.yml", port=port, model="m", engine=engine, kvcalc_key="SKIP",
+        container="c", compose_path=f"models/m/vllm/compose/single/x/mtp.yml",
+        status="experimental", ctx_label="262K", status_note=""))
+
+
+class TestCatalogAddAsPod1939:
+    """#1939 §4: the Catalog serve card offers "Add as pod" next to Start — the
+    slug as a pod on free cards, booted next to what's running, gated on its own
+    cards only."""
+
+    async def _setup(self, app, pilot, monkeypatch, state=None, entries=()):
+        import club3090_cockpit.data as cdata
+        monkeypatch.setattr(cdata, "host_port_free", lambda port: True)
+        await _enter_operate(pilot)
+        app.query_one("#operate-orch-pane", OperateOrchPane)._last_telemetry = _qwen_on_card1()
+        app._last_estate_state = state if state is not None else _addpod_state()
+        app._variants = [e.row for e in entries]
+
+    @pytest.mark.asyncio
+    async def test_offer_prefills_free_cards_a_free_port_and_a_name(self, monkeypatch):
+        app, _, _ = make_app(target=ServingTarget())
+        one, two = _addpod_entry(), _addpod_entry("vllm/dual", port=8010)
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, monkeypatch, entries=(one, two))
+            off = app._pod_offer_for(one)                 # TP 1
+            assert (off.cards, off.port, off.name, off.blocked) == ((2,), 8040, "minimal", "")
+            off2 = app._pod_offer_for(two)                # TP 2: the free run 2,3
+            assert (off2.cards, off2.port, off2.tp) == ((2, 3), 8030, 2)
+
+    @pytest.mark.asyncio
+    async def test_port_steps_off_a_running_model_on_the_slugs_default(self, monkeypatch):
+        """The bug the offer fixes: with no pods, estate_cli's own default for a pod
+        of vllm/minimal is 8020 (its port + 20 x 0), which the switch.sh model of
+        the same slug already holds."""
+        app, _, _ = make_app(target=ServingTarget())
+        e = _addpod_entry()
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, monkeypatch, state=_addpod_state(pods=False), entries=(e,))
+            assert 8020 + 20 * len(app._estate_pods()) == 8020   # estate_cli's pick: taken
+            assert app._pod_offer_for(e).port == 8021
+            import club3090_cockpit.data as cdata
+            monkeypatch.setattr(cdata, "host_port_free", lambda port: port != 8021)
+            assert app._pod_offer_for(e).port == 8022            # a port the host holds too
+
+    @pytest.mark.asyncio
+    async def test_serve_card_offers_p_with_cards_port_and_what_it_stops(self, monkeypatch):
+        app, _, wr = make_app(target=ServingTarget())
+        e = _addpod_entry()
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, monkeypatch, entries=(e,))
+            app._serve_confirm_for(e)
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, ConfirmActionScreen)
+            assert screen.check_action("add_as_pod", ()) is True
+            body = str(screen.query_one("#confirm-body", Static).render())
+            assert "Add as pod" in body and "GPU 2" in body and "port 8040" in body
+            assert "stops nothing" in body
+            assert wr.started == []
+
+    @pytest.mark.asyncio
+    async def test_p_opens_the_prefilled_modal_and_builds_one_gated_write(self, monkeypatch):
+        from club3090_cockpit.app import PodCreateScreen
+        app, _, wr = make_app(target=ServingTarget())
+        e = _addpod_entry()
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, monkeypatch, entries=(e,))
+            app._serve_confirm_for(e)
+            await pilot.pause()
+            app.screen.action_add_as_pod()
+            await pilot.pause()
+            modal = app.screen
+            assert isinstance(modal, PodCreateScreen)
+            assert modal.query_one("#cc-name", Input).value == "minimal"
+            assert modal.query_one("#cc-gpus", Input).value == "2"
+            assert modal.query_one("#cc-port", Input).value == "8040"
+            assert modal.query_one("#cc-slug", Select).value == "vllm/minimal"
+            modal.action_save()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            plan = app.screen._plan
+            assert plan.kind == "pod_add" and plan.requires_reconcile is True
+            assert plan.cmd == ["bash", "scripts/pod.sh", "create", "minimal", "--gpus", "2",
+                                "--slug", "vllm/minimal", "--port", "8040", "--up"]
+            assert plan.gpus == [2]
+            assert wr.started == []                       # nothing until confirmed
+
+    @pytest.mark.asyncio
+    async def test_unavailable_on_the_uuid_incompatible_engines(self, monkeypatch):
+        app, _, _ = make_app(target=ServingTarget())
+        e = _addpod_entry("vllm/gemma-12b-qat-w4a16-single", engine="vllm-gemma4-unified", port=8039)
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, monkeypatch, entries=(e,))
+            off = app._pod_offer_for(e)
+            assert off.blocked and "Known incompatibility" in off.blocked
+            app._serve_confirm_for(e)
+            await pilot.pause()
+            screen = app.screen
+            assert screen.check_action("add_as_pod", ()) is False
+            assert "unavailable" in str(screen.query_one("#confirm-body", Static).render())
+            screen.action_add_as_pod()                     # a no-op
+            await pilot.pause()
+            assert app.screen is screen
+
+    @pytest.mark.asyncio
+    async def test_unavailable_without_enough_free_cards(self, monkeypatch):
+        app, _, _ = make_app(target=ServingTarget())
+        e = _addpod_entry("vllm/dual", port=8010)          # TP 2
+        st = _addpod_state()
+        st.gpus = st.gpus[:3]                              # cards 0-2: only card 2 free
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, monkeypatch, state=st, entries=(e,))
+            assert app._pod_offer_for(e).blocked == "needs 2 free GPUs; free now: 2"
+
+    @pytest.mark.asyncio
+    async def test_p_only_in_start_mode(self, monkeypatch):
+        from club3090_cockpit.data import PodOffer
+        app, _, _ = make_app(target=ServingTarget())
+        e = _addpod_entry()
+        off = PodOffer(slug=e.slug, name="minimal", cards=(2,), port=8040)
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, monkeypatch, entries=(e,))
+            for mode in ("stop", "download", "downloading"):
+                screen = ConfirmActionScreen(app._data.serve(e.slug),
+                                             serve_ctx=ServeContext(mode=mode, entry=e, pod_offer=off))
+                app.push_screen(screen)
+                await pilot.pause()
+                assert screen.check_action("add_as_pod", ()) is False, mode
+                app.pop_screen()
+                await pilot.pause()
+            legacy = ConfirmActionScreen(app._data.pod_up_plan("alpha", [0]))
+            app.push_screen(legacy)
+            await pilot.pause()
+            assert legacy.check_action("add_as_pod", ()) is False
+
+    @pytest.mark.asyncio
+    async def test_new_pod_with_a_blank_port_gets_a_free_one(self, monkeypatch):
+        """[N] (create only) gets the same port fix: a blank port is picked by the
+        app, not left to estate_cli's pods-only default."""
+        app, _, _ = make_app(target=ServingTarget())
+        e = _addpod_entry()
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, monkeypatch, state=_addpod_state(pods=False), entries=(e,))
+            app._on_pod_create({"name": "x", "slug": "vllm/minimal", "gpus": "2",
+                                "port": "", "boot": False})
+            await pilot.pause()
+            plan = app.screen._plan
+            assert plan.kind == "pod_create" and plan.requires_reconcile is False
+            assert plan.cmd[-2:] == ["--port", "8021"]
+
+
+def test_pod_incompatible_engines_match_pods_md():
+    """The engines "Add as pod" refuses are the ones docs/PODS.md's "Known
+    incompatibility" names: the list there drifted once (#1936)."""
+    import re as _re
+    from club3090_cockpit.data import POD_UUID_INCOMPATIBLE_ENGINES
+    doc = (Path(__file__).resolve().parents[3] / "docs" / "PODS.md").read_text(encoding="utf-8")
+    start = doc.index("### ⚠️ Known incompatibility")
+    end = doc.index("\n## ", start)
+    named = set(_re.findall(r"^- `(vllm-[a-z0-9-]+)`", doc[start:end], _re.M))
+    assert named == set(POD_UUID_INCOMPATIBLE_ENGINES), named
 
 
 class TestF9SlugMasquerade:

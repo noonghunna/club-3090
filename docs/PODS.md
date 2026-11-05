@@ -46,14 +46,15 @@ The **Operate · Orchestration** tab lists **every model on the rig** in its **M
 
 - **`⏎` on a row** — that model's card, with only the verbs that apply: **`u`** up (`pod.sh up`), **`k`** down (`pod.sh down`, or `docker stop` for a model that isn't a pod), **`b`** restart, **`l`** logs, **`x`** remove a down pod from the estate file, **`t`** make it the target. Every write opens a confirm that names what stops and which models stay up.
 - **The target** — Stop / Restart (`k` / `b` on Orchestration), Doctor, the Run ladder and Evaluate act on one model. With one model up it is that one. With several, it is the one you pick with `t`, else the model `switch.sh` started; the Models header and the Run banner name it. Doctor and the Run ladder pass it to the scripts as `URL=` and `CONTAINER=`, so no script picks for itself.
-- **`[N]`** — open the **New-pod** modal: name · slug (catalog picker) · GPU set (prefilled with the free GPUs). It runs the same fit-checked, gated `pod.sh create`; then `⏎` on its row → `u` boots it.
+- **`[N]`** — open the **New-pod** modal: name · slug (catalog picker) · GPU set (prefilled with the free GPUs) · port (blank: one no pod or running model uses). It runs the same fit-checked, gated `pod.sh create`; then `⏎` on its row → `u` boots it.
+- **`p` on a Catalog serve card** — **Add as pod**: serve the slug as a pod next to what's running, instead of replacing the Catalog model. The card says which GPUs, port and pod name it would use (free GPUs, as many as the slug's tensor-parallel size, a consecutive run first) and that it stops nothing. `p` opens the same modal pre-filled; saving creates and boots the pod in one write (`pod.sh create … --up`), after a confirm checked on its GPUs only. It's unavailable, with the reason on the card, when too few GPUs are free and on the engines in *Known incompatibility* below.
 - **`[o]`** — stop everything (gated).
 
 CLI and cockpit share **one estate file and one validation path** — a pod you make in either shows up in the other.
 
 **What c3 checks before a write.** It reads which card each container is on from `nvidia-smi` (each compute process, mapped to its container) and, for a pod, the estate file. Booting a pod checks only that pod's cards, and stopping or restarting one model collides with nothing else. If that card map can't be read, every container on a busy card counts as in the way, and the confirm says their cards are unknown.
 
-> ⚠️ **A Catalog serve still replaces the Catalog model, and checks every card.** `switch.sh` stops the model it last started, and most composes see every card, so with pods up a Catalog Start warns that it stops them. To run a second model next to the others, make it a pod (`N`, then `u`). Serving from the Catalog card as a pod is still to come ([#1939](https://github.com/noonghunna/club-3090/issues/1939)).
+> ⚠️ **A Catalog Start still replaces the Catalog model, and checks every card.** `switch.sh` stops the model it last started, and most composes see every card, so with pods up a Catalog Start warns that it stops them. To run a second model next to the others, use **Add as pod** (`p`) on the same card, or `N` then `u`. A Start that names its own cards, like `launch.sh --gpus`, is still to come ([#1939](https://github.com/noonghunna/club-3090/issues/1939)).
 
 ---
 
@@ -110,7 +111,9 @@ You can keep a model you started the usual way and add pods on the other cards. 
 - **Heterogeneous set** (e.g. a 3090 + a 5090) → estimated against the **smallest card** in the set (a conservative floor; a note says which card was used). True per-card heterogeneous modelling is a deferred `kv-calc` enhancement.
 - The whole estate is then re-validated (`validate_estate`) for **GPU collisions** (two pods claiming the same card) and **port collisions** before the new pod is appended.
 
-`create` only *writes the plan* — no GPU is claimed until `up`. In c3 the create routes through the standard confirm gate; a bad set is refused by the same checks.
+`create` only *writes the plan* — no GPU is claimed until `up`. `create … --up` does both in one command: it creates the pod, then boots just that one (a create that fails boots nothing; a boot that fails leaves the pod in the file, down). In c3 the create routes through the standard confirm gate; a bad set is refused by the same checks.
+
+`create` picks a port for you when you don't pass `--port`: the slug's default plus 20 for each pod already in the file, moved past the other pods' ports. It doesn't see models started another way, so next to a `switch.sh` model of the same slug pass `--port` yourself. c3 does that for you.
 
 ## Placement verification
 
