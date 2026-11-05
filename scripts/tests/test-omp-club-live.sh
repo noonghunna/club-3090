@@ -32,7 +32,8 @@ if [[ $NODE_OK -eq 1 ]]; then
 # render_block() is the function that produces the generated block; driving it
 # directly means a renderer format change breaks this test instead of silently
 # breaking every installed alias.
-python3 - <<'PY' > /tmp/club-live-render.txt
+RC_DIR=$(mktemp -d)
+python3 - <<'PY' > "$RC_DIR/render.txt"
 import sys
 sys.path.insert(0, "scripts/lib")
 import litellm_sync as ls
@@ -51,11 +52,11 @@ assert n == 1, f"expected 1 route, got {n}"
 print("model_list:\n" + block)
 PY
 
-node --experimental-strip-types --input-type=module -e '
+RENDER_CASES="$RC_DIR/render.txt" node --experimental-strip-types --input-type=module -e '
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.cwd() + "/services/omp/extensions/club-live.ts").href);
-const cases = readFileSync("/tmp/club-live-render.txt", "utf8").split("===EMPTY===");
+const cases = readFileSync(process.env.RENDER_CASES, "utf8").split("===EMPTY===");
 const switched = cases[1].split("===SWITCHED===");
 const a = mod.parseRenderedConfig(cases[0]);
 if (!a || a.slug !== "qwen3.8-flash-next-iq3_s" || a.ctxWindow !== 524288 || a.maxOut !== 32768)
@@ -78,6 +79,7 @@ if (!d || d.slug !== "no-info-slug" || d.ctxWindow !== 131072)
   throw new Error("no-model_info route inherited the next route window: " + JSON.stringify(d));
 console.log("parseRenderedConfig: real render_block output OK");
 '
+rm -rf "$RC_DIR"
 
 # ---- 2. the extension against a stub omp host -------------------------------
 # Settings file + rendered view in a scratch dir; a fake pi records what the
@@ -99,18 +101,23 @@ const block = (slug, ctx) =>
   `  - model_name: ${slug}\n    litellm_params:\n      api_base: http://127.0.0.1:9/v1\n` +
   `    model_info:\n      max_input_tokens: ${ctx}\n      max_output_tokens: 32768\n` +
   "  # === END GENERATED LOCAL BLOCK ===\n";
-writeFileSync(process.env.CLUB_LIVE_JSON, JSON.stringify({
+const SETTINGS = {
   renderedCfg: RENDERED,
   gateway: "http://127.0.0.1:4100",
   key: "sk-test-key",
   families: [{ name: "glm53", ids: ["glm-5.3-flash"],
     ladder: { efforts: ["low", "high", "max"], defaultLevel: "max" },
     maxTokens: 32768, compat: { supportsReasoningSummary: false } }],
-}));
+};
+writeFileSync(process.env.CLUB_LIVE_JSON, JSON.stringify(SETTINGS));
 process.env.CLUB_LIVE_CFG = RENDERED;   // settingsPath/CFG honour env; the file is missing at import
 
 let fetchTouched = false;
 globalThis.fetch = () => { fetchTouched = true; throw new Error("extension must not call the gateway"); };
+const waitFor = async (pred, ms) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end && !pred()) await new Promise((r) => setTimeout(r, 100));
+};
 
 const registered = [];
 const moved = [];
@@ -140,7 +147,7 @@ const ctx = {
   setInterval: () => {},
 };
 await events.session_start({}, ctx);
-await new Promise((r) => setTimeout(r, 2300));
+await waitFor(() => registered.at(-1).models[0].name.includes("glm-5.3-flash"), 5000);
 m = registered.at(-1).models[0];
 if (!m.name.includes("glm-5.3-flash")) throw new Error("2 s tick did not resolve: " + m.name);
 if (m.thinking?.efforts?.join() !== "low,high,max") throw new Error("family ladder not registered: " + JSON.stringify(m.thinking));
@@ -148,10 +155,11 @@ if (registered.length < 2) throw new Error("expected a re-registration on resolv
 if (registered.at(-1).compat.supportsReasoningSummary !== false) throw new Error("family compat not merged");
 if (moved.at(-1) !== "club-live/live") throw new Error("resolved session was not moved via setModel: " + JSON.stringify(moved));
 
-// The WATCHER leg: the poll is 30 s, so a change caught in ~2 s is the
-// watcher. A prior regression left watcherInstalled permanently false.
+// The WATCHER leg: the poll is 30 s, so a change caught well inside it is
+// the watcher. A prior regression left the watcher never installed; poll to
+// a deadline instead of sleeping a fixed debounce-sized window.
 writeFileSync(RENDERED, block("qwen3.8-flash-next-iq3_s", 524288));
-await new Promise((r) => setTimeout(r, 1800));
+await waitFor(() => registered.at(-1).models[0].name.includes("qwen3.8-flash-next-iq3_s"), 6000);
 m = registered.at(-1).models[0];
 if (!m.name.includes("qwen3.8-flash-next-iq3_s")) throw new Error("watcher did not fire (watcherInstalled regression?): " + m.name);
 if (moved.length < 2) throw new Error("watcher switch did not move the session: " + JSON.stringify(moved));
@@ -159,6 +167,14 @@ if (moved.length < 2) throw new Error("watcher switch did not move the session: 
 // reports no override for.
 if (m.reasoning !== false || m.thinking !== undefined) throw new Error("unknown family must register without thinking: " + JSON.stringify(m));
 if (m.contextWindow !== 524288) throw new Error("window not taken from the rendered route: " + m.contextWindow);
+
+// Key rotation: a settings-json rewrite with a new key must land on the next
+// tick — loadSettings() re-reads every round, and a moved key re-registers.
+writeFileSync(process.env.CLUB_LIVE_JSON, JSON.stringify({ ...SETTINGS, key: "sk-rotated" }));
+writeFileSync(RENDERED, block("qwen3.8-flash-next-iq3_s", 524288)); // nudge the watcher
+await waitFor(() => registered.at(-1).apiKey === "sk-rotated", 6000);
+if (registered.at(-1).apiKey !== "sk-rotated")
+  throw new Error("rotated key not picked up on the next tick: " + registered.at(-1).apiKey);
 
 // Rewrite leg: resolved alias maps the wire model to the live slug.
 const out = events.before_provider_request({ payload: { model: "live", input: "x" } });

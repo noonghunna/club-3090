@@ -63,7 +63,7 @@
 // rendered config's (both are how test-omp-club-live.sh points the extension
 // at scratch files). Without a settings file the defaults are the documented
 // clone location, http://127.0.0.1:4000, and the public compose default key.
-import { readFileSync, watch } from "node:fs";
+import { readFileSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -241,7 +241,8 @@ export default function (pi: PiLike): void {
 	let pendingMove = false; // a change landed while busy: move at agent_end
 	let refreshInFlight = false;
 	let refreshPending = false;
-	let watcherInstalled = false;
+	let watcher: FSWatcher | undefined;
+	let watchedDir = "";
 	{
 		let text = "";
 		try {
@@ -319,6 +320,7 @@ export default function (pi: PiLike): void {
 			do {
 				refreshPending = false;
 				settings = loadSettings(); // rotate / --gateway / families land here
+				installWatcher(); // the settings may have moved the rendered file
 				const next = await resolveLive(settings);
 				if (!next) continue; // keep the last-known-good; the next round retries
 				const changed =
@@ -360,21 +362,31 @@ export default function (pi: PiLike): void {
 		}
 	}
 
-	pi.on("session_start", async (_event: unknown, ctx: CtxLike) => {
-		boundCtx = ctx;
-		ctx.setInterval?.(() => void tick(), POLL_MS);
-		if (watcherInstalled) return;
-		watcherInstalled = true;
+	// fs.watch on the rendered config's directory. Re-armed whenever the
+	// settings move it to a different directory (a re-run pointing at another
+	// checkout or mount); same-directory swaps keep the existing subscription.
+	function installWatcher(): void {
+		const dir = dirname(settings.renderedCfg);
+		if (watchedDir === dir) return;
 		try {
 			let debounce: NodeJS.Timeout | undefined;
-			watch(dirname(settings.renderedCfg), (_event2, filename) => {
+			const w = watch(dir, (_event2, filename) => {
 				if (filename && !settings.renderedCfg.endsWith(filename)) return;
 				clearTimeout(debounce);
 				debounce = setTimeout(() => void tick(), DEBOUNCE_MS);
 			});
+			watcher?.close();
+			watcher = w;
+			watchedDir = dir;
 		} catch {
-			// watcher unavailable (file missing at start) — the poll still covers it
+			// watcher unavailable (directory missing) — the poll still covers it
 		}
+	}
+
+	pi.on("session_start", async (_event: unknown, ctx: CtxLike) => {
+		boundCtx = ctx;
+		ctx.setInterval?.(() => void tick(), POLL_MS);
+		installWatcher();
 		// Adopt the live slug shortly after start, once discovery has settled.
 		setTimeout(() => void tick(true), 2_000);
 	});

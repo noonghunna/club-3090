@@ -173,11 +173,11 @@ def glm53_override(mid: str, fam: dict) -> str:
           efforts: [{", ".join(fam["ladder"]["efforts"])}]
           defaultLevel: {fam["ladder"]["defaultLevel"]}
         compat:
-          supportsReasoningEffort: true
+          supportsReasoningEffort: {str(fam["compat"]["supportsReasoningEffort"]).lower()}
           # The chat-completions form, chat_template_kwargs.reasoning_effort: llama.cpp
           # and Project Maya read it as well as the top-level field.
-          qwenTemplateReasoningEffort: true
-          supportsReasoningSummary: false
+          qwenTemplateReasoningEffort: {str(fam["compat"]["qwenTemplateReasoningEffort"]).lower()}
+          supportsReasoningSummary: {str(fam["compat"]["supportsReasoningSummary"]).lower()}
 """
 
 block = f"""{BEGIN}
@@ -270,8 +270,8 @@ if auto:
     jpath = os.path.join(ext_dir, "club-live.json")
     jtmp = jpath + ".tmp"
     io.open(jtmp, "w", encoding="utf-8").write(json.dumps(settings, indent=2) + "\n")
-    os.replace(jtmp, jpath)
-    os.chmod(jpath, 0o600)          # the gateway key sits in it
+    os.chmod(jtmp, 0o600)          # the gateway key sits in it: the tmp never
+    os.replace(jtmp, jpath)        # lands world-readable, not even briefly
     print(f"[omp-setup] wrote the club-live settings -> {jpath}")
 PY
 
