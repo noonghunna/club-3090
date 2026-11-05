@@ -2967,8 +2967,9 @@ class CockpitData:
         # scenes (gpu-mode --list-modes --json)
         state.scenes = await self.scenes()
 
-        # doctor (health.sh — text)
-        state.doctor = await self.doctor_read(url=target.url or None)
+        # doctor (health.sh — text), aimed at the detected engine when there is one
+        state.doctor = await self.doctor_read(url=target.url or None,
+                                              container=target.container or None)
 
         # Derived "booting" (EstateState.api_booting): an engine container is up but
         # the API isn't reachable yet → a model is mid-boot. Copy onto doctor.booting
@@ -2982,7 +2983,74 @@ class CockpitData:
         )
         state.estate_report = report or {}
 
+        # #1939: which models answer on their port, and which pods have exited, so
+        # the models list can say serving / booting / down / crashed for each.
+        try:
+            state.model_ready, state.exited_pods = await self._model_liveness(state)
+        except Exception:  # pragma: no cover - defensive
+            pass
+
         return state
+
+    async def _model_liveness(self, state: EstateState) -> tuple[dict[str, str], list[str]]:
+        """#1939: ``({container: served model id}, [crashed pod containers])``.
+
+        Every running model's port is asked ``/v1/models`` (curl, 2 s, through the
+        injected runner, all at once); one that answers is serving, with the id it
+        reports. Pods are the estate's instances; the others are running engine
+        containers. Best-effort: a failed read just leaves a model 'booting'."""
+        ports: dict[str, int] = {}
+        est = (state.estate_report or {}).get("active_estate") or {}
+        for inst in (est.get("instances") or []) if est.get("present") else []:
+            name = str(inst.get("name") or "").strip()
+            if name and inst.get("running") is True and inst.get("port"):
+                ports[f"club3090-{name}"] = int(inst["port"])
+        for c in state.containers:
+            if c.kind == "engine" and c.is_running and c.host_port:
+                ports.setdefault(c.name, c.host_port)
+
+        async def _ask(container: str, port: int) -> tuple[str, str]:
+            try:
+                res = await self._runner.run(
+                    ["curl", "-s", "-m", "2", f"http://127.0.0.1:{port}/v1/models"],
+                    cwd=str(self.repo_root), timeout=5.0,
+                )
+            except Exception:
+                return container, ""
+            if not res.ok or not res.stdout.strip():
+                return container, ""
+            try:
+                data = json.loads(res.stdout)
+                ids = [str(m.get("id") or "") for m in (data.get("data") or []) if isinstance(m, dict)]
+            except (ValueError, AttributeError):
+                return container, ""
+            return container, (ids[0] if ids and ids[0] else "")
+
+        ready: dict[str, str] = {}
+        if ports:
+            for container, mid in await asyncio.gather(*(_ask(c, p) for c, p in ports.items())):
+                if mid:
+                    ready[container] = mid
+        # A pod container that exited on its own (not 0, not a stop's SIGTERM 143
+        # or SIGKILL 137) crashed; one stopped cleanly is just down.
+        crashed: list[str] = []
+        try:
+            res = await self._runner.run(
+                ["docker", "ps", "-a", "--filter", "status=exited", "--filter",
+                 "name=club3090-", "--format", "{{.Names}}|{{.State}}|{{.Status}}"],
+                cwd=str(self.repo_root), timeout=10.0,
+            )
+            if res.ok:
+                for line in res.stdout.splitlines():
+                    parts = line.split("|")
+                    if len(parts) != 3 or parts[1] != "exited" or not parts[0].startswith("club3090-"):
+                        continue
+                    m = re.search(r"Exited \((-?\d+)\)", parts[2])
+                    if m and int(m.group(1)) not in (0, 137, 143):
+                        crashed.append(parts[0])
+        except Exception:  # pragma: no cover - defensive
+            pass
+        return ready, crashed
 
     # ── UX Batch 5: estate telemetry (disk / RAM / GPU-VRAM attribution) ──────────
 
@@ -3062,7 +3130,41 @@ class CockpitData:
         return tel
 
     async def _gpu_attribution(self) -> tuple[dict[Optional[int], list[GpuCompApp]], bool]:
+        """The telemetry view of :meth:`_gpu_attribution_read`: the card map and
+        whether some holder could not be named."""
+        by_index, degraded, _read_ok = await self._gpu_attribution_read()
+        return by_index, degraded
+
+    async def _container_card_map(self) -> tuple[dict[str, set[int]], bool]:
+        """#1939: container name -> the cards its processes hold, read FRESH (the
+        reconcile gate never trusts the 4 s telemetry snapshot).
+
+        ``ok`` is False when the map can't be trusted: the compute-apps read
+        failed, or a holder couldn't be pinned to a card (the uuid -> index read
+        failed). A container absent from a good map holds no compute app YET (it
+        may be booting), which is not the same as "on no card"; the gate treats
+        it as unknown unless the estate file places it."""
+        try:
+            by_index, _degraded, read_ok = await self._gpu_attribution_read()
+        except Exception:  # pragma: no cover - defensive
+            return {}, False
+        if not read_ok or None in by_index:
+            return {}, False
+        held: dict[str, set[int]] = {}
+        for idx, apps in by_index.items():
+            for app in apps:
+                if app.container and idx is not None:
+                    held.setdefault(app.container, set()).add(idx)
+        return held, True
+
+    async def _gpu_attribution_read(
+        self,
+    ) -> tuple[dict[Optional[int], list[GpuCompApp]], bool, bool]:
         """Map the live CUDA compute-apps → owning containers (best-effort).
+
+        Returns ``(by_index, degraded, read_ok)``. ``read_ok`` is False when
+        nvidia-smi's compute-apps read failed or printed nothing it could parse;
+        a clean read with no compute apps is ``({}, False, True)``.
 
         Reads ``nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory`` (the
         gpu_uuid leg lets us bucket a holder onto its physical card; absent that
@@ -3085,8 +3187,10 @@ class CockpitData:
             cwd=str(self.repo_root),
             timeout=10.0,
         )
-        if not res.ok or not res.stdout.strip():
-            return {}, False
+        if not res.ok:
+            return {}, False, False
+        if not res.stdout.strip():
+            return {}, False, True      # a good read: nothing holds a card
         # Build (gpu_uuid, app) pairs.  parse_compute_apps wants pid,used cols, so
         # we strip the uuid prefix per line but keep it for bucketing.
         uuid_for_app: dict[int, str] = {}
@@ -3101,7 +3205,7 @@ class CockpitData:
                 app_lines.append(line)
         apps = parse_compute_apps("\n".join(app_lines))
         if not apps:
-            return {}, False
+            return {}, False, False
 
         # Map gpu_uuid → index via a separate query (cheap; one extra read).
         uuid_to_index = await self._gpu_uuid_index_map()
@@ -3133,7 +3237,7 @@ class CockpitData:
             idx = uuid_to_index.get(uuid)  # None when unresolved → not pinned to a card
             app.gpu_index = idx
             by_index.setdefault(idx, []).append(app)
-        return by_index, degraded
+        return by_index, degraded, True
 
     async def _gpu_uuid_index_map(self) -> dict[str, int]:
         """``nvidia-smi --query-gpu=uuid,index`` → {uuid: index} (best-effort, {}
@@ -3358,14 +3462,22 @@ class CockpitData:
         kept.sort(key=lambda s: rank.get(s.group, 3))   # list.sort is stable
         return kept
 
-    async def doctor_read(self, url: Optional[str] = None) -> DoctorRead:
-        """health.sh (text-only) → parsed DoctorRead."""
-        env_prefix: list[str] = []
-        cmd = ["bash", "scripts/health.sh"]
-        if url:
-            # health.sh reads URL from env; pass via a wrapper to keep the
-            # Runner protocol env-free.
-            cmd = ["bash", "-c", 'URL="$1" bash scripts/health.sh', "bash", url]
+    @staticmethod
+    def _targeted(script: str, url: Optional[str], container: Optional[str]) -> list[str]:
+        """``bash <script>`` with the target's ``URL`` / ``CONTAINER`` in its env
+        (#1939: with several models up, the script's own autodetect must never be
+        the one choosing). ``env K=V …`` keeps the Runner protocol env-free; only
+        the values given are set, so an unset one still autodetects."""
+        pairs = [f"URL={url}"] if url else []
+        if container:
+            pairs.append(f"CONTAINER={container}")
+        return (["env", *pairs] if pairs else []) + ["bash", script]
+
+    async def doctor_read(self, url: Optional[str] = None,
+                          container: Optional[str] = None) -> DoctorRead:
+        """health.sh (text-only) → parsed DoctorRead, against ``url`` /
+        ``container`` when given."""
+        cmd = self._targeted("scripts/health.sh", url, container)
         res = await self._runner.run(cmd, cwd=str(self.repo_root), timeout=30.0)
         return parse_health_text(res.stdout or res.stderr)
 
@@ -3377,6 +3489,7 @@ class CockpitData:
         *,
         pending_gpus: Optional[list[int]] = None,
         variants: Optional[list[VariantRow]] = None,
+        target: str = "",
     ) -> ReconcileResult:
         """Re-run detect to see what is ACTUALLY on the cards NOW, and report the
         set of running containers / GPU users / estate claims a pending write
@@ -3384,9 +3497,21 @@ class CockpitData:
         serve / scene-switch must call this immediately before executing, so a
         concurrent writer (e.g. estate_cli already booted GPU0) is caught.
 
-        ``pending_gpus`` = the GPUs the action wants.  ``None`` means "any GPU"
-        (treated as wanting both 0 and 1 — the conservative default), so ANY
-        live GPU user is a conflict.
+        ``pending_gpus`` = the GPUs the action wants.  ``None`` means "not
+        known", read as EVERY detected card (#1939: it used to mean cards 0 and
+        1, so a model on card 2 was never checked).
+
+        ``target`` = the one container a stop / restart acts on (#1939). The gate
+        then checks the cards THAT container holds, and nothing else running is a
+        collision: stopping a container frees its cards, restarting one keeps
+        them. Everything else lands in ``stays_up``.
+
+        Each container's cards come from a FRESH card -> container map
+        (nvidia-smi compute apps -> pid -> cgroup -> name), joined with the
+        estate file's declared cards for a pod (a pod still loading has no
+        compute app yet; a placement mismatch counts both). When the map can't be
+        read nobody's cards are known, and every container on a busy wanted card
+        stays a collision — the gate fails closed.
 
         ``safe`` is True only when nothing live overlaps the requested GPUs.
         """
@@ -3397,7 +3522,7 @@ class CockpitData:
         # a container detection cannot classify reads as NO container — i.e. a
         # registered local slug serving on GPU0 would look like an empty card.
         try:
-            target = await self._detect_endpoint(variants=variants)
+            detected_target = await self._detect_endpoint(variants=variants)
         except Exception as exc:  # pragma: no cover - defensive
             result.note = f"detect failed: {exc}"
             # A failed detect is NOT safe — we can't prove the cards are free.
@@ -3407,7 +3532,7 @@ class CockpitData:
         # GPU read — FAIL CLOSED.  For a SAFETY gate, an error reading the cards
         # must mean "I cannot prove they are free" → UNSAFE, never "nothing in
         # use".  (Previously this swallowed the exception → gpus=[] → safe.)
-        gpus = list(getattr(target, "gpus", []) or [])
+        gpus = list(getattr(detected_target, "gpus", []) or [])
         if not gpus:
             try:
                 gpus = await self._get_gpu_info()
@@ -3422,70 +3547,26 @@ class CockpitData:
                 result.safe = False
                 return result
 
-        # Determine which GPUs the action wants.
-        if pending_gpus is None:
-            wanted = {0, 1}            # conservative: assume both cards
-        else:
-            wanted = set(pending_gpus)
-        result.pending_gpus = sorted(wanted)
+        detected = sorted({
+            int(getattr(g, "index", -1)) for g in gpus
+            if isinstance(getattr(g, "index", None), int) and getattr(g, "index", -1) >= 0
+        })
 
         # 1. Running stack containers (docker ps) — engine containers, estate
         #    `club3090-<name>` containers, and rig services (ComfyUI / Step-Audio)
-        #    are all live GPU users.  When a container's GPU set is KNOWN and is
-        #    disjoint from the wanted cards, it does not conflict; when UNKNOWN
-        #    (the common case — docker ps doesn't expose the device list) we stay
-        #    conservative and treat it as a conflict.  Detector #2 (raw GPU,
-        #    fail-closed) is the backstop for any GPU holder this misses.
-        #    Fix 2 (fail-closed): _docker_ps_stack_containers raises RuntimeError
-        #    on a failed/timed-out docker ps → catch it and fail closed.
+        #    are all live GPU users.  Fail closed: _docker_ps_stack_containers
+        #    raises on a failed/timed-out docker ps.
         try:
             containers = await self.containers(variants=variants)
         except Exception as exc:
             result.note = f"docker ps read failed: {exc}"
             result.safe = False
             return result
-        # Is a WANTED card actually occupied right now (>512 MiB rules out
-        # driver/compositor noise)?  An unknown-GPU container is only a teardown
-        # CONFLICT when there is real contention — a running-but-idle service
-        # (e.g. the studio stack at 0 GiB on free cards) is nothing a serve onto
-        # free cards needs to stop, so it must NOT be cried-wolf as a conflict.
-        # When a wanted card IS busy we stay conservative (the holder may be
-        # unnamed); the raw-VRAM gpu_conflicts pass below is the fail-closed
-        # backstop in EITHER case, so the `safe` verdict never weakens.
-        wanted_busy = any(
-            getattr(g, "index", -1) in wanted and getattr(g, "mem_used_mib", 0) > 512
-            for g in gpus
-        )
-        for c in containers:
-            known = _container_gpu_set(c)
-            if known is not None:
-                if known & wanted:
-                    result.conflicts.append(c)  # provably on a wanted card
-                continue  # known set: authoritative (empty/other-card → not a conflict)
-            # Unknown GPU set → conflict only when a wanted card is occupied.
-            if wanted_busy:
-                result.conflicts.append(c)
 
-        # 2. Raw GPU occupancy — a card with meaningful VRAM in use is occupied
-        #    even if we can't name the container (e.g. a bare llama-server).
-        #    Threshold: >512 MiB rules out driver/compositor noise.
-        for g in gpus:
-            idx = getattr(g, "index", -1)
-            mem = getattr(g, "mem_used_mib", 0)
-            if idx in wanted and mem > 512:
-                result.gpu_conflicts.append(
-                    GpuConflict(
-                        gpu_index=idx,
-                        mem_used_mib=mem,
-                        note="GPU in use",
-                    )
-                )
-
-        # 3. Active estate claims — the estate planner may have booted instances
-        #    that hold cards even if our engine-prefix detect missed them.
+        # 2. The estate planner's instances.  Read BEFORE placing containers: a
+        #    pod's declared cards place it before its first compute app exists.
         #    FAIL CLOSED: if the estate read errors, we cannot rule out a hidden
-        #    estate claim on the wanted cards → UNSAFE.  (Previously the error
-        #    was discarded → report={} → "no claims" → falsely safe.)
+        #    estate claim on the wanted cards → UNSAFE.
         report, estate_err = await self._run_json(
             ["python3", "scripts/lib/profiles/estate_cli.py", "report-state", "--json"],
             timeout=40.0,
@@ -3495,8 +3576,81 @@ class CockpitData:
             result.safe = False
             return result
         active = (report or {}).get("active_estate") or {}
-        if active.get("present") and active.get("instances"):
-            for inst in active["instances"]:
+        instances = list(active.get("instances") or []) if active.get("present") else []
+        declared: dict[str, set[int]] = {}
+        for inst in instances:
+            iname = str(inst.get("name") or "").strip()
+            if iname:
+                declared[f"club3090-{iname}"] = {
+                    int(g) for g in (inst.get("gpus") or []) if str(g).strip().isdigit()
+                }
+
+        # 3. Which cards each container holds (#1939), from a FRESH map.  Unknown
+        #    stays "" → the conservative path below.
+        held, map_ok = await self._container_card_map()
+        result.card_map_ok = map_ok
+        for c in containers:
+            cards = (held.get(c.name, set()) | declared.get(c.name, set())) if map_ok else set()
+            c.gpus = ",".join(str(i) for i in sorted(cards))
+
+        # 4. The cards the action wants.
+        target = (target or "").strip()
+        result.target = target
+        target_cards: Optional[set[int]] = None
+        if target:
+            tc = next((c for c in containers if c.name == target), None)
+            target_cards = _container_gpu_set(tc) if tc is not None else None
+        if pending_gpus is not None:
+            wanted = set(pending_gpus)
+        elif target_cards:
+            wanted = set(target_cards)
+        else:
+            wanted = set(detected)
+        result.pending_gpus = sorted(wanted)
+
+        if target:
+            # A stop / restart of ONE container claims nothing new: everything
+            # else running is left alone, so none of it is a collision.  The gate
+            # still ran its fresh detect, and an in-flight write (below) still
+            # blocks it.
+            result.stays_up = [c for c in containers if c.name != target]
+        else:
+            # Is a WANTED card actually occupied right now (>512 MiB rules out
+            # driver/compositor noise)?  An unknown-card container is only a
+            # teardown CONFLICT when there is real contention — a running-but-idle
+            # service (the studio stack at 0 GiB on free cards) is nothing a serve
+            # onto free cards needs to stop.
+            wanted_busy = any(
+                getattr(g, "index", -1) in wanted and getattr(g, "mem_used_mib", 0) > 512
+                for g in gpus
+            )
+            for c in containers:
+                known = _container_gpu_set(c)
+                if known is not None:
+                    # Known cards are authoritative: a container on other cards
+                    # is not in the way.
+                    (result.conflicts if known & wanted else result.stays_up).append(c)
+                elif wanted_busy:
+                    result.conflicts.append(c)   # unknown cards + contention
+                else:
+                    result.stays_up.append(c)
+
+            # 5. Raw GPU occupancy — a card with meaningful VRAM in use is
+            #    occupied even if we can't name the container (e.g. a bare
+            #    llama-server).  The fail-closed backstop for anything the
+            #    container pass misses.
+            for g in gpus:
+                idx = getattr(g, "index", -1)
+                mem = getattr(g, "mem_used_mib", 0)
+                if idx in wanted and mem > 512:
+                    result.gpu_conflicts.append(
+                        GpuConflict(gpu_index=idx, mem_used_mib=mem, note="GPU in use")
+                    )
+
+            # 6. Active estate claims — the estate planner may have booted
+            #    instances that hold cards even if our engine-prefix detect
+            #    missed them.
+            for inst in instances:
                 # F7: estate.yml is a desired-state PLAN — only a LIVE instance
                 # is a claim.  running == False means estate_cli probed docker
                 # and the instance's container is NOT up (a leftover plan file
@@ -3509,7 +3663,7 @@ class CockpitData:
                 if inst_gpus & wanted:
                     result.estate_claims.append(inst)
 
-        # 4. In-process pending-claim check (Fix 1 — TOCTOU).
+        # 7. In-process pending-claim check (Fix 1 — TOCTOU).
         #    A concurrent write that has passed the gate and started its subprocess
         #    registers a pending claim UNDER the write lock before releasing it.
         #    Because reconcile_before_write is called UNDER the same lock by
@@ -3535,6 +3689,10 @@ class CockpitData:
         )
         if not result.safe and not result.note:
             result.note = f"would collide with: {result.conflict_summary}"
+        if not map_ok and result.conflicts:
+            result.note = (result.note + " · " if result.note else "") + (
+                "the card map (nvidia-smi compute apps) couldn't be read, so every "
+                "container on a busy wanted card counts")
         return result
 
     # ── WRITE: action builders (wired, execution-gated) ──────────────────────────
@@ -3801,6 +3959,40 @@ class CockpitData:
             requires_reconcile=False,
         )
 
+    def pod_up_plan(self, name: str, cards: list[int]) -> ActionPlan:
+        """#1939: boot ONE pod (``pod.sh up <name>``, estate_cli boot --only) on
+        its declared cards. Gated on exactly those cards, so other models on
+        other cards are neither collisions nor torn down by a forced up."""
+        return ActionPlan(
+            kind="pod_up",
+            cmd=["bash", "scripts/pod.sh", "up", name],
+            description=f"pod.sh up {name}",
+            requires_reconcile=True,
+            gpus=sorted({int(c) for c in cards}),
+        )
+
+    def pod_down_plan(self, name: str) -> ActionPlan:
+        """#1939: stop ONE pod (``pod.sh down <name>``). Its container is the
+        plan's target: the gate checks that pod's cards and leaves every other
+        model up."""
+        return ActionPlan(
+            kind="pod_down",
+            cmd=["bash", "scripts/pod.sh", "down", name],
+            description=f"pod.sh down {name}",
+            requires_reconcile=True,
+            target=f"club3090-{name}",
+        )
+
+    def pod_rm_plan(self, name: str) -> ActionPlan:
+        """#1939: remove a pod from the estate file (``pod.sh rm``, which refuses
+        a running pod). A file write: no GPU claimed, so no gate."""
+        return ActionPlan(
+            kind="pod_rm",
+            cmd=["bash", "scripts/pod.sh", "rm", name],
+            description=f"pod.sh rm {name}",
+            requires_reconcile=False,
+        )
+
     def scene_switch(self, mode: str) -> ActionPlan:
         return ActionPlan(
             kind="scene",
@@ -3852,6 +4044,7 @@ class CockpitData:
             cmd=["docker", op, name],
             description=f"docker {op} {name}",
             requires_reconcile=(op == "stop"),
+            target=name,
         )
 
     def _resolve_service_compose(self, name: str) -> Optional[tuple[str, str]]:
@@ -4036,7 +4229,8 @@ class CockpitData:
             reconcile: Optional[ReconcileResult] = None
             if plan.requires_reconcile and not effective_skip:
                 reconcile = await self.reconcile_before_write(
-                    f"{plan.kind}:{plan.description}", variants=variants
+                    f"{plan.kind}:{plan.description}", variants=variants,
+                    pending_gpus=plan.gpus, target=plan.target,
                 )
                 if not reconcile.safe:
                     # An in-flight write's pending claim is a HARD block — force
@@ -4067,12 +4261,15 @@ class CockpitData:
             # subprocess hasn't allocated any VRAM yet.
             claim_token = str(uuid.uuid4())
             if plan.requires_reconcile:
-                # Infer the GPU set the plan wants.  pending_gpus from the last
-                # reconcile is most accurate; fall back to conservative {0, 1}.
+                # The GPU set the plan wants: the gate's (it resolved the plan's
+                # cards, or a target's own), else the plan's, else EVERY card
+                # (#1939: never just 0 and 1).
                 if reconcile is not None and reconcile.pending_gpus:
                     claimed = frozenset(reconcile.pending_gpus)
+                elif plan.gpus:
+                    claimed = frozenset(plan.gpus)
                 else:
-                    claimed = frozenset({0, 1})
+                    claimed = _EVERY_CARD
                 expiry = time.monotonic() + self._claim_ttl
                 self._pending_claims[claim_token] = (claimed, expiry)
 
@@ -4243,6 +4440,7 @@ class CockpitData:
         slug: Optional[str] = None,
         on_event: Optional[Callable[[Any], None]] = None,
         on_line: Optional[Callable[[str], None]] = None,
+        container: Optional[str] = None,
     ) -> Any:
         """Launch a validation script via the core SubprocessRunner, streamed.
 
@@ -4267,6 +4465,10 @@ class CockpitData:
             env["MODEL"] = model
         if url:
             env["URL"] = url
+        if container:
+            # #1939: name the container too, so a script whose autodetect would
+            # otherwise pick among several running models never chooses.
+            env["CONTAINER"] = container
         parser = self._validation_parser(kind)
         # No reconcile gate (validation does not claim a GPU); straight to the
         # streamer.  In tests this is the FakeWriteRunner; live it is blocked.
@@ -4395,7 +4597,8 @@ class CockpitData:
             tri.error = (res.stderr.strip()[:200] or f"no triage output (rc={res.returncode})")
         return tri
 
-    async def verify_smoke(self) -> VerifySmoke:
+    async def verify_smoke(self, url: Optional[str] = None,
+                           container: Optional[str] = None) -> VerifySmoke:
         """Run ``scripts/verify.sh`` (the ~15s "is the model serving correctly?"
         smoke: server reachable → Genesis patch → basic completion → tool-call)
         and parse its ✓/✗ checks.  READ-only — it sends a couple of test queries
@@ -4406,7 +4609,8 @@ class CockpitData:
         injection is needed — when nothing is serving, check 1 fails and the
         result reports unreachable, which is the correct 'not serving' signal."""
         res = await self._runner.run(
-            ["bash", "scripts/verify.sh"], cwd=str(self.repo_root), timeout=90.0
+            self._targeted("scripts/verify.sh", url, container),
+            cwd=str(self.repo_root), timeout=90.0,
         )
         if res.timed_out:
             vs = VerifySmoke(raw=res.stdout or "")
@@ -4414,14 +4618,16 @@ class CockpitData:
             return vs
         return parse_verify_smoke(res.stdout or res.stderr, rc=res.returncode)
 
-    async def verify_full(self) -> VerifyFull:
+    async def verify_full(self, url: Optional[str] = None,
+                          container: Optional[str] = None) -> VerifyFull:
         """Run ``scripts/verify-full.sh`` (the ~1-2 min functional battery:
         9 steps incl. streaming / thinking / cascade / MTP-acceptance) and parse
         its ``[N/9]`` steps + final summary.  READ-only (queries the live model;
         no GPU claim).  Heavier than verify_smoke but still a read — step
         ``[4/9]`` tool-calling is expected to fail on the default compose."""
         res = await self._runner.run(
-            ["bash", "scripts/verify-full.sh"], cwd=str(self.repo_root), timeout=240.0
+            self._targeted("scripts/verify-full.sh", url, container),
+            cwd=str(self.repo_root), timeout=240.0,
         )
         if res.timed_out:
             vf = VerifyFull(raw=res.stdout or "")
@@ -5245,6 +5451,9 @@ class CockpitData:
             requires_confirm=True,
             force=force,
             force_reason=force_reason,
+            # #1939: it acts on this one container, so its gate checks that
+            # container's cards and a forced rm tears down nothing else.
+            target=name,
         )
 
     # ════════════════════════════════════════════════════════════════════════════
@@ -5834,12 +6043,17 @@ def _classify_container_kind(name: str) -> Optional[str]:
     return None
 
 
+# A pending claim whose cards aren't known: it overlaps any card set (#1939).
+_EVERY_CARD = frozenset(range(64))
+
+
 def _container_gpu_set(c: ContainerInfo) -> Optional[set[int]]:
     """The set of GPU indices a container provably holds, or None if unknown.
 
-    docker ps does not expose the device list, so this is None unless something
-    upstream populated ``ContainerInfo.gpus`` (e.g. ``"0,1"`` / ``"1"``).  None
-    means "unknown" → the gate stays conservative and treats it as a conflict."""
+    docker ps does not expose the device list; reconcile_before_write fills
+    ``ContainerInfo.gpus`` (e.g. ``"0,1"`` / ``"1"``) from the card map (#1939).
+    None means "unknown" → the gate stays conservative and treats it as a
+    conflict when a wanted card is busy."""
     raw = (getattr(c, "gpus", "") or "").strip()
     if not raw:
         return None

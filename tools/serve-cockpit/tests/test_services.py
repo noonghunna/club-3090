@@ -14,6 +14,7 @@ script calls.  Covers:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 import sys
@@ -2600,6 +2601,244 @@ class TestReconcileGate:
 
 
 # ===========================================================================
+# #1939 — a gate that knows which card each model is on
+# ===========================================================================
+
+# Three cards: pod `alpha` on card 0, pod `beta` on card 2, card 1 free. The
+# card → container map comes from nvidia-smi compute-apps (gpu uuid + pid), each
+# pid's cgroup (docker id) and `docker ps --no-trunc` (id → name), the same
+# reads estate_telemetry() makes.
+_U = ["GPU-00000000-0000-0000-0000-000000000000",
+      "GPU-11111111-1111-1111-1111-111111111111",
+      "GPU-22222222-2222-2222-2222-222222222222",
+      "GPU-33333333-3333-3333-3333-333333333333"]
+_ID = {"alpha": "a" * 64, "beta": "b" * 64, "gamma": "c" * 64, "qwen": "d" * 64}
+_PID = {"alpha": 1111, "beta": 2222, "gamma": 3333, "qwen": 4444}
+_CNAME = {"alpha": "club3090-alpha", "beta": "club3090-beta", "gamma": "club3090-gamma",
+          "qwen": "vllm-qwen36-27b-dual"}
+
+
+def _cards_runner(placed: dict[str, list[int]], *, n_cards: int = 3,
+                  compute_apps_ok: bool = True, uuid_ok: bool = True,
+                  estate: Optional[dict[str, list[int]]] = None,
+                  extra_ps: str = "") -> tuple["FakeRunner", list[GpuInfo]]:
+    """A runner + GPU list for a rig where each name in ``placed`` holds the
+    listed cards. ``estate`` = the estate file's declared cards per pod (default:
+    the pods in ``placed``). Keys are ordered most-specific first, since
+    FakeRunner answers with the FIRST key that is a substring of the command."""
+    apps, cgroups, ids, ps = [], {}, [], []
+    for name, cards in placed.items():
+        for c in cards:
+            apps.append(f"{_U[c]}, {_PID[name]}, 20000")
+        cgroups[f"/proc/{_PID[name]}/cgroup"] = ok(
+            f"0::/system.slice/docker-{_ID[name]}.scope\n")
+        ids.append(f"{_ID[name]} {_CNAME[name]}")
+        port = 8040 + list(_ID).index(name)
+        ps.append(f"{_CNAME[name]}|0.0.0.0:{port}->8000/tcp")
+    if estate is None:
+        estate = {n: c for n, c in placed.items() if _CNAME[n].startswith("club3090-")}
+    report = {"active_estate": {"present": bool(estate), "instances": [
+        {"name": n, "compose": "vllm/dual", "gpus": c, "port": 8040 + list(_ID).index(n),
+         "running": True} for n, c in estate.items()]}}
+    responses: dict[str, RunResult] = {}
+    responses["--query-compute-apps"] = (
+        ok("\n".join(apps) + "\n") if compute_apps_ok
+        else RunResult(returncode=9, stdout="", stderr="NVML: Unknown Error"))
+    responses["--query-gpu=uuid,index"] = (
+        ok("".join(f"{_U[i]}, {i}\n" for i in range(n_cards))) if uuid_ok
+        else RunResult(returncode=9, stdout="", stderr="NVML: Unknown Error"))
+    responses.update(cgroups)
+    responses["docker ps --no-trunc"] = ok("\n".join(ids) + "\n")
+    responses["docker ps"] = ok("\n".join(ps) + "\n" + extra_ps)
+    responses["estate_cli.py report-state --json"] = ok(json.dumps(report))
+    for k, v in full_runner().responses.items():
+        responses.setdefault(k, v)
+    busy = {c for cards in placed.values() for c in cards}
+    gpus = [GpuInfo(index=i, mem_used_mib=20000 if i in busy else 3) for i in range(n_cards)]
+    return FakeRunner(responses), gpus
+
+
+def _cards_cd(runner, gpus, write_runner=None) -> CockpitData:
+    return CockpitData(
+        ROOT, runner=runner, write_runner=write_runner,
+        detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
+        get_gpu_info_fn=make_gpu_info(gpus),
+    )
+
+
+class TestReconcileKnowsCards:
+    @pytest.mark.asyncio
+    async def test_pod_on_another_card_is_not_a_conflict(self):
+        """The #1939 regression: an action wanting card 2 must flag beta (on 2)
+        and NOT alpha (on 0). Before the fix every container's cards were
+        unknown, so a busy wanted card made every container a conflict."""
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]})
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "pod_up:beta", pending_gpus=[2])
+        names = {c.name for c in rec.conflicts}
+        assert "club3090-alpha" not in names          # the bug
+        assert "club3090-beta" in names               # positive control
+        assert rec.safe is False
+
+    @pytest.mark.asyncio
+    async def test_free_card_is_clear_next_to_two_pods(self):
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]})
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "pod_up:new", pending_gpus=[1])
+        assert rec.safe is True and rec.conflicts == [] and rec.estate_claims == []
+        assert {c.name for c in rec.stays_up} == {"club3090-alpha", "club3090-beta"}
+
+    @pytest.mark.asyncio
+    async def test_each_container_gets_its_cards(self):
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]})
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "pod_up:beta", pending_gpus=[2])
+        cards = {c.name: c.gpus for c in rec.conflicts + rec.stays_up}
+        assert cards == {"club3090-alpha": "0", "club3090-beta": "2"}
+
+    @pytest.mark.asyncio
+    async def test_unknown_cards_mean_every_card_not_0_and_1(self):
+        """No two-card assumption: an action that names no cards wants EVERY card.
+        A model on card 2 alone used to be invisible to it (wanted fell back to
+        {0, 1}, both free → safe)."""
+        runner, gpus = _cards_runner({"beta": [2]})
+        rec = await _cards_cd(runner, gpus).reconcile_before_write("scene:off")
+        assert rec.pending_gpus == [0, 1, 2]
+        assert rec.safe is False
+        assert "club3090-beta" in {c.name for c in rec.conflicts}
+
+    @pytest.mark.asyncio
+    async def test_four_cards(self):
+        runner, gpus = _cards_runner({"alpha": [0, 1], "gamma": [3]}, n_cards=4)
+        cd = _cards_cd(runner, gpus)
+        rec = await cd.reconcile_before_write("pod_up:new", pending_gpus=[2])
+        assert rec.safe is True
+        rec = await cd.reconcile_before_write("pod_up:gamma", pending_gpus=[3])
+        assert {c.name for c in rec.conflicts} == {"club3090-gamma"}
+        rec = await cd.reconcile_before_write("scene:off")
+        assert rec.pending_gpus == [0, 1, 2, 3]
+        assert {c.name for c in rec.conflicts} == {"club3090-alpha", "club3090-gamma"}
+
+    @pytest.mark.asyncio
+    async def test_failed_compute_apps_read_fails_closed(self):
+        """The card map can't be read → nobody's cards are known → a busy wanted
+        card makes every running container a conflict again (fail closed)."""
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]}, compute_apps_ok=False)
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "pod_up:beta", pending_gpus=[2])
+        assert rec.safe is False
+        assert {c.name for c in rec.conflicts} == {"club3090-alpha", "club3090-beta"}
+        assert all(c.gpus == "" for c in rec.conflicts)
+        assert rec.card_map_ok is False
+
+    @pytest.mark.asyncio
+    async def test_failed_uuid_read_fails_closed(self):
+        """Compute apps read fine but can't be pinned to a card (uuid → index read
+        failed): the holders are unplaced, so the map is not trusted."""
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]}, uuid_ok=False)
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "pod_up:beta", pending_gpus=[2])
+        assert "club3090-alpha" in {c.name for c in rec.conflicts}
+        assert rec.card_map_ok is False
+
+    @pytest.mark.asyncio
+    async def test_booting_pod_uses_its_estate_cards(self):
+        """A pod still loading has no compute app yet: its declared cards (the
+        estate file) place it, so it neither vanishes nor blocks other cards."""
+        runner, gpus = _cards_runner({"alpha": [0]}, estate={"alpha": [0], "beta": [2]},
+                                     extra_ps="club3090-beta|0.0.0.0:8041->8000/tcp\n")
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "pod_up:new", pending_gpus=[2])
+        assert {c.name: c.gpus for c in rec.conflicts} == {"club3090-beta": "2"}
+
+    @pytest.mark.asyncio
+    async def test_placement_mismatch_counts_both_cards(self):
+        """The estate says card 1, nvidia-smi says card 2: both count (union)."""
+        runner, gpus = _cards_runner({"beta": [2]}, estate={"beta": [1]})
+        cd = _cards_cd(runner, gpus)
+        for want in ([1], [2]):
+            rec = await cd.reconcile_before_write("pod_up:x", pending_gpus=want)
+            assert "club3090-beta" in {c.name for c in rec.conflicts}, want
+
+    @pytest.mark.asyncio
+    async def test_target_op_collides_with_nothing(self):
+        """Stopping or restarting ONE container frees (or keeps) its own cards and
+        claims no other: it is never a collision, and everything else stays up."""
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]})
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "container:docker stop club3090-beta", target="club3090-beta")
+        assert rec.safe is True
+        assert rec.conflicts == [] and rec.gpu_conflicts == [] and rec.estate_claims == []
+        assert rec.pending_gpus == [2]
+        assert [c.name for c in rec.stays_up] == ["club3090-alpha"]
+
+    @pytest.mark.asyncio
+    async def test_target_op_still_blocked_by_an_in_flight_write(self):
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]})
+        cd = _cards_cd(runner, gpus)
+        cd._pending_claims["tok"] = (frozenset({2}), time.monotonic() + 60)
+        rec = await cd.reconcile_before_write(
+            "container:docker stop club3090-beta", target="club3090-beta")
+        assert rec.safe is False and rec.pending_claim_tokens == ["tok"]
+
+
+class TestExecuteKnowsCards:
+    @pytest.mark.asyncio
+    async def test_stop_one_pod_leaves_the_other_running(self):
+        """Acceptance: three cards, pods on 0 and 2 — stopping beta stops only
+        beta. Before #1939 the serve card's Stop was a FORCED stop whose teardown
+        `docker stop`ped every container the gate flagged, alpha included."""
+        wr = FakeWriteRunner()
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]})
+        cd = _cards_cd(runner, gpus, wr)
+        plan = dataclasses.replace(cd.container_action("club3090-beta", "stop"),
+                                   force=True, force_reason="user chose Stop")
+        executed, rec, _ = await cd.execute_action(plan)
+        assert executed is True
+        stopped = [c for c in runner.calls if c[:2] == ["docker", "stop"]]
+        assert stopped == []                                  # no collateral teardown
+        assert wr.started[0]["cmd"] == ["docker", "stop", "club3090-beta"]
+        assert [c.name for c in rec.stays_up] == ["club3090-alpha"]
+
+    @pytest.mark.asyncio
+    async def test_forced_write_tears_down_only_its_cards(self):
+        wr = FakeWriteRunner()
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]})
+        cd = _cards_cd(runner, gpus, wr)
+        plan = dataclasses.replace(cd.scene_switch("x"), gpus=[2], force=True,
+                                   force_reason="replace beta")
+        executed, rec, _ = await cd.execute_action(plan)
+        assert executed is True
+        stopped = [c[2] for c in runner.calls if c[:2] == ["docker", "stop"]]
+        assert stopped == ["club3090-beta"]
+
+    @pytest.mark.asyncio
+    async def test_forced_write_with_no_card_map_stops_what_it_names(self):
+        """The deliberate choice for a failed card-map read: the gate can't say
+        which container is where, so it names every container on a busy wanted
+        card as a conflict (cards unknown) — and Force stops exactly those."""
+        wr = FakeWriteRunner()
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]}, compute_apps_ok=False)
+        cd = _cards_cd(runner, gpus, wr)
+        plan = dataclasses.replace(cd.scene_switch("x"), gpus=[2], force=True,
+                                   force_reason="replace beta")
+        executed, rec, _ = await cd.execute_action(plan)
+        stopped = sorted(c[2] for c in runner.calls if c[:2] == ["docker", "stop"])
+        assert stopped == sorted(c.name for c in rec.conflicts) == [
+            "club3090-alpha", "club3090-beta"]
+
+    @pytest.mark.asyncio
+    async def test_plan_cards_reach_the_gate_and_the_claim(self):
+        wr = FakeWriteRunner()
+        runner, gpus = _cards_runner({"alpha": [0]})
+        cd = _cards_cd(runner, gpus, wr)
+        plan = dataclasses.replace(cd.scene_switch("x"), gpus=[1])
+        executed, rec, _ = await cd.execute_action(plan)
+        assert executed is True and rec.pending_gpus == [1]
+        assert [set(g) for g, _ in cd._pending_claims.values()] == [{1}]
+
+
+# ===========================================================================
 # execute_action — gated execution (MOCKED, never live)
 # ===========================================================================
 
@@ -3998,8 +4237,9 @@ class TestPhase4RunValidation:
 class TestPhase4GatedWriteExecution:
     @pytest.mark.asyncio
     async def test_container_rm_unsafe_gate_refuses(self):
-        """container_rm requires_reconcile=True → refused when the gate is unsafe
-        (the target container is live), unless forced."""
+        """container_rm requires_reconcile=True. It acts on its own container
+        (#1939: the target), so a live container is no longer a collision with
+        itself; what still refuses it is an in-flight write on its cards."""
         write_runner = FakeWriteRunner()
         runner = full_runner(
             **{"docker ps": ok(DOCKER_PS_ENGINE), "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE)}
@@ -4010,10 +4250,11 @@ class TestPhase4GatedWriteExecution:
             detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
             get_gpu_info_fn=make_gpu_info(gpus),
         )
+        cd._pending_claims["in-flight"] = (frozenset({0, 1}), time.monotonic() + 60)
         plan = cd.container_rm("vllm-qwen36-27b-dual")
         executed, rec, _ = await cd.execute_action(plan)
         assert executed is False
-        assert rec is not None and rec.safe is False
+        assert rec is not None and rec.safe is False and rec.pending_claim_tokens
         assert write_runner.started == []  # destructive rm never reached the runner
 
     @pytest.mark.asyncio
@@ -4696,3 +4937,171 @@ def test_exllamav3_container_is_an_engine_in_the_stack_list():
     # Controls: widening the prefixes must not sweep in non-engines.
     assert _classify_container_kind("open-webui") is None
     assert _classify_container_kind("some-flask-app") is None
+
+
+# ===========================================================================
+# #1939 — every model on the rig, and the verbs on one of them
+# ===========================================================================
+
+
+def _estate_state(instances, containers=(), ready=None, crashed=(), gpus=3):
+    return EstateState(
+        gpus=[GpuInfo(index=i, mem_used_mib=1) for i in range(gpus)],
+        containers=list(containers),
+        estate_report={"active_estate": {"present": True, "instances": list(instances)}},
+        model_ready=dict(ready or {}),
+        exited_pods=list(crashed),
+    )
+
+
+class TestRigModels:
+    def test_pods_then_models_that_are_not_pods(self):
+        from club3090_cockpit.data import rig_models
+        st = _estate_state(
+            [{"name": "alpha", "compose": "vllm/minimal", "gpus": [2], "port": 8041,
+              "running": True, "placement": {"placement": "ok"}},
+             {"name": "beta", "compose": "llamacpp/x", "gpus": [1], "port": 8042,
+              "running": False}],
+            containers=[ContainerInfo(name="vllm-qwen", kind="engine", host_port=8020,
+                                      slug="vllm/dual"),
+                        ContainerInfo(name="club3090-alpha", kind="estate", host_port=8041),
+                        ContainerInfo(name="comfyui", kind="service", host_port=8188)],
+            ready={"club3090-alpha": "qwen3.8-4b", "vllm-qwen": "qwen3.8-27b"},
+        )
+        rows = rig_models(st, {"vllm-qwen": {0, 1}, "club3090-alpha": {2}})
+        assert [(r.name, r.is_pod, r.state, r.cards) for r in rows] == [
+            ("alpha", True, "serving", [2]),
+            ("beta", True, "down", [1]),
+            ("vllm-qwen", False, "serving", [0, 1]),     # switch.sh's model, on its cards
+        ]
+        assert rows[0].container == "club3090-alpha" and rows[0].url == "http://localhost:8041"
+        assert rows[0].model == "qwen3.8-4b" and rows[0].placement == "ok"
+        assert rows[2].slug == "vllm/dual"
+
+    def test_states(self):
+        from club3090_cockpit.data import rig_models
+        st = _estate_state(
+            [{"name": "a", "gpus": [0], "port": 1, "running": True},
+             {"name": "b", "gpus": [1], "port": 2, "running": False},
+             {"name": "c", "gpus": [2], "port": 3, "running": None}],
+            crashed=["club3090-b"],
+        )
+        assert [r.state for r in rig_models(st)] == ["booting", "crashed", "unknown"]
+
+    def test_running_pod_counts_declared_and_seen_cards(self):
+        from club3090_cockpit.data import rig_models
+        st = _estate_state([{"name": "a", "gpus": [1], "port": 1, "running": True}])
+        assert rig_models(st, {"club3090-a": {2}})[0].cards == [1, 2]   # a placement mismatch
+
+    def test_busy_cards_counts_any_model_that_is_up(self):
+        from club3090_cockpit.data import busy_cards, rig_models
+        st = _estate_state(
+            [{"name": "a", "gpus": [2], "port": 1, "running": False}],
+            containers=[ContainerInfo(name="vllm-qwen", kind="engine", host_port=8020)],
+        )
+        assert busy_cards(rig_models(st, {"vllm-qwen": {0, 1}})) == {0, 1}
+
+
+class TestModelLiveness:
+    @pytest.mark.asyncio
+    async def test_ready_ids_and_crashed_pods(self):
+        st = _estate_state(
+            [{"name": "alpha", "gpus": [0], "port": 8041, "running": True},
+             {"name": "beta", "gpus": [1], "port": 8042, "running": True},
+             {"name": "gamma", "gpus": [2], "port": 8043, "running": False},
+             {"name": "delta", "gpus": [2], "port": 8044, "running": False}],
+            containers=[ContainerInfo(name="vllm-qwen", kind="engine", host_port=8020)],
+        )
+        runner = FakeRunner({
+            "127.0.0.1:8041/v1/models": ok('{"data": [{"id": "qwen3.8-4b"}]}'),
+            "127.0.0.1:8042/v1/models": RunResult(returncode=7, stdout="", stderr=""),
+            "127.0.0.1:8020/v1/models": ok('{"data": [{"id": "qwen3.8-27b"}]}'),
+            "status=exited": ok("club3090-gamma|exited|Exited (1) 2 minutes ago\n"
+                                "club3090-delta|exited|Exited (137) 1 minute ago\n"),
+        })
+        cd = CockpitData(ROOT, runner=runner)
+        ready, crashed = await cd._model_liveness(st)
+        assert ready == {"club3090-alpha": "qwen3.8-4b", "vllm-qwen": "qwen3.8-27b"}
+        assert crashed == ["club3090-gamma"]       # 137 = stopped, not crashed
+
+
+class TestPodPlans:
+    def test_up_is_gated_on_its_own_cards(self):
+        plan = CockpitData(ROOT, runner=full_runner()).pod_up_plan("alpha", [2])
+        assert plan.cmd == ["bash", "scripts/pod.sh", "up", "alpha"]
+        assert plan.requires_reconcile is True and plan.gpus == [2] and plan.target == ""
+
+    def test_down_targets_its_container(self):
+        plan = CockpitData(ROOT, runner=full_runner()).pod_down_plan("alpha")
+        assert plan.cmd == ["bash", "scripts/pod.sh", "down", "alpha"]
+        assert plan.requires_reconcile is True and plan.target == "club3090-alpha"
+
+    def test_rm_is_a_file_write(self):
+        plan = CockpitData(ROOT, runner=full_runner()).pod_rm_plan("alpha")
+        assert plan.cmd == ["bash", "scripts/pod.sh", "rm", "alpha"]
+        assert plan.requires_reconcile is False
+
+    def test_container_action_targets_the_container(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        assert cd.container_action("club3090-alpha", "restart").target == "club3090-alpha"
+
+
+class TestExplicitTarget:
+    """#1939: with several models up, Doctor and the Run ladder name the target
+    (URL + CONTAINER) so a script's own autodetect never chooses."""
+
+    @pytest.mark.asyncio
+    async def test_health_verify_and_verify_full_get_url_and_container(self):
+        runner = full_runner()
+        cd = CockpitData(ROOT, runner=runner)
+        await cd.doctor_read(url="http://localhost:8041", container="club3090-alpha")
+        await cd.verify_smoke(url="http://localhost:8041", container="club3090-alpha")
+        await cd.verify_full(url="http://localhost:8041", container="club3090-alpha")
+        want = ["env", "URL=http://localhost:8041", "CONTAINER=club3090-alpha", "bash"]
+        cmds = [c for c in runner.calls if c[:1] == ["env"]]
+        assert [c[:4] for c in cmds] == [want] * 3
+        assert [c[4] for c in cmds] == ["scripts/health.sh", "scripts/verify.sh",
+                                        "scripts/verify-full.sh"]
+
+    @pytest.mark.asyncio
+    async def test_no_target_keeps_the_plain_command(self):
+        runner = full_runner()
+        await CockpitData(ROOT, runner=runner).verify_smoke()
+        assert ["bash", "scripts/verify.sh"] in runner.calls
+
+    @pytest.mark.asyncio
+    async def test_run_validation_passes_container(self, monkeypatch):
+        seen = {}
+
+        class WR:
+            async def start_raw(self, cmd, env, run_type, parser):
+                seen.update(env=env, cmd=cmd)
+                return {"mock_state": True}
+
+        cd = CockpitData(ROOT, runner=full_runner(), write_runner=WR())
+        await cd.run_validation("bench", model="m", url="http://localhost:8041",
+                                container="club3090-alpha")
+        assert seen["env"]["CONTAINER"] == "club3090-alpha"
+        assert seen["env"]["URL"] == "http://localhost:8041"
+
+
+class TestSingleContainerWritesTarget:
+    """#1939: every write that acts on ONE container names it, so 'no cards'
+    (= every card) never turns a forced single-container write into a teardown
+    of every model on the rig."""
+
+    def test_container_rm_targets_its_container(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        plan = cd.container_rm("club3090-alpha", force=True, force_reason="x")
+        assert plan.requires_reconcile is True and plan.target == "club3090-alpha"
+
+    @pytest.mark.asyncio
+    async def test_forced_rm_tears_down_nothing_else(self):
+        wr = FakeWriteRunner()
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]})
+        cd = _cards_cd(runner, gpus, wr)
+        plan = cd.container_rm("club3090-beta", force=True, force_reason="remove beta")
+        executed, rec, _ = await cd.execute_action(plan)
+        assert executed is True
+        assert [c for c in runner.calls if c[:2] == ["docker", "stop"]] == []
+        assert [c.name for c in rec.stays_up] == ["club3090-alpha"]
