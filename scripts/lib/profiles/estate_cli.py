@@ -578,6 +578,64 @@ def docker_logs_tail(name: str, lines: int = 30) -> str:
     return (proc.stdout + proc.stderr).strip()
 
 
+def container_boot_state(name: str) -> tuple[str, int | None, str]:
+    """(State.Status, RestartCount, State.ExitCode) of an instance's container.
+
+    Status is ``missing`` when docker can't inspect it; the count is None when
+    it can't be read.
+    """
+    proc = subprocess.run(
+        ["docker", "inspect", "-f", "{{.State.Status}} {{.RestartCount}} {{.State.ExitCode}}", container_name(name)],
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+    parts = proc.stdout.split() if proc.returncode == 0 else []
+    status = parts[0] if parts else "missing"
+    restarts = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+    exit_code = parts[2] if len(parts) > 2 else "?"
+    return status, restarts, exit_code
+
+
+def boot_restart_baseline(name: str) -> int:
+    """The container's RestartCount when the ready wait starts (0 if unreadable).
+
+    A baseline rather than an assumed 0: `up -d` can leave an existing
+    container in place with a non-zero count.
+    """
+    _, restarts, _ = container_boot_state(name)
+    return restarts if restarts is not None else 0
+
+
+def boot_failure(name: str, restarts_at_start: int) -> str | None:
+    """Why this container won't come up, or None while it still may (#1936).
+
+    The same rule as switch.sh's ready wait (#1099). Under a restart policy
+    (`restart: unless-stopped`, which most composes set) docker reports
+    `.State.Running == true` for a container that is crash-looping, so a check
+    on Running alone never fires, and `pod.sh up` waited out the whole timeout
+    on a container that had died seconds in. Any state but `running` (exited,
+    dead, restarting, paused, missing) fails, and so does a RestartCount above
+    the baseline: a crash-loop reads `running` between two restarts, so the
+    counter is what makes it visible at an arbitrary poll.
+    """
+    status, restarts, exit_code = container_boot_state(name)
+    if status != "running":
+        return f"state={status}, exit={exit_code}"
+    if restarts is not None and restarts > restarts_at_start:
+        return f"crash-looping (restarts {restarts_at_start}→{restarts}), exit={exit_code}"
+    return None
+
+
+def boot_failure_error(name: str, why: str) -> EstateCliError:
+    logs = docker_logs_tail(name)
+    return EstateCliError(
+        f"container {container_name(name)} is not coming up ({why})\n{logs}\n"
+        f"Its restart policy keeps restarting it until you stop it: bash scripts/pod.sh down {name}"
+    )
+
+
 def endpoint_ready(port: int) -> bool:
     try:
         with urllib.request.urlopen(f"http://localhost:{port}/v1/models", timeout=3) as resp:
@@ -586,36 +644,43 @@ def endpoint_ready(port: int) -> bool:
         return False
 
 
+def ready_poll_interval() -> float:
+    return max(float(os.environ.get("CLUB3090_ESTATE_POLL_INTERVAL", "4")), 0.1)
+
+
 def wait_ready(inst: InstanceSpec, timeout: int) -> None:
     start = time.monotonic()
     last_line = 0
+    poll_interval = ready_poll_interval()
+    restarts_at_start = boot_restart_baseline(inst.name)
     print(f"[estate] waiting for {inst.name} http://localhost:{inst.port}/v1/models (timeout {timeout}s)...")
     while True:
         if endpoint_ready(inst.port):
             elapsed = int(time.monotonic() - start)
             print(f"[estate] ✓ {inst.name} ready after {elapsed}s")
             return
-        if not container_running(inst.name):
-            logs = docker_logs_tail(inst.name)
-            raise EstateCliError(f"container {container_name(inst.name)} stopped during boot\n{logs}")
+        why = boot_failure(inst.name, restarts_at_start)
+        if why:
+            raise boot_failure_error(inst.name, why)
         elapsed = int(time.monotonic() - start)
         if elapsed >= timeout:
             raise EstateCliError(f"timeout waiting for {inst.name} after {timeout}s; logs: docker logs {container_name(inst.name)}")
         if elapsed // 30 > last_line:
             last_line = elapsed // 30
             print(f"[estate]   {elapsed}s elapsed for {inst.name}, still waiting...")
-        time.sleep(4)
+        time.sleep(poll_interval)
 
 
 def wait_ready_quiet(inst: InstanceSpec, timeout: int) -> int:
     start = time.monotonic()
-    poll_interval = max(float(os.environ.get("CLUB3090_ESTATE_POLL_INTERVAL", "4")), 0.1)
+    poll_interval = ready_poll_interval()
+    restarts_at_start = boot_restart_baseline(inst.name)
     while True:
         if endpoint_ready(inst.port):
             return int(time.monotonic() - start)
-        if not container_running(inst.name):
-            logs = docker_logs_tail(inst.name)
-            raise EstateCliError(f"container {container_name(inst.name)} stopped during boot\n{logs}")
+        why = boot_failure(inst.name, restarts_at_start)
+        if why:
+            raise boot_failure_error(inst.name, why)
         elapsed = time.monotonic() - start
         if elapsed >= timeout:
             raise EstateCliError(f"timeout waiting for {inst.name} after {timeout}s; logs: docker logs {container_name(inst.name)}")
