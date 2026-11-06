@@ -372,9 +372,14 @@ def effective(cfg):
 
 
 def write_in_place(path, cfg):
-    """Write cfg to path through a temporary sibling, keeping path's mode (the launch config holds the API key: 0600)."""
+    """Write cfg to path through a temporary sibling, keeping path's mode (the launch config holds the API key: 0600).
+    The sibling is created 0600, so the key is never readable under the entrypoint's umask 0002 in between."""
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    try:
+        os.unlink(tmp)                                # a leftover keeps its own mode through O_CREAT
+    except FileNotFoundError:
+        pass
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
     try:
         os.chmod(tmp, os.stat(path).st_mode & 0o7777)
