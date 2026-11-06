@@ -43,11 +43,12 @@ For TP=1 vLLM composes, `switch.sh` auto-selects the largest eligible GPU and ex
 
 Overrides:
 
-`CLUB3090_GPU=<index>` pins any single-card slug to that GPU (by UUID), on every engine and with `--force` too — which every 🧪 slug needs, and which skips the automatic largest-card pick above:
+`CLUB3090_GPU=<index>` pins any single-card slug to that GPU (by UUID), on every engine and with `--force` too — which every 🧪 slug needs, and which skips the automatic largest-card pick above. A dual or multi-card slug takes one index per card (`CLUB3090_GPU=1,2`); a single index is ignored there, so a saved single-card pin doesn't move dual slugs. The two Gemma vLLM engines can't run on UUID-pinned cards: see [`docs/PODS.md`](PODS.md), *Known incompatibility*.
 
 ```bash
 CLUB3090_GPU=1 bash scripts/switch.sh vllm/default
 CLUB3090_GPU=1 bash scripts/switch.sh --force vllm/qwen38-27b-single-fast
+CLUB3090_GPU=2,3 bash scripts/switch.sh vllm/dual
 NVIDIA_VISIBLE_DEVICES=2,3 bash scripts/switch.sh vllm/dual
 bash scripts/switch.sh --force vllm/gemma-mtp-tp1
 ```
