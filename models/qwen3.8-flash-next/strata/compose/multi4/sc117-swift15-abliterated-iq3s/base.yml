@@ -102,6 +102,14 @@ services:
       # DeltaNet prompt kernels on the tensor cores); 0 turns each off.
       STRATA_GDN_TC:
       STRATA_GDN_CONVL2:
+      # 0.2.11's CPU / upload share for missed experts follows the CPU pool (ceiling 0.95, was 0.60).
+      # STRATA_PCIE_AUTO_SPLIT=0, STRATA_PCIE_K_RULE=0 and STRATA_PCIE_SHARE_MAX=0.60, all three, bring
+      # back 0.2.10's rule; the engine log's "PCIe share:" line shows which one runs.
+      STRATA_PCIE_AUTO_SPLIT:
+      STRATA_PCIE_K_RULE:
+      STRATA_PCIE_SHARE_MAX:
+      # 0.2.10's penalties count only the reply's tokens; 1 counts the prompt's again, as before.
+      STRATA_PENALTY_PROMPT:
       # PLE (n-gram) residency switch: 0 = direct disk reads instead of page-locking the ~27 GiB
       # table; the auto policy can lock it and still starve the expert arena at big CONTEXT
       # (the dual ista-iq3s compose's block has the full note). Unset = Strata's auto policy.

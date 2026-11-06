@@ -255,12 +255,12 @@ does, and what to do by hand when it refuses.
   `MODEL`, `FAMILY`, `MODEL_PATH`, `CONTEXT`, `KV`, `VISION`, `GPUS`, `PRESET`, `API_KEY`), the run config setup writes
   (`/data/install/strata-<family>.json`, where `launcher/strata_config.py` puts the launch settings) and how setup
   keeps an option it doesn't choose itself (`user_args`). Re-read the release notes for those.
-- The composes forward a short list of Strata's own engine switches (`STRATA_GDN_TC`, `STRATA_GDN_CONVL2`;
-  docs/engines/STRATA.md, "Engine switches"). When a release turns on a new default that reaches our slugs and names
-  the variable that turns it off, add that variable to all five composes and to `ENGINE_EXACT` in
-  `test-compose-env-declared-unused.sh`, once `strings` on the image's
-  `/opt/strata/components/engine/<version>/strata` shows the engine reads it. A listed name the engine no longer
-  reads comes out the same way.
+- The composes forward a short list of Strata's own engine switches (docs/engines/STRATA.md, "Engine switches",
+  lists them). When a release turns on a new default that reaches our slugs and names the variable that turns it off,
+  add that variable to all five composes and to `ENGINE_EXACT` in `test-compose-env-declared-unused.sh`, once
+  `strings` on the image's `/opt/strata/components/engine/<version>/strata` shows the engine reads it. Take the
+  per-feature names, not a release-wide switch such as `STRATA_DEFAULTS=026`, which goes back further than the one
+  change. A listed name the engine no longer reads comes out the same way.
 - The data volume (`strata-data-v2`) carries one pack per model family and the shared MTP layer between versions,
   in a folder every topology shares; a release that changes the pack format re-prepares a family's pack at its first
   start in each topology.
