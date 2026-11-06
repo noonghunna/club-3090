@@ -4160,14 +4160,112 @@ def _addpod_state(pods=True) -> EstateState:
     )
 
 
-def _addpod_entry(slug="vllm/minimal", engine="vllm-stable", port=8020):
+def _addpod_entry(slug="vllm/minimal", engine="vllm-stable", port=8020, container="c"):
     from club3090_cockpit.data import CatalogEntry
     from club3090_tui_core.registry import VariantRow
     return CatalogEntry(row=VariantRow(
         slug=slug, switch_engine="vllm", launch_engine="vllm", compose_dir="x",
         file="mtp.yml", port=port, model="m", engine=engine, kvcalc_key="SKIP",
-        container="c", compose_path=f"models/m/vllm/compose/single/x/mtp.yml",
+        container=container, compose_path=f"models/m/vllm/compose/single/x/mtp.yml",
         status="experimental", ctx_label="262K", status_note=""))
+
+
+class TestCatalogStartNamesCards1939:
+    """#1939: next to running models, a Catalog Start names its cards (as many as
+    the slug's TP, free or held by the Catalog model it replaces), so the gate and
+    switch.sh's preflight check only those; with nothing else running it names
+    none and checks every card, as before."""
+
+    async def _setup(self, app, pilot, state, entries):
+        await _enter_operate(pilot)
+        app.query_one("#operate-orch-pane", OperateOrchPane)._last_telemetry = _qwen_on_card1()
+        app._last_estate_state = state
+        app._variants = [e.row for e in entries]
+
+    @staticmethod
+    def _entries(target="llamacpp/mimo9b-single-vision", engine="llama-cpp-local"):
+        # vllm-qwen (card 1) is the switch.sh model of vllm/minimal: its row names it.
+        return (_addpod_entry(target, engine=engine, port=8094),
+                _addpod_entry("vllm/minimal", container="vllm-qwen"))
+
+    @pytest.mark.asyncio
+    async def test_next_to_a_pod_start_names_a_card_and_pins_it(self):
+        app, _, wr = make_app(target=ServingTarget())
+        e, qwen = self._entries()
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, _addpod_state(), (e, qwen))
+            # alpha (pod) holds 0; qwen, which Start replaces, holds 1: card 1 first.
+            assert app._start_cards_for(e).cards == (1,)
+            app._serve_confirm_for(e)
+            await pilot.pause()
+            screen = app.screen
+            plan = screen._plan
+            assert plan.cmd == ["bash", "scripts/switch.sh", e.slug]
+            assert plan.env == {"CLUB3090_GPU": "1"} and plan.gpus == [1]
+            assert plan.replaces_catalog is True
+            assert "Start  on GPU 1" in str(screen.query_one("#confirm-body", Static).render())
+            assert wr.started == []
+
+    @pytest.mark.asyncio
+    async def test_with_only_the_catalog_model_running_nothing_changes(self):
+        app, _, _ = make_app(target=ServingTarget())
+        e, qwen = self._entries()
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, _addpod_state(pods=False), (e, qwen))
+            app._serve_confirm_for(e)
+            await pilot.pause()
+            plan = app.screen._plan
+            assert plan.env is None and plan.gpus is None and plan.replaces_catalog is False
+            assert "Start  " not in str(app.screen.query_one("#confirm-body", Static).render())
+
+    @pytest.mark.asyncio
+    async def test_a_dual_slug_takes_a_run_of_two(self):
+        app, _, _ = make_app(target=ServingTarget())
+        e, qwen = self._entries("vllm/dual", engine="vllm-stable")
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, _addpod_state(), (e, qwen))
+            assert app._start_cards_for(e).cards == (1, 2)
+            st = _addpod_state()
+            st.gpus = st.gpus[:2]                          # two cards: alpha holds one
+            app._last_estate_state = st
+            sc = app._start_cards_for(e)
+            assert sc.cards == () and "needs 2 GPUs" in sc.note
+            app._serve_confirm_for(e)
+            await pilot.pause()
+            assert app.screen._plan.env is None           # every card, as before
+            assert "checks every GPU" in str(app.screen.query_one("#confirm-body", Static).render())
+
+    @pytest.mark.asyncio
+    async def test_the_gemma_engines_name_no_cards(self):
+        app, _, _ = make_app(target=ServingTarget())
+        e, qwen = self._entries("vllm/gemma-12b-qat-w4a16-single", engine="vllm-gemma4-unified")
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, _addpod_state(), (e, qwen))
+            sc = app._start_cards_for(e)
+            assert sc.cards == () and "Known incompatibility" in sc.note
+            app._serve_confirm_for(e)
+            await pilot.pause()
+            assert app.screen._plan.env is None
+
+    @pytest.mark.asyncio
+    async def test_card_and_footer_say_what_start_replaces(self):
+        from club3090_cockpit.data import ReconcileResult
+        app, _, _ = make_app(target=ServingTarget())
+        e, qwen = self._entries()
+        async with app.run_test(size=(140, 44)) as pilot:
+            await self._setup(app, pilot, _addpod_state(), (e, qwen))
+            app._serve_confirm_for(e)
+            await pilot.pause()
+            screen = app.screen
+            screen.set_reconcile(ReconcileResult(
+                safe=True, pending_gpus=[1],
+                replaces=[ContainerInfo(name="vllm-qwen", kind="engine", slug="vllm/minimal", gpus="1")],
+                stays_up=[ContainerInfo(name="club3090-alpha", kind="estate", gpus="0")]))
+            await pilot.pause()
+            body = str(screen.query_one("#confirm-body", Static).render())
+            assert "replaces" in body and "vllm/minimal on GPU 1" in body
+            assert "stays up" in body and "GPU 0" in body
+            assert _serve_footer_desc(screen, "enter").endswith("(replaces vllm/minimal)")
 
 
 class TestCatalogAddAsPod1939:
