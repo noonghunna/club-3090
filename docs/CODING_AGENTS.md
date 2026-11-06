@@ -468,9 +468,10 @@ modelRoles:
   Nothing serving at the last render means no alias route, and a `live`
   request then 400s honestly like any dead name; an alias left over from an
   engine that died since the render fails with connect errors until the next
-  re-render, like any stale route. A real slug literally named `live`
-  suppresses the alias — two routes with one name would make the gateway
-  load-balance `live` traffic across both.
+  re-render, like any stale route. A route named `live` elsewhere — a real
+  slug, or one of your own `config.local.yaml` routes — suppresses the alias:
+  two routes with one name would make the gateway load-balance `live` traffic
+  across both.
 - A running session moves to the new slug once its current turn completes
   (`setModel`) — only a session whose current model is a club-live one; roles
   pointed at cloud providers are never touched.

@@ -242,6 +242,30 @@ else
   bad "all-key-skipped render: routes=$(routes)"
 fi
 
+# --- 10g: a config.local.yaml route named `live` suppresses the alias ---------
+# The suppression must cover the user's own block too: one name across the
+# merged config is one LiteLLM load-balancing group, and hook-bypassed `live`
+# traffic (omp compaction) would split between the mirrored engine and the
+# user's own endpoint. The user's route resolves the name on its own.
+LOCAL_CFG_BK="$(mktemp)"; cp "$LOCAL_CFG" "$LOCAL_CFG_BK"
+cat > "$LOCAL_CFG" <<'YAML'
+model_list:
+  # the user's own endpoint, named exactly like the omp alias
+  - model_name: live
+    litellm_params:
+      model: openai/users-own-live
+      api_base: https://cloud.example.invalid/v1
+      api_key: os.environ/RIG_CLOUD_KEY
+YAML
+render "8020=real-slug"
+cp "$LOCAL_CFG_BK" "$LOCAL_CFG"; rm -f "$LOCAL_CFG_BK"
+if [[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "1" ]] \
+   && [[ "$(route_field live litellm_params.api_base)" == "https://cloud.example.invalid/v1" ]]; then
+  ok "a config.local.yaml route named live suppresses the alias — the user's own endpoint resolves it"
+else
+  bad "cloud live collision: routes=$(routes) api_base=$(route_field live litellm_params.api_base)"
+fi
+
 # restore the section-10 fixture for every section below
 render "8113=qwen3.8-27b@262144,8142=sgl-live@163840,8020=gguf-live"
 
