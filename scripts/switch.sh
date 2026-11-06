@@ -78,9 +78,9 @@
 #
 # Env overrides (rarely needed):
 #   COMPOSE_BIN     Default: "docker compose" (set to e.g. "podman compose" if needed)
-#   CLUB3090_GPU    Single-card GPU index override, e.g. "1" on a hetero rig. Pins the card
-#                   (by UUID) on every single-card slug, --force included; ignored on
-#                   dual/multi slugs (use launch.sh --gpus there)
+#   CLUB3090_GPU    GPU index override, e.g. "1" on a hetero rig. Pins the card (by UUID)
+#                   on every single-card slug, --force included. A dual/multi slug takes
+#                   one index per card ("1,2"); a single index is ignored there
 #   FORCE           Set to 1 to skip hardware/free-VRAM preflight
 #   READY_URL       Default: http://localhost:8020/v1/models
 #   READY_TIMEOUT   Default: 600 (seconds — longer for cold cudagraph capture)
@@ -192,13 +192,14 @@ switch_gpu_profile_spec() {
 
 PRIMARY_MODEL="${PRIMARY_MODEL:-qwen3.6-27b}"
 
-# apply_club3090_gpu_pin <slug> — CLUB3090_GPU pins a SINGLE-card slug to one host GPU.
+# apply_club3090_gpu_pin <slug> — CLUB3090_GPU pins a slug to host GPUs: one index for a
+# single-card slug, one per card for a dual/multi slug (CLUB3090_GPU=1,2; #1939).
 # It used to be read only inside preflight_compose_hardware, which runs for vLLM slugs only,
 # returns early on a compose without Requires-* metadata, and is skipped under --force. So the
 # advertised override did nothing on every 🧪 slug (they need --force) and every non-vLLM
 # single-card slug, which then landed on GPU 0. Applied here, once, before anything reads the
 # GPU selection: the index is resolved to a UUID and exported as CUDA_/NVIDIA_VISIBLE_DEVICES,
-# the same thing launch.sh --gpus does (#610). Multi-card slugs pick cards with launch.sh --gpus.
+# the same thing launch.sh --gpus does (#610).
 apply_club3090_gpu_pin() {
   local v="$1" eng dir file topo
   [[ -n "${CLUB3090_GPU:-}" ]] || return 0
@@ -207,13 +208,34 @@ apply_club3090_gpu_pin() {
   topo="${file%%/*}"
   case "$topo" in
     dual|multi*)
-      echo "[switch] CLUB3090_GPU=${CLUB3090_GPU} ignored: ${v} is a ${topo}-card slug, and CLUB3090_GPU pins single-card slugs. Pick cards with: bash scripts/launch.sh --variant ${v} --gpus <a,b>" >&2
-      return 0 ;;
-  esac
-  case "$CLUB3090_GPU" in
-    ""|*[!0-9]*)
-      echo "[switch] ERROR: CLUB3090_GPU='${CLUB3090_GPU}' must be one GPU index as nvidia-smi numbers them, e.g. 1" >&2
-      exit 1 ;;
+      # A multi-card slug takes one index per card (c3's Catalog Start names its cards
+      # this way next to running pods, #1939). One index is a single-card pin, maybe a
+      # saved one, so it's ignored here as before; any other list is a mistake.
+      local need=2 idx
+      [[ "$topo" == multi* ]] && need="${topo#multi}"
+      case "$CLUB3090_GPU" in
+        *,*) ;;
+        *)
+          echo "[switch] CLUB3090_GPU=${CLUB3090_GPU} ignored: ${v} is a ${topo}-card slug. Give it ${need} indices (CLUB3090_GPU=$(seq -s, 0 $((need - 1)))), or pick cards with: bash scripts/launch.sh --variant ${v} --gpus <a,b>" >&2
+          return 0 ;;
+      esac
+      local -a _pin_idx=()
+      local -A _pin_seen=()
+      IFS=',' read -ra _pin_idx <<< "$CLUB3090_GPU"
+      for idx in "${_pin_idx[@]}"; do
+        if [[ ! "$idx" =~ ^[0-9]+$ || -n "${_pin_seen[$idx]:-}" ]]; then _pin_idx=(); break; fi
+        _pin_seen[$idx]=1
+      done
+      if [[ "${#_pin_idx[@]}" -ne "$need" ]]; then
+        echo "[switch] ERROR: CLUB3090_GPU='${CLUB3090_GPU}' must be ${need} different GPU indices for ${v}, a ${topo}-card slug, e.g. $(seq -s, 0 $((need - 1)))" >&2
+        exit 1
+      fi ;;
+    *)
+      case "$CLUB3090_GPU" in
+        ""|*[!0-9]*)
+          echo "[switch] ERROR: CLUB3090_GPU='${CLUB3090_GPU}' must be one GPU index as nvidia-smi numbers them, e.g. 1" >&2
+          exit 1 ;;
+      esac ;;
   esac
   # shellcheck source=lib/gpu-select.sh
   source "${ROOT_DIR}/scripts/lib/gpu-select.sh"
@@ -1324,20 +1346,37 @@ gpu_preflight() {
   fi
   # Free MiB per GPU. Tolerate small overhead (driver, X server) — abort
   # if any selected GPU has <80% of its total memory free.
+  # A selection names cards by index or by UUID: CLUB3090_GPU and launch.sh --gpus
+  # export UUIDs (#610). This loop used to match indices only, so a UUID selection
+  # matched no card and the check passed with the pinned card full. A token that
+  # names no card here (a MIG id, a partial UUID) means every card is checked.
   local mem_query
-  mem_query=$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits 2>/dev/null) || return
+  mem_query=$(nvidia-smi --query-gpu=index,uuid,memory.free,memory.total --format=csv,noheader,nounits 2>/dev/null) || return
   local selector="${NVIDIA_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
   local selector_specific=0
   if [[ -n "$selector" && "$selector" != "all" && "$selector" != "void" ]]; then
     selector_specific=1
+    local tok known
+    known=",$(awk -F', *' '{printf "%s,%s,", $1, $2}' <<< "$mem_query")"
+    IFS=',' read -ra _gp_tokens <<< "$selector"
+    for tok in "${_gp_tokens[@]}"; do
+      tok="${tok//[[:space:]]/}"
+      if [[ -n "$tok" && "$known" != *",${tok},"* ]]; then
+        echo "[switch] GPU selection '${tok}' names no card here; checking every card." >&2
+        selector_specific=0
+        break
+      fi
+    done
+    selector=",${selector//[[:space:]]/},"
   fi
   local bad=0
-  while IFS=',' read -r idx free total; do
+  while IFS=',' read -r idx uuid free total; do
     free=$(echo "$free" | tr -d ' ')
     total=$(echo "$total" | tr -d ' ')
     idx=$(echo "$idx" | tr -d ' ')
+    uuid=$(echo "$uuid" | tr -d ' ')
     [[ -z "$free" || -z "$total" ]] && continue
-    if [[ "$selector_specific" -eq 1 && ",${selector}," != *",${idx},"* ]]; then
+    if [[ "$selector_specific" -eq 1 && "$selector" != *",${idx},"* && "$selector" != *",${uuid},"* ]]; then
       continue
     fi
     # Require ≥80% free. Compose default gpu-memory-utilization is 0.92.

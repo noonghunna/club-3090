@@ -3143,7 +3143,9 @@ class CockpitData:
         failed, or a holder couldn't be pinned to a card (the uuid -> index read
         failed). A container absent from a good map holds no compute app YET (it
         may be booting), which is not the same as "on no card"; the gate treats
-        it as unknown unless the estate file places it."""
+        it as unknown unless the estate file places it. A holder that isn't in
+        any container (a host process) is listed under "", so a card it shares
+        with a replaced model is never counted as freed."""
         try:
             by_index, _degraded, read_ok = await self._gpu_attribution_read()
         except Exception:  # pragma: no cover - defensive
@@ -3153,8 +3155,8 @@ class CockpitData:
         held: dict[str, set[int]] = {}
         for idx, apps in by_index.items():
             for app in apps:
-                if app.container and idx is not None:
-                    held.setdefault(app.container, set()).add(idx)
+                if idx is not None:
+                    held.setdefault(app.container or "", set()).add(idx)
         return held, True
 
     async def _gpu_attribution_read(
@@ -3490,6 +3492,7 @@ class CockpitData:
         pending_gpus: Optional[list[int]] = None,
         variants: Optional[list[VariantRow]] = None,
         target: str = "",
+        replaces_catalog: bool = False,
     ) -> ReconcileResult:
         """Re-run detect to see what is ACTUALLY on the cards NOW, and report the
         set of running containers / GPU users / estate claims a pending write
@@ -3512,6 +3515,12 @@ class CockpitData:
         compute app yet; a placement mismatch counts both). When the map can't be
         read nobody's cards are known, and every container on a busy wanted card
         stays a collision — the gate fails closed.
+
+        ``replaces_catalog`` = a serve through switch.sh on named cards (#1939).
+        switch.sh stops every container the registry names, on any card, before
+        it boots: those land in ``replaces``, never in ``conflicts`` or
+        ``stays_up``, and their cards aren't a GPU conflict. With no variants to
+        name them, every engine container counts.
 
         ``safe`` is True only when nothing live overlaps the requested GPUs.
         """
@@ -3615,13 +3624,30 @@ class CockpitData:
             # blocks it.
             result.stays_up = [c for c in containers if c.name != target]
         else:
+            if replaces_catalog:
+                managed = {v.container for v in (variants or []) if getattr(v, "container", "")}
+                for c in containers:
+                    if c.is_running and (c.name in managed if managed else c.kind == "engine"):
+                        result.replaces.append(c)
+                gone = {c.name for c in result.replaces}
+                containers = [c for c in containers if c.name not in gone]
+                # A wanted card whose every holder is replaced frees up before the
+                # boot, so its memory isn't a conflict. Only with the card map read:
+                # without it, any memory on a wanted card stays one (fail closed).
+                freed = {
+                    card for card in wanted
+                    if map_ok and any(card in held.get(n, set()) for n in gone)
+                    and all(n in gone for n, cs in held.items() if card in cs)
+                }
+            else:
+                freed = set()
             # Is a WANTED card actually occupied right now (>512 MiB rules out
             # driver/compositor noise)?  An unknown-card container is only a
             # teardown CONFLICT when there is real contention — a running-but-idle
             # service (the studio stack at 0 GiB on free cards) is nothing a serve
             # onto free cards needs to stop.
             wanted_busy = any(
-                getattr(g, "index", -1) in wanted and getattr(g, "mem_used_mib", 0) > 512
+                getattr(g, "index", -1) in wanted - freed and getattr(g, "mem_used_mib", 0) > 512
                 for g in gpus
             )
             for c in containers:
@@ -3642,7 +3668,7 @@ class CockpitData:
             for g in gpus:
                 idx = getattr(g, "index", -1)
                 mem = getattr(g, "mem_used_mib", 0)
-                if idx in wanted and mem > 512:
+                if idx in wanted and idx not in freed and mem > 512:
                     result.gpu_conflicts.append(
                         GpuConflict(gpu_index=idx, mem_used_mib=mem, note="GPU in use")
                     )
@@ -3697,9 +3723,18 @@ class CockpitData:
 
     # ── WRITE: action builders (wired, execution-gated) ──────────────────────────
 
-    def serve(self, slug: str, *, force: bool = False, force_reason: str = "") -> ActionPlan:
+    def serve(
+        self, slug: str, *, force: bool = False, force_reason: str = "",
+        cards: Optional[list[int]] = None,
+    ) -> ActionPlan:
         """Build the GATED switch.sh <slug> action.  ``--force`` is only added
-        when explicitly requested WITH a reason (surfaced to the user)."""
+        when explicitly requested WITH a reason (surfaced to the user).
+
+        ``cards`` (#1939): the GPU indices a Catalog Start names when other
+        models are running. They reach switch.sh as ``CLUB3090_GPU`` (one index
+        per card, pinned by UUID; a value in the environment beats a saved one),
+        and the gate checks only them, plus the Catalog model switch.sh replaces
+        wherever it runs. None = every card, as before."""
         cmd = ["bash", "scripts/switch.sh"]
         if force:
             if not force_reason:
@@ -3707,6 +3742,9 @@ class CockpitData:
             cmd.append("--force")
         cmd.append(slug)
         desc = f"switch.sh {'--force ' if force else ''}{slug}"
+        named = sorted({int(c) for c in cards}) if cards else []
+        if named:
+            desc += f" on GPU {','.join(str(c) for c in named)}"
         return ActionPlan(
             kind="serve",
             cmd=cmd,
@@ -3714,6 +3752,9 @@ class CockpitData:
             force=force,
             force_reason=force_reason,
             requires_reconcile=True,
+            env={"CLUB3090_GPU": ",".join(str(c) for c in named)} if named else None,
+            gpus=named or None,
+            replaces_catalog=bool(named),
         )
 
     # ── Producer lane ② Serve — generate a compose, then serve it untested ─────────
@@ -4262,6 +4303,7 @@ class CockpitData:
                 reconcile = await self.reconcile_before_write(
                     f"{plan.kind}:{plan.description}", variants=variants,
                     pending_gpus=plan.gpus, target=plan.target,
+                    replaces_catalog=plan.replaces_catalog,
                 )
                 if not reconcile.safe:
                     # An in-flight write's pending claim is a HARD block — force

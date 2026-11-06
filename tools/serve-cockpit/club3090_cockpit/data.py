@@ -778,6 +778,52 @@ def pod_card_block(tp: int, free: list[int]) -> list[int]:
     return cards[:tp]
 
 
+@dataclass(frozen=True)
+class StartCards:
+    """The cards a Catalog Start names (#1939). ``cards`` empty = it names none
+    and checks every card, as before: nothing else is running, or ``note`` says
+    why it can't name them."""
+
+    cards: tuple = ()
+    note: str = ""
+
+
+def start_cards(
+    tp: int,
+    n_cards: int,
+    rows: list[ModelRow],
+    replaced: set[str],
+    *,
+    engine: str = "",
+) -> StartCards:
+    """Which cards a Catalog Start of a ``tp``-card slug names, given the models
+    on the rig (``rig_models``) and the containers switch.sh would replace.
+
+    Only when a model that isn't replaced is up: then the Start names ``tp``
+    cards that are free or held by a replaced model (a consecutive run first),
+    so the gate and switch.sh's preflight check only those and leave the others
+    running. A card a pod declares, up or down, is never picked. Pure."""
+    staying = [r for r in rows if r.is_up and r.container not in replaced]
+    if not staying:
+        return StartCards()
+    if engine in POD_UUID_INCOMPATIBLE_ENGINES:
+        return StartCards(note=(
+            "this engine can't run on cards pinned by UUID (docs/PODS.md, "
+            "Known incompatibility)"))
+    if any(not r.cards for r in staying):
+        return StartCards(note="a running model's cards couldn't be read")
+    taken = {c for r in staying for c in r.cards}
+    taken |= {c for r in rows if r.is_pod for c in r.cards}
+    candidates = [i for i in range(n_cards) if i not in taken]
+    cards = pod_card_block(tp, candidates)
+    if not cards:
+        have = ",".join(str(c) for c in candidates) or "none"
+        return StartCards(note=(
+            f"it needs {tp} GPU{'s' if tp != 1 else ''} that no other model holds; "
+            f"available: {have}"))
+    return StartCards(cards=tuple(cards))
+
+
 def host_port_free(port: int) -> bool:
     """True when nothing on this host holds ``port``: a TCP bind on every
     interface fails while a container publishes it or any process listens on it,
@@ -855,6 +901,11 @@ class ReconcileResult:
     # read: no container's cards are known, and the gate falls back to treating
     # every container on a busy wanted card as a collision (fail closed).
     card_map_ok: bool = True
+    # #1939: the Catalog models a switch.sh serve replaces. switch.sh stops every
+    # container the registry names (down_running) on any card, so these stop
+    # whichever cards the serve names. Not collisions: switch.sh stops them itself,
+    # then checks the cards are free.
+    replaces: list[ContainerInfo] = field(default_factory=list)
 
     @property
     def conflict_summary(self) -> str:
@@ -1032,6 +1083,10 @@ class ActionPlan:
     # #1939: the one container a stop / restart acts on. Set, the gate checks the
     # cards that container holds, and nothing else running is a collision.
     target: str = ""
+    # #1939: a Catalog Start that names its cards. It runs switch.sh, which stops
+    # the model switch.sh last started wherever it runs: the gate lists that model
+    # as replaced, and checks only ``gpus`` for everything else.
+    replaces_catalog: bool = False
 
 
 # ── Phase 4: Doctor (estate + profile triage reads) ──────────────────────────────

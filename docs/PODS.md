@@ -54,7 +54,7 @@ CLI and cockpit share **one estate file and one validation path** — a pod you 
 
 **What c3 checks before a write.** It reads which card each container is on from `nvidia-smi` (each compute process, mapped to its container) and, for a pod, the estate file. Booting a pod checks only that pod's cards, and stopping or restarting one model collides with nothing else. If that card map can't be read, every container on a busy card counts as in the way, and the confirm says their cards are unknown.
 
-> ⚠️ **A Catalog Start still replaces the Catalog model, and checks every card.** `switch.sh` stops the model it last started, and most composes see every card, so with pods up a Catalog Start warns that it stops them. To run a second model next to the others, use **Add as pod** (`p`) on the same card, or `N` then `u`. A Start that names its own cards, like `launch.sh --gpus`, is still to come ([#1939](https://github.com/noonghunna/club-3090/issues/1939)).
+> **A Catalog Start replaces the Catalog model** (`switch.sh` stops the model it last started, wherever it runs). With other models up, pods or models `switch.sh` didn't start, it names its own cards: as many as the slug's tensor-parallel size, free or held by the Catalog model it replaces, a consecutive run first. They reach `switch.sh` as `CLUB3090_GPU`, so the confirm and `switch.sh`'s free-memory check look at those cards only, and the other models stay up. When it can't name them (too few such cards, a running model's cards unknown, or an engine in *Known incompatibility* below), the serve card says why and Start checks every card: with pods up, it warns that it stops them. To run a second model next to the Catalog one, use **Add as pod** (`p`), or `N` then `u` ([#1939](https://github.com/noonghunna/club-3090/issues/1939)).
 
 ---
 
@@ -126,7 +126,7 @@ A mismatch on a CDI/NixOS rig usually means `CUDA_VISIBLE_DEVICES` didn't reach 
 
 ### ⚠️ Known incompatibility — Gemma slugs on older vLLM builds × UUID pinning
 
-Pods boot GPUs **UUID-pinned** (#610). Two Gemma engines run vLLM builds whose `Platform.device_id_to_physical_device_id` casts the `CUDA_VISIBLE_DEVICES` entry with a bare `int()`, so a `GPU-<uuid>` mask raises before the model loads:
+Pods boot GPUs **UUID-pinned** (#610), and so do `CLUB3090_GPU`, `launch.sh --gpus` and a c3 Catalog Start that names its cards (c3 doesn't name them for these engines). Two Gemma engines run vLLM builds whose `Platform.device_id_to_physical_device_id` casts the `CUDA_VISIBLE_DEVICES` entry with a bare `int()`, so a `GPU-<uuid>` mask raises before the model loads:
 
 - `vllm-gemma-stable`, pinned at **vLLM v0.22.0**;
 - `vllm-gemma4-unified`, vLLM's `gemma4-unified` preview tag. The tag is mutable; the build that hit it in [#1936](https://github.com/noonghunna/club-3090/discussions/1936) reported `0.1.dev17235`, built 2026-06-03.

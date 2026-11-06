@@ -111,6 +111,7 @@ from .data import (
     OptimizerReport,
     POD_UUID_INCOMPATIBLE_ENGINES,
     PodOffer,
+    StartCards,
     PowerCapState,
     PromoteScaffold,
     ReconcileResult,
@@ -129,6 +130,7 @@ from .data import (
     measurement_from_explain_columns,
     parse_ctx_label,
     pod_card_block,
+    start_cards,
     pod_name_for,
     pod_port,
     rig_models,
@@ -3565,6 +3567,9 @@ class ServeContext(NamedTuple):
     # #1939 §4: what [p] "Add as pod" would do — cards, port, name, or why it
     # can't (start and stop modes; None elsewhere, and the key stays hidden).
     pod_offer: Optional[PodOffer] = None
+    # #1939: the cards Start names when other models run (the serve plan carries
+    # them), or why it names none. None outside start mode.
+    start_cards: Optional[StartCards] = None
 
 
 # ── Confirm modal (used for serve + scene + container writes) ────────────────────
@@ -4398,6 +4403,13 @@ class ConfirmActionScreen(ModalScreen):
                     f"  [bold]p[/bold] Add as pod  runs alongside as pod [bold]{off.name}[/bold] "
                     f"on GPU {cards}, port {off.port}; stops nothing"
                 )
+        # #1939: the cards Start serves on when other models run (the gate and
+        # switch.sh's preflight check only those), or why it checks every card.
+        sc = ctx.start_cards if ctx is not None and ctx.mode == "start" else None
+        if sc is not None and sc.cards:
+            lines.append(f"  [bold]⏎[/bold] Start  on GPU {','.join(str(c) for c in sc.cards)}")
+        elif sc is not None and sc.note:
+            lines.append(f"  [bold]⏎[/bold] Start  [dim]checks every GPU: {sc.note}[/dim]")
         # The reconcile / teardown line — a placeholder until the detect lands.
         lines.append("")
         lines.append(self._reconcile_line())
@@ -4422,11 +4434,21 @@ class ConfirmActionScreen(ModalScreen):
                 rec.target and rec.pending_gpus) else "its GPUs"
             return (f"  [yellow]⏹ stops[/yellow] container [red]{con}[/red] (frees {frees})"
                     + (f"\n{stays}" if stays else ""))
+        replaced = [
+            f"[red]{c.slug or c.name}[/red]" + (f" on GPU {c.gpus}" if c.gpus else "")
+            for c in (getattr(rec, "replaces", None) or [])
+        ]
+        if rec.safe and replaced:
+            # #1939: a Start on named cards. switch.sh stops the Catalog model it
+            # last started, wherever it runs, then checks the named cards.
+            return (f"  [yellow]⏹ replaces[/yellow] {', '.join(replaced)} (the Catalog model);"
+                    f" nothing else in the way."
+                    + (f"\n{stays}" if stays else ""))
         if rec.safe:
             return ("  [green]● gate clear[/green] — GPU free, nothing to tear down."
                     + (f"\n{stays}" if stays else ""))
         # START with a conflict → warn that Start performs teardown-then-serve.
-        parts: list[str] = []
+        parts: list[str] = list(replaced)
         for c in rec.conflicts:
             g = f" on GPU {c.gpus}" if c.gpus else (
                 "" if rec.card_map_ok else " (cards unknown)")
@@ -4494,11 +4516,13 @@ class ConfirmActionScreen(ModalScreen):
                 # switch.sh needs --force); "(stops <model>)" appended when a live
                 # model holds the GPU.  Both are the SAME --force re-issue.
                 verb = "Force Start" if ctx.force_required else "Start"
-                label = (
-                    f"{verb} (stops {self._primary_conflict_name()})"
-                    if self._has_conflict
-                    else verb
-                )
+                rep = [c.slug or c.name for c in (getattr(rec, "replaces", None) or [])]
+                if self._has_conflict:
+                    label = f"{verb} (stops {self._primary_conflict_name()})"
+                elif rep:
+                    label = f"{verb} (replaces {rep[0]})"
+                else:
+                    label = verb
                 self._set_start_binding_label(label)
             # The destructive Start/Stop is now safe to ENABLE (the fresh detect
             # landed).  Footer reflects it via check_action.
@@ -13922,6 +13946,7 @@ class CockpitApp(App):
             pending_gpus=pending,
             variants=self._variants or None,
             target=getattr(plan, "target", "") or "",
+            replaces_catalog=bool(getattr(plan, "replaces_catalog", False)),
         )
         try:
             screen.set_reconcile(rec)
@@ -15452,13 +15477,39 @@ class CockpitApp(App):
         GPU-mutating write; on confirm the boot streams into the re-homed
         LivePane (#serve-live) below the tabs."""
         self._staged_entry = entry
-        plan = self._data.serve(entry.slug)  # gated, NOT --force
+        ctx = self._serve_context_for(entry)
+        # #1939: next to running models, Start names its cards (as many as the
+        # slug's TP, free or held by the Catalog model it replaces), so the gate
+        # and switch.sh's preflight check only those. Otherwise every card.
+        sc = self._start_cards_for(entry) if ctx.mode == "start" else None
+        if sc is not None:
+            ctx = ctx._replace(start_cards=sc)
+        plan = self._data.serve(  # gated, NOT --force
+            entry.slug, cards=list(sc.cards) if sc is not None and sc.cards else None)
         self.push_screen(
             ConfirmActionScreen(
                 plan,
-                serve_ctx=self._serve_context_for(entry),
+                serve_ctx=ctx,
                 repo_root=self._repo_root,   # for the #1010 compose gate sniff
             )
+        )
+
+    def _start_cards_for(self, entry: CatalogEntry) -> StartCards:
+        """The cards a Catalog Start of ``entry`` names (#1939): none when nothing
+        but the Catalog model it replaces is running, or the rig hasn't been
+        read; else ``tp`` cards no other model holds, or why there are none."""
+        st = getattr(self, "_last_estate_state", None)
+        if st is None:
+            return StartCards()
+        rows = rig_models(st, self._models_card_map())
+        managed = {getattr(v, "container", "") for v in (self._variants or [])} - {""}
+        replaced = {
+            r.container for r in rows
+            if not r.is_pod and r.is_up and (r.container in managed if managed else True)
+        }
+        return start_cards(
+            self._data.slug_tp(entry.slug), len(getattr(st, "gpus", None) or []),
+            rows, replaced, engine=entry.engine or "",
         )
 
     def _serve_context_for(self, entry: CatalogEntry) -> ServeContext:

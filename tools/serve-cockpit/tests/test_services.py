@@ -5176,3 +5176,162 @@ class TestAddAsPod1939:
         assert executed is False and rec.safe is False
         assert {c.name for c in rec.conflicts} == {"club3090-beta"}
         assert wr.started == []
+
+
+# ===========================================================================
+# #1939 — a Catalog Start that names its cards
+# ===========================================================================
+
+def _qwen_variant() -> VariantRow:
+    """The registry row of the switch.sh model `qwen` in _cards_runner, so the
+    gate knows switch.sh manages (and so replaces) its container."""
+    return VariantRow(
+        slug="vllm/dual", switch_engine="vllm", launch_engine="vllm",
+        compose_dir="", file="", port=8010, model="qwen3.6-27b",
+        engine="vllm", kvcalc_key="", container="vllm-qwen36-27b-dual",
+        compose_path="", status="production", ctx_label="262K", status_note="",
+    )
+
+
+class _EnvWriteRunner(FakeWriteRunner):
+    async def start_raw(self, cmd, env, run_type, parser):
+        self.started.append({"cmd": cmd, "run_type": run_type, "env": dict(env or {})})
+        return {"mock_state": True, "cmd": cmd}
+
+
+class TestStartNamesCards1939:
+    def test_plan_names_cards_through_club3090_gpu(self):
+        cd = CockpitData(ROOT)
+        plan = cd.serve("vllm/dual", cards=[2, 1])
+        assert plan.cmd == ["bash", "scripts/switch.sh", "vllm/dual"]
+        assert plan.env == {"CLUB3090_GPU": "1,2"}
+        assert plan.gpus == [1, 2] and plan.replaces_catalog is True
+        assert plan.description == "switch.sh vllm/dual on GPU 1,2"
+
+    def test_plan_without_cards_is_unchanged(self):
+        plan = CockpitData(ROOT).serve("vllm/dual")
+        assert plan.env is None and plan.gpus is None and plan.replaces_catalog is False
+        assert plan.description == "switch.sh vllm/dual"
+
+    @pytest.mark.asyncio
+    async def test_catalog_model_on_another_card_is_replaced_not_staying(self):
+        """switch.sh stops the model it last started wherever it runs, so a Start
+        on card 1 must list qwen (card 0) as replaced, and pod beta (card 2) as
+        staying up."""
+        runner, gpus = _cards_runner({"qwen": [0], "beta": [2]})
+        cd = _cards_cd(runner, gpus)
+        rec = await cd.reconcile_before_write(
+            "serve:x", pending_gpus=[1], variants=[_qwen_variant()], replaces_catalog=True)
+        assert rec.safe is True and rec.conflicts == [] and rec.gpu_conflicts == []
+        assert [c.name for c in rec.replaces] == ["vllm-qwen36-27b-dual"]
+        assert [c.name for c in rec.stays_up] == ["club3090-beta"]
+
+    @pytest.mark.asyncio
+    async def test_negative_control_without_the_rule_qwen_reads_as_staying(self):
+        """What the confirm would have said with cards named and no rule: qwen
+        "stays up", which switch.sh then stops."""
+        runner, gpus = _cards_runner({"qwen": [0], "beta": [2]})
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "serve:x", pending_gpus=[1], variants=[_qwen_variant()])
+        assert rec.replaces == []
+        assert "vllm-qwen36-27b-dual" in {c.name for c in rec.stays_up}
+
+    @pytest.mark.asyncio
+    async def test_start_on_the_replaced_models_card_is_clear(self):
+        runner, gpus = _cards_runner({"qwen": [0], "beta": [2]})
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "serve:x", pending_gpus=[0], variants=[_qwen_variant()], replaces_catalog=True)
+        assert rec.safe is True and rec.gpu_conflicts == []
+        assert [c.name for c in rec.replaces] == ["vllm-qwen36-27b-dual"]
+
+    @pytest.mark.asyncio
+    async def test_positive_control_the_same_card_without_the_rule_collides(self):
+        runner, gpus = _cards_runner({"qwen": [0], "beta": [2]})
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "serve:x", pending_gpus=[0], variants=[_qwen_variant()])
+        assert rec.safe is False
+        assert "vllm-qwen36-27b-dual" in {c.name for c in rec.conflicts}
+
+    @pytest.mark.asyncio
+    async def test_a_host_process_on_the_replaced_card_still_collides(self):
+        """A process outside any container on qwen's card isn't freed when qwen
+        stops, so the card's memory stays a conflict."""
+        runner, gpus = _cards_runner({"qwen": [0], "beta": [2]})
+        apps = runner.responses["--query-compute-apps"].stdout
+        runner.responses["--query-compute-apps"] = ok(apps + f"{_U[0]}, 9999, 500\n")
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "serve:x", pending_gpus=[0], variants=[_qwen_variant()], replaces_catalog=True)
+        assert rec.safe is False
+        assert [g.gpu_index for g in rec.gpu_conflicts] == [0]
+
+    @pytest.mark.asyncio
+    async def test_unread_card_map_keeps_the_replaced_card_a_conflict(self):
+        runner, gpus = _cards_runner({"qwen": [0], "beta": [2]}, compute_apps_ok=False)
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "serve:x", pending_gpus=[0], variants=[_qwen_variant()], replaces_catalog=True)
+        assert rec.safe is False and 0 in [g.gpu_index for g in rec.gpu_conflicts]
+
+    @pytest.mark.asyncio
+    async def test_engine_containers_switch_sh_does_not_manage_stay(self):
+        """An engine container that isn't in the registry survives switch.sh's
+        teardown: on another card it stays up, on the wanted card it collides."""
+        runner, gpus = _cards_runner({"qwen": [0], "beta": [2]})
+        cd = _cards_cd(runner, gpus)
+        other = dataclasses.replace(_qwen_variant(), container="vllm-something-else")
+        rec = await cd.reconcile_before_write(
+            "serve:x", pending_gpus=[1], variants=[other], replaces_catalog=True)
+        assert rec.replaces == [] and rec.safe is True
+        assert "vllm-qwen36-27b-dual" in {c.name for c in rec.stays_up}
+        rec = await cd.reconcile_before_write(
+            "serve:x", pending_gpus=[0], variants=[other], replaces_catalog=True)
+        assert rec.safe is False and "vllm-qwen36-27b-dual" in {c.name for c in rec.conflicts}
+
+    @pytest.mark.asyncio
+    async def test_no_variants_count_every_engine_container_as_replaced(self):
+        runner, gpus = _cards_runner({"qwen": [0], "beta": [2]})
+        rec = await _cards_cd(runner, gpus).reconcile_before_write(
+            "serve:x", pending_gpus=[1], replaces_catalog=True)
+        assert [c.name for c in rec.replaces] == ["vllm-qwen36-27b-dual"]
+
+    @pytest.mark.asyncio
+    async def test_execute_starts_on_card_1_with_the_pin_and_stops_nothing(self):
+        """Acceptance: qwen on 0, pod beta on 2, a Start on card 1. The gate is
+        clear, c3 stops nothing itself (switch.sh replaces qwen), and switch.sh
+        gets CLUB3090_GPU=1."""
+        wr = _EnvWriteRunner()
+        runner, gpus = _cards_runner({"qwen": [0], "beta": [2]})
+        cd = _cards_cd(runner, gpus, wr)
+        plan = cd.serve("vllm/minimal", cards=[1])
+        executed, rec, _ = await cd.execute_action(plan, variants=[_qwen_variant()])
+        assert executed is True and rec.safe is True
+        assert [s["cmd"] for s in wr.started] == [plan.cmd]
+        assert wr.started[0]["env"].get("CLUB3090_GPU") == "1"
+        assert [c for c in runner.calls if c[:2] == ["docker", "stop"]] == []
+
+    def test_start_cards_pick(self):
+        from club3090_cockpit.data import ModelRow, start_cards
+
+        def row(name, cards, pod=False, state="serving"):
+            return ModelRow(name=name, container=name, is_pod=pod, cards=cards, state=state)
+
+        qwen, beta = row("qwen", [0]), row("beta", [2], pod=True)
+        # Nothing but the replaced model runs: no cards named (every card, as before).
+        assert start_cards(1, 3, [qwen], {"qwen"}).cards == ()
+        assert start_cards(1, 3, [], set()).cards == ()
+        # Next to a pod: a free card or the replaced model's, consecutive run first.
+        assert start_cards(1, 3, [qwen, beta], {"qwen"}).cards == (0,)
+        assert start_cards(2, 3, [qwen, beta], {"qwen"}).cards == (0, 1)
+        assert start_cards(1, 3, [beta], set()).cards == (0,)
+        # A down pod's cards are never picked, but a down pod alone names none.
+        down = row("gamma", [0], pod=True, state="down")
+        assert start_cards(1, 3, [down, beta], set()).cards == (1,)
+        assert start_cards(1, 3, [down], set()).cards == ()
+        # Too few cards: none named, and the note says why.
+        sc = start_cards(3, 3, [qwen, beta], {"qwen"})
+        assert sc.cards == () and "needs 3 GPUs" in sc.note and "available: 0,1" in sc.note
+        # The two Gemma engines can't take a UUID pin.
+        sc = start_cards(1, 3, [beta], set(), engine="vllm-gemma-stable")
+        assert sc.cards == () and "Known incompatibility" in sc.note
+        # A running model with unknown cards: none named.
+        sc = start_cards(1, 3, [row("x", [])], set())
+        assert sc.cards == () and "couldn't be read" in sc.note
