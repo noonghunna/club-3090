@@ -736,7 +736,15 @@ def main() -> int:
         litellm_local.notice(a.root, quiet=a.quiet)
 
     template = os.path.join(a.root, "services/litellm/config.yaml")
-    runtime = os.path.join(a.root, "services/litellm/config.runtime.yaml")
+    # Test seam: render to an isolated path. The live runtime view is watched by
+    # the club-live omp extension, which re-points every live agent session at
+    # whatever it sees — a suite writing fixtures here hijacks those sessions
+    # onto slugs the gateway never serves, and their turns 400. Same seam
+    # convention as C3_LITELLM_FAKE_LIVE / C3_LITELLM_LOCAL_CONFIG. Honored
+    # together with C3_LITELLM_FAKE_LIVE (the suite sets both): a REAL render
+    # must follow the mount, so choose_runtime below overrides this seam.
+    runtime = os.environ.get("C3_LITELLM_RUNTIME") \
+        or os.path.join(a.root, "services/litellm/config.runtime.yaml")
     # The gateway serves the file its container MOUNTS. A switch.sh run from a
     # worktree used to re-render the worktree's copy while the gateway kept the
     # main checkout's stale routes. Real renders follow the mount; the test seam

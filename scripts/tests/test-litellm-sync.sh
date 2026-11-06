@@ -28,10 +28,15 @@ ok()  { echo "  ok   — $*"; }
 bad() { echo "  FAIL — $*" >&2; fail=1; }
 
 SYNC="scripts/lib/litellm-sync.sh"
-RUNTIME="services/litellm/config.runtime.yaml"
-BACKUP="$(mktemp)"; [[ -f "$RUNTIME" ]] && cp "$RUNTIME" "$BACKUP"
-restore() { [[ -s "$BACKUP" ]] && cp "$BACKUP" "$RUNTIME"; rm -f "$BACKUP"; }
-trap 'restore; rm -f "${LOCAL_CFG:-}"' EXIT
+# Isolated runtime path: the real services/litellm/config.runtime.yaml is
+# watched by the club-live omp extension, which re-points every live agent
+# session at whatever it sees — fixture states there hijack those sessions onto
+# slugs the gateway never serves and their turns 400 (2026-11-05, twice). The
+# suite renders through the C3_LITELLM_RUNTIME seam and never touches the real
+# file, so there is nothing to back up or restore.
+RUNTIME="$(mktemp -t c3-runtime-XXXXXX.yaml)"
+export C3_LITELLM_RUNTIME="$RUNTIME"
+trap 'rm -f "${LOCAL_CFG:-}" "${RUNTIME:-}"' EXIT
 
 # Deterministic: C3_LITELLM_FAKE_LIVE substitutes the socket probe, so the gate
 # does not depend on whatever this rig happens to be serving.
@@ -84,7 +89,7 @@ fi
 
 # --- 5: a route on a port we do NOT own is never touched ---------------------
 # Someone's hand-added local service on an unrelated port is not ours to collect.
-tmpl="services/litellm/config.yaml"; cp "$tmpl" "$BACKUP.tmpl"
+tmpl="services/litellm/config.yaml"; TMPL_BK="$(mktemp)"; cp "$tmpl" "$TMPL_BK"
 python3 - <<'PY'
 import io
 p="services/litellm/config.yaml"; s=io.open(p,encoding="utf-8").read()
@@ -100,7 +105,7 @@ io.open(p,"w",encoding="utf-8").write(s)
 PY
 render ""
 got="$(routes)"
-cp "$BACKUP.tmpl" "$tmpl"; rm -f "$BACKUP.tmpl"
+cp "$TMPL_BK" "$tmpl"; rm -f "$TMPL_BK"
 [[ "$got" == *someones-own-thing* ]] \
   && ok "a route on an unowned port is never pruned" \
   || bad "PRUNED A ROUTE WE DO NOT OWN (got: $got)"
@@ -117,8 +122,9 @@ fi
 
 # --- 7: the runtime file is GITIGNORED ---------------------------------------
 # It is rig state. Committed, every checkout conflicts on a file nobody edited.
-git check-ignore -q "$RUNTIME" \
-  && ok "runtime view is gitignored" || bad "$RUNTIME is NOT gitignored"
+# Pinned to the checkout path: a temp file proves nothing about what git ignores.
+git check-ignore -q services/litellm/config.runtime.yaml \
+  && ok "runtime view is gitignored" || bad "services/litellm/config.runtime.yaml is NOT gitignored"
 
 # --- 8: the compose mounts the RUNTIME view, not the tracked catalog ---------
 # The whole mechanism is inert if the container still mounts config.yaml, and
@@ -796,7 +802,7 @@ else
 fi
 rm -f "$errf"
 out="$(C3_LITELLM_FAKE_LIVE="8182=gamma-model" bash "$SYNC" --no-restart 2>/dev/null)"
-if [[ "$out" == *"-> services/litellm/config.runtime.yaml"* ]]; then
+if [[ "$out" == *"-> $RUNTIME"* ]]; then
   ok "#1945: the render log names the file it wrote"
 else
   bad "#1945: render log doesn't name the written file: $out"
