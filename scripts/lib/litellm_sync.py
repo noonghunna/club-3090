@@ -501,7 +501,8 @@ def route_api_key(key: str, root: str, port: int, warnings: list) -> "str | None
 
 
 def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
-                 root: str = "", warnings: "list | None" = None) -> tuple[str, int]:
+                 root: str = "", warnings: "list | None" = None,
+                 taken: "set[str] | None" = None) -> tuple[str, int]:
     lines = [
         BEGIN.rstrip() + " — " + RUNTIME_MARKER + " ===",
         "  # Routes for endpoints that answered /v1/models at render time. Names come",
@@ -510,6 +511,7 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
         "  # DO NOT EDIT — edit services/litellm/config.yaml (the catalog view) instead.",
     ]
     seen: set[str] = set()
+    first: "list[str] | None" = None
     facts = facts or {}
     warnings = warnings if warnings is not None else []
     for r in sorted(live, key=lambda t: (t.model, t.port)):
@@ -520,7 +522,7 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
         if ak is None:   # a saved key the container does not use: no route, warned
             continue
         seen.add(r.model)
-        lines += [
+        route = [
             f"  - model_name: {r.model}",
             "    litellm_params:",
             f"      model: openai/{r.model}",
@@ -528,10 +530,27 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
             f"      api_key: {ak}",
             *ROUTE_PARAMS,
             *([] if r.responses else [RESPONSES_BRIDGE]),
-        ]
-        lines += model_info(r.ctx, facts.get(r.port, {}), r.native_messages, r.out_cap) + [""]
-    if not live:
-        lines.append("  # (nothing serving right now — no local routes)")
+        ] + model_info(r.ctx, facts.get(r.port, {}), r.native_messages, r.out_cap)
+        if first is None:
+            first = route
+        lines += route + [""]
+    if not seen:
+        # `live` may be non-empty with every route skipped (a saved key no
+        # container uses): something serves, yet the block has no local routes.
+        lines.append("  # (no local routes right now — nothing serving, or no key matched)")
+    elif "live" not in seen and "live" not in (taken or set()):
+        # The club-live omp alias (services/omp/extensions/club-live.ts) registers a
+        # virtual model named `live`. Agent turns reach the real slug through the
+        # extension's rewrite hook, but omp's compaction and skill-compression
+        # dispatch bypass that hook — such a request arrives here still named
+        # `live` and must resolve, not 400. The alias mirrors the FIRST route (the
+        # same one the extension names) and sits after every real route, so the
+        # extension's parser — which reads only the first route — never sees it.
+        # A route named `live` elsewhere already resolves that name — a real slug
+        # (seen check) or one of this rig's own config.local.yaml routes (taken) —
+        # and a second route with the name would make LiteLLM load-balance `live`
+        # traffic between the two, so the alias stands down.
+        lines += ["  - model_name: live", *first[1:]] + [""]
     return "\n".join(lines).rstrip() + "\n" + END + "\n", len(seen)
 
 
@@ -599,6 +618,30 @@ def local_routes(root: str) -> str:
             fixed.append(ln[min(-shift, len(ln) - len(ln.lstrip())):])
     return (LOCAL_BEGIN.format(src=litellm_local.display_path(found, root)) + "\n"
             + "\n".join(fixed).strip("\n") + "\n" + LOCAL_END + "\n")
+
+
+def local_route_names(root: str) -> "set[str]":
+    """Model names this rig's own config.local.yaml serves. The `live` alias
+    must not mirror onto a name the local block already carries: two routes
+    with one name are one LiteLLM load-balancing group, and hook-bypassed
+    `live` traffic (omp compaction) would split between the mirrored engine
+    and the user's own endpoint. Scoped to `model_list:` exactly like
+    local_routes above."""
+    found, _origin = litellm_local.active_routes(root)
+    if found is None or not found.is_file():
+        return set()
+    names: "set[str]" = set()
+    inside = False
+    for ln in io.open(found, encoding="utf-8").read().splitlines():
+        top = bool(ln) and not ln[0].isspace() and not ln.startswith("#") and not ln.startswith("-")
+        if top:
+            inside = ln.split("#", 1)[0].strip() == "model_list:"
+            continue
+        if inside:
+            m = re.match(r"\s*-\s*model_name:\s*(\S+)", ln)
+            if m:
+                names.add(m.group(1))
+    return names
 
 
 def mounted_runtime_path() -> "str | None":
@@ -719,7 +762,15 @@ def main() -> int:
         litellm_local.notice(a.root, quiet=a.quiet)
 
     template = os.path.join(a.root, "services/litellm/config.yaml")
-    runtime = os.path.join(a.root, "services/litellm/config.runtime.yaml")
+    # Test seam: render to an isolated path. The live runtime view is watched by
+    # the club-live omp extension, which re-points every live agent session at
+    # whatever it sees — a suite writing fixtures here hijacks those sessions
+    # onto slugs the gateway never serves, and their turns 400. Same seam
+    # convention as C3_LITELLM_FAKE_LIVE / C3_LITELLM_LOCAL_CONFIG. Honored
+    # together with C3_LITELLM_FAKE_LIVE (the suite sets both): a REAL render
+    # must follow the mount, so choose_runtime below overrides this seam.
+    runtime = os.environ.get("C3_LITELLM_RUNTIME") \
+        or os.path.join(a.root, "services/litellm/config.runtime.yaml")
     # The gateway serves the file its container MOUNTS. A switch.sh run from a
     # worktree used to re-render the worktree's copy while the gateway kept the
     # main checkout's stale routes. Real renders follow the mount; the test seam
@@ -754,7 +805,8 @@ def main() -> int:
     live_ports = {str(r[0]) for r in live}
 
     warnings: list = []
-    block, n_routes = render_block(live, port_facts(variants), a.root, warnings)
+    block, n_routes = render_block(live, port_facts(variants), a.root, warnings,
+                                   taken=local_route_names(a.root))
     for w in warnings:
         print(f"[litellm-sync] WARN: {w}", file=sys.stderr)
     out = (prune(src[:b], reg_ports, live_ports)

@@ -28,10 +28,15 @@ ok()  { echo "  ok   — $*"; }
 bad() { echo "  FAIL — $*" >&2; fail=1; }
 
 SYNC="scripts/lib/litellm-sync.sh"
-RUNTIME="services/litellm/config.runtime.yaml"
-BACKUP="$(mktemp)"; [[ -f "$RUNTIME" ]] && cp "$RUNTIME" "$BACKUP"
-restore() { [[ -s "$BACKUP" ]] && cp "$BACKUP" "$RUNTIME"; rm -f "$BACKUP"; }
-trap 'restore; rm -f "${LOCAL_CFG:-}"' EXIT
+# Isolated runtime path: the real services/litellm/config.runtime.yaml is
+# watched by the club-live omp extension, which re-points every live agent
+# session at whatever it sees — fixture states there hijack those sessions onto
+# slugs the gateway never serves and their turns 400 (2026-11-05, twice). The
+# suite renders through the C3_LITELLM_RUNTIME seam and never touches the real
+# file, so there is nothing to back up or restore.
+RUNTIME="$(mktemp -t c3-runtime-XXXXXX.yaml)"
+export C3_LITELLM_RUNTIME="$RUNTIME"
+trap 'rm -f "${LOCAL_CFG:-}" "${RUNTIME:-}"' EXIT
 
 # Deterministic: C3_LITELLM_FAKE_LIVE substitutes the socket probe, so the gate
 # does not depend on whatever this rig happens to be serving.
@@ -75,7 +80,8 @@ got="$(routes)"
 # --- 4: NOTHING live → zero local routes, cloud intact -----------------------
 render ""
 got="$(routes)"
-if [[ "$got" == *rig-cloud-model* ]] && ! command grep -q "host.docker.internal" "$RUNTIME"; then
+if [[ "$got" == *rig-cloud-model* ]] && ! command grep -q "host.docker.internal" "$RUNTIME" \
+   && [[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "0" ]]; then
   ok "with nothing serving: no engine routes, this rig's own routes intact"
 else
   bad "empty-rig render wrong" "this rig's own routes only" "$got"
@@ -83,7 +89,7 @@ fi
 
 # --- 5: a route on a port we do NOT own is never touched ---------------------
 # Someone's hand-added local service on an unrelated port is not ours to collect.
-tmpl="services/litellm/config.yaml"; cp "$tmpl" "$BACKUP.tmpl"
+tmpl="services/litellm/config.yaml"; TMPL_BK="$(mktemp)"; cp "$tmpl" "$TMPL_BK"
 python3 - <<'PY'
 import io
 p="services/litellm/config.yaml"; s=io.open(p,encoding="utf-8").read()
@@ -99,7 +105,7 @@ io.open(p,"w",encoding="utf-8").write(s)
 PY
 render ""
 got="$(routes)"
-cp "$BACKUP.tmpl" "$tmpl"; rm -f "$BACKUP.tmpl"
+cp "$TMPL_BK" "$tmpl"; rm -f "$TMPL_BK"
 [[ "$got" == *someones-own-thing* ]] \
   && ok "a route on an unowned port is never pruned" \
   || bad "PRUNED A ROUTE WE DO NOT OWN (got: $got)"
@@ -116,8 +122,9 @@ fi
 
 # --- 7: the runtime file is GITIGNORED ---------------------------------------
 # It is rig state. Committed, every checkout conflicts on a file nobody edited.
-git check-ignore -q "$RUNTIME" \
-  && ok "runtime view is gitignored" || bad "$RUNTIME is NOT gitignored"
+# Pinned to the checkout path: a temp file proves nothing about what git ignores.
+git check-ignore -q services/litellm/config.runtime.yaml \
+  && ok "runtime view is gitignored" || bad "services/litellm/config.runtime.yaml is NOT gitignored"
 
 # --- 8: the compose mounts the RUNTIME view, not the tracked catalog ---------
 # The whole mechanism is inert if the container still mounts config.yaml, and
@@ -158,6 +165,109 @@ for r in qwen3.8-27b sgl-live gguf-live; do
     bad "$r route shape: model=$prov allowed_openai_params=$allowed drop_params=$drop"
   fi
 done
+
+# --- 10b: the `live` alias route (the club-live omp alias, #1949) -------------
+# omp's compaction and skill-compression dispatch bypass the extension's
+# before_provider_request hook, so a request can reach the gateway still named
+# `live`; it must resolve here or those requests 400. The alias mirrors the
+# FIRST route (the one the extension names) and must never BE the first route:
+# the extension's parser reads only the first route of the generated block.
+[[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "1" ]] \
+  && ok "a live alias route is rendered when something serves" \
+  || bad "live alias route missing or duplicated: $(routes)"
+# The mirror must track WHICHEVER route is first — the fixture's sort order is
+# an accident; the invariant is "alias == the first route of the block".
+first_gen=$(python3 -c "
+import io, re
+t = io.open('$RUNTIME', encoding='utf-8').read()
+b = re.search(r'BEGIN GENERATED LOCAL BLOCK[\s\S]*?END GENERATED LOCAL BLOCK', t).group(0)
+print(re.search(r'- model_name:\s*(\S+)', b).group(1))")
+[[ "$first_gen" != "live" ]] \
+  && ok "the live alias never shadows the first real route (first is $first_gen)" \
+  || bad "the live alias is the first route — the extension's parser would name it"
+[[ "$(route_field live litellm_params.api_base)" == "$(route_field "$first_gen" litellm_params.api_base)" \
+   && "$(route_field live litellm_params.model)" == "openai/$first_gen" ]] \
+  && ok "the live alias mirrors the first route's deployment (first is $first_gen)" \
+  || bad "live alias: model=$(route_field live litellm_params.model) api_base=$(route_field live litellm_params.api_base) (want a mirror of $first_gen)"
+
+# The count the sync reports counts DEPLOYMENTS; the alias is not one. Round-1
+# adjudication: the alias mirrors a deployment, never adds one — these log
+# lines are its only consumers. Pin it so a future edit can't silently drift.
+rm -f "$RUNTIME"
+cnt_out=$(C3_LITELLM_FAKE_LIVE="8113=qwen3.8-27b@262144,8142=sgl-live@163840,8020=gguf-live" bash "$SYNC" --no-restart 2>&1)
+[[ "$cnt_out" == *"rendered 3 live route(s)"* ]] \
+  && ok "the reported route count excludes the alias (3 real, not 4)" \
+  || bad "count pin: $(printf '%s\n' "$cnt_out" | command grep 'live route(s)' | tail -1)"
+
+# --- 10c: a real slug literally named `live` — no alias on top of it ----------
+# Two routes named `live` are one LiteLLM load-balancing group: the
+# hook-bypassed traffic the alias exists to save would land nondeterministically
+# on the real slug or the mirrored route. The real route resolves `live` itself.
+render "8020=live"
+[[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "1" \
+   && "$(route_field live litellm_params.api_base)" == "http://host.docker.internal:8020/v1" ]] \
+  && ok "a real slug named live renders once, without the alias duplicating it" \
+  || bad "slug named live: routes=$(routes) api_base=$(route_field live litellm_params.api_base)"
+
+# --- 10f: `live` coexisting with other routes — suppression, not just sole ----
+# The load-balance hazard is coexistence: one name, one deployment group. With
+# `live` sorting SECOND, `first` is another route — the guard must still refuse
+# to mirror it, or hook-bypassed `live` traffic lands on the real slug or the
+# mirror nondeterministically.
+render "8018=aaa,8020=live"
+[[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "1" \
+   && "$(route_field live litellm_params.api_base)" == "http://host.docker.internal:8020/v1" ]] \
+  && ok "a real live beside other routes stays alone — no mirror of the first" \
+  || bad "live coexisting: routes=$(routes) api_base=$(route_field live litellm_params.api_base)"
+
+# --- 10d: the alias follows the first SURVIVING route -------------------------
+# A saved key no container uses skips its route entirely (section 21). When the
+# skipped route would have sorted first, the alias must mirror the survivor —
+# the same route the extension's parser reads and names.
+STRATA_API_KEY=other-saved-key-999 C3_LITELLM_FAKE_LIVE="8018=aaa-skipped+keyed=seam-key-1794,8020=bbb-live" bash "$SYNC" --no-restart --quiet 2>/dev/null
+[[ "$(route_field live litellm_params.api_base)" == "$(route_field bbb-live litellm_params.api_base)" \
+   && "$(route_field live litellm_params.model)" == "openai/bbb-live" ]] \
+  && ok "with the first route key-skipped, the alias mirrors the survivor" \
+  || bad "key-skip mirror: model=$(route_field live litellm_params.model) api_base=$(route_field live litellm_params.api_base)"
+
+# --- 10e: every route key-skipped — marker present, no alias ------------------
+# `first` stays None while the live list is non-empty: the block must say so
+# (not render silent nothing) and must not alias a deployment that is not there.
+STRATA_API_KEY=other-saved-key-999 C3_LITELLM_FAKE_LIVE="8018=aaa-skipped+keyed=seam-key-1794,8020=bbb-skipped+keyed=seam-key-1794" bash "$SYNC" --no-restart --quiet 2>/dev/null
+if command grep -q "no local routes right now" "$RUNTIME" \
+   && [[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "0" ]] \
+   && ! command grep -q "host.docker.internal" "$RUNTIME"; then
+  ok "all routes key-skipped: marker present, no alias, no engine routes"
+else
+  bad "all-key-skipped render: routes=$(routes)"
+fi
+
+# --- 10g: a config.local.yaml route named `live` suppresses the alias ---------
+# The suppression must cover the user's own block too: one name across the
+# merged config is one LiteLLM load-balancing group, and hook-bypassed `live`
+# traffic (omp compaction) would split between the mirrored engine and the
+# user's own endpoint. The user's route resolves the name on its own.
+LOCAL_CFG_BK="$(mktemp)"; cp "$LOCAL_CFG" "$LOCAL_CFG_BK"
+cat > "$LOCAL_CFG" <<'YAML'
+model_list:
+  # the user's own endpoint, named exactly like the omp alias
+  - model_name: live
+    litellm_params:
+      model: openai/users-own-live
+      api_base: https://cloud.example.invalid/v1
+      api_key: os.environ/RIG_CLOUD_KEY
+YAML
+render "8020=real-slug"
+cp "$LOCAL_CFG_BK" "$LOCAL_CFG"; rm -f "$LOCAL_CFG_BK"
+if [[ "$(routes | tr ' ' '\n' | command grep -cx live)" == "1" ]] \
+   && [[ "$(route_field live litellm_params.api_base)" == "https://cloud.example.invalid/v1" ]]; then
+  ok "a config.local.yaml route named live suppresses the alias — the user's own endpoint resolves it"
+else
+  bad "cloud live collision: routes=$(routes) api_base=$(route_field live litellm_params.api_base)"
+fi
+
+# restore the section-10 fixture for every section below
+render "8113=qwen3.8-27b@262144,8142=sgl-live@163840,8020=gguf-live"
 
 # --- 11: model_info from the LIVE server (what omp's discovery: litellm reads) -
 [[ "$(route_field qwen3.8-27b model_info.max_input_tokens)" == "262144" && "$(route_field sgl-live model_info.max_input_tokens)" == "163840" ]] \
@@ -736,7 +846,7 @@ else
 fi
 rm -f "$errf"
 out="$(C3_LITELLM_FAKE_LIVE="8182=gamma-model" bash "$SYNC" --no-restart 2>/dev/null)"
-if [[ "$out" == *"-> services/litellm/config.runtime.yaml"* ]]; then
+if [[ "$out" == *"-> $RUNTIME"* ]]; then
   ok "#1945: the render log names the file it wrote"
 else
   bad "#1945: render log doesn't name the written file: $out"

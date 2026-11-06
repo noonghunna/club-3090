@@ -460,6 +460,18 @@ modelRoles:
   different local models serving at once, the first route in the rendered
   block wins — an arbitrary pick; point roles at `club/<id>` explicitly if you
   care which one answers.
+
+- The rendered block also carries a `live` alias route mirroring the first
+  serving route: omp's compaction and skill-compression dispatch bypass the
+  extension's rewrite hook, so such a request reaches the gateway still named
+  `live` and must resolve there (`test-litellm-sync.sh` pins the route).
+  Nothing serving at the last render means no alias route, and a `live`
+  request then 400s honestly like any dead name; an alias left over from an
+  engine that died since the render fails with connect errors until the next
+  re-render, like any stale route. A route named `live` elsewhere — a real
+  slug, or one of your own `config.local.yaml` routes — suppresses the alias:
+  two routes with one name would make the gateway load-balance `live` traffic
+  across both.
 - A running session moves to the new slug once its current turn completes
   (`setModel`) — only a session whose current model is a club-live one; roles
   pointed at cloud providers are never touched.
