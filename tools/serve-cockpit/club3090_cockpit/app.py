@@ -109,6 +109,8 @@ from .data import (
     KvOption,
     ModelRow,
     OptimizerReport,
+    POD_UUID_INCOMPATIBLE_ENGINES,
+    PodOffer,
     PowerCapState,
     PromoteScaffold,
     ReconcileResult,
@@ -126,6 +128,9 @@ from .data import (
     downgrade_fit_glyph,
     measurement_from_explain_columns,
     parse_ctx_label,
+    pod_card_block,
+    pod_name_for,
+    pod_port,
     rig_models,
     variant_quant,
 )
@@ -3557,6 +3562,9 @@ class ServeContext(NamedTuple):
     # ``--force`` folds in only on a GPU conflict, per the warned-Start path).
     force_required: bool = False
     weights_state: str = ""                     # present|partial|absent|downloading|unknown
+    # #1939 §4: what [p] "Add as pod" would do — cards, port, name, or why it
+    # can't (start and stop modes; None elsewhere, and the key stays hidden).
+    pod_offer: Optional[PodOffer] = None
 
 
 # ── Confirm modal (used for serve + scene + container writes) ────────────────────
@@ -3669,6 +3677,11 @@ class ConfirmActionScreen(ModalScreen):
         Binding("t", "cycle_thinking", "thinking", show=True),
         Binding("r", "reset_sampler", "reset sampler", show=True),
         Binding("T", "persist_thinking", "save as default", show=True),
+        # #1939 §4: [p] serves the slug as a POD next to what's running, on the
+        # free cards the card names, instead of replacing the Catalog model. Start
+        # and stop (the serving slug: a second copy) modes, only when the card has
+        # an offer (see _render_serve_card).
+        Binding("p", "add_as_pod", "Add as pod", show=True, priority=True),
         Binding("escape", "cancel", "Cancel", show=True),
     ]
 
@@ -4373,6 +4386,18 @@ class ConfirmActionScreen(ModalScreen):
                 "  [yellow]⚠ experimental — Force Start serves an UNVALIDATED "
                 "config (not gate-passed).[/yellow]"
             )
+        # #1939 §4: the other way to serve it — a pod next to what's running. The
+        # reconcile line below says what Start stops; this says what a pod would.
+        off = ctx.pod_offer if ctx is not None and ctx.mode in ("start", "stop") else None
+        if off is not None:
+            if off.blocked:
+                lines.append(f"  [bold]p[/bold] Add as pod  [dim]unavailable: {off.blocked}[/dim]")
+            else:
+                cards = ",".join(str(c) for c in off.cards)
+                lines.append(
+                    f"  [bold]p[/bold] Add as pod  runs alongside as pod [bold]{off.name}[/bold] "
+                    f"on GPU {cards}, port {off.port}; stops nothing"
+                )
         # The reconcile / teardown line — a placeholder until the detect lands.
         lines.append("")
         lines.append(self._reconcile_line())
@@ -4622,6 +4647,12 @@ class ConfirmActionScreen(ModalScreen):
                 return bool(resolved and mode == "stop")
             if action == "start":
                 return bool(resolved and mode == "start")
+            # #1939 §4: [p] opens the pod's own modal and then its own gated
+            # confirm on the pod's cards, so it needs no resolved detect here.
+            # On the serving slug's card (stop) it adds a second copy as a pod.
+            if action == "add_as_pod":
+                off = ctx.pod_offer if ctx is not None else None
+                return bool(mode in ("start", "stop") and off is not None and not off.blocked)
             # W4A8 int8-activation toggle — only where the card binds [a]:
             # the classic opt-in OR the inverted ship-int8 toggle (#609/#1010).
             if action == "toggle_act8":
@@ -4643,7 +4674,7 @@ class ConfirmActionScreen(ModalScreen):
             return True
         if action == "toggle_act8":
             return False
-        if action in ("cycle_thinking", "reset_sampler", "persist_thinking"):
+        if action in ("cycle_thinking", "reset_sampler", "persist_thinking", "add_as_pod"):
             return False
         if action == "confirm":
             return bool(resolved and rec.safe)
@@ -4698,6 +4729,17 @@ class ConfirmActionScreen(ModalScreen):
             return
         self.app.pop_screen()
         self.app.start_download(ctx.entry)  # type: ignore[attr-defined]
+
+    def action_add_as_pod(self) -> None:
+        """p → serve the slug as a pod next to what's running (#1939 §4). Closes
+        this card and opens the pod modal pre-filled from the offer; the write
+        then goes through its own confirm, gated on the pod's cards."""
+        ctx = self._serve_ctx
+        off = ctx.pod_offer if ctx is not None else None
+        if ctx is None or ctx.mode not in ("start", "stop") or off is None or off.blocked:
+            return
+        self.app.pop_screen()
+        self.app.open_add_as_pod(off)  # type: ignore[attr-defined]
 
     def action_cancel_download(self) -> None:
         """k in downloading mode → cancel the in-flight download (Esc just closes,
@@ -7766,20 +7808,32 @@ class PodCreateScreen(ModalScreen):
         Binding("escape", "cancel", "Cancel", show=True),
     ]
 
-    def __init__(self, free_gpus: list[int], slugs: list[str], **kwargs):
+    def __init__(self, free_gpus: list[int], slugs: list[str], *, title: str = "New pod",
+                 name: str = "", slug: str = "", cards: Optional[list[int]] = None,
+                 port: Optional[int] = None, boot: bool = False, **kwargs):
         super().__init__(**kwargs)
         self._free_gpus = free_gpus or []
         self._slugs = slugs or []
+        # #1939 §4: the Catalog's "Add as pod" opens this pre-filled (its name, the
+        # slug, the cards and a free port) and with boot=True: the app then creates
+        # AND boots the pod (pod.sh create … --up) instead of only creating it.
+        self._title = title
+        self._name = name
+        self._slug = slug
+        self._cards = list(cards) if cards else list(self._free_gpus)
+        self._port = port
+        self._boot = boot
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Label("New pod", classes="cc-title")
+            yield Label(self._title, classes="cc-title")
             yield Label("Name", classes="cc-field")
-            yield Input(placeholder="e.g. coder", id="cc-name")
+            yield Input(value=self._name, placeholder="e.g. coder", id="cc-name")
             yield Label("Model / slug", classes="cc-field")
+            preset = {"value": self._slug} if self._slug in self._slugs else {}
             yield Select(
                 [(s, s) for s in self._slugs],
-                allow_blank=True, id="cc-slug",
+                allow_blank=True, id="cc-slug", **preset,
             )
             free = ",".join(str(g) for g in self._free_gpus)
             yield Label(
@@ -7787,12 +7841,19 @@ class PodCreateScreen(ModalScreen):
                 f"free now: {free or 'none'})[/dim]",
                 classes="cc-field",
             )
-            yield Input(value=free, placeholder="e.g. 1,2", id="cc-gpus")
-            yield Label(
-                "[dim]Ctrl+S create · Esc cancel · the create is fit-checked against the "
-                "selected GPUs and confirmed before it writes[/dim]",
-                classes="cc-field",
-            )
+            yield Input(value=",".join(str(g) for g in self._cards),
+                        placeholder="e.g. 1,2", id="cc-gpus")
+            yield Label("Port  [dim](blank: one no pod or running model uses)[/dim]",
+                        classes="cc-field")
+            yield Input(value=str(self._port) if self._port else "",
+                        placeholder="e.g. 8114", id="cc-port")
+            if self._boot:
+                hint = ("[dim]Ctrl+S add · Esc cancel · the pod is created and booted next "
+                        "to what's running, after a confirm checked on these GPUs only[/dim]")
+            else:
+                hint = ("[dim]Ctrl+S create · Esc cancel · the create is fit-checked against the "
+                        "selected GPUs and confirmed before it writes[/dim]")
+            yield Label(hint, classes="cc-field")
             yield Footer()
 
     def action_save(self) -> None:
@@ -7800,13 +7861,19 @@ class PodCreateScreen(ModalScreen):
         slug_val = self.query_one("#cc-slug", Select).value
         slug = "" if slug_val is Select.BLANK else str(slug_val).strip()
         gpus = self.query_one("#cc-gpus", Input).value.strip()
+        port = self.query_one("#cc-port", Input).value.strip()
         if not (name and slug and gpus):
             self.app.notify(
                 "Name, slug and GPUs are all required.",
-                title="New pod", severity="warning", timeout=4,
+                title=self._title, severity="warning", timeout=4,
             )
             return
-        self.dismiss({"name": name, "slug": slug, "gpus": gpus})
+        if port and not port.isdigit():
+            self.app.notify("The port must be a number, or blank.",
+                            title=self._title, severity="warning", timeout=4)
+            return
+        self.dismiss({"name": name, "slug": slug, "gpus": gpus, "port": port,
+                      "boot": self._boot})
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -15436,6 +15503,8 @@ class CockpitApp(App):
                     entry=entry,
                     stop_plan=stop_plan,
                     serving_container=con.name,
+                    # #1939 §4: a second copy of the serving model, as a pod.
+                    pod_offer=self._pod_offer_for(entry),
                 )
             # Serving slug matched but we couldn't resolve the container — fall
             # back to a Start presentation (no stop target to offer).
@@ -15455,6 +15524,7 @@ class CockpitApp(App):
             entry=entry,
             weights_state=ws,
             force_required=not _status_is_functional(entry.status),
+            pod_offer=self._pod_offer_for(entry),
         )
 
     def _operate_primary(self) -> None:
@@ -16416,12 +16486,82 @@ class CockpitApp(App):
         )
 
     def _on_pod_create(self, result) -> None:
-        """Modal dismiss → build the pod.sh create WRITE + route through the
-        confirm gate. ``result`` is ``{"name","slug","gpus"}`` or ``None``."""
+        """Modal dismiss → build the write + route it through the confirm gate.
+        ``result`` is ``{"name","slug","gpus","port","boot"}`` or ``None``.
+        ``boot`` (the Catalog's "Add as pod", #1939 §4) → create AND boot as one
+        write gated on the pod's cards; else the plain pod.sh create of [N]. A
+        blank port gets one that no pod or running model holds."""
         if not result:
             return
-        plan = self._data.pod_create_plan(result["name"], result["gpus"], result["slug"])
+        name, slug, gpus = result["name"], result["slug"], str(result["gpus"])
+        try:
+            cards = [int(x) for x in gpus.split(",") if x.strip()]
+        except ValueError:
+            self.notify("GPUs must be card indices, e.g. 1 or 1,2.",
+                        title="Pod", severity="warning", timeout=4)
+            return
+        port_txt = str(result.get("port") or "").strip()
+        port = int(port_txt) if port_txt.isdigit() else self._free_pod_port(slug)
+        if result.get("boot"):
+            plan = self._data.pod_add_plan(name, cards, slug, port)
+        else:
+            plan = self._data.pod_create_plan(name, gpus, slug, port=port)
         self.push_screen(ConfirmActionScreen(plan))
+
+    # ── #1939 §4 · the Catalog's "Add as pod" ─────────────────────────────────────────
+
+    def _estate_pods(self) -> list[dict]:
+        """The estate's pods (up or down) off the last estate poll."""
+        st = getattr(self, "_last_estate_state", None)
+        est = ((getattr(st, "estate_report", None) or {}).get("active_estate") or {}) if st else {}
+        inst = est.get("instances") if isinstance(est, dict) else None
+        return [i for i in (inst or []) if isinstance(i, dict)]
+
+    def _free_pod_port(self, slug: str) -> int:
+        """A port for a new pod of ``slug``: estate_cli's default (the slug's port
+        + 20 per pod), moved past every pod's port, every running model's and any
+        the host holds. estate_cli alone steps around other pods only."""
+        pods = self._estate_pods()
+        used = {int(p["port"]) for p in pods if str(p.get("port") or "").isdigit()}
+        st = getattr(self, "_last_estate_state", None)
+        if st is not None:
+            used |= {r.port for r in rig_models(st, self._models_card_map()) if r.port}
+        base = next((int(r.port) for r in (self._variants or [])
+                     if getattr(r, "slug", "") == slug and getattr(r, "port", 0)), 8000)
+        return pod_port(base, len(pods), used)
+
+    def _pod_offer_for(self, entry: CatalogEntry) -> PodOffer:
+        """What [p] "Add as pod" on ``entry``'s serve card would do: its free cards
+        (as many as the slug's TP, a consecutive run first), a free port and a
+        unique pod name — or why it can't be offered."""
+        slug = entry.slug
+        tp = self._data.slug_tp(slug)
+        if (entry.engine or "") in POD_UUID_INCOMPATIBLE_ENGINES:
+            return PodOffer(slug=slug, tp=tp, blocked=(
+                "this engine can't take the GPU UUID a pod pins its cards with "
+                "(docs/PODS.md, Known incompatibility); Start serves it"))
+        if getattr(self, "_last_estate_state", None) is None:
+            return PodOffer(slug=slug, tp=tp, blocked="the rig's cards haven't been read yet")
+        free = self._pod_free_gpus()
+        cards = pod_card_block(tp, free)
+        if not cards:
+            have = ",".join(str(c) for c in free) or "none"
+            return PodOffer(slug=slug, tp=tp, blocked=(
+                f"needs {tp} free GPU{'s' if tp != 1 else ''}; free now: {have}"))
+        taken = {str(p.get("name") or "") for p in self._estate_pods()}
+        return PodOffer(slug=slug, name=pod_name_for(slug, taken), cards=tuple(cards),
+                        port=self._free_pod_port(slug), tp=tp)
+
+    def open_add_as_pod(self, offer: PodOffer) -> None:
+        """[p] on the Catalog serve card → the pod modal, pre-filled from the offer
+        (its name, this slug, its cards, a free port). Ctrl+S → the create-and-boot
+        write through a confirm checked on the pod's cards only."""
+        self.push_screen(
+            PodCreateScreen(self._pod_free_gpus(), [offer.slug], title="Add as pod",
+                            name=offer.name, slug=offer.slug, cards=list(offer.cards),
+                            port=offer.port, boot=True),
+            self._on_pod_create,
+        )
 
     def action_power_cap(self) -> None:
         """[c] in Operate · Orchestration: open the power-cap MENU — apply the

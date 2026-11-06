@@ -8,6 +8,7 @@
 #
 # Usage:
 #   bash scripts/pod.sh create <name> --gpus 1,2 --slug vllm/dual [--port N]
+#   bash scripts/pod.sh create <name> --gpus 1 --slug <slug> --up   # create, then boot it
 #   bash scripts/pod.sh list [--json]
 #   bash scripts/pod.sh status [--json]
 #   bash scripts/pod.sh up <name>        # boot just this pod
@@ -31,10 +32,13 @@ set -euo pipefail
 # processes and nested scripts inherit it. Guarded by test-locale-utf8.sh.
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-ESTATE_CLI="${ROOT_DIR}/scripts/lib/profiles/estate_cli.py"
+# ESTATE_HELPER points pod.sh at another estate CLI, as it does launch.sh: the tests'
+# stub, so `create --up` is checked without booting a model.
+ESTATE_CLI="${ESTATE_HELPER:-${ROOT_DIR}/scripts/lib/profiles/estate_cli.py}"
 
 usage() {
-  sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # The header comment only: every line from 2 up to the first non-comment line.
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
 }
 
 cmd="${1:-}"
@@ -42,7 +46,35 @@ cmd="${1:-}"
 shift || true
 
 case "$cmd" in
-  create|list|status|rm)
+  create)
+    # --up (#1939, c3's Catalog "Add as pod"): boot the new pod right after creating
+    # it, as ONE command, so a caller gates one write on the pod's cards. A create
+    # that fails boots nothing; a boot that fails leaves the pod in the file, down.
+    up=0
+    args=()
+    file_args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --up) up=1; shift ;;
+        --file)
+          args+=("$1" "${2:-}"); file_args=(--file "${2:-}"); shift
+          if [[ $# -gt 0 ]]; then shift; fi ;;
+        --file=*) args+=("$1"); file_args=("$1"); shift ;;
+        *) args+=("$1"); shift ;;
+      esac
+    done
+    if [[ $up -eq 0 ]]; then
+      exec python3 "$ESTATE_CLI" create "${args[@]}"
+    fi
+    name="${args[0]:-}"
+    if [[ -z "$name" || "$name" == -* ]]; then
+      echo "pod.sh create <name> … --up: give the pod's name first" >&2
+      exit 2
+    fi
+    python3 "$ESTATE_CLI" create "${args[@]}" || exit $?
+    exec python3 "$ESTATE_CLI" boot --only "$name" "${file_args[@]}"
+    ;;
+  list|status|rm)
     exec python3 "$ESTATE_CLI" "$cmd" "$@"
     ;;
   up)

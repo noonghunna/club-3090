@@ -79,4 +79,41 @@ PY
 "${CL[@]}" rm chat0 --file "$EST" >/dev/null 2>&1 || fail "rm chat0 should succeed"
 grep -q 'name: chat0' "$EST" && fail "chat0 still in estate file after rm"
 
-echo "PASS: pod.sh create/list/status/rm + D1 count!=TP + GPU-collision rejects (fake-GPU)"
+# 8. create --up (#1939, c3's Catalog "Add as pod"): ONE command that creates the
+#    pod, then boots just that pod, with the estate file forwarded to both. A stub
+#    estate CLI (ESTATE_HELPER, which launch.sh honours too) logs each call and
+#    exits, so nothing boots.
+STUB="$TMP/estate-stub.py"
+cat > "$STUB" <<'PY'
+import os, sys
+with open(os.environ["STUB_LOG"], "a", encoding="utf-8") as f:
+    f.write(" ".join(sys.argv[1:]) + "\n")
+sys.exit(int(os.environ.get("STUB_CREATE_RC", "0")) if sys.argv[1:2] == ["create"] else 0)
+PY
+export STUB_LOG="$TMP/stub.log"
+: > "$STUB_LOG"
+ESTATE_HELPER="$STUB" "${CL[@]}" create pal --gpus 0 --slug vllm/minimal --port 8099 --up --file "$EST" >/dev/null 2>&1 \
+  || fail "create --up should create, then boot"
+want="create pal --gpus 0 --slug vllm/minimal --port 8099 --file $EST
+boot --only pal --file $EST"
+[[ "$(cat "$STUB_LOG")" == "$want" ]] \
+  || fail "create --up must call create (without --up), then boot --only pal with the same --file; got: $(cat "$STUB_LOG")"
+# A create that fails boots nothing, and its failure is the exit code.
+: > "$STUB_LOG"
+if STUB_CREATE_RC=1 ESTATE_HELPER="$STUB" "${CL[@]}" create pal --gpus 0 --slug vllm/minimal --up --file "$EST" >/dev/null 2>&1; then
+  fail "create --up must fail when the create fails"
+fi
+[[ "$(cat "$STUB_LOG")" == "create pal --gpus 0 --slug vllm/minimal --file $EST" ]] \
+  || fail "a failed create must not boot; got: $(cat "$STUB_LOG")"
+# Without --up, create is one create and nothing else.
+: > "$STUB_LOG"
+ESTATE_HELPER="$STUB" "${CL[@]}" create pal --gpus 0 --slug vllm/minimal --file "$EST" >/dev/null 2>&1 \
+  || fail "a plain create through the stub should succeed"
+[[ "$(cat "$STUB_LOG")" == "create pal --gpus 0 --slug vllm/minimal --file $EST" ]] \
+  || fail "a plain create must not boot; got: $(cat "$STUB_LOG")"
+# --up needs the name first (it is what the boot names).
+if ESTATE_HELPER="$STUB" "${CL[@]}" create --gpus 0 --slug vllm/minimal pal --up >/dev/null 2>&1; then
+  fail "create --up with the name not first must be refused"
+fi
+
+echo "PASS: pod.sh create/list/status/rm + D1 count!=TP + GPU-collision rejects (fake-GPU) + create --up"

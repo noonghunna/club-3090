@@ -740,6 +740,81 @@ def busy_cards(rows: list[ModelRow]) -> set[int]:
     return {c for r in rows if r.is_up for c in r.cards}
 
 
+# ── #1939 §4: the Catalog's "Add as pod" ────────────────────────────────────────
+
+# Engines whose pinned vLLM build can't take the GPU UUID a pod pins its cards
+# with (a bare int() on CUDA_VISIBLE_DEVICES): a pod of one crash-loops a few
+# seconds into start-up (D#1936). docs/PODS.md, "Known incompatibility", names the
+# same engines; test_pod_incompatible_engines_match_pods_md keeps the two in step.
+POD_UUID_INCOMPATIBLE_ENGINES = frozenset({"vllm-gemma-stable", "vllm-gemma4-unified"})
+
+
+@dataclass(frozen=True)
+class PodOffer:
+    """What the Catalog serve card's "Add as pod" would do, worked out before the
+    user presses it: the cards (free ones, as many as the slug's TP), a port that
+    no pod, running model or host process holds, and a pod name. ``blocked`` says
+    why it can't be offered ("" = it can)."""
+
+    slug: str
+    name: str = ""
+    cards: tuple = ()
+    port: int = 0
+    tp: int = 1
+    blocked: str = ""
+
+
+def pod_card_block(tp: int, free: list[int]) -> list[int]:
+    """The cards an "Add as pod" pre-fills: the first run of ``tp`` consecutive
+    free cards, else the first ``tp`` free ones (estate_cli's default_gpu_block
+    rule). [] when fewer than ``tp`` are free."""
+    cards = sorted(set(free))
+    if tp < 1 or len(cards) < tp:
+        return []
+    for start in cards:
+        block = list(range(start, start + tp))
+        if all(c in cards for c in block):
+            return block
+    return cards[:tp]
+
+
+def host_port_free(port: int) -> bool:
+    """True when nothing on this host holds ``port``: a TCP bind on every
+    interface fails while a container publishes it or any process listens on it,
+    on any address. SO_REUSEADDR so connections still closing (TIME_WAIT, e.g. a
+    model stopped seconds ago) don't count; a listener still does."""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", port))
+        return True
+    except OSError:
+        return False
+
+
+def pod_port(base: int, slot: int, used: set[int], is_free=None) -> int:
+    """A pod's port: estate_cli's default (the slug's port + 20 per pod), moved up
+    past every port in ``used`` and every port the host already holds.
+    estate_cli only steps around other pods' ports, so a pod added next to a
+    switch.sh model of the same slug took that model's port."""
+    is_free = is_free or host_port_free   # looked up per call: tests stub it
+    port = base + 20 * slot
+    while port <= 65535 and (port in used or not is_free(port)):
+        port += 1
+    return port
+
+
+def pod_name_for(slug: str, taken: set[str]) -> str:
+    """A pod name from the slug's last part, in estate_cli's safe_name alphabet
+    ([a-z0-9_-]), unique among ``taken``."""
+    base = re.sub(r"[^a-z0-9_-]+", "-", slug.rsplit("/", 1)[-1].lower()).strip("-_") or "pod"
+    name, n = base, 2
+    while name in taken:
+        name, n = f"{base}-{n}", n + 1
+    return name
+
+
 # ── Reconcile gate ──────────────────────────────────────────────────────────────
 
 
@@ -931,7 +1006,7 @@ class ActionPlan:
     The reconcile gate is consulted BEFORE execution.
     """
 
-    kind: str                           # "serve" | "set_default" | "clear_default" | "scene" | "estate_down" | "container" | "validation" | "submit_bench" | "power_cap" | "power_cap_sweep" | "prune" | "container_rm" | "pod_create" | "weights_remove"
+    kind: str                           # "serve" | "set_default" | "clear_default" | "scene" | "estate_down" | "container" | "validation" | "submit_bench" | "power_cap" | "power_cap_sweep" | "prune" | "container_rm" | "pod_create" | "pod_up" | "pod_add" | "weights_remove"
     cmd: list[str]
     description: str = ""
     is_write: bool = True

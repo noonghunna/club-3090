@@ -5105,3 +5105,74 @@ class TestSingleContainerWritesTarget:
         assert executed is True
         assert [c for c in runner.calls if c[:2] == ["docker", "stop"]] == []
         assert [c.name for c in rec.stays_up] == ["club3090-alpha"]
+
+
+# ── #1939 §4: the Catalog's "Add as pod" ─────────────────────────────────────────
+
+
+class TestAddAsPod1939:
+    def test_card_block_takes_a_consecutive_run_first(self):
+        from club3090_cockpit.data import pod_card_block
+        assert pod_card_block(1, [2, 3]) == [2]
+        assert pod_card_block(2, [0, 2, 3]) == [2, 3]     # the run, not 0,2
+        assert pod_card_block(2, [0, 2]) == [0, 2]        # no run: first two free
+        assert pod_card_block(2, [3]) == []               # too few free
+        assert pod_card_block(4, [0, 1, 2, 3]) == [0, 1, 2, 3]
+
+    def test_port_steps_past_used_and_host_held_ports(self):
+        from club3090_cockpit.data import pod_port
+        assert pod_port(8020, 1, set(), is_free=lambda p: True) == 8040
+        assert pod_port(8020, 0, {8020}, is_free=lambda p: True) == 8021
+        assert pod_port(8020, 0, set(), is_free=lambda p: p != 8020) == 8021
+
+    def test_name_is_safe_and_unique(self):
+        from club3090_cockpit.data import pod_name_for
+        assert pod_name_for("llamacpp/mimo9b-single-vision", set()) == "mimo9b-single-vision"
+        assert pod_name_for("vllm/minimal", {"minimal"}) == "minimal-2"
+        assert pod_name_for("vllm/minimal", {"minimal", "minimal-2"}) == "minimal-3"
+        assert pod_name_for("x/Qwen3.8 FP8", set()) == "qwen3-8-fp8"
+
+    def test_add_plan_is_one_gated_create_and_boot(self):
+        cd = CockpitData(ROOT)
+        plan = cd.pod_add_plan("minimal", [3, 2], "vllm/dual", 8030)
+        assert plan.kind == "pod_add"
+        assert plan.cmd == ["bash", "scripts/pod.sh", "create", "minimal", "--gpus", "3,2",
+                            "--slug", "vllm/dual", "--port", "8030", "--up"]
+        assert plan.requires_reconcile is True and plan.gpus == [2, 3]
+
+    def test_create_plan_passes_a_port_when_given(self):
+        cd = CockpitData(ROOT)
+        assert cd.pod_create_plan("c", "1", "vllm/minimal").cmd[-2:] == ["--slug", "vllm/minimal"]
+        assert cd.pod_create_plan("c", "1", "vllm/minimal", port=8041).cmd[-2:] == ["--port", "8041"]
+
+    def test_slug_tp_reads_the_registry(self):
+        cd = CockpitData(ROOT)
+        assert cd.slug_tp("vllm/minimal") == 1
+        assert cd.slug_tp("vllm/dual") == 2
+        assert cd.slug_tp("no/such-slug") == 1
+
+    @pytest.mark.asyncio
+    async def test_add_on_a_free_card_runs_next_to_two_pods(self):
+        """Acceptance: with pods on cards 0 and 2, adding a pod on card 1 is clear,
+        names both as staying up, and runs exactly the create-and-boot command."""
+        wr = FakeWriteRunner()
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]})
+        cd = _cards_cd(runner, gpus, wr)
+        plan = cd.pod_add_plan("gamma", [1], "vllm/minimal", 8060)
+        executed, rec, _ = await cd.execute_action(plan)
+        assert executed is True and rec.safe is True
+        assert {c.name for c in rec.stays_up} == {"club3090-alpha", "club3090-beta"}
+        assert [s["cmd"] for s in wr.started] == [plan.cmd]
+        assert [c for c in runner.calls if c[:2] == ["docker", "stop"]] == []
+
+    @pytest.mark.asyncio
+    async def test_add_on_a_held_card_is_refused(self):
+        """Positive control: the same add on beta's card is a collision."""
+        wr = FakeWriteRunner()
+        runner, gpus = _cards_runner({"alpha": [0], "beta": [2]})
+        cd = _cards_cd(runner, gpus, wr)
+        executed, rec, _ = await cd.execute_action(
+            cd.pod_add_plan("gamma", [2], "vllm/minimal", 8060))
+        assert executed is False and rec.safe is False
+        assert {c.name for c in rec.conflicts} == {"club3090-beta"}
+        assert wr.started == []

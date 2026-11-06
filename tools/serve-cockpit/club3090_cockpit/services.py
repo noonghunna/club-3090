@@ -3947,17 +3947,48 @@ class CockpitData:
             requires_reconcile=False,
         )
 
-    def pod_create_plan(self, name: str, gpus: str, slug: str) -> ActionPlan:
+    def pod_create_plan(self, name: str, gpus: str, slug: str, port: Optional[int] = None) -> ActionPlan:
         """C2 (#610 Phase C): write a new pod to the estate file via
         pod.sh create. A pure FILE write (no GPU claimed until `up`), so it
         skips the reconcile gate — but pod.sh create itself runs the D1
-        fit-vs-set + validate_estate gates, so a bad set is refused there."""
+        fit-vs-set + validate_estate gates, so a bad set is refused there.
+        ``port`` (#1939): estate_cli's own default steps around other pods'
+        ports only, so the app passes one no running model holds."""
+        cmd = ["bash", "scripts/pod.sh", "create", name, "--gpus", gpus, "--slug", slug]
+        if port:
+            cmd += ["--port", str(port)]
         return ActionPlan(
             kind="pod_create",
-            cmd=["bash", "scripts/pod.sh", "create", name, "--gpus", gpus, "--slug", slug],
-            description=f"pod.sh create {name} --gpus {gpus} --slug {slug}",
+            cmd=cmd,
+            description=" ".join(cmd[2:]),
             requires_reconcile=False,
         )
+
+    def pod_add_plan(self, name: str, gpus: list[int], slug: str, port: int) -> ActionPlan:
+        """#1939 §4: the Catalog's "Add as pod" — create the pod and boot it as ONE
+        command (``pod.sh create … --up``), gated on exactly its cards, so the
+        models on other cards are neither collisions nor torn down. A create that
+        fails boots nothing; a boot that fails leaves the pod in the estate, down."""
+        cards = [int(c) for c in gpus]
+        csv = ",".join(str(c) for c in cards)
+        cmd = ["bash", "scripts/pod.sh", "create", name, "--gpus", csv, "--slug", slug,
+               "--port", str(int(port)), "--up"]
+        return ActionPlan(
+            kind="pod_add",
+            cmd=cmd,
+            description=" ".join(cmd[2:]),
+            requires_reconcile=True,
+            gpus=sorted(set(cards)),
+        )
+
+    def slug_tp(self, slug: str) -> int:
+        """A slug's tensor-parallel size from the registry: the card count
+        `pod.sh create` enforces (estate_cli's fit_slug_on_gpuset)."""
+        try:
+            from scripts.lib.profiles.compose_registry import get_registry
+            return max(1, int((get_registry().get(slug) or {}).get("tp") or 1))
+        except Exception:
+            return 1
 
     def pod_up_plan(self, name: str, cards: list[int]) -> ActionPlan:
         """#1939: boot ONE pod (``pod.sh up <name>``, estate_cli boot --only) on
