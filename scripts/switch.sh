@@ -1324,20 +1324,37 @@ gpu_preflight() {
   fi
   # Free MiB per GPU. Tolerate small overhead (driver, X server) — abort
   # if any selected GPU has <80% of its total memory free.
+  # A selection names cards by index or by UUID: CLUB3090_GPU and launch.sh --gpus
+  # export UUIDs (#610). This loop used to match indices only, so a UUID selection
+  # matched no card and the check passed with the pinned card full. A token that
+  # names no card here (a MIG id, a partial UUID) means every card is checked.
   local mem_query
-  mem_query=$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits 2>/dev/null) || return
+  mem_query=$(nvidia-smi --query-gpu=index,uuid,memory.free,memory.total --format=csv,noheader,nounits 2>/dev/null) || return
   local selector="${NVIDIA_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
   local selector_specific=0
   if [[ -n "$selector" && "$selector" != "all" && "$selector" != "void" ]]; then
     selector_specific=1
+    local tok known
+    known=",$(awk -F', *' '{printf "%s,%s,", $1, $2}' <<< "$mem_query")"
+    IFS=',' read -ra _gp_tokens <<< "$selector"
+    for tok in "${_gp_tokens[@]}"; do
+      tok="${tok//[[:space:]]/}"
+      if [[ -n "$tok" && "$known" != *",${tok},"* ]]; then
+        echo "[switch] GPU selection '${tok}' names no card here; checking every card." >&2
+        selector_specific=0
+        break
+      fi
+    done
+    selector=",${selector//[[:space:]]/},"
   fi
   local bad=0
-  while IFS=',' read -r idx free total; do
+  while IFS=',' read -r idx uuid free total; do
     free=$(echo "$free" | tr -d ' ')
     total=$(echo "$total" | tr -d ' ')
     idx=$(echo "$idx" | tr -d ' ')
+    uuid=$(echo "$uuid" | tr -d ' ')
     [[ -z "$free" || -z "$total" ]] && continue
-    if [[ "$selector_specific" -eq 1 && ",${selector}," != *",${idx},"* ]]; then
+    if [[ "$selector_specific" -eq 1 && "$selector" != *",${idx},"* && "$selector" != *",${uuid},"* ]]; then
       continue
     fi
     # Require ≥80% free. Compose default gpu-memory-utilization is 0.92.
