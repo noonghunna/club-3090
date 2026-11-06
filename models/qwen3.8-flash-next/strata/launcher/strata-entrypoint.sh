@@ -29,6 +29,12 @@
 # setup (after CONTEXT or KV changed) keeps the keys it doesn't write itself and our --spec too; once
 # the server answers, what it runs from is checked anyway, and when a setting didn't survive, Strata
 # restarts once to read it.
+#
+# The server starts from the launch config, not the run config: Strata 0.2.11's launch writes
+# $XDG_STATE_HOME/strata/launch/<PRESET>.json from the run config at every start and keeps that file's
+# user_args from one launch to the next. Before every start `strata_config.py forget` takes our --spec
+# and rope flags out of them, or a value that setup once folded in would win over every later setting
+# (#1958 follow-up). After the start the launch config is what the check reads.
 set -eu
 umask 0002                   # group-writable, so the launcher's user can clear /data
 
@@ -52,11 +58,13 @@ export MODEL=IQ3_S FAMILY MODEL_PATH=/gguf VISION=off
 export GPUS="${STRATA_START_GPUS:-0,1}"
 export CONTEXT="${CONTEXT:-131072}"
 export PRESET="club-$FAMILY"
+launch="${XDG_STATE_HOME:-/data/state}/strata/launch/$PRESET.json"   # what the server starts from (Strata 0.2.11+)
 
 SETUP_PORT=8090                              # the first start's setup serves here, unpublished
 
 apply() {
   "$PY" "$knobs" apply "$inst" "$inst"
+  if [ -f "$launch" ]; then "$PY" "$knobs" forget "$launch"; fi
   sha256sum "$inst" > "$mark"
 }
 healthy() {  # <port>
@@ -91,14 +99,20 @@ else
 fi
 
 start "${PORT:-8080}"
+running() {  # what this start runs of our settings: the launch config it started from (the run config before 0.2.11)
+  if [ -f "$launch" ]; then "$PY" "$knobs" effective "$launch"; else "$PY" "$knobs" effective "$inst"; fi
+}
 if [ -f "$inst" ] && ! sha256sum -c "$mark" >/dev/null 2>&1; then
-  # setup ran during this start anyway: apply again, and restart once if what Strata runs from changed
-  before="$("$PY" "$knobs" effective "$inst")"
+  # setup ran during this start anyway: apply again, and restart once if what Strata runs differs from the settings
+  before="$(running)"
   apply
   if [ "$before" != "$("$PY" "$knobs" effective "$inst")" ]; then
     echo "[strata-recipe] setup ran during this start and dropped a setting: restarting Strata once to read it"
     stop
     exec /opt/strata/entrypoint.sh run
   fi
+elif [ -f "$inst" ] && [ "$(running)" != "$("$PY" "$knobs" effective "$inst")" ]; then
+  echo "[strata-recipe] WARNING: Strata runs $(running)" >&2
+  echo "[strata-recipe]          where the settings give $("$PY" "$knobs" effective "$inst")" >&2
 fi
 wait "$child"
