@@ -40,21 +40,32 @@ keeps keys it doesn't write itself across a new setup, so they would otherwise l
 back to setup's own value, then writes the settings in the environment. SPEC_N goes into args; at its next
 run setup keeps it as an option of the user's (user_args, folded into args and args_written), which is how
 a later apply knows it is ours. Setup's own --spec is remembered in CLUB3090_STRATA_SETUP_SPEC_FILE, since
-after an override setup writes ours instead. The rope pair is tricky the other way: past the trained 262144
-setup resolves --rope-scaling/--rope-scale itself (yarn with a derived factor; it refuses no scaling there), so a
-rope flag sitting in args_written with no matching user_args entry is setup's own resolution and strip LEAVES it --
-deleting it would silently unscale a long-context boot. Ours are the ones in user_args or in args beyond
-args_written; a removed rope setting deletes ours and setup re-derives its own at its next run (a CONTEXT change
-re-runs it). When our flag sits in args_written too but with a different value, it is an override of setup's
-resolution: strip restores setup's value rather than deleting, so the boot keeps its scaling. CONTEXT and KV
-belong to setup (they size the KV and the expert cache): Strata's own entrypoint passes them to
-`strata launch`, which runs setup again when they change; here they are only checked.
+after an override setup writes ours instead. The rope pair needs no record: setup is never given a rope option here
+(Strata's launch runs it with the context alone), so its own rope flags follow from the run config's --max-context
+(setup.py resolve_rope): none inside the trained 262144, and past it yarn with factor context / 262144 (setup refuses
+no scaling there). strip puts both args and args_written back to that, whatever an earlier setup folded into
+args_written: a carried flag of ours sits there too, and once its user_args entry is gone it can't be told from
+setup's own any other way (#1958 follow-up). CONTEXT and KV belong to setup (they size the KV and the expert
+cache): Strata's own entrypoint passes them to `strata launch`, which runs setup again when they change; here they
+are only checked.
+
+Strata 0.2.11's launch keeps a second copy, the launch config /data/state/strata/launch/<preset>.json, which is
+what the server starts from (strata_control/arg_layers.py). Each launch builds it from the run config plus the
+previous launch config's user_args and hand edits, which win. When setup folds our --spec or rope flags into the
+run config's user_args, the launch copies them there, and from then on every launch kept them over the run config:
+a changed or removed SPEC_N / ROPE_* never reached the engine, even across later setups. `forget` takes our flags
+out of the launch config before every start, keeping what it starts unchanged, so the next launch takes them from
+the run config again.
 
   strata_config.py validate               check the settings in the environment (exit 2 on a bad one)
   strata_config.py apply <in> <out>       write <out> = <in> with the settings (<in> = <out>: in place;
                                           an unchanged result is not written, so its bytes stay put)
-  strata_config.py effective <config>     print what the server runs from (args and the managed keys;
-                                          not setup's own bookkeeping, args_written and user_args)
+  strata_config.py forget <launch config> take our flags out of the launch config's user_args (in place;
+                                          the file keeps its mode, and an unchanged one its bytes)
+  strata_config.py effective <config>     print what the server runs of our settings: --spec and the rope pair
+                                          (user_args over args, as the server merges them; not args_written)
+                                          and the managed keys; the entrypoint compares the launch config's
+                                          with the run config's after the start
 """
 import json
 import os
@@ -65,6 +76,7 @@ EFFORTS = {"none": "none", "low": "low", "medium": "medium", "high": "high",
 KV_FORMATS = ("fp16", "int8", "q4_0", "k8v4")  # `strata launch --kv` choices; strata-pin-bump.sh checks each new image still offers them
 ROPE_METHODS = ("none", "linear", "yarn")      # `strata --help`: --rope-scaling choices (setup.py's resolve_rope set)
 ROPE_FLAGS = ("--rope-scaling", "--rope-scale")
+MANAGED_FLAGS = ("--spec",) + ROPE_FLAGS       # the engine options our settings write (SPEC_N, ROPE_SCALING, ROPE_SCALE)
 TRAINED_CTX = 262144                           # the model's trained length: setup.py picks yarn past it (factor ctx/262144, min 1) and refuses none; --yarn-orig-ctx's default
 MANAGED = ("reasoning_effort", "reasoning_budget_tokens", "aliases")
 MANAGED_SAMPLING = ("temperature", "top_p", "top_k", "min_p", "presence_penalty", "repetition_penalty")
@@ -203,23 +215,67 @@ def setup_spec_record(value=None):
         return None
 
 
-def set_arg(args, flag, value):
+def del_arg(args, flag):
+    """args without flag and its value, every time it appears."""
     args = list(args)
-    if flag in args[:-1]:
-        args[args.index(flag) + 1] = value
-    else:
-        args += [flag, value]
+    while flag in args[:-1]:
+        i = args.index(flag)
+        del args[i:i + 2]
     return args
 
 
+def set_arg(args, flag, value):
+    """args with flag's value set where it first appears (appended when absent), and any later copy of it removed."""
+    args = list(args)
+    if flag in args[:-1]:
+        i = args.index(flag)
+        return args[:i] + [flag, value] + del_arg(args[i + 2:], flag)
+    return args + [flag, value]
+
+
+def groups(args):
+    """An argument list as option groups (an option and the values after it), as Strata's user_args.groups splits them."""
+    out = []
+    for a in args if isinstance(args, list) else []:
+        a = str(a)
+        if a.startswith("--") or not out:
+            out.append([a])
+        else:
+            out[-1].append(a)
+    return out
+
+
+def merged(args, user):
+    """args with user_args over them: what serve/server.py engine_args (user_args.merge) starts the engine with."""
+    ug = groups(user)
+    mine = {g[0] for g in ug}
+    return [t for g in [g for g in groups(args) if g[0] not in mine] + ug for t in g]
+
+
+def setup_rope(cfg):
+    """The rope flags setup itself writes for this run config's context ({flag: value}; {} for none): setup.py resolve_rope
+    with no rope option given, which is how Strata's launch runs it -- nothing inside the trained 262144, past it yarn with
+    factor context / 262144, written with %g. None when the config names no --max-context: then args_written's are taken
+    as setup's."""
+    ctx = arg_value(cfg.get("args_written") or cfg.get("args") or [], "--max-context")
+    if ctx is None or not str(ctx).isdigit():
+        return None
+    ctx = int(ctx)
+    if ctx <= TRAINED_CTX:
+        return {}
+    return {"--rope-scaling": "yarn", "--rope-scale": "%g" % max(1.0, ctx / TRAINED_CTX)}
+
+
 def strip_managed(cfg):
-    """Take out what an earlier apply wrote: the managed keys, --spec back to setup's own value, and our rope flags.
+    """Take out what an earlier apply wrote: the managed keys, --spec back to setup's own value, and the rope pair back
+    to setup's own for the context.
 
     Strata 0.2's setup keeps an option it doesn't choose itself as user_args (what args has beyond
     args_written) and folds it into both at its next run, so an --spec of ours is recognised by user_args.
-    A rope flag is ours the same way, but the other direction matters too: past the trained 262144 setup writes
-    --rope-scaling/--rope-scale itself, and a rope flag with no user_args entry is that resolution -- ours is
-    deleted, setup's is left standing (stripping it would unscale a long-context boot into extrapolation)."""
+    Rope flags are put back to setup_rope in args and args_written alike: a folded flag of ours also sits in
+    args_written, and after the first strip has taken its user_args entry out it looks like setup's own (#1958
+    follow-up: a removed ROPE_SCALING stayed in force). Past the trained 262144 that keeps setup's yarn, so a
+    removed setting never unscales a long-context boot."""
     for k in MANAGED:
         cfg.pop(k, None)
     sampling = {k: v for k, v in (cfg.get("sampling") or {}).items() if k not in MANAGED_SAMPLING}
@@ -228,26 +284,16 @@ def strip_managed(cfg):
     else:
         cfg.pop("sampling", None)
     user = list(cfg.get("user_args") or [])
-    written = cfg.get("args_written") or []
     for flag in ROPE_FLAGS:
-        # ours = in user_args (setup folded it) or in args beyond args_written; a rope flag only in args_written is
-        # setup's own resolution for this context (it auto-yarns past the trained length) and stays. A third state:
-        # the flag in args AND in args_written with a DIFFERENT value — that is our override of setup's resolution,
-        # and strip restores setup's value (deleting would unscale the boot; leaving ours is a stale override).
-        args = cfg.get("args") or []
-        ours = flag in user or (flag in args[:-1] and flag not in written)
-        override = (not ours) and flag in args[:-1] and flag in written \
-            and arg_value(args, flag) != arg_value(written, flag)
-        if flag in user:
-            i = user.index(flag)
-            del user[i:i + 2]
-        if ours and flag in (cfg.get("args") or [])[:-1]:
-            args = list(cfg["args"])
-            i = args.index(flag)
-            del args[i:i + 2]
-            cfg["args"] = args            # a removed rope setting is gone; setup re-derives its own at its next run
-        elif override:
-            cfg["args"] = set_arg(cfg["args"], flag, arg_value(written, flag))
+        user = del_arg(user, flag)                     # in user_args: setup folded ours
+    theirs = setup_rope(cfg)
+    if theirs is None:                                 # no context to derive from: args_written's are setup's
+        written = cfg.get("args_written") or []
+        theirs = {f: arg_value(written, f) for f in ROPE_FLAGS if arg_value(written, f) is not None}
+    for key in ("args", "args_written"):
+        if key in cfg:
+            for flag in ROPE_FLAGS:
+                cfg[key] = set_arg(cfg[key] or [], flag, theirs[flag]) if flag in theirs else del_arg(cfg[key] or [], flag)
     if user:
         cfg["user_args"] = user
     else:
@@ -293,6 +339,55 @@ def apply(in_cfg):
     return cfg, shown, notes
 
 
+def forget(cfg):
+    """The launch config (/data/state/strata/launch/<preset>.json) without our flags in its user_args.
+
+    Strata 0.2.11's launch builds this file from the run config plus the previous launch config's user_args and hand
+    edits (args changed since args_written), and those win (strata_control/arg_layers.py). A --spec or rope flag of
+    ours that setup folded into the run config's user_args lands here and would be kept by every later launch. Each
+    one's value moves into args, so what this file starts is unchanged (user_args over args gives the same), and
+    args_written agrees with args on our flags, so the next launch sees no hand edit and takes them from the run
+    config. The person's other user_args stay."""
+    ug = groups(cfg.get("user_args"))
+    ours = [g for g in ug if g[0] in MANAGED_FLAGS]
+    if ours:
+        args = [g for g in groups(cfg.get("args")) if g[0] not in {g[0] for g in ours}] + ours
+        cfg["args"] = [t for g in args for t in g]
+        rest = [t for g in ug if g[0] not in MANAGED_FLAGS for t in g]
+        if rest:
+            cfg["user_args"] = rest
+        else:
+            cfg.pop("user_args", None)
+    if isinstance(cfg.get("args_written"), list):    # our flags' groups exactly as in args: Strata compares each flag's whole list of groups
+        cfg["args_written"] = [t for g in [g for g in groups(cfg["args_written"]) if g[0] not in MANAGED_FLAGS]
+                               + [g for g in groups(cfg.get("args")) if g[0] in MANAGED_FLAGS] for t in g]
+    return cfg
+
+
+def effective(cfg):
+    """What the server runs of our settings: --spec and the rope pair as it starts the engine (user_args over args), and
+    the managed keys. A run config and the launch config made from it give the same when nothing kept a value of ours."""
+    args = merged(cfg.get("args") or [], cfg.get("user_args"))
+    return {"args": {f: arg_value(args, f) for f in MANAGED_FLAGS}, **{k: cfg.get(k) for k in ("sampling", *MANAGED)}}
+
+
+def write_in_place(path, cfg):
+    """Write cfg to path through a temporary sibling, keeping path's mode (the launch config holds the API key: 0600).
+    The sibling is created 0600, so the key is never readable under the entrypoint's umask 0002 in between."""
+    tmp = path + ".tmp"
+    try:
+        os.unlink(tmp)                                # a leftover keeps its own mode through O_CREAT
+    except FileNotFoundError:
+        pass
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+    try:
+        os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else ""
     try:
@@ -300,9 +395,15 @@ def main(argv):
             for n in settings()[4]:
                 print(f"[strata-recipe] {n}")
             return 0
-        if cmd == "effective" and len(argv) == 3:       # what the server runs from: args and our keys
+        if cmd == "effective" and len(argv) == 3:       # what the server runs of our settings
             cfg = json.load(open(argv[2], encoding="utf-8"))
-            print(json.dumps({k: cfg.get(k) for k in ("args", "sampling", *MANAGED)}, sort_keys=True))
+            print(json.dumps(effective(cfg), sort_keys=True))
+            return 0
+        if cmd == "forget" and len(argv) == 3:
+            cur = json.load(open(argv[2], encoding="utf-8"))
+            cfg = forget(json.loads(json.dumps(cur)))
+            if cfg != cur:
+                write_in_place(argv[2], cfg)
             return 0
         if cmd == "apply" and len(argv) == 4:
             cur = json.load(open(argv[2], encoding="utf-8"))
@@ -320,7 +421,8 @@ def main(argv):
     except Bad as e:
         print(f"[strata-recipe] {e}", file=sys.stderr)
         return 2
-    print("usage: strata_config.py validate | apply <in.json> <out.json> | effective <config.json>", file=sys.stderr)
+    print("usage: strata_config.py validate | apply <in.json> <out.json> | forget <launch.json> | effective <config.json>",
+          file=sys.stderr)
     return 64
 
 
