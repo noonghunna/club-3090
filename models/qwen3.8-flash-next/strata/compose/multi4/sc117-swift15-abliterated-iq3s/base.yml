@@ -44,6 +44,12 @@
 #     lowest, during verify-full rather than at ready. Since 0.2.3 (engine 0.1.48, Niko1221/Strata#3493)
 #     Strata also sizes a conversation cache from free RAM (8192 MiB here, for up to 4 parked
 #     conversations; --conversation-cache-mib N sets it), which the 2026-10-14 figure predates.
+# Strata-PLE-Table-GB: 28
+# Strata-PLE-Setup-Pins-From-GiB: 106
+#   ⤷ The n-gram table's share of the figure above (28.8 GB, rounded down). With STRATA_PLE_AUTO_RAM=0
+#     and the model on an SSD it stays on disk, and preflight leaves it out, except from 106 GiB of RAM,
+#     where Strata's setup keeps it in RAM on an SSD too (setup.py: the model's 62 GB + the table + 16;
+#     re-check at a Strata pin bump). A rotational disk, or one preflight can't read, keeps it in.
 #   Best for:  Swift 1.5's shorter thinking, abliterated, on 4 cards
 # ---------------------------------------------------------------------------
 # Strata (github.com/Niko1221/Strata) is its own engine for this model: see docs/engines/STRATA.md.
