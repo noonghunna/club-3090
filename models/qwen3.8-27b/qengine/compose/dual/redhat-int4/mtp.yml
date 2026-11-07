@@ -3,15 +3,16 @@
 #   Model:     Qwen3.8-27B — RedHatAI INT4 (compressed-tensors W4A16, group 128, symmetric) with
 #              its MTP head, plus QEngine's fine-tuned MTP head and draft vocabulary (its release
 #              assets, unchanged since v1.0; the server downloads them when they're missing)
-#   Engine:    QEngine 1.3.4.3 (bpx03): its own C++/CUDA engine and server, the author's own image
-#              ghcr.io/bpx03/qengine (source d2a24bf8, the :vision image: PyTorch for the encoder)
+#   Engine:    QEngine 1.3.5 (bpx03): its own C++/CUDA engine and server, the author's own image
+#              ghcr.io/bpx03/qengine (source 1348a95d, the :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (tensor parallel 2; GPU-to-GPU P2P when the driver grants it)
 #   Drafter:   MTP, up to 7 drafts a step (adaptive; SPEC_N sets the most, 0 turns MTP off) + lookup
 #              drafts from the token history
 #   KV:        fp8_e4m3 (QEngine's only K / V format, one shared pool per GPU)
 #   Vision:    yes (VISION=0 turns it off; verify-full vision 4/4, 2026-10-31). The encoder and PyTorch's
 #              CUDA context sit on GPU1, and tensor parallel sizes the KV pool by the smaller card: MEASURED
-#              374,784 -> 289,792 tokens (-23%, still a full 262K context); VISION=0 gives it back
+#              374,784 -> 289,792 tokens (-23%, still a full 262K context); VISION=0 gives it back.
+#              On 1.3.5 the pool with vision is 368,640 tokens (2026-11-06, two boots; cause not traced)
 #   Max ctx:   262144
 #   Genesis:   none
 #   Status:    ⚠️ Production w/ caveats — promoted 2026-10-31 (the full gate on a community rig, #1862)
@@ -23,7 +24,7 @@
 #              The full gate passed on another rig, not this one: eddietheengineer's #1862 (QEngine 1.3,
 #              3090 + 3090 Ti at 260 / 240 W) ran verify-full, verify-stress 8/8 with the ceiling ladder
 #              filled to 240K, both soaks (PASS, 0 MB growth) and the 8-pack (108 / 132 of 150, thinking
-#              off / on); here it has bench and verify-full. 1.3.1 to 1.3.4.3 were boot-tested. From 1.3.4.3
+#              off / on); here it has bench and verify-full. 1.3.1 to 1.3.5 were boot-tested. From 1.3.4.3
 #              our THINKING_BUDGET_* map (4096 / 16384 / 32768 by effort, as on the vLLM and SGLang
 #              slugs) reaches QEngine's own per-effort QE_THINKING_BUDGET; a request's own budget wins.
 #              The default effort is low, as on the other Qwen3.8 slugs, through QEngine's
@@ -81,7 +82,8 @@
 #                     (48K tokens: 0.2-0.3 s to the first token against ~19 s, 2026-11-04). A new one with the
 #                     same system prompt reuses it only while a saved conversation still holds the checkpoint
 #                     at that prompt's end: one that itself came from the cache is saved with its own end
-#                     only (QEngine 1.3.4.3), so the checkpoint can go. Reuse is at those checkpoints, not at
+#                     only (QEngine 1.3.4.3), so the checkpoint can go; 1.3.5 keeps it (bpx03/QEngine#14,
+#                     fixed upstream, not re-measured here). Reuse is at those checkpoints, not at
 #                     any shared prefix (the DeltaNet state exists only there).
 #                     Each file carries a fingerprint (model files, cards, KV split, per-card sizes); one
 #                     that doesn't match is ignored, so a changed setup starts empty.
@@ -107,6 +109,8 @@
 #   QE_PRESENCE_PENALTY, QE_FREQUENCY_PENALTY  defaults for sampled requests that send none (0)
 #   QE_LOOP_GUARD_TURNS, QE_LOOP_GUARD_NOTE, QE_LOOP_GUARD_PENALTY  the cross-turn loop guard
 #                     (3, 1, 1.5; 0 turns the guard or its note off)
+#   QE_LOOP_GUARD_THINK  from 1.3.5 a guarded turn reasons even when the request turned thinking off, at most
+#                     this many reasoning tokens on top of max_tokens (2048; 0 = off)
 #   QE_METRICS_PORT   its dashboard, /metrics and qetop's /api/stats, on 9393 in the container and
 #                     not published: <port> publishes them on 127.0.0.1:<port> only (switch.sh adds
 #                     the mapping); 0 turns the metrics server off
@@ -121,14 +125,33 @@
 #   QE_EMPTY_RETRY    a non-streamed sampled reply with no text and no tool call is sampled again up
 #                     to N times (2, from 1.3.4; 0 = off)
 #   QE_HOST_RESERVE_GB  host RAM the start-up plan leaves to the system (max(8, 8% of RAM), 1.3.4)
-#   QE_EXTRA_ARGS     more server/app.py flags (--max-ctx, --served-name, ...), after ours
+#   QE_RAM_WAIT_S     seconds a start waits for host RAM when MemAvailable is short of its plan (20, from
+#                     1.3.5; 0 = plan at once)
+#   QE_DECODE_COMM    the decode all-reduces' path (1.3.5): auto (both timed on real decode steps at the end
+#                     of start-up, the faster kept, cached per hardware and settings) | remeasure | p2p | host;
+#                     the `[comm] decode collectives` log line says which. Prefill keeps QE_COMM's
+#   QE_COMM_CACHE     the start-up cache of the link probe and that timing (1; 0 = off, refresh = measure again)
+#   QE_VRAM_ADAPT     1.3.5: when another process takes GPU memory while serving, the KV pool shrinks (idle
+#                     conversations to the archive) and grows back once it's free (1; 0 = off).
+#                     QE_VRAM_LOW_MB / QE_VRAM_TARGET_MB set the free-memory marks (QEngine's own)
+#   QE_NO_ROOM_S      a queued request that fits nowhere while nothing runs ends with an error after this
+#                     many seconds (10, from 1.3.5; 0 = no deadline). It used to wait for the memory
+#   QE_PAUSE_TIMEOUT_S  a reply waiting for GPU memory another process holds ends with an error after this
+#                     many seconds (900, from 1.3.5)
+#   QE_GRAPH_RESERVE_MB  VRAM per card kept for CUDA graphs (128, from 1.3.5; 0 = off): when another process
+#                     takes all free VRAM, a step that needs a new graph uses it instead of stopping, then
+#                     runs without a graph (one log line; 1.3.4.3 aborted there)
+#   QE_EXTRA_ARGS     more server/app.py flags (--max-ctx, --served-name, ...), after ours. From 1.3.5,
+#                     --max-ctx 512K or 1M turns on YaRN for every request of that server (opt-in; upstream
+#                     found needles at 524K and 1.04M on three cards), and --lsa MAP sparse attention for
+#                     long prompts (a map you fetch and convert yourself; upstream docs/advanced.md)
 # `switch.sh --set` saves only our knobs above for this slug; it refuses QEngine's own names, because
 # they aren't catalogued launch settings. Set those for one launch, or for every QEngine slug:
 #   QE_MAX_SEQS=16 bash scripts/switch.sh --force qengine/qwen38-27b-dual
 #   bash scripts/settings.sh set QE_KV_ARCHIVE_GB=8
 services:
   qengine-qwen38-27b-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:db64a5db94a72c437ed5d7fae937e6de876ab4ae9d7623c815c760c36c93ca11}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:167d404cd82776d64a53ea5270b1bad6ec2f6a59779629069a88bad7404dd339}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-27b-dual}"
     user: "0:${DOCKER_GID:-1000}"
@@ -182,12 +205,22 @@ services:
       - QE_LOOP_GUARD_TURNS
       - QE_LOOP_GUARD_NOTE
       - QE_LOOP_GUARD_PENALTY
+      - QE_LOOP_GUARD_THINK
       - QE_METRICS_PORT
       - QE_HANG_S
       - QE_THINKING_BUDGET
       - QE_THINK_TAIL
       - QE_EMPTY_RETRY
       - QE_HOST_RESERVE_GB
+      - QE_RAM_WAIT_S
+      - QE_DECODE_COMM
+      - QE_COMM_CACHE
+      - QE_VRAM_ADAPT
+      - QE_VRAM_LOW_MB
+      - QE_VRAM_TARGET_MB
+      - QE_NO_ROOM_S
+      - QE_PAUSE_TIMEOUT_S
+      - QE_GRAPH_RESERVE_MB
       - QE_EXTRA_ARGS
       # our launch knobs, mapped onto QEngine's flags by the entrypoint below
       - ENABLE_THINKING

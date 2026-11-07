@@ -8,6 +8,8 @@
 #   3. Flash-Next (libqflash) with peer access prints no decode line: the block says it isn't stated
 #   4. without peer access (both libraries' own format strings) and a refused pair: said, with a ⚠
 #   5. CONTAINER=none: n/a, no log to read
+#   6. QEngine 1.3.5's own decode-path line (QE_DECODE_COMM) wins over the 27B's "GPU to GPU" line, which
+#      it still prints when peer access opens, also when the choice is host memory (real 1.3.5 lines)
 # Hermetic: the function is extracted from bench.sh. The log reader is the real p2p_qengine_transport
 # from lib/p2p-state.sh (report.sh reads QEngine through it too, #1862); the other p2p_* helpers and
 # docker are stubs.
@@ -61,4 +63,29 @@ ok "without peer access (both libraries) and a refused pair: said, with a ⚠"
 out="$(block none 'P2P: decode all-reduce GPU to GPU (peer access between all 2 GPUs)\n')"
 [[ "$out" == *"engine transport : n/a — no container to read QEngine's log from"* ]] || fail "CONTAINER=none: $out"
 ok "CONTAINER=none: n/a"
+
+P2P_LINE='P2P: decode all-reduce GPU to GPU (peer access between all 2 GPUs)\n'
+PRE27='[comm] prefill transfers: copy engine (QE_COMM=auto, auto)\n'
+ANNOUNCE='[comm] decode collectives: auto, timed on real decode steps at the end of the start-up (P2P SM stores vs pinned host memory); the rule alone would pick P2P (the prefill rule keeps P2P: P2P kept: tax over the cap, under the 1 NUMA node cap)\n'
+out="$(block qengine-qwen38-27b-dual "${P2P_LINE}${ANNOUNCE}${PRE27}"'[comm] decode collectives (all-reduce, all-gather): pinned host memory (QE_DECODE_COMM=host, forced)\n')"
+[[ "$out" == *"engine transport : decode collectives pinned host memory (QE_DECODE_COMM=host); prefill transfers: copy engine (QE_COMM=auto)"* ]] \
+  || fail "1.3.5 27B, QE_DECODE_COMM=host beside the GPU-to-GPU line: $out"
+ok "1.3.5 27B forced to host memory: the decode-collectives line wins over 'GPU to GPU'"
+out="$(block qengine-qwen38-27b-dual "${P2P_LINE}${ANNOUNCE}${PRE27}"'[comm] decode collectives (QE_DECODE_COMM=auto, real decode steps, median of 4 interleaved rounds of 12): single sequence: P2P SM stores (P2P 15.75, host memory 17.11 ms/step, host faster in 0/4); batched (4 sequences): P2P SM stores (P2P 23.46, host memory 33.57 ms/step, host faster in 0/4); calibration 8731 ms\n')"
+[[ "$out" == *"engine transport : decode collectives P2P SM stores (QE_DECODE_COMM=auto); prefill transfers: copy engine (QE_COMM=auto)"* ]] \
+  || fail "1.3.5 27B, auto timed: $out"
+out="$(block qengine-qwen38-27b-dual "${P2P_LINE}${ANNOUNCE}${PRE27}"'[comm] decode collectives (QE_DECODE_COMM=auto, from the start-up cache, measured 2026-11-06 23:22:49): single sequence: P2P SM stores (P2P 15.75, host memory 17.11 ms/step); batched: P2P SM stores (P2P 23.46, host memory 33.57 ms/step); QE_DECODE_COMM=remeasure measures again\n')"
+[[ "$out" == *"engine transport : decode collectives P2P SM stores (QE_DECODE_COMM=auto); prefill"* ]] || fail "1.3.5 27B, auto from the cache: $out"
+ok "1.3.5 27B auto, timed and from the start-up cache: P2P SM stores"
+out="$(block qengine-qwen38-flash-next-dual "${ANNOUNCE}"'[comm] prefill transfers: P2P SM loads / stores, pairs 1<-0:pull 0<-1:pull (FLASH_COMM=auto, auto: P2P tax 1.69)\n[comm] decode collectives (QE_DECODE_COMM=auto, real decode steps, median of 4 interleaved rounds of 12): single sequence: P2P SM stores (P2P 23.90, host memory 28.62 ms/step, host faster in 0/4); batched (4 sequences): P2P SM stores (P2P 63.67, host memory 69.16 ms/step, host faster in 0/4); calibration 9020 ms\n')"
+[[ "$out" == *"engine transport : decode collectives P2P SM stores (QE_DECODE_COMM=auto); prefill transfers: P2P SM loads / stores (FLASH_COMM=auto)"* ]] \
+  || fail "1.3.5 Flash-Next, auto timed: $out"
+ok "1.3.5 Flash-Next auto: its decode path is stated now"
+# the two paths differ (auto picks per batch shape; the format of the real lines above)
+out="$(block qengine-qwen38-27b-dual "${P2P_LINE}${PRE27}"'[comm] decode collectives (QE_DECODE_COMM=auto, real decode steps, median of 4 interleaved rounds of 12): single sequence: pinned host memory (P2P 30.10, host memory 21.40 ms/step, host faster in 4/4); batched (4 sequences): P2P SM stores (P2P 40.00, host memory 52.00 ms/step, host faster in 0/4); calibration 9000 ms\n')"
+[[ "$out" == *"engine transport : decode collectives: one sequence pinned host memory, batched P2P SM stores (QE_DECODE_COMM=auto)"* ]] \
+  || fail "1.3.5 auto with different paths per shape: $out"
+out="$(block qengine-qwen38-27b-dual "${P2P_LINE}${ANNOUNCE}"'[comm] decode collectives (QE_DECODE_COMM=auto): calibration could not run a decode step, P2P SM stores (120 ms)\n')"
+[[ "$out" == *"engine transport : decode collectives P2P SM stores (QE_DECODE_COMM=auto, not timed)"* ]] || fail "1.3.5 auto, calibration failed: $out"
+ok "1.3.5 auto: per-shape paths, and a calibration that couldn't run"
 echo "PASS test-bench-interconnect-qengine"

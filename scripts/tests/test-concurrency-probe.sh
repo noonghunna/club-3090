@@ -633,7 +633,7 @@ fi
 exit 0
 DOCK
 chmod +x "$CTX_STUB/docker"
-got_q="$(PATH="$CTX_STUB:$PATH" STUB_IMAGE="ghcr.io/bpx03/qengine@sha256:db64a5db94a72c437ed5d7fae937e6de876ab4ae9d7623c815c760c36c93ca11" \
+got_q="$(PATH="$CTX_STUB:$PATH" STUB_IMAGE="ghcr.io/bpx03/qengine@sha256:167d404cd82776d64a53ea5270b1bad6ec2f6a59779629069a88bad7404dd339" \
   CONTAINER=qengine-qwen38-flash-next-dual URL=http://127.0.0.1:9 python3 "$LIB" --served-max-len)"
 got_n="$(PATH="$CTX_STUB:$PATH" STUB_IMAGE="vllm/vllm-openai:v0.32.0" CONTAINER=vllm-x URL=http://127.0.0.1:9 python3 "$LIB" --served-max-len)"
 rm -rf "$CTX_STUB"

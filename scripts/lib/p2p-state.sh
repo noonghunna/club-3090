@@ -144,11 +144,27 @@ p2p_engine_log_evidence() {
 # access, only "[flash] no peer access: …" without it. Both print "[comm] prefill
 # transfers: <mode> (…)", and "P2P: enabling peer access … failed (…), host path"
 # when a pair is refused.
+# From 1.3.5 both libraries pick decode's path themselves (QE_DECODE_COMM) and say which in
+# "[comm] decode collectives (…): <path> (QE_DECODE_COMM=<mode>, …)" when it's set, or with auto
+# "… : single sequence: <path> (…); batched (…): <path> (…)". That line wins: the 27B still prints
+# "P2P: decode all-reduce GPU to GPU" when peer access opens, before the choice, also when the
+# choice is host memory. Without it (1.3.4.3 and older) the older lines decide.
 # Prints one line: "<decode path>[; prefill transfers: <mode> (QE_COMM=…)][; ⚠ <refusal>]".
 p2p_qengine_transport() {
-  local log dec="" pre="" fail=""
-  log="$(command grep -E '^P2P: |^QE_COMM: |no peer access|^\[comm\] prefill transfers: ' || true)"
-  if printf '%s\n' "$log" | command grep -qE '^P2P: decode all-reduce GPU to GPU'; then
+  local log dec="" pre="" fail="" res="" one="" many=""
+  log="$(command grep -E '^P2P: |^QE_COMM: |no peer access|^\[comm\] prefill transfers: |^\[comm\] decode collectives' || true)"
+  # the result line, not the announcement ("decode collectives: auto, timed …") or a cache note
+  res="$(printf '%s\n' "$log" | command grep -E '^\[comm\] decode collectives( \(|: no calibration)' | tail -n 1 || true)"
+  if [ -n "$res" ] && [[ "$res" == *"single sequence: "* ]]; then
+    one="$(printf '%s\n' "$res" | sed -E 's/.*single sequence: ([^(;]*[^(; ]) \(.*/\1/')"
+    many="$(printf '%s\n' "$res" | sed -E 's/.*; batched[^:]*: ([^(;]*[^(; ]) \(.*/\1/')"
+    if [ "$one" = "$many" ]; then dec="decode collectives ${one} (QE_DECODE_COMM=auto)"
+    else dec="decode collectives: one sequence ${one}, batched ${many} (QE_DECODE_COMM=auto)"; fi
+  elif [ -n "$res" ] && [[ "$res" =~ \((QE_DECODE_COMM=[a-z]+),\ [a-z] ]] && [[ "$res" == *"all-reduce"* ]]; then
+    dec="decode collectives $(printf '%s\n' "$res" | sed -E 's/^\[comm\] decode collectives \([^)]*\): ([^(]*[^( ]) \((QE_DECODE_COMM=[a-z]+).*/\1 (\2)/')"
+  elif [ -n "$res" ] && [[ "$res" =~ (P2P\ SM\ stores|pinned\ host\ memory) ]]; then
+    dec="decode collectives ${BASH_REMATCH[1]} (QE_DECODE_COMM=auto, not timed)"
+  elif printf '%s\n' "$log" | command grep -qE '^P2P: decode all-reduce GPU to GPU'; then
     dec="decode all-reduce GPU to GPU (peer access)"
   elif printf '%s\n' "$log" | command grep -qE 'no peer access'; then
     dec="no peer access: collectives through pinned host memory"

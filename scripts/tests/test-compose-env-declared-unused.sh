@@ -76,6 +76,9 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 "FLASH_RUN_TIMEOUT_S",
                 # 1.3.4's parallel mode (tensor parallel / layer pipeline)
                 "FLASH_PAR", "FLASH_GRAPH_MB", "FLASH_PFGRAPH_WINDOW", "FLASH_ATTN_DMIN",
+                # 1.3.5: the VRAM-pressure handling, the start-up context fit, kernel preload, repeatable text
+                "FLASH_VRAM_ADAPT", "FLASH_VRAM_LOW_MB", "FLASH_VRAM_TARGET_MB", "FLASH_CTX_FIT",
+                "FLASH_PRELOAD", "FLASH_ATTN_CHUNK",
                 # Project Maya's serve/server.py reads it (model load/unload endpoints, on by default from v1.1.47)
                 "MAYA_MODEL_MANAGEMENT",
                 # Project Maya's DeepSeek engine (build/maya-ds4) reads it: its RAM headroom, from v1.1.51
