@@ -255,6 +255,14 @@ does, and what to do by hand when it refuses.
   `MODEL`, `FAMILY`, `MODEL_PATH`, `CONTEXT`, `KV`, `VISION`, `GPUS`, `PRESET`, `API_KEY`), the run config setup writes
   (`/data/install/strata-<family>.json`, where `launcher/strata_config.py` puts the launch settings) and how setup
   keeps an option it doesn't choose itself (`user_args`). Re-read the release notes for those.
+- The host-RAM check copies two numbers from setup (#1975). Every Strata Flash-Next compose declares
+  `Strata-PLE-Table-GB` (the n-gram table, 28) and `Strata-PLE-Setup-Pins-From-GiB`: the MemTotal from which setup
+  writes `--ple-io ram` on an SSD by itself, which is the model's `ram_gb` in setup's `MODELS` + the table + 16 (92
+  for the Unsloth sets, 106 for IQ3_S in 0.2.12). Below it, `STRATA_PLE_AUTO_RAM=0` on an SSD keeps the table on disk
+  and `preflight_cpu_offload_ram` leaves it out. At each bump, read `/opt/strata/terminal/setup.py` in the new image:
+  the `MODELS` entries' `ram_gb`, the SSD branch after `rotational_disk(ple)` (its `+ 16`) and `rotational_disk()`
+  itself. Update the headers in the same PR when any of them moved; a header set too high lets a box through that
+  setup will pin the table on.
 - The composes forward a short list of Strata's own engine switches (docs/engines/STRATA.md, "Engine switches",
   lists them). When a release turns on a new default that reaches our slugs and names the variable that turns it off,
   add that variable to all five composes and to `ENGINE_EXACT` in `test-compose-env-declared-unused.sh`, once
