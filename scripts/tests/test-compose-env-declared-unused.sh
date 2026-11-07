@@ -81,6 +81,8 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 "FLASH_PRELOAD", "FLASH_ATTN_CHUNK",
                 # Project Maya's serve/server.py reads it (model load/unload endpoints, on by default from v1.1.47)
                 "MAYA_MODEL_MANAGEMENT",
+                # Project Maya's GLM engine (src/core/glm_window.cu) reads it: the layer split's token states GPU to GPU, from v1.1.56
+                "MAYA_GLM_P2P",
                 # Project Maya's DeepSeek engine (build/maya-ds4) reads it: its RAM headroom, from v1.1.51
                 "DS4_RAM_MARGIN_GB",
                 # ... and this: the flow's expert DMA from the pinned RAM copies, from v1.1.53

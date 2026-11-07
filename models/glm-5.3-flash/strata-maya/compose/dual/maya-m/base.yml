@@ -8,7 +8,8 @@
 #   Topology:  Dual 3090, Maya layer split (--layer-split auto): each card holds its layers' dense part and
 #              an expert pool; the two cards pipeline consecutive tokens. No NCCL, no P2P needed
 #   Drafter:   MTP: the model's own NextN block, drafted across the split (Maya's default)
-#   KV:        fp16 latent cache, 32K positions in VRAM, the rest streamed from pinned RAM (--kv-streaming on)
+#   KV:        INT8 latent cache (Maya's default from v1.1.55; KV=fp16 keeps 16 bits), 32K positions in
+#              VRAM, the rest streamed from pinned RAM (--kv-streaming on)
 #   Vision:    no (the image is text only)
 #   Max ctx:   131072
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
@@ -86,6 +87,9 @@ services:
       # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
       # switch are refused from outside the container. MAYA_MODEL_MANAGEMENT=0 turns all of them off
       MAYA_MODEL_MANAGEMENT:
+      # v1.1.56, opt-in: =1 sends the layer split's token states GPU to GPU over PCIe on a pair the driver
+      # grants peer access (else through host memory, as unset); the same answers upstream (mw00/project-maya#853)
+      MAYA_GLM_P2P:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/glm-5.3-flash-maya-gguf/Maya-M:/gguf:ro"

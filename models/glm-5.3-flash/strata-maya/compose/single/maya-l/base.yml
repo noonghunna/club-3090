@@ -8,7 +8,8 @@
 #              built by club-3090 at the release commit (models/glm-5.3-flash/strata-maya/image/)
 #   Topology:  Single 3090 (GPU0): the whole model's dense part on one card, experts in its VRAM pool + RAM
 #   Drafter:   none (the model's MTP block runs only on two or more GPUs)
-#   KV:        fp16 latent cache, 32K positions in VRAM, the rest streamed from pinned RAM (--kv-streaming on)
+#   KV:        INT8 latent cache (Maya's default from v1.1.55; KV=fp16 keeps 16 bits), 32K positions in
+#              VRAM, the rest streamed from pinned RAM (--kv-streaming on)
 #   Vision:    no (the image is text only)
 #   Max ctx:   131072
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific

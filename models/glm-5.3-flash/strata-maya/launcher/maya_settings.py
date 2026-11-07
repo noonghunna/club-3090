@@ -13,7 +13,8 @@ serve/server.py (the strata-maya-club3090 image) reads:
   TOP_K MIN_P            sampling.top_k        integer 1..64 / 0..1
   PRESENCE_PENALTY       sampling.presence_penalty   >= 0
   REPEAT_PENALTY         sampling.repetition_penalty > 0 (1 = off)
-  KV                     args: --kv            fp16 (the engine's default) | int8 (the latent cache in INT8). The
+  KV                     args: --kv            int8 (the engine's default from v1.1.55, MAYA_GLM_KV_INT8) | fp16
+                                               (16 bits, the default before). The
                                                engine also parses q4_0 / k8v4, but only its Qwen path uses them:
                                                with --glm-pack they run fp16, so they are refused here
   SERVED_NAME            model_name            the name /v1/models reports and every answer carries (Maya answers a
