@@ -2657,8 +2657,10 @@ preflight_nvidia_page_pool() {
 #     covers only the lock its free-RAM policy took. The compose declares that point
 #     as Strata-PLE-Setup-Pins-From-GiB (rounded DOWN, so a box right at it counts
 #     as pinned).
-# A compose without both headers, or a disk this can't read, keeps the table in
-# the figure: the safe direction.
+# A file with no block device behind it (btrfs, ZFS, NFS, tmpfs…) takes the SSD
+# path, as it does in setup (rotational_disk() returns None, and setup reads that
+# as "not rotational"); the pin point still applies. A compose without both
+# headers, or whose model files can't be found, keeps the table in the figure.
 
 # _strata_gguf_dir <compose_file>
 # The host folder the compose mounts at /gguf, with ${MODEL_DIR:-default} resolved
@@ -2690,19 +2692,19 @@ _strata_gguf_dir() {
 # The disk kind under the files, read the way Strata's setup reads it (setup.py
 # rotational_disk(): stat the file, /sys/dev/block/<major>:<minor>, then
 # queue/rotational on that node or, for a partition, on its disk). Prints
-# "rotational <disk>", "ssd <disk>" or "unknown". One rotational file makes the
-# set rotational; a file with no queue/rotational (tmpfs, overlay, NFS, ZFS…)
-# makes it unknown. Strata reads that last case as an SSD; the gate reads it as
-# "can't tell" and keeps the table in the figure.
+# "rotational <disk>", "ssd <disk>" or "nodev". One rotational file makes the
+# set rotational; otherwise a file with no queue/rotational behind it (btrfs,
+# ZFS, NFS, tmpfs, overlay…, or one stat can't read) makes it "nodev", which
+# setup treats exactly like an SSD.
 _strata_ple_disk() {
-  local f dev major minor node q rot disk="" seen=0
+  local f dev major minor node q rot disk="" seen=0 nodev=0
   for f in "$@"; do
-    dev="$(stat -L -c '%d' -- "$f" 2>/dev/null)" || { echo unknown; return 0; }
-    [[ "$dev" =~ ^[0-9]+$ ]] || { echo unknown; return 0; }
+    dev="$(stat -L -c '%d' -- "$f" 2>/dev/null)" || { nodev=1; continue; }
+    [[ "$dev" =~ ^[0-9]+$ ]] || { nodev=1; continue; }
     # glibc's gnu_dev_major / gnu_dev_minor
     major=$(( ((dev >> 8) & 0xfff) | ((dev >> 32) & ~0xfff) ))
     minor=$(( (dev & 0xff) | ((dev >> 12) & ~0xff) ))
-    node="$(readlink -f "/sys/dev/block/${major}:${minor}" 2>/dev/null)" || { echo unknown; return 0; }
+    node="$(readlink -f "/sys/dev/block/${major}:${minor}" 2>/dev/null)" || { nodev=1; continue; }
     rot=""
     for q in "$node" "${node%/*}"; do
       if [[ -r "$q/queue/rotational" ]]; then
@@ -2713,16 +2715,17 @@ _strata_ple_disk() {
     case "$rot" in
       1) echo "rotational ${disk}"; return 0 ;;
       0) seen=1 ;;
-      *) echo unknown; return 0 ;;
+      *) nodev=1 ;;
     esac
   done
-  if (( seen )); then echo "ssd ${disk}"; else echo unknown; fi
+  if (( seen && ! nodev )); then echo "ssd ${disk}"; else echo nodev; fi
 }
 
 # _strata_ple_case <compose_file> <MemTotal kB>
 # Where Strata will keep the table on this box, before STRATA_PLE_AUTO_RAM is asked:
-# "ssd <disk>" (the setting decides), "rotational <disk>", "setup-pins <GiB>"
-# (an SSD, but setup's own rule pins it from this much RAM) or "unknown".
+# "ssd <disk>" or "nodev" (the setting decides), "rotational <disk>",
+# "setup-pins <GiB>" (setup's SSD branch, but its own rule pins the table from
+# this much RAM) or "unknown" (no headers, no /gguf mount, no model files).
 _strata_ple_case() {
   local compose_file="$1" total_kb="$2" from dir f disk
   local -a files=()
@@ -2734,11 +2737,7 @@ _strata_ple_case() {
   done
   (( ${#files[@]} )) || { echo unknown; return 0; }
   disk="$(_strata_ple_disk "${files[@]}")"
-  case "$disk" in
-    rotational\ *) echo "$disk"; return 0 ;;
-    ssd\ *) ;;
-    *) echo unknown; return 0 ;;
-  esac
+  [[ "$disk" == rotational\ * ]] && { echo "$disk"; return 0; }
   # setup.py compares MemTotal in GiB; the header is rounded down, so ">=" here
   # can only call a box pinned that setup would not pin (the safe direction).
   if (( total_kb / 1048576 >= from )); then
@@ -2817,12 +2816,18 @@ preflight_cpu_offload_ram() {
     ple_case="$(_strata_ple_case "$compose_file" "$total_kb")"
     if [[ "${STRATA_PLE_AUTO_RAM:-}" == "0" ]]; then
       case "$ple_case" in
-        ssd\ *)
+        ssd\ *|nodev)
           ple_gone=1
           need_gb=$(( need_gb - ple_gb ))
           (( need_gb < 1 )) && need_gb=1
-          echo "[preflight] cpu-offload: STRATA_PLE_AUTO_RAM=0 and the model is on an SSD (${ple_case#ssd }):" \
-               "the ~${ple_gb} GB n-gram table stays on disk, so it is left out of the RAM need" ;;
+          if [[ "$ple_case" == nodev ]]; then
+            echo "[preflight] cpu-offload: STRATA_PLE_AUTO_RAM=0 and the model's filesystem has no block device" \
+                 "behind it (btrfs, ZFS, NFS…), which Strata's setup treats as an SSD: the ~${ple_gb} GB" \
+                 "n-gram table stays on disk, so it is left out of the RAM need"
+          else
+            echo "[preflight] cpu-offload: STRATA_PLE_AUTO_RAM=0 and the model is on an SSD (${ple_case#ssd }):" \
+                 "the ~${ple_gb} GB n-gram table stays on disk, so it is left out of the RAM need"
+          fi ;;
         rotational\ *)
           echo "[preflight] cpu-offload: STRATA_PLE_AUTO_RAM=0 is set, but the model is on a rotational disk" \
                "(${ple_case#rotational }): Strata's setup keeps the ~${ple_gb} GB n-gram table in RAM there, so it still counts" ;;
@@ -2830,11 +2835,13 @@ preflight_cpu_offload_ram() {
           echo "[preflight] cpu-offload: STRATA_PLE_AUTO_RAM=0 is set, but from ${ple_case#setup-pins } GiB of RAM" \
                "Strata's setup keeps the ~${ple_gb} GB n-gram table in RAM on an SSD too, so it still counts" ;;
         *)
-          echo "[preflight] cpu-offload: STRATA_PLE_AUTO_RAM=0 is set, but the model folder's disk type could not" \
-               "be read, so the ~${ple_gb} GB n-gram table still counts" ;;
+          echo "[preflight] cpu-offload: STRATA_PLE_AUTO_RAM=0 is set, but preflight could not find the model's" \
+               "files to check their disk, so the ~${ple_gb} GB n-gram table still counts" ;;
       esac
-    elif [[ "$ple_case" == ssd\ * ]] && (( need_gb - ple_gb >= 1 )); then
-      ple_hint="On this SSD, STRATA_PLE_AUTO_RAM=0 keeps the ~${ple_gb} GB n-gram table on disk and lowers this to ~$(( need_gb - ple_gb )) GB (prompts 2-3% slower)."
+    elif [[ "$ple_case" == ssd\ * || "$ple_case" == nodev ]] && (( need_gb - ple_gb >= 1 )); then
+      local ple_where="SSD"
+      [[ "$ple_case" == nodev ]] && ple_where="filesystem"
+      ple_hint="On this ${ple_where}, STRATA_PLE_AUTO_RAM=0 keeps the ~${ple_gb} GB n-gram table on disk and lowers this to ~$(( need_gb - ple_gb )) GB (prompts 2-3% slower)."
     fi
   fi
 
