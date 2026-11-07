@@ -19,9 +19,8 @@
 #              Qwen/Qwen3.8-Flash-Next) and ~93 GB of free host RAM when the
 #              n-gram table lands in RAM — either setup's --ple-io ram for a rotational disk
 #              (which STRATA_PLE_AUTO_RAM=0 does NOT override) or the engine's free-RAM policy
-#              locking it on an SSD boot (it counts only the table + expert arena, so a
-#              big-CONTEXT boot can lock it and then starve the arena; =0 keeps the SSD on
-#              direct disk reads). Host
+#              locking it on an SSD boot (since 0.2.10 it gives the lock back if RAM runs short;
+#              =0 keeps the SSD on direct disk reads). Host
 #              needs NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only. Strata reasons by default,
 #              at the template's xhigh (as the bucko-vllm Flash-Next slugs). Launch settings
 #              (REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, SPEC_N,
@@ -115,9 +114,11 @@ services:
       # "PLE table locked in RAM (--ple-io ram)"). The policy's free-RAM check counts
       # only the table + the expert arena — not the KV stream, the conversation cache or
       # the batch sessions that fill right after it — so on an SSD a big-context boot can
-      # lock the table and still starve the arena. 0 is the right call for an SSD model
-      # disk at a raised CONTEXT (the hang needs the big arena; at stock context the lock
-      # costs only 2-3% of prompt speed, per upstream). Unset = Strata's own auto policy.
+      # lock the table and then run short of RAM. Before 0.2.10 that hung the host; since
+      # 0.2.10 the engine gives the lock back and keeps the table in the page cache (both
+      # boots that used to hang served on an SSD rig, #1888). So 0 is a speed trade-off
+      # now: direct reads cost 2-3% of prompt speed (per upstream) and pin no RAM for the
+      # table. Unset = Strata's own auto policy.
       STRATA_PLE_AUTO_RAM:
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/qwen3.8-flash-next-gsq-rco-gguf/IQ3_S:/gguf:ro"

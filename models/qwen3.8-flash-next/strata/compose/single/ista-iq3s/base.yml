@@ -18,9 +18,8 @@
 #              Qwen/Qwen3.8-Flash-Next) and ~93 GB of free host RAM when the
 #              n-gram table lands in RAM — either setup's --ple-io ram for a rotational disk
 #              (which STRATA_PLE_AUTO_RAM=0 does NOT override) or the engine's free-RAM policy
-#              locking it on an SSD boot (it counts only the table + expert arena, so a
-#              big-CONTEXT boot can lock it and then starve the arena; =0 keeps the SSD on
-#              direct disk reads). Host
+#              locking it on an SSD boot (since 0.2.10 it gives the lock back if RAM runs short;
+#              =0 keeps the SSD on direct disk reads). Host
 #              needs NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only. Strata reasons by default,
 #              at the template's xhigh (as the bucko-vllm Flash-Next slugs). Launch settings
 #              (REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, SPEC_N,
@@ -106,8 +105,8 @@ services:
       # 0.2.10's penalties count only the reply's tokens; 1 counts the prompt's again, as before.
       STRATA_PENALTY_PROMPT:
       # PLE (n-gram) residency switch: 0 = direct disk reads instead of page-locking the ~27 GiB
-      # table; the auto policy can lock it and still starve the expert arena at big CONTEXT
-      # (the dual ista-iq3s compose's block has the full note). Unset = Strata's auto policy.
+      # table, a 2-3% prompt-speed trade-off; since 0.2.10 the auto policy's lock is given back
+      # if RAM runs short (the dual ista-iq3s compose's block has the full note). Unset = Strata's auto policy.
       STRATA_PLE_AUTO_RAM:
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/qwen3.8-flash-next-gsq-rco-gguf/IQ3_S:/gguf:ro"
