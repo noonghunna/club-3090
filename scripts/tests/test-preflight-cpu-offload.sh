@@ -545,8 +545,10 @@ command grep -q "preflight_offload_split_mode" scripts/switch.sh \
 # The Strata Flash-Next figures were measured with the 28.8 GB table in RAM (the
 # reference rig's model disk is rotational). eddie's 92 GiB SSD rig with =0 was
 # refused for the UD-IQ4_XS dual although the table stays on disk there. The
-# subtraction must fire on exactly that case and on nothing else: a rotational
-# disk, setup's own SSD pin point, an unreadable disk and any other value of the
+# subtraction must fire on exactly the cases where Strata's setup keeps the table
+# on disk — an SSD, or a filesystem with no block device behind it, which setup
+# also takes its SSD branch for — and on nothing else: a rotational disk, setup's
+# own SSD pin point, model files that can't be found and any other value of the
 # setting all keep the table in.
 for fn in _strata_gguf_dir _strata_ple_disk _strata_ple_case; do
   declare -F "$fn" >/dev/null 2>&1 && ok "$fn defined" || bad "$fn missing"
@@ -570,15 +572,26 @@ for f in models/qwen3.8-flash-next/strata/compose/*/*/base.yml; do
     || bad "$short: /gguf mount did not resolve under MODEL_DIR (got '$d')"
 done
 
-# the disk reader, on real files: procfs has no block device behind it
-[[ "$(_strata_ple_disk /proc/meminfo)" == "unknown" ]] \
-  && ok "disk reader: a procfs file is 'unknown' (no queue/rotational)" \
+# the disk reader, on real files: procfs has no block device behind it (the
+# btrfs/ZFS/NFS shape — setup.py's rotational_disk() returns None there too)
+[[ "$(_strata_ple_disk /proc/meminfo)" == "nodev" ]] \
+  && ok "disk reader: a procfs file is 'nodev' (no queue/rotational)" \
   || bad "disk reader on /proc/meminfo: '$(_strata_ple_disk /proc/meminfo)'"
 r="$(_strata_ple_disk scripts/preflight.sh)"
-[[ "$r" =~ ^(rotational|ssd)\ [^\ ]+$ || "$r" == unknown ]] \
+[[ "$r" =~ ^(rotational|ssd)\ [^\ ]+$ || "$r" == nodev ]] \
   && ok "disk reader: a real file reads as '$r'" || bad "disk reader printed '$r'"
-[[ "$(_strata_ple_disk /nonexistent/x.gguf)" == "unknown" ]] \
-  && ok "disk reader: a missing file is 'unknown'" || bad "disk reader on a missing file"
+[[ "$(_strata_ple_disk /nonexistent/x.gguf)" == "nodev" ]] \
+  && ok "disk reader: a file stat can't read is 'nodev' (setup's OSError → not rotational)" \
+  || bad "disk reader on a missing file"
+[[ "$(_strata_ple_disk /proc/meminfo /proc/meminfo)" == nodev ]] \
+  && ok "disk reader: all no-device files -> 'nodev'" \
+  || bad "disk reader: two no-device files did not read as 'nodev'"
+# a rotational file anywhere in the set wins (the reference rig's model disk is one)
+if [[ "$r" == rotational\ * ]]; then
+  [[ "$(_strata_ple_disk /proc/meminfo scripts/preflight.sh)" == rotational\ * ]] \
+    && ok "disk reader: no-device + rotational files -> rotational" \
+    || bad "disk reader: a rotational file did not win over a no-device one"
+fi
 
 # A Strata-shaped compose under the gate. The 999999 figure makes every leg refuse,
 # so the message says which figure the gate used; the disk is stubbed per leg.
@@ -606,10 +619,10 @@ msg="$(_ple_gate "rotational sdb" 0)"
 command grep -q "needs ~999999 GB" <<<"$msg" && command grep -q "rotational disk (sdb)" <<<"$msg" \
   && ok "=0 on a rotational disk: the table still counts, and the gate says why" \
   || bad "rotational disk was priced without the table: $msg"
-msg="$(_ple_gate "unknown" 0)"
-command grep -q "needs ~999999 GB" <<<"$msg" && command grep -q "could not" <<<"$msg" \
-  && ok "=0 on an unreadable disk: the table still counts (the safe direction)" \
-  || bad "unreadable disk was priced without the table: $msg"
+msg="$(_ple_gate "nodev" 0)"
+command grep -q "needs ~999971 GB" <<<"$msg" && command grep -q "no block device" <<<"$msg" \
+  && ok "=0 on a filesystem with no block device (btrfs/ZFS): left out, as setup's SSD branch" \
+  || bad "=0 on a no-device filesystem kept the table (setup takes its SSD branch there): $msg"
 for v in - 1 "" auto; do
   msg="$(_ple_gate "ssd nvme0n1" "$v")"
   command grep -q "needs ~999999 GB" <<<"$msg" \
@@ -621,6 +634,10 @@ msg="$(_ple_gate "ssd nvme0n1" -)"
 command grep -q "STRATA_PLE_AUTO_RAM=0 keeps the ~28 GB n-gram table on disk and lowers this to ~999971 GB" <<<"$msg" \
   && ok "refusal on an SSD without =0 names STRATA_PLE_AUTO_RAM=0 and the lower figure" \
   || bad "refusal on an SSD does not point at STRATA_PLE_AUTO_RAM=0: $msg"
+msg="$(_ple_gate "nodev" -)"
+command grep -q "On this filesystem, STRATA_PLE_AUTO_RAM=0 keeps" <<<"$msg" \
+  && ok "refusal on a no-device filesystem without =0 names the setting" \
+  || bad "refusal on a no-device filesystem does not point at STRATA_PLE_AUTO_RAM=0: $msg"
 msg="$(_ple_gate "rotational sdb" -)"
 command grep -q "STRATA_PLE_AUTO_RAM=0" <<<"$msg" \
   && bad "refusal on a rotational disk suggests =0, which cannot help there: $msg" \
@@ -633,6 +650,10 @@ msg="$(_ple_gate "ssd nvme0n1" 0)"
 command grep -q "needs ~999999 GB" <<<"$msg" && command grep -q "from 1 GiB of RAM" <<<"$msg" \
   && ok "=0 on an SSD past setup's pin point: the table still counts" \
   || bad "box past setup's SSD pin point was priced without the table: $msg"
+msg="$(_ple_gate "nodev" 0)"
+command grep -q "needs ~999999 GB" <<<"$msg" && command grep -q "from 1 GiB of RAM" <<<"$msg" \
+  && ok "=0 on a no-device filesystem past setup's pin point: the table still counts" \
+  || bad "no-device filesystem past setup's pin point was priced without the table: $msg"
 # the boundary, in setup.py's units (MemTotal GiB >= the rounded-down point = pinned)
 _ple_compose 92
 ( _strata_ple_disk() { echo "ssd nvme0n1"; }
@@ -641,6 +662,14 @@ _ple_compose 92
     && [[ "$(_strata_ple_case "$tmp" $(( 92 * 1048576 )))" == "setup-pins 92" ]] ) \
   && ok "pin point: 91.9 GiB (eddie's rig) is below 92, 92.0 GiB is at it" \
   || bad "the setup pin-point boundary moved"
+# model files that can't be found: the table still counts
+_ple_compose 999999
+( rm -f "$pdir/w/"*.gguf
+  msg="$(_ple_gate "ssd nvme0n1" 0)"
+  : > "$pdir/w/m-00001-of-00001.gguf"
+  command grep -q "needs ~999999 GB" <<<"$msg" && command grep -q "could not find the model's" <<<"$msg" ) \
+  && ok "=0 with no model files in the /gguf folder: the table still counts" \
+  || bad "a /gguf folder without model files lost the table"
 # no /gguf mount, or no headers: unknown, so nothing changes
 printf '# CPU-Offload-Host-RAM-GB: 999999\n# Strata-PLE-Table-GB: 28\n# Strata-PLE-Setup-Pins-From-GiB: 999999\nservices:\n  x:\n    command: >-\n      -ot a=CPU\n' > "$tmp"
 msg="$(_ple_gate "ssd nvme0n1" 0)"

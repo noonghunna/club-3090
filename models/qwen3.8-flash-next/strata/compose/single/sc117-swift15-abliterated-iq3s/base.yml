@@ -46,7 +46,8 @@
 #   ⤷ The n-gram table's share of the figure above (28.8 GB, rounded down). With STRATA_PLE_AUTO_RAM=0
 #     and the model on an SSD it stays on disk, and preflight leaves it out, except from 106 GiB of RAM,
 #     where Strata's setup keeps it in RAM on an SSD too (setup.py: the model's 62 GB + the table + 16;
-#     re-check at a Strata pin bump). A rotational disk, or one preflight can't read, keeps it in.
+#     re-check at a Strata pin bump). A rotational disk keeps it in; btrfs, ZFS or NFS (no block
+#     device behind the files) counts as an SSD, as it does in setup.
 #   Best for:  Swift 1.5's shorter thinking, abliterated, on ONE 3090 + ~96 GB RAM (less with the model on an SSD)
 # ---------------------------------------------------------------------------
 # Strata (github.com/Niko1221/Strata) is its own engine for this model: see docs/engines/STRATA.md.
