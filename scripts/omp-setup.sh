@@ -146,7 +146,8 @@ def qwen38_override(mid: str, fam: dict) -> str:
 # ran at the server's default, the slowest rung (club-3090 Discussion #1690).
 # These are the ids the engines REPORT, which is what the gateway names each route:
 # a compose's --served-model-name / --alias / --model-name / SERVED_MODEL_NAME / --served-name (QEngine),
-# Strata's "<family name>-<quant>" (qwen3.8-flash-next-iq3_s, swift-1.5-iq3_s) and
+# Strata's "<family name>-<quant>" (qwen3.8-flash-next-iq3_s, swift-1.5-iq3_s,
+# qwen3.8-flash-next-unsloth-ud-iq4_xs-v31) and
 # Project Maya's model_name (glm-5.3-flash). test-omp-setup checks both lists
 # against the composes.
 # Sent with the Flash-Next and GLM overrides only. omp adds `summary: "auto"` to the
@@ -158,7 +159,8 @@ def qwen38_override(mid: str, fam: dict) -> str:
 # (llama.cpp, Strata, vLLM) don't use the summary request.
 FLASH_NEXT_IDS = ["qwen3.8-flash-next", "qwen3.8-flash-next-ple", "qwen3.8-flash-next-swift15",
                   "qwen3.8-flash-next-exl3-3.05bpw", "qwen3.8-flash-next-exl3-4.05bpw",
-                  "qwen3.8-flash-next-iq3_s", "swift-1.5-iq3_s"]
+                  "qwen3.8-flash-next-iq3_s", "swift-1.5-iq3_s",
+                  "qwen3.8-flash-next-unsloth-ud-iq4_xs-v31", "qwen3.8-flash-next-unsloth-ud-iq3_xxs"]
 GLM53_IDS = ["glm-5.3-flash"]
 
 # The per-family wire shape — the SINGLE source for both the modelOverrides
