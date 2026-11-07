@@ -134,6 +134,17 @@
 #                     on the vLLM and SGLang slugs): QE_THINKING_BUDGET=low:N,medium:N,xhigh:N, QEngine's
 #                     own budget per effort (from 1.3.4.3; high and max use xhigh's, minimal low's).
 #                     THINKING_BUDGETS=off: no budget. A QE_THINKING_BUDGET set by hand wins.
+#   KV_OFFLOAD_DISK   0 (default) | 1: QEngine's disk cache (--disk-cache, Flash-Next from 1.3.5.3, upstream-
+#                     experimental), at /kv-offload/qengine-qwen3.8-flash-next, i.e. KV_OFFLOAD_DIR on the host
+#                     (else <data dir>/kv-offload, ~/.local/share/club-3090). A tier under the host-RAM archive
+#                     (FLASH_KV_ARCHIVE_GB, which it needs on): a conversation of 2,048 tokens or more is written
+#                     in the background when it leaves VRAM (at most once a minute), after --persist-idle (120 s)
+#                     and at shutdown, so it survives a restart; a new one with the same system prompt reads only
+#                     the part it needs. Upstream: ~2.3 GB for a 95K-token conversation. Each file is checked
+#                     (checksum, build, weights, cards, layout, YaRN): another setup starts empty, a damaged file
+#                     is removed and prefilled. A failing disk costs only the cache. Measured here: QENGINE.md
+#   KV_OFFLOAD_DISK_GB  cap on the disk cache, GiB in total (unset = QEngine's own 200); oldest files go first.
+#                     Needs KV_OFFLOAD_DISK=1. Flash-Next keeps 1 GB of the disk free.
 # The Flash-Next engine's own settings, passed through when set (its defaults otherwise):
 #   FLASH_MAX_SEQS       sequence slots, 1-16 (8 here; QEngine's default is 16). Each slot holds ~103 MB
 #                        of recurrent state a card, and the VRAM fewer slots free goes to the expert cache.
@@ -258,7 +269,9 @@ services:
     ipc: host
     ulimits:
       memlock: -1
-    stop_grace_period: 30s
+    # 120 s, not 30: with KV_OFFLOAD_DISK=1 the server saves conversations at shutdown, and upstream asks
+    # for a longer `docker stop -t` so that save isn't cut off (the last idle save stays either way)
+    stop_grace_period: 120s
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8198}}:8080"
     deploy:
@@ -274,6 +287,8 @@ services:
       - ${MODEL_DIR:-../../../../../../models-cache}/qwen3.8-flash-next-qengine-int4:/app/models/Qwen3.8-Flash-Next-QE-INT4:ro
       # ~/.cache/qengine: tune tables, stats, logs and the one-engine-per-GPU locks
       - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/qengine:/root/.cache/qengine
+      # KV_OFFLOAD_DISK=1: QEngine's disk cache, in qengine-qwen3.8-flash-next/ under this folder
+      - ${KV_OFFLOAD_DIR:-${CLUB3090_DATA_DIR:-../../../../../..}/kv-offload}:/kv-offload
       # the effort -> thinking-budget map, the same file the vLLM and SGLang composes mount
       - ../../../../../../scripts/lib/effort_budget.py:/etc/club3090/effort_budget.py:ro
     environment:
@@ -339,6 +354,8 @@ services:
       - THINKING_BUDGET_MEDIUM
       - THINKING_BUDGET_XHIGH
       - THINKING_BUDGETS
+      - KV_OFFLOAD_DISK
+      - KV_OFFLOAD_DISK_GB
     entrypoint:
       - bash
       - -c
@@ -406,9 +423,33 @@ services:
           *) echo "[vision] VISION='$$_vis' must be 1 or 0" >&2; exit 1 ;;
         esac
         echo "[vision] image input $$( [ "$$_vis" = 1 ] && echo on || echo off ) (VISION=$$_vis)" >&2
+        # KV_OFFLOAD_DISK / KV_OFFLOAD_DISK_GB (ours) -> --disk-cache / --disk-cache-gb: QEngine's disk tier under its
+        # host-RAM archive (Flash-Next from 1.3.5.3; 1.3.5 and older stop the start on the flag), in a folder of its own.
+        _disk_args=()
+        case "$${KV_OFFLOAD_DISK:-0}" in
+          0|1) ;;
+          *) echo "[kv-offload] KV_OFFLOAD_DISK='$$KV_OFFLOAD_DISK' must be 0 or 1" >&2; exit 1 ;;
+        esac
+        if [ -n "$${KV_OFFLOAD_DISK_GB:-}" ]; then
+          case "$$KV_OFFLOAD_DISK_GB" in
+            *[!0-9]*|0) echo "[kv-offload] KV_OFFLOAD_DISK_GB='$$KV_OFFLOAD_DISK_GB' must be a whole number of GiB, 1 or more" >&2; exit 1 ;;
+          esac
+          [ "$${KV_OFFLOAD_DISK:-0}" = "1" ] || { echo "[kv-offload] KV_OFFLOAD_DISK_GB is set but KV_OFFLOAD_DISK is not 1" >&2; exit 1; }
+        fi
+        if [ "$${KV_OFFLOAD_DISK:-0}" = "1" ]; then
+          _disk_args+=(--disk-cache /kv-offload/qengine-qwen3.8-flash-next)
+          _cap="200 GiB (QEngine's default)"
+          if [ -n "$${KV_OFFLOAD_DISK_GB:-}" ]; then _disk_args+=(--disk-cache-gb "$$KV_OFFLOAD_DISK_GB"); _cap="$$KV_OFFLOAD_DISK_GB GiB"; fi
+          echo "[kv-offload] QEngine disk cache at /kv-offload/qengine-qwen3.8-flash-next (KV_OFFLOAD_DIR on the host), cap $$_cap" >&2
+        fi
+        _args+=( "$${_disk_args[@]}" )
         # The engine library makes ~/.cache/qengine/locks 0755 whatever the umask; group-writable, the
         # lock files it leaves in the shared engine cache stay removable by the user.
         mkdir -p /root/.cache/qengine/locks && chmod g+w /root/.cache/qengine/locks
+        # The same for the disk cache's folder (QEngine creates it 0755), so you can delete its files without root.
+        if [ "$${KV_OFFLOAD_DISK:-0}" = "1" ]; then
+          mkdir -p /kv-offload/qengine-qwen3.8-flash-next && chmod g+w /kv-offload/qengine-qwen3.8-flash-next
+        fi
         # Ours first, so a flag in QE_EXTRA_ARGS wins (server/app.py takes the last one).
         export QE_EXTRA_ARGS="$${_args[*]} $${QE_EXTRA_ARGS:-}"
         exec /usr/local/bin/qengine-entrypoint

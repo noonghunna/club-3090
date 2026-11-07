@@ -44,7 +44,7 @@ The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<releas
 - **Booted on both slugs** (2026-11-06, 230 W). verify-full passes on each with vision 4/4. MTP acceptance length is 3.97 on Flash-Next and 6.57 on the 27B, and an omitted effort renders as `low` on both. With tiny budgets through our knobs (64 / 128 / 256), every `probe-effort-budget.sh` check passed on the 27B (reasoning stopped 27–30 tokens past each budget), and the positive control passed on both. `QE_DECODE_COMM=auto` kept P2P on both slugs: one stream 15.75 against 17.11 ms a step through host memory on the 27B, 23.90 against 28.62 on Flash-Next. Flash-Next was ready in 148 s with its context still 262144 (`FLASH_CTX_FIT` lowered nothing), and MemAvailable fell 87.4 GiB at ready, as on 1.3.4.2. The 27B's KV pool with vision is 368,640 tokens, against 289,792 on 1.3.4.x (cause not traced). No bench was run on 1.3.5.
 
 **1.3.5.3** (pinned 2026-11-07; upstream-experimental, and it contains 1.3.5.1 and 1.3.5.2) is pinned at the maintainer's call. Upstream's own notes say its final build and Docker images were never started; our boots below are their first.
-- **Flash-Next disk cache** ([bpx03/QEngine#15](https://github.com/bpx03/QEngine/issues/15)): the engine has it from this build.
+- **Flash-Next disk cache** ([bpx03/QEngine#15](https://github.com/bpx03/QEngine/issues/15)): `KV_OFFLOAD_DISK=1` now works on the Flash-Next slug too, off by default (Disk cache, below).
 - **Sampling defaults from the Qwen3.8 card**, per reply mode, for requests that send none:
   - thinking: 1.0 / 0.95 / 20 / 0, presence 0;
   - non-thinking: 0.7 / 0.80 / 20 / 0, presence 1.5.
@@ -103,9 +103,9 @@ Its own environment variables (the image's entrypoint passes `QE_EXTRA_ARGS` to 
 
 ⚠️ The loop guard is on by default, and it writes into the conversation: on a guarded turn, an agent finds the server's note in its latest tool result. A request with `"loop_guard": false` turns it off for that request.
 
-### Disk cache (27B): `KV_OFFLOAD_DISK=1`
+### Disk cache: `KV_OFFLOAD_DISK=1`
 
-The 27B slug can keep its conversations on disk across restarts, with QEngine's own `--disk-cache`. It's off by default; Flash-Next's, new in 1.3.5.3, is wired in the next commit.
+Both slugs can keep their conversations on disk across restarts, with QEngine's own `--disk-cache`: the 27B since #1941, Flash-Next from 1.3.5.3 (below). It's off by default. The 27B first:
 
 - **Turning it on:** `KV_OFFLOAD_DISK=1`, the same setting as the vLLM and SGLang disk tiers.
   - **Where:** the files go in `qengine-qwen3.8-27b/` under `KV_OFFLOAD_DIR` (else `<data dir>/kv-offload`, `~/.local/share/club-3090/kv-offload`).
@@ -130,6 +130,25 @@ Measured on the reference rig (2026-11-04, QEngine 1.3.4.3, `KV_OFFLOAD_DISK_GB=
 | after `docker restart`: same system prompt, new question | off (control) | 0 | 20.2 s |
 
 verify-full passed on the disk-cache boot. The folder is made group-writable at start, so you can delete its files without root.
+
+**Flash-Next, from 1.3.5.3 (an upstream-experimental build):** the same setting turns on Flash-Next's own disk cache ([bpx03/QEngine#15](https://github.com/bpx03/QEngine/issues/15)), in `qengine-qwen3.8-flash-next/`. Its code isn't the 27B's:
+- **What gets saved:** a conversation of 2,048 tokens or more, in the background, when it leaves VRAM (at most once a minute per conversation), after 120 s idle and at shutdown. Each file is rewritten whole.
+- **What it reuses:** a continued conversation is read back whole. A new one with the same system prompt reads only the part up to that prompt's end. Reads run in the background, and after 30 s a prompt gives up on its file and prefills.
+- **Checks:** every read is checksummed, and a file serves only the same build, weights (path, size and date), cards, layout and YaRN factor. An upgrade starts empty, and a damaged file is removed and prefilled.
+- **Limits:** it keeps 1 GB of the disk free. A failing disk costs only the cache, with a log line.
+- **Shutdown:** the slug's `stop_grace_period` is 120 s for the shutdown save, as upstream asks for `docker stop`.
+- **Side effect:** QEngine also keeps its start-up link and decode calibration (`comm_probe_*.txt`, `comm_decode_*.txt`) in that folder, so the first start with it on measures again, for a few seconds.
+
+Measured on the reference rig (2026-11-07, QEngine 1.3.5.3, `KV_OFFLOAD_DISK_GB=20`, two 3090s at 230 W), a system prompt of 100,933 tokens, temperature 0, every answer correct:
+
+| Request | Disk cache | Reused | Time to first token |
+|---|---|---|---|
+| first conversation (cold) | on | 0 | 28.5 s |
+| after `docker restart`: same system prompt, new question | on | 100,902 (1.57 GB read in 0.97 s) | 1.41 s |
+| after a second `docker restart`: the first conversation continued, alone | on | 100,943 (2.37 GB read in 1.44 s) | 1.84 s |
+| after `docker restart`: same system prompt, new question | off (control) | 0 | 28.0 s |
+
+The shutdown saves took 2.3–13.1 s (2.37 GB for the first conversation). After the run the folder held 5.6 GiB in three conversations. The folder is made group-writable at start, and the test files were deleted without root.
 
 ## Slugs
 
