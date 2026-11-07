@@ -52,7 +52,7 @@
 # a 6K prompt -35%; not re-measured on this compose).
 services:
   strata-maya:
-    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:856bb9c0440914dba34d221be743730609923dd51d0d41c3fc7acc0ee78b6be2}
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:3cf8d5dd9f91719f6ef7e8187a4658093482bb464e4b9435de72c2b37e92365f}
     container_name: ${ESTATE_CONTAINER:-strata-maya-deepseek41-flash-dual-ista-iq2-xxs}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
