@@ -2644,6 +2644,110 @@ preflight_nvidia_page_pool() {
   return 0
 }
 
+# --- Strata's n-gram (PLE) table and the RAM gate (#1888 follow-up) ----------
+# A Strata Flash-Next compose's CPU-Offload-Host-RAM-GB counts the ~28.8 GB n-gram
+# table in RAM, as it was MEASURED: the reference rig's model disk is rotational,
+# and there setup writes --ple-io ram whatever STRATA_PLE_AUTO_RAM says. On an SSD,
+# STRATA_PLE_AUTO_RAM=0 keeps the table on direct disk reads, so the gate leaves it
+# out. Two things still put it in RAM, and the gate prices both:
+#   • a rotational disk (setup's --ple-io ram, setup.py rotational_disk(), #605);
+#   • setup's own SSD rule: from <model ram_gb> + table + 16 GiB of MemTotal it
+#     writes --ple-io ram on an SSD too (147-verify), and the engine keeps a lock
+#     the args asked for ("--ple-io ram are kept as asked") — its 0.2.10 give-back
+#     covers only the lock its free-RAM policy took. The compose declares that point
+#     as Strata-PLE-Setup-Pins-From-GiB (rounded DOWN, so a box right at it counts
+#     as pinned).
+# A compose without both headers, or a disk this can't read, keeps the table in
+# the figure: the safe direction.
+
+# _strata_gguf_dir <compose_file>
+# The host folder the compose mounts at /gguf, with ${MODEL_DIR:-default} resolved
+# as compose resolves it (MODEL_DIR from the loaded settings, else the compose's
+# default relative to its own folder). Fails when there is no such mount or its
+# source uses any other variable. Does not check that the folder exists.
+_strata_gguf_dir() {
+  local compose_file="$1" line src def rest base
+  line="$(command grep -m1 -E '^[[:space:]]*-[[:space:]]*"?[^"#]*:/gguf(:ro)?"?[[:space:]]*$' "$compose_file" 2>/dev/null)" \
+    || return 1
+  src="${line#*-}"
+  src="${src#"${src%%[![:space:]]*}"}"
+  src="${src#\"}"
+  src="${src%%:/gguf*}"
+  if [[ "$src" =~ ^\$\{MODEL_DIR:-([^}]*)\}(.*)$ ]]; then
+    def="${BASH_REMATCH[1]}"; rest="${BASH_REMATCH[2]}"
+    if [[ -n "${MODEL_DIR:-}" ]]; then
+      base="$MODEL_DIR"
+    else
+      base="$(cd -- "$(dirname -- "$compose_file")" && pwd)/${def}"
+    fi
+    src="${base}${rest}"
+  fi
+  [[ -n "$src" && "$src" != *'$'* ]] || return 1
+  printf '%s\n' "$src"
+}
+
+# _strata_ple_disk <file>…
+# The disk kind under the files, read the way Strata's setup reads it (setup.py
+# rotational_disk(): stat the file, /sys/dev/block/<major>:<minor>, then
+# queue/rotational on that node or, for a partition, on its disk). Prints
+# "rotational <disk>", "ssd <disk>" or "unknown". One rotational file makes the
+# set rotational; a file with no queue/rotational (tmpfs, overlay, NFS, ZFS…)
+# makes it unknown. Strata reads that last case as an SSD; the gate reads it as
+# "can't tell" and keeps the table in the figure.
+_strata_ple_disk() {
+  local f dev major minor node q rot disk="" seen=0
+  for f in "$@"; do
+    dev="$(stat -L -c '%d' -- "$f" 2>/dev/null)" || { echo unknown; return 0; }
+    [[ "$dev" =~ ^[0-9]+$ ]] || { echo unknown; return 0; }
+    # glibc's gnu_dev_major / gnu_dev_minor
+    major=$(( ((dev >> 8) & 0xfff) | ((dev >> 32) & ~0xfff) ))
+    minor=$(( (dev & 0xff) | ((dev >> 12) & ~0xff) ))
+    node="$(readlink -f "/sys/dev/block/${major}:${minor}" 2>/dev/null)" || { echo unknown; return 0; }
+    rot=""
+    for q in "$node" "${node%/*}"; do
+      if [[ -r "$q/queue/rotational" ]]; then
+        rot="$(<"$q/queue/rotational")"; disk="${q##*/}"
+        break
+      fi
+    done
+    case "$rot" in
+      1) echo "rotational ${disk}"; return 0 ;;
+      0) seen=1 ;;
+      *) echo unknown; return 0 ;;
+    esac
+  done
+  if (( seen )); then echo "ssd ${disk}"; else echo unknown; fi
+}
+
+# _strata_ple_case <compose_file> <MemTotal kB>
+# Where Strata will keep the table on this box, before STRATA_PLE_AUTO_RAM is asked:
+# "ssd <disk>" (the setting decides), "rotational <disk>", "setup-pins <GiB>"
+# (an SSD, but setup's own rule pins it from this much RAM) or "unknown".
+_strata_ple_case() {
+  local compose_file="$1" total_kb="$2" from dir f disk
+  local -a files=()
+  from="$(compose_meta_get "$compose_file" strata-ple-setup-pins-from-gib || true)"
+  [[ "$from" =~ ^[0-9]+$ && "$total_kb" =~ ^[0-9]+$ ]] || { echo unknown; return 0; }
+  dir="$(_strata_gguf_dir "$compose_file")" || { echo unknown; return 0; }
+  for f in "$dir"/*.gguf; do
+    [[ -e "$f" ]] && files+=("$f")
+  done
+  (( ${#files[@]} )) || { echo unknown; return 0; }
+  disk="$(_strata_ple_disk "${files[@]}")"
+  case "$disk" in
+    rotational\ *) echo "$disk"; return 0 ;;
+    ssd\ *) ;;
+    *) echo unknown; return 0 ;;
+  esac
+  # setup.py compares MemTotal in GiB; the header is rounded down, so ">=" here
+  # can only call a box pinned that setup would not pin (the safe direction).
+  if (( total_kb / 1048576 >= from )); then
+    echo "setup-pins ${from}"
+  else
+    echo "$disk"
+  fi
+}
+
 # preflight_cpu_offload_ram <compose_file>
 # Guards an offload compose against a host that cannot hold the experts.
 #
@@ -2694,7 +2798,7 @@ preflight_cpu_offload_ram() {
     echo "[preflight] WARN:  cannot read /proc/meminfo; skipping CPU-offload RAM check." >&2
     return 0
   fi
-  local kb total_gb avail_gb
+  local kb total_kb total_gb avail_gb
   # ⚠️ DECIMAL GB, because the header key is `CPU-Offload-Host-RAM-GB` and every
   # value authored against it is decimal GB (weights sizes, `size_gb`, the
   # measured cgroup figures). This used to be `kb / 1024 / 1024`, i.e. GiB
@@ -2702,19 +2806,52 @@ preflight_cpu_offload_ram() {
   # documented contract on every offload slug, silently. /proc/meminfo is in KiB,
   # so bytes = kb * 1024, and GB = bytes / 1e9. (241 GB reads as 224 in GiB: on a
   # 135 GB slug that is the difference between "fits with room" and a refusal.)
-  kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo)";     total_gb=$(( kb * 1024 / 1000000000 ))
-  kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"; avail_gb=$(( kb * 1024 / 1000000000 ))
+  total_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo)"; total_gb=$(( total_kb * 1024 / 1000000000 ))
+  kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)";  avail_gb=$(( kb * 1024 / 1000000000 ))
+
+  # Strata's n-gram table (see _strata_ple_case above): left out only with
+  # STRATA_PLE_AUTO_RAM=0 on an SSD, below setup's own SSD pin point.
+  local ple_gb ple_case="" ple_gone=0 ple_hint=""
+  ple_gb="$(compose_meta_get "$compose_file" strata-ple-table-gb || true)"
+  if [[ "$ple_gb" =~ ^[0-9]+$ ]] && (( ple_gb > 0 )); then
+    ple_case="$(_strata_ple_case "$compose_file" "$total_kb")"
+    if [[ "${STRATA_PLE_AUTO_RAM:-}" == "0" ]]; then
+      case "$ple_case" in
+        ssd\ *)
+          ple_gone=1
+          need_gb=$(( need_gb - ple_gb ))
+          (( need_gb < 1 )) && need_gb=1
+          echo "[preflight] cpu-offload: STRATA_PLE_AUTO_RAM=0 and the model is on an SSD (${ple_case#ssd }):" \
+               "the ~${ple_gb} GB n-gram table stays on disk, so it is left out of the RAM need" ;;
+        rotational\ *)
+          echo "[preflight] cpu-offload: STRATA_PLE_AUTO_RAM=0 is set, but the model is on a rotational disk" \
+               "(${ple_case#rotational }): Strata's setup keeps the ~${ple_gb} GB n-gram table in RAM there, so it still counts" ;;
+        setup-pins\ *)
+          echo "[preflight] cpu-offload: STRATA_PLE_AUTO_RAM=0 is set, but from ${ple_case#setup-pins } GiB of RAM" \
+               "Strata's setup keeps the ~${ple_gb} GB n-gram table in RAM on an SSD too, so it still counts" ;;
+        *)
+          echo "[preflight] cpu-offload: STRATA_PLE_AUTO_RAM=0 is set, but the model folder's disk type could not" \
+               "be read, so the ~${ple_gb} GB n-gram table still counts" ;;
+      esac
+    elif [[ "$ple_case" == ssd\ * ]] && (( need_gb - ple_gb >= 1 )); then
+      ple_hint="On this SSD, STRATA_PLE_AUTO_RAM=0 keeps the ~${ple_gb} GB n-gram table on disk and lowers this to ~$(( need_gb - ple_gb )) GB (prompts 2-3% slower)."
+    fi
+  fi
 
   if (( total_gb < need_gb )); then
     echo "[preflight] ERROR: this compose offloads experts to host RAM and needs ~${need_gb} GB" >&2
     if (( grant_gb > 0 )); then
       echo "            on this rig (${need_hdr} GB worst case, minus ~${grant_gb} GB of experts" >&2
       echo "            residency keeps on your GPUs), but the machine has only ${total_gb} GB TOTAL." >&2
+    elif (( ple_gone )); then
+      echo "            (${need_hdr} GB less the ~${ple_gb} GB n-gram table, which stays on disk)," >&2
+      echo "            but the machine has only ${total_gb} GB TOTAL." >&2
     else
       echo "            (worst case: all experts on CPU), but the machine has only ${total_gb} GB TOTAL." >&2
     fi
     echo "            It cannot run here." >&2
     echo "            This is a hard gate, not a tuning knob: below it the box thrashes or OOMs." >&2
+    [[ -n "$ple_hint" ]] && echo "            ${ple_hint}" >&2
     echo "            Fix: use a lower-bit tier (the IQ2 slug needs ~86 GB), add RAM, or pick a" >&2
     echo "            model that fits VRAM." >&2
     # ⚠️ "more cards => less host RAM" holds ONLY for composes that can pin expert
@@ -2736,11 +2873,15 @@ preflight_cpu_offload_ram() {
     echo "[preflight] ERROR: needs ~${need_gb} GB of host RAM; only ${avail_gb} GB is AVAILABLE" >&2
     echo "            (of ${total_gb} GB total). Something else is holding memory." >&2
     echo "            Fix: stop other services and retry — 'docker ps' is the usual culprit." >&2
+    [[ -n "$ple_hint" ]] && echo "            ${ple_hint}" >&2
     return 1
   fi
   if (( grant_gb > 0 )); then
     echo "[preflight] cpu-offload: RAM ok — needs ~${need_gb} GB on this rig (${need_hdr} GB worst" \
          "case, residency keeps ~${grant_gb} GB of experts on GPU), ${avail_gb} GB available"
+  elif (( ple_gone )); then
+    echo "[preflight] cpu-offload: RAM ok — needs ~${need_gb} GB (${need_hdr} GB less the ~${ple_gb} GB" \
+         "n-gram table, which stays on disk), ${avail_gb} GB available"
   else
     echo "[preflight] cpu-offload: RAM ok — needs ~${need_hdr} GB (worst case), ${avail_gb} GB available"
   fi

@@ -541,6 +541,117 @@ command grep -q "preflight_cpu_offload_ram" scripts/switch.sh \
 command grep -q "preflight_offload_split_mode" scripts/switch.sh \
   && ok "switch.sh calls the split-mode guard" || bad "switch.sh does not call the split-mode guard"
 
+# --- Strata's n-gram (PLE) table: left out ONLY with =0 on an SSD (#1888) ------
+# The Strata Flash-Next figures were measured with the 28.8 GB table in RAM (the
+# reference rig's model disk is rotational). eddie's 92 GiB SSD rig with =0 was
+# refused for the UD-IQ4_XS dual although the table stays on disk there. The
+# subtraction must fire on exactly that case and on nothing else: a rotational
+# disk, setup's own SSD pin point, an unreadable disk and any other value of the
+# setting all keep the table in.
+for fn in _strata_gguf_dir _strata_ple_disk _strata_ple_case; do
+  declare -F "$fn" >/dev/null 2>&1 && ok "$fn defined" || bad "$fn missing"
+done
+
+# Every shipped Strata Flash-Next compose declares both headers, and its /gguf
+# mount resolves under MODEL_DIR (no mount found = "unknown" = the table always
+# counts, which would silently undo this fix).
+for f in models/qwen3.8-flash-next/strata/compose/*/*/base.yml; do
+  short="$(basename "$(dirname "$(dirname "$f")")")/$(basename "$(dirname "$f")")"
+  hdr="$(compose_meta_get "$f" cpu-offload-host-ram-gb || true)"
+  tbl="$(compose_meta_get "$f" strata-ple-table-gb || true)"
+  pin="$(compose_meta_get "$f" strata-ple-setup-pins-from-gib || true)"
+  if [[ "$tbl" =~ ^[0-9]+$ && "$pin" =~ ^[0-9]+$ && "$hdr" =~ ^[0-9]+$ ]] && (( tbl > 0 && tbl < hdr )); then
+    ok "$short declares Strata-PLE-Table-GB=$tbl and Strata-PLE-Setup-Pins-From-GiB=$pin"
+  else
+    bad "$short: Strata-PLE-Table-GB='$tbl' / Strata-PLE-Setup-Pins-From-GiB='$pin' (RAM header '$hdr')"
+  fi
+  d="$(MODEL_DIR=/srv/m _strata_gguf_dir "$f" || true)"
+  [[ "$d" == /srv/m/?* ]] && ok "$short mounts its weights at /gguf from MODEL_DIR ($d)" \
+    || bad "$short: /gguf mount did not resolve under MODEL_DIR (got '$d')"
+done
+
+# the disk reader, on real files: procfs has no block device behind it
+[[ "$(_strata_ple_disk /proc/meminfo)" == "unknown" ]] \
+  && ok "disk reader: a procfs file is 'unknown' (no queue/rotational)" \
+  || bad "disk reader on /proc/meminfo: '$(_strata_ple_disk /proc/meminfo)'"
+r="$(_strata_ple_disk scripts/preflight.sh)"
+[[ "$r" =~ ^(rotational|ssd)\ [^\ ]+$ || "$r" == unknown ]] \
+  && ok "disk reader: a real file reads as '$r'" || bad "disk reader printed '$r'"
+[[ "$(_strata_ple_disk /nonexistent/x.gguf)" == "unknown" ]] \
+  && ok "disk reader: a missing file is 'unknown'" || bad "disk reader on a missing file"
+
+# A Strata-shaped compose under the gate. The 999999 figure makes every leg refuse,
+# so the message says which figure the gate used; the disk is stubbed per leg.
+pdir="$(mktemp -d)"; mkdir -p "$pdir/w"; : > "$pdir/w/m-00001-of-00001.gguf"
+trap 'rm -f "$tmp"; rm -rf "$stub" "$pdir"' EXIT
+_ple_compose() {  # <setup pin point GiB>
+  printf '# CPU-Offload-Host-RAM-GB: 999999\n# Strata-PLE-Table-GB: 28\n# Strata-PLE-Setup-Pins-From-GiB: %s\nservices:\n  strata:\n    volumes:\n      - "${MODEL_DIR:-../m}/w:/gguf:ro"\n' "$1" > "$tmp"
+}
+_ple_gate() {  # <disk stub output> <STRATA_PLE_AUTO_RAM or "-" for unset>
+  # (not named `disk`: _strata_ple_case declares a local of that name, which the
+  #  stub would then read under dynamic scoping)
+  local _ple_stub_disk="$1" auto="$2"
+  ( _strata_ple_disk() { echo "$_ple_stub_disk"; }
+    export MODEL_DIR="$pdir"
+    if [[ "$auto" == "-" ]]; then unset STRATA_PLE_AUTO_RAM; else export STRATA_PLE_AUTO_RAM="$auto"; fi
+    preflight_cpu_offload_ram "$tmp" 2>&1 )
+}
+_ple_compose 999999        # below setup's SSD pin point on any box
+
+msg="$(_ple_gate "ssd nvme0n1" 0)"
+command grep -q "needs ~999971 GB" <<<"$msg" && command grep -q "stays on disk" <<<"$msg" \
+  && ok "=0 on an SSD: the 28 GB table is left out (999999 -> 999971)" \
+  || bad "=0 on an SSD did not leave the table out: $msg"
+msg="$(_ple_gate "rotational sdb" 0)"
+command grep -q "needs ~999999 GB" <<<"$msg" && command grep -q "rotational disk (sdb)" <<<"$msg" \
+  && ok "=0 on a rotational disk: the table still counts, and the gate says why" \
+  || bad "rotational disk was priced without the table: $msg"
+msg="$(_ple_gate "unknown" 0)"
+command grep -q "needs ~999999 GB" <<<"$msg" && command grep -q "could not" <<<"$msg" \
+  && ok "=0 on an unreadable disk: the table still counts (the safe direction)" \
+  || bad "unreadable disk was priced without the table: $msg"
+for v in - 1 "" auto; do
+  msg="$(_ple_gate "ssd nvme0n1" "$v")"
+  command grep -q "needs ~999999 GB" <<<"$msg" \
+    && ok "STRATA_PLE_AUTO_RAM='${v/-/<unset>}' on an SSD: the table still counts" \
+    || bad "STRATA_PLE_AUTO_RAM='${v/-/<unset>}' left the table out: $msg"
+done
+# the refusal names the setting when it would have helped — eddie had to ask
+msg="$(_ple_gate "ssd nvme0n1" -)"
+command grep -q "STRATA_PLE_AUTO_RAM=0 keeps the ~28 GB n-gram table on disk and lowers this to ~999971 GB" <<<"$msg" \
+  && ok "refusal on an SSD without =0 names STRATA_PLE_AUTO_RAM=0 and the lower figure" \
+  || bad "refusal on an SSD does not point at STRATA_PLE_AUTO_RAM=0: $msg"
+msg="$(_ple_gate "rotational sdb" -)"
+command grep -q "STRATA_PLE_AUTO_RAM=0" <<<"$msg" \
+  && bad "refusal on a rotational disk suggests =0, which cannot help there: $msg" \
+  || ok "refusal on a rotational disk does not suggest =0"
+
+# setup's own SSD rule: from the pin point it writes --ple-io ram, which the
+# engine keeps — so =0 cannot keep the table out there
+_ple_compose 1             # every box is past a 1 GiB pin point
+msg="$(_ple_gate "ssd nvme0n1" 0)"
+command grep -q "needs ~999999 GB" <<<"$msg" && command grep -q "from 1 GiB of RAM" <<<"$msg" \
+  && ok "=0 on an SSD past setup's pin point: the table still counts" \
+  || bad "box past setup's SSD pin point was priced without the table: $msg"
+# the boundary, in setup.py's units (MemTotal GiB >= the rounded-down point = pinned)
+_ple_compose 92
+( _strata_ple_disk() { echo "ssd nvme0n1"; }
+  export MODEL_DIR="$pdir"
+  [[ "$(_strata_ple_case "$tmp" $(( 91 * 1048576 + 943718 )))" == "ssd nvme0n1" ]] \
+    && [[ "$(_strata_ple_case "$tmp" $(( 92 * 1048576 )))" == "setup-pins 92" ]] ) \
+  && ok "pin point: 91.9 GiB (eddie's rig) is below 92, 92.0 GiB is at it" \
+  || bad "the setup pin-point boundary moved"
+# no /gguf mount, or no headers: unknown, so nothing changes
+printf '# CPU-Offload-Host-RAM-GB: 999999\n# Strata-PLE-Table-GB: 28\n# Strata-PLE-Setup-Pins-From-GiB: 999999\nservices:\n  x:\n    command: >-\n      -ot a=CPU\n' > "$tmp"
+msg="$(_ple_gate "ssd nvme0n1" 0)"
+command grep -q "needs ~999999 GB" <<<"$msg" \
+  && ok "no /gguf mount: the table still counts" || bad "a compose without a /gguf mount lost the table: $msg"
+printf '# CPU-Offload-Host-RAM-GB: 999999\nservices:\n  strata:\n    volumes:\n      - "${MODEL_DIR:-../m}/w:/gguf:ro"\n' > "$tmp"
+msg="$(_ple_gate "ssd nvme0n1" 0)"
+command grep -q "needs ~999999 GB" <<<"$msg" && ! command grep -q "n-gram" <<<"$msg" \
+  && ok "no Strata-PLE headers: the gate is unchanged and silent about the table" \
+  || bad "a compose without the Strata headers was touched: $msg"
+
 # --- unit contract: the -GB key is compared in DECIMAL GB --------------------
 # The header key is `CPU-Offload-Host-RAM-GB` and every value authored against it
 # is decimal GB. preflight_cpu_offload_ram() once computed `kb/1024/1024` (GiB)

@@ -40,6 +40,12 @@
 #   ⤷ MEASURED 2026-11-07 (0.2.11, this rig's rotational model disk, sampled every 2 s with the page cache
 #     dropped first): MemAvailable fell 96.0 GB at ready on the first start and 100.7 GB at its lowest on
 #     the bench boot, during the 90K prefill. Registry `host_ram_gb` (101) must stay <= this.
+# Strata-PLE-Table-GB: 28
+# Strata-PLE-Setup-Pins-From-GiB: 92
+#   ⤷ The n-gram table's share of the figure above (28.8 GB, rounded down). With STRATA_PLE_AUTO_RAM=0
+#     and the model on an SSD it stays on disk, and preflight leaves it out, except from 92 GiB of RAM,
+#     where Strata's setup keeps it in RAM on an SSD too (setup.py: the model's 48 GB + the table + 16;
+#     re-check at a Strata pin bump). A rotational disk, or one preflight can't read, keeps it in.
 #   Best for:  Unsloth's 4-bit v3.1 set on 2 cards: the larger of the two Unsloth Strata slugs
 # ---------------------------------------------------------------------------
 # Strata (github.com/Niko1221/Strata) is its own engine for this model: see docs/engines/STRATA.md.
