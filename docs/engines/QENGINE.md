@@ -22,7 +22,7 @@ What it does, from its README:
 
 ## Image
 
-The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<release>`, text only (about 0.3 GB), and `:<release>-vision`, which adds PyTorch for the vision encoder (about 3 GB to pull). Each image's `org.opencontainers.image.revision` label names its source commit. The profile pins **`1.3.5-vision`** by digest (`sha256:167d404c…`, source `1348a95d` = git tag `v1.3.5`), and the launchers inject it as `QENGINE_IMAGE`. Its server, engine libraries and entrypoint are byte-identical to the text image's, so text serving is the same in either; the vision image is what lets the slugs take images.
+The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<release>`, text only (about 0.3 GB), and `:<release>-vision`, which adds PyTorch for the vision encoder (about 3 GB to pull). Each image's `org.opencontainers.image.revision` label names its source commit. The profile pins **`1.3.5.3-vision`** by digest (`sha256:c175eb42…`, source `dffb7d19` = git tag `v1.3.5.3`), an upstream-**experimental** build (a GitHub pre-release; upstream's stable, `latest` and `vision` stay on 1.3.5), pinned at the maintainer's call for the Flash-Next disk cache. The rollback is 1.3.5-vision (`sha256:167d404c…`), and the launchers inject it as `QENGINE_IMAGE`. Its server, engine libraries and entrypoint are byte-identical to the text image's, so text serving is the same in either; the vision image is what lets the slugs take images.
 
 **1.3.3.1** (pinned 2026-11-01, a fix-only release for both engines) fixes replies that could pick up text from another conversation running at the same time: when a new request was admitted between two chunks of another prompt's prefill, the next generation step of a running request ran on the new request's sequence slot, so it continued that conversation and sent the tokens to the wrong client (or ended early with empty content). Only a server handling several requests at once is affected, which both slugs allow (several slots); upstream recommends that everyone upgrade. Flash-Next also had the same mix-up after a failed prompt in a batched prefill. Both engines now refuse a generation step on a slot that is still prefilling or no longer in use, and log a `BUG:` line if one is attempted.
 
@@ -43,6 +43,28 @@ The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<releas
 - **Forwarded.** Both composes forward the new README settings for their engine, plus two from upstream's `docs/advanced.md`: `QE_LOOP_GUARD_THINK`, like the loop-guard settings already forwarded, and the 27B's `QE_GRAPH_RESERVE_MB`, the fallback the release notes name for a graph out of VRAM. Upstream's other new settings in `docs/advanced.md`, debugging switches and tuning, aren't forwarded.
 - **Booted on both slugs** (2026-11-06, 230 W). verify-full passes on each with vision 4/4. MTP acceptance length is 3.97 on Flash-Next and 6.57 on the 27B, and an omitted effort renders as `low` on both. With tiny budgets through our knobs (64 / 128 / 256), every `probe-effort-budget.sh` check passed on the 27B (reasoning stopped 27–30 tokens past each budget), and the positive control passed on both. `QE_DECODE_COMM=auto` kept P2P on both slugs: one stream 15.75 against 17.11 ms a step through host memory on the 27B, 23.90 against 28.62 on Flash-Next. Flash-Next was ready in 148 s with its context still 262144 (`FLASH_CTX_FIT` lowered nothing), and MemAvailable fell 87.4 GiB at ready, as on 1.3.4.2. The 27B's KV pool with vision is 368,640 tokens, against 289,792 on 1.3.4.x (cause not traced). No bench was run on 1.3.5.
 
+**1.3.5.3** (pinned 2026-11-07; upstream-experimental, and it contains 1.3.5.1 and 1.3.5.2) is pinned at the maintainer's call. Upstream's own notes say its final build and Docker images were never started; our boots below are their first.
+- **Flash-Next disk cache** ([bpx03/QEngine#15](https://github.com/bpx03/QEngine/issues/15)): the engine has it from this build.
+- **Sampling defaults from the Qwen3.8 card**, per reply mode, for requests that send none:
+  - thinking: 1.0 / 0.95 / 20 / 0, presence 0;
+  - non-thinking: 0.7 / 0.80 / 20 / 0, presence 1.5.
+
+  Before, both models used top_p 0.95 and no penalty, with temperature 1.0 on Flash-Next and 0.6 on the 27B. A set `QE_PRESENCE_PENALTY` is one value for both modes. Upstream hasn't measured these defaults: not the speed cost of presence 1.5, not tool calls under it, not quality. Results from runs that send no sampler aren't comparable with 1.3.5's.
+- **Log wording:** the 27B's start-up line reads `P2P: peer access between all N GPUs` instead of naming a decode path before it's chosen (from our note on bpx03/QEngine#19). `bench.sh` / `report.sh` read the `[comm] decode collectives` line either way.
+- **From 1.3.5.1 and 1.3.5.2:**
+  - images in Flash-Next's `FLASH_PAR=pp`;
+  - truer `pp` log lines;
+  - an INT8 27B option (`bpx03/Qwen3.8-27B-INT8-QEngine`, three cards upstream; its `QE_KV_SCALES` and `QE_INT8_MTP_FT` aren't forwarded, since no slug runs those weights).
+- **Not forwarded:** the disk cache's tuning in `docs/advanced.md` (`FLASH_DISK_MIN_TOKENS`, `FLASH_DISK_MIN_S`, `FLASH_DISK_LOAD_S`, `FLASH_DISK_RESERVE_GB`, `QE_DISK_FLUSH_S`) and `FLASH_PP_P2P`.
+- **Booted on both slugs** (2026-11-07, 230 W), each image's first start:
+  - verify-full passes on both, vision 4/4, MTP acceptance length 3.97 on Flash-Next and 6.39 on the 27B;
+  - an omitted effort renders as `low` on both, and `probe-effort-budget.sh --positive` passes on both;
+  - `QE_DECODE_COMM=auto` kept P2P on both;
+  - Flash-Next was ready in 136 s with context 262144, and MemAvailable fell 87.1 GiB at ready;
+  - both logged the card's sampling table at start.
+
+  No bench was run.
+
 **Vision (`VISION`, default 1):** both slugs accept images (OpenAI `image_url`, data URLs or http(s); Anthropic `image` blocks) through QEngine's `--vision 1`. Both weights folders carry the checkpoint's vision tower. The encoder runs in PyTorch on the last card. Flash-Next keeps the encoder's blocks in pinned host RAM and copies them to the card one block at a time for each image; the 27B keeps them on the card (QEngine's `QE_VISION_STREAM`, 1 by default for Flash-Next only; [#1953](https://github.com/noonghunna/club-3090/issues/1953)). Measured on the reference rig (2026-10-31, verify-full vision 4/4 on both): on the 27B, the encoder and PyTorch's CUDA context on GPU1 shrink the KV pool from 374,784 to 289,792 tokens (-23%), because tensor parallel sizes it by the smaller card; it still holds a full 262K context, and `VISION=0` gives the pool back. On 1.3.5 the pool with vision measured 368,640 tokens (2026-11-06, two boots); we haven't traced which change gave the room back. On Flash-Next, GPU1's expert budget goes from 15.73 to 15.05 GiB (1,485 fewer resident expert groups, ~2.4% of both cards'), the KV pool is unchanged, and MemAvailable at ready fell 88.2 GiB against 85.5 on the text image. Upstream measured text output unchanged by the feature and agent throughput the same (536 vs 537 tok/s, three cards); it has no vision quality benchmark yet, and video isn't supported. `VISION=0` turns it off; the compose stops with the reason if `VISION=1` meets an image without PyTorch. QEngine 1.3.4 listed one known issue: with vision on, agent workloads may briefly drop CUDA graphs under VRAM pressure, and the engine recovers. 1.3.4.1 fixes it in the Flash-Next engine (the 27B's is unchanged): see below.
 
 ## Settings
@@ -56,7 +78,7 @@ Its own environment variables (the image's entrypoint passes `QE_EXTRA_ARGS` to 
 | `QE_RESERVE_GB` | 1.5 | VRAM left outside the KV pool, per card |
 | `QE_KV_ARCHIVE_GB` | 32 | the host-RAM archive of evicted conversations |
 | `QE_P2P` | auto | 0 forces the host-memory path: every collective goes through pinned host memory, so the copy engine, which also uses the peer link, goes too. On Flash-Next, whether that pays depends on the machine. On four RTX 5080s at Gen5 x8 behind one PCIe switch, 0 cost 32–34% of prefill and 15–16% of decode ([#1952](https://github.com/noonghunna/club-3090/issues/1952)). On three RTX 3090s at x16, 0 decoded 41–46% faster (34% and 82% at 10K and 90K depth) and cost 11–16% of prefill ([#1926](https://github.com/noonghunna/club-3090/issues/1926)). On the reference rig's two 3090s (1.3.4.3, 2026-11-03) it cost 3–5% of decode, 25% at 10K and 90K depth, and 12–20% of prefill. Decode can't leave peer memory without prefill yet; we've asked upstream for a setting (QEngine #19, [UPSTREAM.md](../UPSTREAM.md#qengine-bpx03qengine)). To try 0 on Flash-Next, also set `FLASH_PAR=tp`: without peer access, `auto` may pick pipeline mode, which turns lookup drafts off |
-| `QE_PRESENCE_PENALTY`, `QE_FREQUENCY_PENALTY` | 0 | the penalties of sampled requests that send none (from 1.3-rc4) |
+| `QE_PRESENCE_PENALTY`, `QE_FREQUENCY_PENALTY` | per mode, 0 | the penalties of sampled requests that send none (from 1.3-rc4). From 1.3.5.3, unset, a request that sends no sampler values gets the Qwen3.8 card's row for its mode: thinking temperature 1.0, top_p 0.95, top_k 20, min_p 0, presence 0; non-thinking 0.7, 0.80, 20, 0, presence 1.5 (before: top_p 0.95, no penalty, temperature 1.0 on Flash-Next and 0.6 on the 27B). A set `QE_PRESENCE_PENALTY` is one value for both modes |
 | `QE_LOOP_GUARD_TURNS` | 3 | the cross-turn loop guard (from 1.3-rc4): after this many identical (reply, tool result) turns in a row, the next turn gets a presence penalty on the repeated reply (`QE_LOOP_GUARD_PENALTY`, 1.5) and no lookup drafts; 0 turns it off |
 | `QE_LOOP_GUARD_NOTE` | 1 | on a guarded turn, also append a short server note to the latest tool result; 0 drops the note |
 | `QE_LOOP_GUARD_THINK` | 2048 | from 1.3.5 the guard also sees short cycles of calls, and a guarded turn reasons even when the request turned thinking off, at most this many reasoning tokens on top of `max_tokens`; 0 turns that off. It backs off at 3, 6, 12 turns, then every 24 |
@@ -83,7 +105,7 @@ Its own environment variables (the image's entrypoint passes `QE_EXTRA_ARGS` to 
 
 ### Disk cache (27B): `KV_OFFLOAD_DISK=1`
 
-The 27B slug can keep its conversations on disk across restarts, with QEngine's own `--disk-cache`. It's off by default, and the Flash-Next engine has no disk cache.
+The 27B slug can keep its conversations on disk across restarts, with QEngine's own `--disk-cache`. It's off by default; Flash-Next's, new in 1.3.5.3, is wired in the next commit.
 
 - **Turning it on:** `KV_OFFLOAD_DISK=1`, the same setting as the vLLM and SGLang disk tiers.
   - **Where:** the files go in `qengine-qwen3.8-27b/` under `KV_OFFLOAD_DIR` (else `<data dir>/kv-offload`, `~/.local/share/club-3090/kv-offload`).

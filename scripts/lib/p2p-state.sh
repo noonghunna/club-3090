@@ -146,9 +146,10 @@ p2p_engine_log_evidence() {
 # when a pair is refused.
 # From 1.3.5 both libraries pick decode's path themselves (QE_DECODE_COMM) and say which in
 # "[comm] decode collectives (…): <path> (QE_DECODE_COMM=<mode>, …)" when it's set, or with auto
-# "… : single sequence: <path> (…); batched (…): <path> (…)". That line wins: the 27B still prints
+# "… : single sequence: <path> (…); batched (…): <path> (…)". That line wins: the 27B's 1.3.5 still prints
 # "P2P: decode all-reduce GPU to GPU" when peer access opens, before the choice, also when the
-# choice is host memory. Without it (1.3.4.3 and older) the older lines decide.
+# choice is host memory (1.3.5.3 rewords it to "P2P: peer access between all N GPUs"). Without the
+# decode line (1.3.4.3 and older) the older lines decide.
 # Prints one line: "<decode path>[; prefill transfers: <mode> (QE_COMM=…)][; ⚠ <refusal>]".
 p2p_qengine_transport() {
   local log dec="" pre="" fail="" res="" one="" many=""
