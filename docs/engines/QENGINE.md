@@ -22,7 +22,7 @@ What it does, from its README:
 
 ## Image
 
-The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<release>`, text only (about 0.3 GB), and `:<release>-vision`, which adds PyTorch for the vision encoder (about 3 GB to pull). Each image's `org.opencontainers.image.revision` label names its source commit. The profile pins **`1.3.5.3-vision`** by digest (`sha256:c175eb42…`, source `dffb7d19` = git tag `v1.3.5.3`), an upstream-**experimental** build (a GitHub pre-release; upstream's stable, `latest` and `vision` stay on 1.3.5), pinned at the maintainer's call for the Flash-Next disk cache. The rollback is 1.3.5-vision (`sha256:167d404c…`), and the launchers inject it as `QENGINE_IMAGE`. Its server, engine libraries and entrypoint are byte-identical to the text image's, so text serving is the same in either; the vision image is what lets the slugs take images.
+The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<release>`, text only (about 0.3 GB), and `:<release>-vision`, which adds PyTorch for the vision encoder (about 3 GB to pull). Each image's `org.opencontainers.image.revision` label names its source commit. The profile pins **`1.3.5.4-vision`** by digest (`sha256:0fbc6fec…`, source `8ec82d5e` = git tag `v1.3.5.4`), an upstream-**experimental** build (a GitHub pre-release; upstream's stable, `latest` and `vision` stay on 1.3.5), on the experimental line the maintainer chose for the Flash-Next disk cache (1.3.5.3). The rollback is 1.3.5.3-vision (`sha256:c175eb42…`), or 1.3.5-vision (`sha256:167d404c…`) for upstream's stable build, and the launchers inject the pin as `QENGINE_IMAGE`. Its server, engine libraries and entrypoint are byte-identical to the text image's, so text serving is the same in either; the vision image is what lets the slugs take images.
 
 **1.3.3.1** (pinned 2026-11-01, a fix-only release for both engines) fixes replies that could pick up text from another conversation running at the same time: when a new request was admitted between two chunks of another prompt's prefill, the next generation step of a running request ran on the new request's sequence slot, so it continued that conversation and sent the tokens to the wrong client (or ended early with empty content). Only a server handling several requests at once is affected, which both slugs allow (several slots); upstream recommends that everyone upgrade. Flash-Next also had the same mix-up after a failed prompt in a batched prefill. Both engines now refuse a generation step on a slot that is still prefilling or no longer in use, and log a `BUG:` line if one is attempted.
 
@@ -62,6 +62,26 @@ The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<releas
   - `QE_DECODE_COMM=auto` kept P2P on both;
   - Flash-Next was ready in 136 s with context 262144, and MemAvailable fell 87.1 GiB at ready;
   - both logged the card's sampling table at start.
+
+  No bench was run.
+
+**1.3.5.4** (pinned 2026-11-07; upstream-experimental, and it contains 1.3.5.3) closes two issues we filed and adds no setting either slug needs.
+- **`logprobs` and `top_logprobs`** (0–20) on `/v1/chat/completions`, streamed too ([bpx03/QEngine#10](https://github.com/bpx03/QEngine/issues/10)):
+  - the values come from the target head's raw logits, before temperature, penalties and the sampling filters, as in the OpenAI API;
+  - only the reply's content tokens get entries, not the reasoning;
+  - a request with `logprobs` steps one token at a time with no drafts, about 3× slower upstream, and requests running beside it slow down too;
+  - in Flash-Next's `pp` mode the low entries of the top 20 carry `pp`'s own rounding, so upstream says to use `tp` to compare distributions (both of our slugs run `tp`);
+  - no prompt logprobs: one request per position with `max_tokens: 1` gives them.
+- **Log:** Flash-Next's `[qflash] parallel mode` line names prefill's path and, with `auto`, says decode's is timed at the end of the start-up; a closing line gives the result, e.g. `[qflash] parallel mode tp, decode collectives: single sequence P2P SM stores, batched P2P SM stores` ([bpx03/QEngine#19](https://github.com/bpx03/QEngine/issues/19)). `bench.sh` / `report.sh` still read the `[comm] decode collectives` line.
+- **Fixes:** a setting written while the load threads were already reading settings could crash the load (bpx03/QEngine#11); on exactly four equal cards, `FLASH_PAR=auto` picks `tp` when peer access passes the data check and `tp` fits, and restarts in `pp` if `tp` can't start (bpx03/QEngine#12, not run on four cards upstream).
+- **Not forwarded:** `QE_NUMA` (sets the NUMA nodes of pinned host memory by hand, for boards that report no node for a card; the reference rig has one node) and `FLASH_SLOT_LOG` (a log switch).
+- **Booted on both slugs** (2026-11-07, 230 W):
+  - verify-full passes on both, vision 4/4, MTP acceptance length 3.97 on Flash-Next and 6.05 on the 27B;
+  - an omitted effort renders as `low` on both, and `probe-effort-budget.sh --positive` passes on both;
+  - `logprobs: true, top_logprobs: 3` returned an entry with three alternatives for each of the 8 content tokens on both;
+  - `QE_DECODE_COMM=auto` kept P2P on both: one stream 15.52 against 17.20 ms a step through host memory on the 27B, 23.85 against 28.59 on Flash-Next;
+  - the 27B was ready in 24 s with its KV pool at 368,640 tokens; Flash-Next in 140 s with context 262144, and MemAvailable at ready was 87.9 GiB below the idle reading taken after it stopped;
+  - both logged the card's per-mode sampling table, as on 1.3.5.3.
 
   No bench was run.
 

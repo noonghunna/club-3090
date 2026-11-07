@@ -11,6 +11,8 @@
 #   6. QEngine 1.3.5's own decode-path line (QE_DECODE_COMM) wins over the 27B's "GPU to GPU" line, which
 #      it still prints when peer access opens, also when the choice is host memory (real 1.3.5 lines)
 #   7. 1.3.5.3 rewords that line to "P2P: peer access between all N GPUs" (real 1.3.5.3 lines)
+#   8. 1.3.5.4's Flash-Next "[qflash] parallel mode" lines, which now name decode's path, change nothing
+#      (real 1.3.5.4 lines)
 # Hermetic: the function is extracted from bench.sh. The log reader is the real p2p_qengine_transport
 # from lib/p2p-state.sh (report.sh reads QEngine through it too, #1862); the other p2p_* helpers and
 # docker are stubs.
@@ -95,4 +97,10 @@ out="$(block qengine-qwen38-27b-dual 'P2P: peer access between all 2 GPUs (the p
 [[ "$out" == *"engine transport : decode collectives P2P SM stores (QE_DECODE_COMM=auto); prefill transfers: copy engine (QE_COMM=auto)"* ]] \
   || fail "1.3.5.3 27B, reworded peer-access line: $out"
 ok "1.3.5.3 27B: the reworded peer-access line, decode path from its own line"
+# 8. 1.3.5.4's real Flash-Next lines: the parallel-mode lines name decode's path (bpx03/QEngine#19); the
+#    decode-collectives line still decides, and "peer access yes" is not read as "no peer access"
+out="$(block qengine-qwen38-flash-next-dual '[comm] decode collectives: auto, timed on real decode steps at the end of the start-up (P2P SM stores vs pinned host memory); the rule alone would pick P2P (the prefill rule keeps P2P: P2P kept: tax over the cap, under the 1 NUMA node cap)\n[comm] prefill transfers: P2P SM loads / stores, pairs 1<-0:pull 0<-1:pull (FLASH_COMM=auto, auto: P2P tax 1.71 (median of 5 runs, 1.67-1.73; cap 1.30, 1 NUMA node cap 1.90 on a narrow link, severe 3.00, 1 NUMA node, narrowest link x8), CE tax 1.03, P2P 13 CE 13 host 9 GB/s: P2P kept: tax over the cap, under the 1 NUMA node cap)\n[qflash] parallel mode: tp (auto: peer access between the cards: TP); probe: 2 cards, peer access yes, TP prefill exchanges P2P, decode collectives timed at the end of the start-up (model: +0.000 ms/token, +0.0 ms/step), host link 13.5 GB/s\n[comm] decode collectives (QE_DECODE_COMM=auto, real decode steps, median of 4 interleaved rounds of 12): single sequence: P2P SM stores (P2P 23.85, host memory 28.59 ms/step, host faster in 0/4); batched (4 sequences): P2P SM stores (P2P 63.58, host memory 69.07 ms/step, host faster in 0/4); calibration 19811 ms\n[qflash] parallel mode tp, decode collectives: single sequence P2P SM stores, batched P2P SM stores\n')"
+[[ "$out" == *"engine transport : decode collectives P2P SM stores (QE_DECODE_COMM=auto); prefill transfers: P2P SM loads / stores (FLASH_COMM=auto)"* ]] \
+  || fail "1.3.5.4 Flash-Next, parallel-mode lines naming decode: $out"
+ok "1.3.5.4 Flash-Next: the parallel-mode lines change nothing"
 echo "PASS test-bench-interconnect-qengine"
