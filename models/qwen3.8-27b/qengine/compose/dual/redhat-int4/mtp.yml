@@ -138,6 +138,9 @@
 #                     many seconds (10, from 1.3.5; 0 = no deadline). It used to wait for the memory
 #   QE_PAUSE_TIMEOUT_S  a reply waiting for GPU memory another process holds ends with an error after this
 #                     many seconds (900, from 1.3.5)
+#   QE_GRAPH_RESERVE_MB  VRAM per card kept for CUDA graphs (128, from 1.3.5; 0 = off): when another process
+#                     takes all free VRAM, a step that needs a new graph uses it instead of stopping, then
+#                     runs without a graph (one log line; 1.3.4.3 aborted there)
 #   QE_EXTRA_ARGS     more server/app.py flags (--max-ctx, --served-name, ...), after ours. From 1.3.5,
 #                     --max-ctx 512K or 1M turns on YaRN for every request of that server (opt-in; upstream
 #                     found needles at 524K and 1.04M on three cards), and --lsa MAP sparse attention for
@@ -217,6 +220,7 @@ services:
       - QE_VRAM_TARGET_MB
       - QE_NO_ROOM_S
       - QE_PAUSE_TIMEOUT_S
+      - QE_GRAPH_RESERVE_MB
       - QE_EXTRA_ARGS
       # our launch knobs, mapped onto QEngine's flags by the entrypoint below
       - ENABLE_THINKING
