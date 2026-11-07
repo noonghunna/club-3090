@@ -455,6 +455,48 @@ weights:
     kind: main
     verify_glob: '*.gguf'
     manual_note: 'SC117''s abliterated edition of UkisAI''s Swift 1.5 GSQ-RCO IQ3_S: 144 residual-writer tensors (ssm_out, attn_output, ffn_down_shexp, ffn_down_exps) transplanted from orcarouter''s abliterated release, the other 1080 byte-identical to Swift''s. Two shards at the repo root (44.85 GB + 38.70 GB, LFS sha256 638fbd42a01c7b39… / 091a4f6a53697a12…), pinned to the revision of 2026-10-08; the rest of the repo (other tiers, mmproj, mtp-*, strata/rt) is not fetched. Swift keeps the 28.8 GB per-layer embedding table in shard 1, not shard 2 as ISTA does. Abliterated: its README states it has no reliable built-in guardrails. Swift Open License 1.0 (commercial use free below US$1M annual revenue) on top of the Qwen licence. Strata serves it as its swift family; the MTP draft layer is Strata''s own (from Qwen/Qwen3.8-Flash-Next), shared with the ISTA slugs.'
+  unsloth-ud-iq4xs-v31:
+    path: qwen3.8-flash-next-gguf/UD-IQ4_XS
+    local_subdir: qwen3.8-flash-next-gguf
+    # Unsloth's 11-04 "Dynamic v3.1" re-upload, pinned to that revision: its UD-IQ4_XS folder now holds
+    # FOUR shards with other tensor types than the 09-30 three-shard set, which Strata keeps under the
+    # old name and calls this one UD-IQ4_XS-v31 (Strata 0.2.11+, sha256-checked against d9620119).
+    # 93.67 GB from the HF tree (decimal).
+    size_gb: 93.67
+    format: gguf
+    status: community-experimental
+    hf_repo: unsloth/Qwen3.8-Flash-Next-GGUF
+    revision: d96201194f103c906994f283f504209dc8d2a10c
+    engine: strata
+    kind: main
+    shards: 4
+    # local_subdir is the BUCKET; files: / verify_glob carry the quant-folder prefix.
+    files:
+      - UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00004.gguf
+      - UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00002-of-00004.gguf
+      - UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00003-of-00004.gguf
+      - UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00004-of-00004.gguf
+    verify_glob: "UD-IQ4_XS/*.gguf"
+    manual_note: "Unsloth's Dynamic v3.1 UD-IQ4_XS of Qwen3.8-Flash-Next (revision d9620119, 2026-11-04): 4 shards, 93.67 GB; shard 4 is the 28.8 GB per-layer embedding (n-gram) table, byte-identical to UD-IQ3_XXS's and UD-Q4_K_XL's (sha256 5de8b5db...). Experts mostly IQ4_XS with Q5_0 in 33 layers (Strata 0.2.11 added Q5_0). ⚠️ Shard 2 (49.6 GB) is close to huggingface_hub's 50 GB single-file limit: /opt/ai/hf-download.sh prefetches every large shard with curl range-resume and checks its sha256. Served by Strata as --family unsloth --model UD-IQ4_XS-v31."
+  unsloth-ud-iq3xxs:
+    path: qwen3.8-flash-next-gguf/UD-IQ3_XXS
+    local_subdir: qwen3.8-flash-next-gguf
+    # Unsloth's 11-04 "Dynamic v3.1" UD-IQ3_XXS (Strata 0.2.11+). 83.63 GB from the HF tree (decimal).
+    size_gb: 83.63
+    format: gguf
+    status: community-experimental
+    hf_repo: unsloth/Qwen3.8-Flash-Next-GGUF
+    revision: d96201194f103c906994f283f504209dc8d2a10c
+    engine: strata
+    kind: main
+    shards: 4
+    files:
+      - UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00004.gguf
+      - UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00002-of-00004.gguf
+      - UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00003-of-00004.gguf
+      - UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00004-of-00004.gguf
+    verify_glob: "UD-IQ3_XXS/*.gguf"
+    manual_note: "Unsloth's Dynamic v3.1 UD-IQ3_XXS of Qwen3.8-Flash-Next (revision d9620119, 2026-11-04): 4 shards, 83.63 GB, the same download size as ISTA's IQ3_S. Shard 4, the 28.8 GB n-gram table, is byte-identical to UD-IQ4_XS's (sha256 5de8b5db...): with both sets in one bucket, a hard link saves 28.8 GB (the reference rig does this), and then removing one set's files frees that much less than it reports. Served by Strata as --family unsloth --model UD-IQ3_XXS."
   qengine-int4:
     path: qwen3.8-flash-next-qengine-int4
     local_subdir: qwen3.8-flash-next-qengine-int4

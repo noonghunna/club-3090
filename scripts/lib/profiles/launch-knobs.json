@@ -268,12 +268,37 @@
      ],
      "source": {
       "file": "models/qwen3.8-27b/qengine/compose/dual/redhat-int4/mtp.yml",
-      "what": "`case \"$${KV_OFFLOAD_DISK:-0}\" in 0|1) ;; *) exit 1`; 1 adds `--disk-cache /kv-offload/qengine-qwen3.8-27b`. QEngine's host-RAM archive (QE_KV_ARCHIVE_GB) is on by default, so the disk tier needs no KV_OFFLOAD_GB"
+      "what": "`case \"$${KV_OFFLOAD_DISK:-0}\" in 0|1) ;; *) exit 1`; 1 adds `--disk-cache /kv-offload/qengine-<model>` (qengine-qwen3.8-27b, and qengine-qwen3.8-flash-next from QEngine 1.3.5.3). QEngine's host-RAM archive (QE_KV_ARCHIVE_GB / FLASH_KV_ARCHIVE_GB) is on by default, so the disk tier needs no KV_OFFLOAD_GB"
      },
      "checks": [
       {
        "kind": "shell",
        "compose": "models/qwen3.8-27b/qengine/compose/dual/redhat-int4/mtp.yml",
+       "from": "^\\s*_disk_args=\\(\\)\\s*$",
+       "to": "^\\s*_args\\+=\\( \"\\$\\$\\{_disk_args\\[@\\]\\}\" \\)\\s*$",
+       "accept": [
+        {
+         "KV_OFFLOAD_DISK": "0"
+        },
+        {
+         "KV_OFFLOAD_DISK": "1"
+        }
+       ],
+       "reject": [
+        {
+         "KV_OFFLOAD_DISK": "yes"
+        },
+        {
+         "KV_OFFLOAD_DISK": "true"
+        },
+        {
+         "KV_OFFLOAD_DISK": "2"
+        }
+       ]
+      },
+      {
+       "kind": "shell",
+       "compose": "models/qwen3.8-flash-next/qengine/compose/dual/qengine-int4/mtp.yml",
        "from": "^\\s*_disk_args=\\(\\)\\s*$",
        "to": "^\\s*_args\\+=\\( \"\\$\\$\\{_disk_args\\[@\\]\\}\" \\)\\s*$",
        "accept": [
@@ -353,7 +378,7 @@
      }
     },
     {
-     "text": "On QEngine (27B only) it turns on QEngine's own disk cache: a second tier under its host-RAM archive that survives restarts. A conversation is saved after 120 s idle, at shutdown, and whenever it leaves VRAM, and a returning one is copied back instead of recomputed. A new conversation with the same system prompt reuses it only while a saved one still holds the checkpoint at that prompt's end; a conversation that came from the cache is saved with its own end only (QEngine 1.3.4.3). Reuse is at checkpoints, not at any shared prefix.",
+     "text": "On QEngine it turns on QEngine's own disk cache: a second tier under its host-RAM archive that survives restarts (the 27B, and Flash-Next from 1.3.5.3, an upstream-experimental build). A conversation is saved after 120 s idle, at shutdown, and whenever it leaves VRAM (Flash-Next: at most once a minute, and only from 2,048 tokens), and a returning one is copied back instead of recomputed. A new conversation with the same system prompt reads the part up to that prompt's end. Reuse is at checkpoints, not at any shared prefix. On 1.3.4.3 a conversation that came from the 27B's cache was saved with its own end only; 1.3.5 keeps the checkpoint (bpx03/QEngine#14).",
      "source": {
       "file": "models/qwen3.8-27b/qengine/compose/dual/redhat-int4/mtp.yml",
       "what": "KV_OFFLOAD_DISK comment in the knob list"
@@ -465,6 +490,32 @@
        "stricter": [
         "00"
        ]
+      },
+      {
+       "kind": "shell",
+       "compose": "models/qwen3.8-flash-next/qengine/compose/dual/qengine-int4/mtp.yml",
+       "from": "^\\s*_disk_args=\\(\\)\\s*$",
+       "to": "^\\s*_args\\+=\\( \"\\$\\$\\{_disk_args\\[@\\]\\}\" \\)\\s*$",
+       "env": {
+        "KV_OFFLOAD_DISK": "1"
+       },
+       "accept": [
+        "3",
+        "100"
+       ],
+       "reject": [
+        "0",
+        "2.5",
+        "3G",
+        "-1",
+        {
+         "KV_OFFLOAD_DISK_GB": "3",
+         "KV_OFFLOAD_DISK": "0"
+        }
+       ],
+       "stricter": [
+        "00"
+       ]
       }
      ]
     }
@@ -499,7 +550,7 @@
      }
     },
     {
-     "text": "On QEngine it is `--disk-cache-gb`: oldest files are removed first to stay under it. QEngine keeps no free-space margin of its own, so the cap is the only limit.",
+     "text": "On QEngine it is `--disk-cache-gb`: oldest files are removed first to stay under it. The 27B keeps no free-space margin of its own, so the cap is the only limit there; Flash-Next also keeps 1 GB of the disk free.",
      "source": {
       "file": "models/qwen3.8-27b/qengine/compose/dual/redhat-int4/mtp.yml",
       "what": "KV_OFFLOAD_DISK_GB comment in the knob list"

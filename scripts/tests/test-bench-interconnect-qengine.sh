@@ -10,6 +10,7 @@
 #   5. CONTAINER=none: n/a, no log to read
 #   6. QEngine 1.3.5's own decode-path line (QE_DECODE_COMM) wins over the 27B's "GPU to GPU" line, which
 #      it still prints when peer access opens, also when the choice is host memory (real 1.3.5 lines)
+#   7. 1.3.5.3 rewords that line to "P2P: peer access between all N GPUs" (real 1.3.5.3 lines)
 # Hermetic: the function is extracted from bench.sh. The log reader is the real p2p_qengine_transport
 # from lib/p2p-state.sh (report.sh reads QEngine through it too, #1862); the other p2p_* helpers and
 # docker are stubs.
@@ -88,4 +89,10 @@ out="$(block qengine-qwen38-27b-dual "${P2P_LINE}${PRE27}"'[comm] decode collect
 out="$(block qengine-qwen38-27b-dual "${P2P_LINE}${ANNOUNCE}"'[comm] decode collectives (QE_DECODE_COMM=auto): calibration could not run a decode step, P2P SM stores (120 ms)\n')"
 [[ "$out" == *"engine transport : decode collectives P2P SM stores (QE_DECODE_COMM=auto, not timed)"* ]] || fail "1.3.5 auto, calibration failed: $out"
 ok "1.3.5 auto: per-shape paths, and a calibration that couldn't run"
+
+# 7. 1.3.5.3's real 27B lines: the peer-access line no longer names a decode path
+out="$(block qengine-qwen38-27b-dual 'P2P: peer access between all 2 GPUs (the paths: [comm] prefill transfers, [comm] decode collectives)\n[comm] decode collectives: auto, timed on real decode steps at the end of the start-up (P2P SM stores vs pinned host memory); the rule alone would pick P2P (the prefill rule keeps P2P: P2P kept: tax over the cap, under the 1 NUMA node cap)\n[comm] prefill transfers: copy engine (QE_COMM=auto, auto)\n[comm] decode collectives (QE_DECODE_COMM=auto, real decode steps, median of 4 interleaved rounds of 12): single sequence: P2P SM stores (P2P 15.67, host memory 17.33 ms/step, host faster in 0/4); batched (4 sequences): P2P SM stores (P2P 23.23, host memory 33.41 ms/step, host faster in 0/4); calibration 8713 ms\n')"
+[[ "$out" == *"engine transport : decode collectives P2P SM stores (QE_DECODE_COMM=auto); prefill transfers: copy engine (QE_COMM=auto)"* ]] \
+  || fail "1.3.5.3 27B, reworded peer-access line: $out"
+ok "1.3.5.3 27B: the reworded peer-access line, decode path from its own line"
 echo "PASS test-bench-interconnect-qengine"

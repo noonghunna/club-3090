@@ -140,7 +140,7 @@ PY
 #    the server's slowest default. Two engines name the model themselves, so their ids
 #    are derived the way they derive them: Strata as "<family name>-<quant>" (its
 #    setup; the family is the argument after strata-entrypoint.sh in the compose's
-#    entrypoint, the quant the launcher's MODEL=), Project Maya from its launcher's model_name. A compose whose
+#    entrypoint, the quant the one after it, else the launcher's default set), Project Maya from its launcher's model_name. A compose whose
 #    id this can't tell fails, rather than going unchecked.
 python3 - "$ROOT" <<'PY' || bad "omp-setup.sh FLASH_NEXT_IDS / GLM53_IDS must equal the ids the Flash-Next / GLM composes serve"
 import ast, glob, io, os, re, sys
@@ -148,10 +148,12 @@ root = sys.argv[1]
 src = io.open(f"{root}/scripts/omp-setup.sh", encoding="utf-8").read()
 def listed(name):
     return set(ast.literal_eval(re.search(rf"^{name} = (\[.*?\])$", src, re.M | re.S).group(1)))
-STRATA_FAMILY = {"qwen": "qwen3.8-flash-next", "swift": "swift-1.5"}   # Strata setup.py FAMILIES[...]["name"]
+STRATA_FAMILY = {"qwen": "qwen3.8-flash-next", "swift": "swift-1.5",
+                 "unsloth": "qwen3.8-flash-next-unsloth"}   # Strata setup.py FAMILIES[...]["name"]
 def read(p): return io.open(p, encoding="utf-8").read()
 def strata_quant(engine_dir):
-    m = re.search(r"^(?:export )?MODEL=(\S+)", read(f"{engine_dir}/launcher/strata-entrypoint.sh"), re.M)
+    # the launcher's default set: SET="${2:-IQ3_S}" (the compose's second argument overrides it)
+    m = re.search(r'^SET="\$\{2:-([^}"]+)\}"', read(f"{engine_dir}/launcher/strata-entrypoint.sh"), re.M)
     return m.group(1).lower() if m else None
 def maya_name(engine_dir):
     m = re.search(r'"model_name":\s*"([^"]+)"', read(f"{engine_dir}/launcher/maya_prepare.py"))
@@ -185,7 +187,7 @@ def compose_ids(f):
         args = re.findall(r'"([^"]+)"', m.group(1)) if m else []
         at = next((i for i, a in enumerate(args) if a.endswith("strata-entrypoint.sh")), None)   # the family follows it
         fam = args[at + 1] if at is not None and len(args) > at + 1 else "qwen"
-        q = strata_quant(engine_dir)
+        q = args[at + 2].lower() if at is not None and len(args) > at + 2 else strata_quant(engine_dir)
         if fam in STRATA_FAMILY and q: out.add(f"{STRATA_FAMILY[fam]}-{q}")
     elif engine == "strata-maya":
         n = maya_name(engine_dir)

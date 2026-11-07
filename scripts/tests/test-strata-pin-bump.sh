@@ -138,8 +138,8 @@ command grep -qx "  source_ref: \"$COMMIT\"" "$y" || fail "strata: source_ref no
 command grep -qx "  # pin-current: 9.9.9 · upstream 12345678 · engine 9.9.8 · pinned $TODAY · booted pending" "$y" \
   || fail "strata: pin-current line wrong: $(command grep pin-current "$y")"
 command grep -q "^  # pin-earlier: $OLD_VER \`$OLD_SHORT…\` (upstream " "$y" || fail "strata: outgoing pin not first in pin-earlier"
-[[ "$(command grep -c "strata@$DIGEST" "$d"/models/qwen3.8-flash-next/strata/compose/*/*/base.yml | awk -F: '{s+=$2} END{print s}')" == 5 ]] \
-  || fail "strata: not all 5 compose image defaults repointed"
+[[ "$(command grep -c "strata@$DIGEST" "$d"/models/qwen3.8-flash-next/strata/compose/*/*/base.yml | awk -F: '{s+=$2} END{print s}')" == 7 ]] \
+  || fail "strata: not all 7 compose image defaults repointed"
 cmp -s "$PRISTINE/docs/UPSTREAM.md" "$d/docs/UPSTREAM.md" || fail "strata: the bump edited docs/UPSTREAM.md (the pin lives in the profile)"
 command grep -qxF -- "- **Pinned:** 9.9.9 (engine 9.9.8), since $TODAY ($OLD_VER, engine $OLD_ENG, from $OLD_DATE)." "$d/docs/engines/STRATA.md" \
   || fail "strata: STRATA.md Pinned line wrong"

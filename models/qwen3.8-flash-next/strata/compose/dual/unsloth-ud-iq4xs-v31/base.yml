@@ -1,0 +1,136 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-Flash-Next — Unsloth's Dynamic v3.1 UD-IQ4_XS (revision d9620119, 2026-11-04;
+#              4 shards: 64.9 GB of weights + the 28.8 GB n-gram table, 93.67 GB). Experts IQ4_XS, with
+#              Q5_0 in 33 layers. Strata (0.2.11+) calls it UD-IQ4_XS-v31: the 09-30 three-shard
+#              UD-IQ4_XS keeps that name. Setup SHA-256-checks every shard at the first start.
+#   Engine:    Strata (the release engines/strata.yml pins) — upstream's own image ghcr.io/niko1221/strata:<release>-cuda13,
+#              pinned by digest; club-3090's launcher (../../../launcher/) applies the launch settings
+#   Topology:  Dual 3090, Strata layer split (--gpus 0,1, layer split auto): each card
+#              caches the experts of its own layers; one hand-off per verify window, no
+#              NCCL and no P2P needed. STRATA_START_GPUS=0 starts the same install on one card.
+#   Drafter:   DFlash2 — Strata's own pick for its unsloth family ("Auto is DFlash2 where the engine has
+#              it"): incoai/Qwen3.8-Flash-Next-DFlash2 at the revision Strata pins, fetched and packed into
+#              the shared data volume at the first start (823 MB on disk, 625 MiB of VRAM as Q4_0),
+#              --draft dflash2 --spec 6 --draft-conf 0.35, windows up to 8 tokens; no MTP layer loaded
+#   KV:        Strata default (int8): 32K cells in VRAM, the rest streamed to RAM
+#   Vision:    no
+#   Max ctx:   131072
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   Not gate-passing yet: quality unmeasured (8-pack pending). Unsloth's v3.1 sets reach Strata
+#              in 0.2.11 (Strata's family unsloth, checked against revision d9620119); another revision of
+#              these files fails setup's SHA-256 check. One request at a time: Strata sets that for DFlash2
+#              ("DFlash2 answers one request at a time"); the others wait.
+#              Needs ~101 GB of free host RAM (header below): Strata page-locks every expert in host RAM,
+#              and on a rotational model disk setup keeps the 28.8 GB n-gram table there too (--ple-io ram).
+#              The first start needs the network for the DFlash2 drafter unless the other Unsloth slug
+#              already fetched it into the shared data volume. Host needs NVIDIA driver >= 580 (CUDA 13)
+#              and an AVX2 CPU; x86-64 only. Strata reasons by default, at the template's xhigh (as the
+#              other Strata Flash-Next slugs). Launch settings (REASONING_EFFORT, ENABLE_THINKING,
+#              THINKING_BUDGET, SPEC_N, ROPE_SCALING, ROPE_SCALE, the sampler; docs/engines/STRATA.md) are
+#              written into Strata's config at every boot.
+#              The FIRST start took 255 s on the reference rig (shard check, pack, DFlash2 fetch and pack;
+#              setup serves on an unpublished port until it is done); later starts ~63 s.
+#              Measured 2026-11-07 on two 3090s at 230 W, Strata 0.2.11 (engine 0.1.57): verify-full all pass
+#              (vision n/a: off); bench.sh on its own boot 108.7 / 155.2 decode, 1,428 / 2,762 prefill
+#              @10K/@90K (90K n=1), draft acceptance 57.6%, 23,636 / 23,724 MiB a card (BENCHMARKS.md,
+#              Qwen3.8-Flash-Next / Strata). The UD-IQ3_XXS slug measured faster on every row.
+# CPU-Offload-Host-RAM-GB: 101
+#   ⤷ MEASURED 2026-11-07 (0.2.11, this rig's rotational model disk, sampled every 2 s with the page cache
+#     dropped first): MemAvailable fell 96.0 GB at ready on the first start and 100.7 GB at its lowest on
+#     the bench boot, during the 90K prefill. Registry `host_ram_gb` (101) must stay <= this.
+#   Best for:  Unsloth's 4-bit v3.1 set on 2 cards: the larger of the two Unsloth Strata slugs
+# ---------------------------------------------------------------------------
+# Strata (github.com/Niko1221/Strata) is its own engine for this model: see docs/engines/STRATA.md.
+# Siblings on the same data volume (their own run config, preset and pack; the MTP layer is shared):
+# ../unsloth-ud-iq3xxs/base.yml (Unsloth's UD-IQ3_XXS) and ../ista-iq3s/base.yml (ISTA's GSQ-RCO IQ3_S).
+#   bash scripts/switch.sh --force strata/qwen3.8-flash-next-ud-iq4xs-dual
+# The first start runs Strata's one-time setup for this set (shard check, pack; the run config is
+# kept in this topology's folder on the data volume, the packs and MTP layer in a folder all of them
+# share). Every request needs `Authorization: Bearer <key>`: the container's API_KEY, club-3090's
+# default (club-3090-strata-local-key) unless STRATA_API_KEY is set; our scripts send it themselves.
+# ⚠️ Strata sizes its RAM tiers from FREE memory at start, so drop the page cache first on a
+#   box that just read large files. /health says loaded before the engine has filled its expert
+#   cache; switch.sh's generation probe (one token) is the real gate.
+services:
+  strata:
+    image: ${STRATA_IMAGE:-ghcr.io/niko1221/strata@sha256:871e1e79c063b240184b08075ba0676b6cd2585eac11f76a9d179f4739d2c857}
+    container_name: ${ESTATE_CONTAINER:-strata-qwen38-flash-next-ud-iq4xs}
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    # root, with the launcher's group: what Strata writes to the data volume stays
+    # removable by the user (the entrypoint sets umask 0002)
+    user: "0:${DOCKER_GID:-1000}"
+    # tini first, as in the image: it reaps the launcher's children and passes `docker stop` on
+    entrypoint: ["/usr/bin/tini", "--", "/bin/sh", "/opt/club3090/strata-entrypoint.sh", "unsloth", "UD-IQ4_XS-v31"]
+    ulimits:
+      memlock: -1            # Strata pins (locks) RAM for the GPU; upstream's docker run uses -1
+    shm_size: "2g"           # and --shm-size 2g
+    stop_grace_period: 120s  # and --stop-timeout 120: on `docker stop` the server drains, then stops the model
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8200}}:8080"
+    environment:
+      CONTEXT: "${CONTEXT:-131072}"
+      KV: "${KV:-}"
+      STRATA_START_GPUS: "${STRATA_START_GPUS:-0,1}"
+      # Strata 0.2+ serves nothing but /health without a key, so one is always set: club-3090's
+      # default unless STRATA_API_KEY is (bash scripts/settings.sh set STRATA_API_KEY=...). Our
+      # tooling reads it back from this container (scripts/lib/engine-auth.sh).
+      API_KEY: "${STRATA_API_KEY:-club-3090-strata-local-key}"
+      # Strata run-config settings, written into its config at every boot by strata_config.py
+      # (mounted below); unset = Strata's own default. CONTEXT and KV run setup again when changed.
+      REASONING_EFFORT:
+      ENABLE_THINKING:
+      THINKING_BUDGET:
+      SPEC_N:
+      ROPE_SCALING:
+      ROPE_SCALE:
+      TEMP:
+      TOP_P:
+      TOP_K:
+      MIN_P:
+      PRESENCE_PENALTY:
+      REPEAT_PENALTY:
+      SERVED_NAME:
+      # Strata's own engine switches, passed to the engine as they are when set; unset, Strata's own default
+      # (docs/engines/STRATA.md, "Engine switches"). 0.2.9 turned these on for Linux NVIDIA cards (the Gated
+      # DeltaNet prompt kernels on the tensor cores); 0 turns each off.
+      STRATA_GDN_TC:
+      STRATA_GDN_CONVL2:
+      # 0.2.11's CPU / upload share for missed experts follows the CPU pool (ceiling 0.95, was 0.60).
+      # STRATA_PCIE_AUTO_SPLIT=0, STRATA_PCIE_K_RULE=0 and STRATA_PCIE_SHARE_MAX=0.60, all three, bring
+      # back 0.2.10's rule; the engine log's "PCIe share:" line shows which one runs.
+      STRATA_PCIE_AUTO_SPLIT:
+      STRATA_PCIE_K_RULE:
+      STRATA_PCIE_SHARE_MAX:
+      # 0.2.10's penalties count only the reply's tokens; 1 counts the prompt's again, as before.
+      STRATA_PENALTY_PROMPT:
+      # Strata's PLE (n-gram) residency switch: 0 keeps the ~27 GiB table on direct disk
+      # reads instead of page-locking it in RAM — but only for the engine's free-RAM
+      # residency policy, which decides for --ple-io direct. On a rotational disk setup
+      # itself writes --ple-io ram into the run config when the RAM holds the table, and
+      # 0 does NOT override that (verified on the reference rig: the boot still logged
+      # "PLE table locked in RAM (--ple-io ram)"). The policy's free-RAM check counts
+      # only the table + the expert arena — not the KV stream, the conversation cache or
+      # the batch sessions that fill right after it — so on an SSD a big-context boot can
+      # lock the table and still starve the arena. 0 is the right call for an SSD model
+      # disk at a raised CONTEXT (the hang needs the big arena; at stock context the lock
+      # costs only 2-3% of prompt speed, per upstream). Unset = Strata's own auto policy.
+      STRATA_PLE_AUTO_RAM:
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}/qwen3.8-flash-next-gguf/UD-IQ4_XS:/gguf:ro"
+      # Strata 0.2's layout (0.1.x's strata-data is not read by it), under ~/.local/share/club-3090 from
+      # the launchers: run configs, presets and state per topology (setup bakes the cards into a model's
+      # run config, so a dual and a single start would set the model up again each time), and the
+      # packs and MTP layer shared by all of them
+      - "${STRATA_DATA_DIR:-${CLUB3090_DATA_DIR:-../../..}/strata-data-v2}/dual:/data"
+      - "${STRATA_DATA_DIR:-${CLUB3090_DATA_DIR:-../../..}/strata-data-v2}/Strata-data:/data/Strata-data"
+      - "../../../launcher/strata-entrypoint.sh:/opt/club3090/strata-entrypoint.sh:ro"
+      - "../../../launcher/strata_config.py:/opt/club3090/strata_config.py:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0,1}}']
+              capabilities: [gpu]
