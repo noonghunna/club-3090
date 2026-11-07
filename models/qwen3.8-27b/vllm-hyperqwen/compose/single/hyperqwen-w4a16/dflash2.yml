@@ -4,7 +4,7 @@
 #              the first start: int8 lm_head / embeddings / MTP module, a calibrated draft
 #              vocabulary, and the single-user "fast" variant it serves
 #   Engine:    HyperQwen (syv-ai): vLLM 0.32.0 + syv-ai's patch series, syv-ai's own image
-#              ghcr.io/syv-ai/hyperqwen (commit f382342d)
+#              ghcr.io/syv-ai/hyperqwen (commit 6ab9bd05)
 #   Topology:  Single card (TP=1)
 #   Drafter:   DFlash2 — syvai/Qwen3.8-27B-DFlash2-W4A16 block drafter, 7 tokens per verify
 #              (SPEC_N sets it; SPEC_N=0 turns speculation off)
@@ -80,7 +80,7 @@
 #   CTX=long READY_TIMEOUT=1800 bash scripts/switch.sh --force vllm-hyperqwen/qwen38-27b-single-ultrafast
 services:
   vllm-hyperqwen-qwen38-27b-single:
-    image: ${VLLM_IMAGE:-ghcr.io/syv-ai/hyperqwen@sha256:f6baf1489229c614044be14e1efea1c6e4589414c32deaf8ed946957ad7c5ee6}
+    image: ${VLLM_IMAGE:-ghcr.io/syv-ai/hyperqwen@sha256:f706b092aabb156c23fe98c312ba7912fb8dbc0c107d4f152382113e33762f1c}
     container_name: "${ESTATE_CONTAINER:-vllm-hyperqwen-qwen38-27b-single}"
     user: "0:${DOCKER_GID:-1000}"
     restart: ${CLUB3090_RESTART:-unless-stopped}

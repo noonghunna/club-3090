@@ -13,7 +13,7 @@ The image runs prepare, then HyperQwen's own `verify.sh --no-server`, then the l
 
 ## Image
 
-syv-ai's CI builds `ghcr.io/syv-ai/hyperqwen` on every push to main and tags it `:sha-<7>`; there are no versioned releases. The profile pins a digest (`:sha-f382342`, commit `f382342d`, 2026-10-30) and the launchers inject it as `VLLM_IMAGE`, as they do for `vllm-lmcache`. It pulls without credentials.
+syv-ai's CI builds `ghcr.io/syv-ai/hyperqwen` on every push to main and tags it `:sha-<7>`; there are no versioned releases. The profile pins a digest (`:sha-6ab9bd0`, commit `6ab9bd05`, 2026-11-03) and the launchers inject it as `VLLM_IMAGE`, as they do for `vllm-lmcache`. It pulls without credentials.
 
 **Bumping:** boot the slug on the new digest through `switch.sh`, run `verify-full`, then `scripts/engine-pin-bump.sh vllm-hyperqwen ghcr.io/syv-ai/hyperqwen@sha256:<digest>`. Update `lineage.source_ref` and `base_version`. [NIGHTLY_BUMP_RUNBOOK.md](../NIGHTLY_BUMP_RUNBOOK.md) lists the HyperQwen interfaces the compose leans on, which are what can move.
 

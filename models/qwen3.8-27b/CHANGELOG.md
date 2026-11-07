@@ -2,6 +2,22 @@
 
 Dated history for Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-11-07 — HyperQwen moves to commit 6ab9bd05
+
+`vllm-hyperqwen/qwen38-27b-single-ultrafast` now runs syv-ai's `:sha-6ab9bd0` (commit `6ab9bd05`,
+2026-11-03; was `f382342d`), still vLLM 0.32.0. Its eight commits change nothing on this slug's default path:
+- **Latent Sparse Attention** (`LSA=1`, syv-ai/HyperQwen#431): opt-in, and only with `SPEC=mtp CTX=long`. This slug
+  is upstream's setup B (`SPEC=dflash2`), so the compose doesn't forward it.
+- **A Cyrillic draft vocabulary** in `prepare/` (syv-ai/HyperQwen#423): for the MTP head's draft vocabulary, which this
+  DFlash2 slug doesn't use.
+- **A fix for a stored prefix that returned no cached tokens** (syv-ai/HyperQwen#424, issue syv-ai/HyperQwen#405): a hybrid Mamba target with a
+  sliding-window drafter under sparse CPU KV retention. It reaches this slug only with a CPU KV tier
+  added through `EXTRA_ARGS` (`--kv-offloading-size`); the default has none.
+No setting our compose passes was renamed. On the reference rig (230 W) the slug booted in 280 s (a cold
+start: the new image has an empty compile cache) on the same backend (FLASH_ATTN, bf16 KV, 64K, DFlash2
+with 7 tokens a verify), with `reasoning_effort` low, and passed verify-full with a DFlash2 acceptance
+length of 3.68. Boot test only: no new throughput numbers.
+
 ## 2026-10-31 — HyperQwen moves to commit f382342d
 
 `vllm-hyperqwen/qwen38-27b-single-ultrafast` now runs syv-ai's `:sha-f382342` (commit
