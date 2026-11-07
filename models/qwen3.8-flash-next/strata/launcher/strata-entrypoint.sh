@@ -18,10 +18,13 @@
 #                          trained 262144 (see the CONTEXT note above: raising CONTEXT re-runs setup,
 #                          which picks yarn itself; these knobs override that at every boot).
 #
-# Its one argument is the model family, fixed by the compose (not a setting, so a saved value can never
-# point a slug at the other model's files): qwen (ISTA-DASLab's GSQ-RCO of the original, the default
-# when absent) or swift (a Swift 1.5 GSQ-RCO, here SC117's abliterated one). The weights are our model
-# folder, mounted read-only at /gguf; packs, the MTP layer and the run configs go to /data.
+# Its arguments are the model family and Strata's name for the set, fixed by the compose (not settings,
+# so a saved value can never point a slug at another model's files): qwen (ISTA-DASLab's GSQ-RCO of the
+# original, the default when absent) or swift (a Swift 1.5 GSQ-RCO, here SC117's abliterated one), both
+# IQ3_S (the default set); or unsloth with UD-IQ4_XS-v31 or UD-IQ3_XXS (Unsloth's 11-04 "Dynamic v3.1"
+# GGUFs, revision d9620119, Strata 0.2.11+). The weights are our model folder, mounted read-only at
+# /gguf; packs, the MTP layer and the run configs go to /data. Each unsloth set gets its own launch
+# preset (club-<tag>): two sets share one data volume, and a preset keeps its user_args launch to launch.
 #
 # The first start for a model in a topology (its own folder on the data volume) runs setup before there
 # is a run config to write the settings into, so it serves on a port nothing outside reaches
@@ -39,10 +42,13 @@ set -eu
 umask 0002                   # group-writable, so the launcher's user can clear /data
 
 FAMILY="${1:-qwen}"
-case "$FAMILY" in
-  qwen)  tag="iq3_s" ;;
-  swift) tag="swift-iq3_s" ;;
-  *) echo "[strata-recipe] the family argument must be qwen or swift, not '$FAMILY'" >&2; exit 1 ;;
+SET="${2:-IQ3_S}"                            # Strata's catalog spelling (UD-IQ4_XS-v31 has a lower-case v)
+case "$FAMILY/$SET" in
+  qwen/IQ3_S)  tag="iq3_s" ;;
+  swift/IQ3_S) tag="swift-iq3_s" ;;
+  unsloth/UD-IQ4_XS-v31|unsloth/UD-IQ3_XXS)
+    tag="unsloth-$(printf '%s' "$SET" | tr '[:upper:]' '[:lower:]')" ;;   # setup's tag: family prefix + set, lower case
+  *) echo "[strata-recipe] the family and set must be qwen or swift with IQ3_S, or unsloth with UD-IQ4_XS-v31 or UD-IQ3_XXS, not '$FAMILY $SET'" >&2; exit 1 ;;
 esac
 PY=/opt/strata/terminal/python/bin/python3   # the image's python (it has no other)
 knobs=/opt/club3090/strata_config.py
@@ -54,10 +60,13 @@ export CLUB3090_STRATA_SETUP_SPEC_FILE="/data/club3090/strata-$tag.setup-spec"  
 mkdir -p /data/club3090
 
 # the image entrypoint's own settings (docs/DOCKER.md upstream)
-export MODEL=IQ3_S FAMILY MODEL_PATH=/gguf VISION=off
+export MODEL="$SET" FAMILY MODEL_PATH=/gguf VISION=off
 export GPUS="${STRATA_START_GPUS:-0,1}"
 export CONTEXT="${CONTEXT:-131072}"
-export PRESET="club-$FAMILY"
+case "$FAMILY" in
+  unsloth) export PRESET="club-$tag" ;;      # one preset per set: both unsloth slugs share the data volume
+  *)       export PRESET="club-$FAMILY" ;;   # unchanged, so existing volumes keep their launch configs
+esac
 launch="${XDG_STATE_HOME:-/data/state}/strata/launch/$PRESET.json"   # what the server starts from (Strata 0.2.11+)
 
 SETUP_PORT=8090                              # the first start's setup serves here, unpublished

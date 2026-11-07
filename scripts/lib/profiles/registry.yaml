@@ -6503,6 +6503,68 @@ entries:
     weights_companions: []
     gateway: false
     serve_aliases: []
+  strata/qwen3.8-flash-next-ud-iq4xs-dual:
+    origin: core
+    model: qwen3.8-flash-next
+    weights_variant: unsloth-ud-iq4xs-v31
+    workload: long-ctx-single
+    engine: strata
+    drafter: null
+    spec_method: dflash2
+    kv_format: q8_0
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 101
+    kv_offload: null
+    chat_template: native
+    tp: 2
+    max_ctx: 131072
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/qwen3.8-flash-next/strata/compose/dual/unsloth-ud-iq4xs-v31/base.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8200
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Two 3090s, Strata layer split: Unsloth's Dynamic v3.1 UD-IQ4_XS (revision d9620119, 93.67 GB in four shards; Strata 0.2.11's unsloth family calls it UD-IQ4_XS-v31). Strata's Auto drafter here is DFlash2 (incoai/Qwen3.8-Flash-Next-DFlash2, fetched and packed into the shared data volume at the first start; --spec 6), which serves one request at a time. MEASURED 2026-11-07 at 230 W on Strata 0.2.11 (engine 0.1.57): first start 255 s, later starts ~63 s; verify-full all pass; bench.sh on its own boot 108.7 / 155.2 decode, 1,428 / 2,762 prefill @10K/@90K (90K n=1), draft acceptance 57.6%; host_ram_gb 101 MEASURED (MemAvailable fell 96.0 GB at ready, 100.7 GB at its lowest during the bench, rotational model disk: the 28.8 GB n-gram table stays in RAM). Not gate-passing yet: quality unmeasured."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+  strata/qwen3.8-flash-next-ud-iq3xxs-dual:
+    origin: core
+    model: qwen3.8-flash-next
+    weights_variant: unsloth-ud-iq3xxs
+    workload: long-ctx-single
+    engine: strata
+    drafter: null
+    spec_method: dflash2
+    kv_format: q8_0
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 91
+    kv_offload: null
+    chat_template: native
+    tp: 2
+    max_ctx: 131072
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/qwen3.8-flash-next/strata/compose/dual/unsloth-ud-iq3xxs/base.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8201
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Two 3090s, Strata layer split: Unsloth's Dynamic v3.1 UD-IQ3_XXS (revision d9620119, 83.63 GB in four shards, the same download as ISTA's IQ3_S; its n-gram-table shard is byte-identical to UD-IQ4_XS's). Strata's Auto drafter here is DFlash2 (incoai/Qwen3.8-Flash-Next-DFlash2, packed into the shared data volume; --spec 6), which serves one request at a time. MEASURED 2026-11-07 at 230 W on Strata 0.2.11 (engine 0.1.57): first start 169 s (DFlash2 drafter already on the volume), later starts ~63 s; verify-full all pass; bench.sh on its own boot 122.9 / 181.3 decode, 1,773 / 3,046 prefill @10K/@90K (90K n=1), draft acceptance 57.4%, faster than the UD-IQ4_XS slug on every row; host_ram_gb 91 MEASURED (MemAvailable fell 85.9 GB at ready, 90.3 GB at its lowest during the bench, rotational model disk: the 28.8 GB n-gram table stays in RAM). Not gate-passing yet: quality unmeasured."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
   strata/qwen3.8-flash-next-swift15-abliterated-iq3s-dual:
     origin: core
     model: qwen3.8-flash-next
