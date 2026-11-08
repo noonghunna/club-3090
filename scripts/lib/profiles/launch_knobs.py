@@ -101,6 +101,7 @@ MOUNTED_READERS = (
             "SPEC_N": None,
             "ROPE_SCALING": None,
             "ROPE_SCALE": None,
+            "CONTEXT": None,          # checked here; Strata's own entrypoint hands it to setup
         },
     },
     {
@@ -111,6 +112,7 @@ MOUNTED_READERS = (
         "knobs": {
             "REASONING_EFFORT": None,
             "ENABLE_THINKING": None,
+            "CONTEXT": None,          # checked here; maya_prepare.py writes it into maya.json's --max-context
         },
     },
     {
@@ -121,6 +123,7 @@ MOUNTED_READERS = (
         "knobs": {
             "REASONING_EFFORT": None,
             "ENABLE_THINKING": None,
+            "CONTEXT": None,          # checked here; ds4_prepare.py writes it into maya-ds4.json's --max-context
         },
     },
     {
@@ -131,6 +134,7 @@ MOUNTED_READERS = (
         "knobs": {
             "REASONING_EFFORT": None,
             "ENABLE_THINKING": None,
+            "CONTEXT": None,          # checked here; mm3_prepare.py writes it into maya-mm3.json's --max-context
         },
     },
     {

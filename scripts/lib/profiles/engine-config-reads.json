@@ -71,7 +71,7 @@
     "SERVED_NAME": "llm"
    },
    "setup_only": {
-    "CONTEXT": "Strata's own entrypoint passes it to `strata launch --context` (setup owns it: it sizes the KV and expert cache); strata_config.py only checks it",
+    "CONTEXT": "Strata's own entrypoint passes it to `strata launch --context` (setup owns it: it sizes the KV and expert cache); strata_config.py only checks it (a whole number >= 4096)",
     "KV": "Strata's own entrypoint passes it to `strata launch --kv`; strata_config.py only checks it",
     "API_KEY": "Strata's own entrypoint passes it to `strata launch` (--api-key-env); strata_config.py only checks its length"
    },
@@ -126,7 +126,9 @@
     "SERVED_NAME": "llm",
     "LOOP_GUARD": "false"
    },
-   "setup_only": {},
+   "setup_only": {
+    "CONTEXT": "maya_settings.py only checks it (a whole number >= 4096); maya_prepare.py writes it into the run config's args as --max-context, which the server passes to the engine"
+   },
    "server": "/opt/maya/serve/server.py",
    "engine_help": [
     "/opt/maya/build/maya",
@@ -179,7 +181,9 @@
     "THREADS": "7",
     "LOOP_GUARD": "false"
    },
-   "setup_only": {},
+   "setup_only": {
+    "CONTEXT": "ds4_settings.py only checks it (a whole number >= 4096); ds4_prepare.py writes it into the run config's args as --max-context, which the server passes to the engine"
+   },
    "server": "/opt/maya/serve/server.py",
    "engine_help": [
     "/opt/maya/build/maya-ds4",
@@ -234,7 +238,9 @@
     "DSPARK": "off",
     "THREADS": "7"
    },
-   "setup_only": {},
+   "setup_only": {
+    "CONTEXT": "mm3_settings.py only checks it (a whole number >= 4096); mm3_prepare.py writes it into the run config's args as --max-context, which the server passes to the engine"
+   },
    "server": "/opt/maya/serve/server.py",
    "engine_help": [
     "/opt/maya/build/maya-mm3",

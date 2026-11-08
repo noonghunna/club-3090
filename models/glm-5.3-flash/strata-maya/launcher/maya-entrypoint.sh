@@ -10,7 +10,8 @@
 #   VERIFY=0            skip the one-time SHA-256 check of the shards
 #   MAYA_GPUS           the cards to start on, as the container sees them: "0,1" (dual, a layer
 #                       split), "0" (single), "0,1,2,3" (multi4); the compose sets it
-#   CONTEXT             --max-context (default 131072)
+#   CONTEXT             --max-context (default 131072); maya_settings.py validates it (>= 4096), so a bad
+#                       value stops the boot like any other launch setting
 #   MAYA_PCIE_SHARE     the engine's STRATA_GLM_PCIE_SHARE (the share of each token's RAM-tier experts
 #                       sent over PCIe instead of computed on the CPU), set only when non-empty: what
 #                       Maya's own `maya.sh --calibrate` tunes. Unset: the engine's own choice
