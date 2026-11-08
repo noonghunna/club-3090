@@ -18,7 +18,9 @@
 #   Max ctx:   131072
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   Not gate-passing yet: quality unmeasured (8-pack pending). Unsloth's v3.1 sets reach Strata
+#   Caveats:   Not gate-passing yet on the reference rig: no 8-pack, verify-stress or soak here. One community
+#              run (#1974: 262K, the n-gram table on an NVMe, Strata 0.2.12) passed verify-stress 8/8 and the
+#              soak, and scored 115/150 thinking off, 127/150 on (BENCHMARKS.md). Unsloth's v3.1 sets reach Strata
 #              in 0.2.11 (Strata's family unsloth, checked against revision d9620119); another revision of
 #              these files fails setup's SHA-256 check. One request at a time: Strata sets that for DFlash2
 #              ("DFlash2 answers one request at a time"); the others wait.
