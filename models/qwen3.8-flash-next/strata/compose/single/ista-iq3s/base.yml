@@ -31,7 +31,7 @@
 #              topology, ~45 s (the packs and the MTP layer are shared).
 #              Measured 2026-10-13 on 0.1.43.1: 106.1 / 121.5 decode, 1,920 / 2,359 prefill (BENCHMARKS.md, Qwen3.8-Flash-Next / Strata).
 # CPU-Offload-Host-RAM-GB: 93
-#   ⤷ RE-MEASURED 2026-10-14 (0.1.44.1, this rig's rotational model disk): MemAvailable fell 84 GB
+#   ⤷ RE-MEASURED 2026-10-14 (0.1.44.1, the reference rig's rotational model disk): MemAvailable fell 84 GB
 #     at ready on one card: every expert page-locked plus the 28.8 GB n-gram table, which setup
 #     keeps in RAM on a rotational disk (--ple-io ram). The 2026-10-06 figure (~58.4 GB, 0.1.33)
 #     predates that. Strata page-locks every expert in host RAM whatever the card count.

@@ -37,7 +37,7 @@
 #              @10K/@90K (90K n=1), draft acceptance 57.6%, 23,636 / 23,724 MiB a card (BENCHMARKS.md,
 #              Qwen3.8-Flash-Next / Strata). The UD-IQ3_XXS slug measured faster on every row.
 # CPU-Offload-Host-RAM-GB: 101
-#   ⤷ MEASURED 2026-11-07 (0.2.11, this rig's rotational model disk, sampled every 2 s with the page cache
+#   ⤷ MEASURED 2026-11-07 (0.2.11, the reference rig's rotational model disk, sampled every 2 s with the page cache
 #     dropped first): MemAvailable fell 96.0 GB at ready on the first start and 100.7 GB at its lowest on
 #     the bench boot, during the 90K prefill. Registry `host_ram_gb` (101) must stay <= this.
 # Strata-PLE-Table-GB: 28

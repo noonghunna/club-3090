@@ -33,7 +33,7 @@
 #              Measured 2026-10-14 on 0.1.44.1 at 370 W: 93.9 / 105.8 decode, 1,952 / 2,302 prefill
 #              @10K/@90K, MTP acceptance 65.7% (BENCHMARKS.md, Qwen3.8-Flash-Next / Strata).
 # CPU-Offload-Host-RAM-GB: 93
-#   ⤷ MEASURED 2026-10-14 (0.1.44.1, this rig's rotational model disk): MemAvailable fell 84 GB at
+#   ⤷ MEASURED 2026-10-14 (0.1.44.1, the reference rig's rotational model disk): MemAvailable fell 84 GB at
 #     ready on one card and ~80 GiB on two: 46.8 GiB of experts page-locked plus the 28.8 GB n-gram
 #     table, which setup keeps in RAM on a rotational disk (--ple-io ram). Strata page-locks every
 #     expert in host RAM whatever the card count. Registry `host_ram_gb` (93) must stay <= this.

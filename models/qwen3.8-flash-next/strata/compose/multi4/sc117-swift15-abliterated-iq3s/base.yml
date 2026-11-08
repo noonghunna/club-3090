@@ -36,7 +36,7 @@
 #              Not measured: the dual sibling's 125.7 / 161.7 decode (0.1.44.1, 2026-10-14) is the
 #              nearest reference, not a number for four cards.
 # CPU-Offload-Host-RAM-GB: 93
-#   ⤷ The dual sibling's MEASURED figure (2026-10-14, 0.1.44.1, a rotational model disk): Strata
+#   ⤷ The dual sibling's MEASURED figure (2026-10-14, 0.1.44.1, the reference rig's rotational model disk): Strata
 #     page-locks every expert in host RAM whatever the card count, plus the 28.8 GB n-gram table on a
 #     rotational disk (--ple-io ram). Not measured on four cards. Registry `host_ram_gb` (93) must
 #     stay <= this.
