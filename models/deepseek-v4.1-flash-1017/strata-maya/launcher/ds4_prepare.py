@@ -227,7 +227,7 @@ def main() -> int:
     ap.add_argument("--src", default="/gguf")
     ap.add_argument("--dspark", default="/dspark")
     ap.add_argument("--data", default="/data")
-    ap.add_argument("--context", type=int, default=65536)   # CONTEXT wins when set (checked by settings())
+    ap.add_argument("--context", type=int, default=65536)
     ap.add_argument("--gpus", default="0,1")
     ap.add_argument("--tp", type=int, default=1)
     ap.add_argument("--verify", default="1")
@@ -235,8 +235,6 @@ def main() -> int:
     a = ap.parse_args()
     try:
         ds4_settings.settings()                       # a bad setting stops here, before the SHA-256 check and the pack
-        c = ds4_settings.context()                  # CONTEXT, when set, replaces the default (checked above)
-        a.context = a.context if c is None else c
     except ds4_settings.Bad as e:
         die(str(e))
     d = Path(a.data) / a.tag

@@ -203,15 +203,13 @@ def main() -> int:
     ap.add_argument("--src", default="/gguf")
     ap.add_argument("--companions", default="/companions")
     ap.add_argument("--data", default="/data")
-    ap.add_argument("--context", type=int, default=204800)   # CONTEXT wins when set (checked by settings())
+    ap.add_argument("--context", type=int, default=204800)
     ap.add_argument("--gpus", default="0,1")
     ap.add_argument("--verify", default="1")
     ap.add_argument("--repack", default="0")
     a = ap.parse_args()
     try:
         mm3_settings.settings()                       # a bad setting stops here, before the SHA-256 check and the pack
-        c = mm3_settings.context()                  # CONTEXT, when set, replaces the default (checked above)
-        a.context = a.context if c is None else c
     except mm3_settings.Bad as e:
         die(str(e))
     d = Path(a.data) / a.tag

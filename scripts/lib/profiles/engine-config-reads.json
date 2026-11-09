@@ -126,9 +126,7 @@
     "SERVED_NAME": "llm",
     "LOOP_GUARD": "false"
    },
-   "setup_only": {
-    "CONTEXT": "maya_settings.py only checks it (a whole number >= 4096); maya_prepare.py writes it into the run config's args as --max-context, which the server passes to the engine"
-   },
+   "setup_only": {},
    "server": "/opt/maya/serve/server.py",
    "engine_help": [
     "/opt/maya/build/maya",
@@ -181,9 +179,7 @@
     "THREADS": "7",
     "LOOP_GUARD": "false"
    },
-   "setup_only": {
-    "CONTEXT": "ds4_settings.py only checks it (a whole number >= 4096); ds4_prepare.py writes it into the run config's args as --max-context, which the server passes to the engine"
-   },
+   "setup_only": {},
    "server": "/opt/maya/serve/server.py",
    "engine_help": [
     "/opt/maya/build/maya-ds4",
@@ -238,9 +234,7 @@
     "DSPARK": "off",
     "THREADS": "7"
    },
-   "setup_only": {
-    "CONTEXT": "mm3_settings.py only checks it (a whole number >= 4096); mm3_prepare.py writes it into the run config's args as --max-context, which the server passes to the engine"
-   },
+   "setup_only": {},
    "server": "/opt/maya/serve/server.py",
    "engine_help": [
     "/opt/maya/build/maya-mm3",
