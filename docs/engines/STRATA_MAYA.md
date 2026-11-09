@@ -85,6 +85,12 @@ Measurements, with dates and settings, are in each compose's header and in [BENC
     - AMD-only, EXL3-only and Pascal-only switches, which don't reach these GGUF slugs on NVIDIA.
     - DeepSeek's new prompt and loading defaults (`DS4_AI_RUN`, `MAYA_DS4_AR2`, `MAYA_DS4_LOAD_INTERLEAVE`): speed only, the same answers.
     - `MAYA_PROMPT_MEMO`: the same token ids.
+- **v1.1.57 (pinned 2026-11-09), what reaches these slugs:**
+  - **The server, every model:** a SIGTERM or Ctrl+C right as the server was waiting could hang it for good; it now stops. `docker stop`, which the slugs' teardown runs, sends SIGTERM.
+  - **Maya's own model API** (`/api/chat`, `/api/generate`): `"think": false` now turns thinking off; before, thinking stayed on for every model. The OpenAI, Responses and Anthropic APIs weren't affected.
+  - **DeepSeek:** a video in a request gets a clear 400 ("reads pictures, not videos") instead of an encoder error, or being dropped beside a picture.
+  - **Prompt path:** the release also changes headers the GLM prompt path shares (`moe_mmq.hpp`, `glm_kv_stream.hpp`), so the bump ran a long-prompt needle: 72,139 tokens on the dual Maya-L slug, found.
+  - **Not forwarded:** the release's new settings (`MAYA_GLM_IDX_FP16`, `MAYA_GLM_DSA_GRAPHS`, `MAYA_GLM_LANE_ROW4`, `MAYA_GLM_NGRAM_DRAFT` / `_MIN` / `_MAX`, `MAYA_GLM_PROMPT_CACHE_*`, `MAYA_GLM_SPLIT_CARDS`) are GLM-5.3 (744B)'s own, in upstream's `docs/SETTINGS.md`. No slug serves that model: its UD-IQ2_M files are 238.6 GB, and upstream recommends about 256 GB of VRAM and RAM together.
 - **Runtime numbers from `/metrics`.** Maya serves Strata's `/metrics` document (its version in `engine.maya_version`), but its draft counts are only in its engine log (`/data/<quant>/maya.log`, "glm spec: N of M drafts accepted"). Given the container, `scripts/lib/strata_metrics.py` sums them, so `health.sh`, `verify-full` (its MTP acceptance check), `bench.sh` and `report.sh` read Maya's drafts the way they read Strata's.
 - **The club conventions:** the `CLUB3090_RESTART` knob, `BIND_HOST` / `ESTATE_PORT` / `ESTATE_CONTAINER` / `ESTATE_GPUS`, and the host GID plus `umask 0002` on the data volume.
 
