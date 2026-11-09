@@ -19,7 +19,7 @@ Its profile declares `type: strata` and `lineage.relation: new`, and the tooling
 
 From 0.2.1 Strata publishes its own Docker images, built by its `docker-images` workflow from the signed engine packages of each release: `ghcr.io/niko1221/strata:<release>-<flavor>`. The slugs pin the digest of `<release>-cuda13` (RTX 20–50 and the A-series, NVIDIA driver 580 or newer), and the launchers inject it as `STRATA_IMAGE`. Export `STRATA_IMAGE` in the shell to try another image for one launch; a saved value loses to the pin.
 
-- **Pinned:** 0.2.12 (engine 0.1.58), since 2026-11-07 (0.2.11, engine 0.1.57, from 2026-11-05).
+- **Pinned:** 0.2.13 (engine 0.1.59), since 2026-11-09 (0.2.12, engine 0.1.58, from 2026-11-07).
 - **Before 0.2.1** upstream published no Linux image, and club-3090 built `ghcr.io/noonghunna/strata-club3090` from upstream's Dockerfile, with ggml's CPU code for an AVX2 baseline (the last one, v0.1.45, until 2026-10-20). Upstream's image now builds that way itself.
 - x86-64 with AVX2 only (no DGX Spark).
 

@@ -259,9 +259,9 @@ does, and what to do by hand when it refuses.
   `Strata-PLE-Table-GB` (the n-gram table, 28) and `Strata-PLE-Setup-Pins-From-GiB`: the MemTotal from which setup
   writes `--ple-io ram` on an SSD by itself, which is the model's `ram_gb` in setup's `MODELS` + the table + 16 (92
   for the Unsloth sets, 106 for IQ3_S in 0.2.12). Below it, `STRATA_PLE_AUTO_RAM=0` on an SSD keeps the table on disk
-  and `preflight_cpu_offload_ram` leaves it out. At each bump, read `/opt/strata/terminal/setup.py` in the new image:
-  the `MODELS` entries' `ram_gb`, the SSD branch after `rotational_disk(ple)` (its `+ 16`) and `rotational_disk()`
-  itself. Update the headers in the same PR when any of them moved; a header set too high lets a box through that
+  and `preflight_cpu_offload_ram` leaves it out. At each bump, read in the new image the `MODELS` entries' `ram_gb` and
+  `rotational_disk()` in `/opt/strata/terminal/setup.py`, and the SSD branch after `rotational_disk(ple)` (its `+ 16`),
+  which 0.2.13 moved, unchanged, to `/opt/strata/terminal/strata_control/setup_config.py`. Update the headers in the same PR when any of them moved; a header set too high lets a box through that
   setup will pin the table on.
 - The composes forward a short list of Strata's own engine switches (docs/engines/STRATA.md, "Engine switches",
   lists them). When a release turns on a new default that reaches our slugs and names the variable that turns it off,
