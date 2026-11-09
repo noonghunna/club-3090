@@ -1599,7 +1599,18 @@ if ! benchlocal-cli run --help 2>/dev/null | command grep -q -- "--reasoning-eff
   echo "[quality-test]   the two arms are the same reasoning-on run — a silently invalid A/B." >&2
   echo "[quality-test]   Upgrade: pip install --upgrade git+https://github.com/noonghunna/benchlocal-cli.git" >&2
 fi
-if [[ -n "$REASONING_EFFORT" ]]; then
+# Never on a thinking-off leg (#1966). An explicit --reasoning-effort makes
+# benchlocal-cli use the effort control without reading the template, so its
+# thinking-off requests carry `reasoning_effort: "none"` and no
+# `enable_thinking: false`. Templates read that `none` differently: QEngine's
+# renders an effort it doesn't know as medium, with thinking on; ExLlamaV3's and
+# Swift-1.5's reject it. Left out, benchlocal picks the off switch from the
+# template itself (GET /props, where the server has it). This covers
+# --both-modes and rebench-full.sh's thinking-off step too, since both run this
+# with --no-thinking while REASONING_EFFORT is still in the environment.
+if [[ -n "$REASONING_EFFORT" && "$NO_THINKING" == "1" ]]; then
+  echo "[quality-test] reasoning effort: not sent on a --no-thinking leg (REASONING_EFFORT=$REASONING_EFFORT ignored), so benchlocal-cli picks the off switch from the model's template"
+elif [[ -n "$REASONING_EFFORT" ]]; then
   CLI_ARGS+=(--reasoning-effort "$REASONING_EFFORT")
   echo "[quality-test] reasoning effort: $REASONING_EFFORT (forwarded to benchlocal-cli)"
 fi

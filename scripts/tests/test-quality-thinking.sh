@@ -147,6 +147,7 @@ run_qt() {  # run_qt <env assignments...> -- <wrapper args...>
   # Start from none of the budget knobs set, whatever the calling shell exports.
   out="$(env -u MAX_TOKENS -u THINKING_MAX_TOKENS -u PACK_BUDGETS -u TIMEOUT_PER_CASE \
     -u BENCHLOCAL_MODEL_TURN_TIMEOUT -u BENCHLOCAL_HERMES_SUBPROCESS_TIMEOUT_S \
+    -u REASONING_EFFORT -u NO_THINKING -u ENABLE_THINKING -u BOTH_MODES -u QUALITY_BOTH_LEG \
     "${envs[@]+"${envs[@]}"}" PATH="${tmp_bin}:$PATH" BENCHLOCAL_MOCK_LOG="$tmp_log" BENCHLOCAL_MOCK_ENV_LOG="$tmp_env" \
     BENCHLOCAL_MOCK_HELP="--run-meta KEY=VALUE" PREFLIGHT_NO_AUTODETECT=1 URL=http://mock MODEL=mock-model \
     bash scripts/quality-test.sh "$@" 2>&1)"
@@ -194,6 +195,35 @@ done
 # ...while an explicit value still goes through under --pack-budgets
 run_qt -- --quick --pack-budgets --max-tokens 2048
 assert_contains "$args" "--max-tokens 2048"
+
+# --- REASONING_EFFORT never reaches a thinking-off leg (#1966) ---
+# An explicit --reasoning-effort makes benchlocal-cli send `reasoning_effort: "none"`
+# (and no enable_thinking:false) as the off switch, which QEngine's template renders
+# as medium with thinking on. So the wrapper drops it on --no-thinking, in each form
+# that leg takes, and keeps it on a thinking leg.
+for form in "--no-thinking" "NO_THINKING=1"; do
+  if [[ "$form" == --* ]]; then run_qt REASONING_EFFORT=low -- --quick "$form"
+  else run_qt REASONING_EFFORT=low "$form" -- --quick; fi
+  assert_not_contains "$args" "--reasoning-effort"
+  assert_contains "$args" "--no-thinking"
+  assert_contains "$out" "reasoning effort: not sent on a --no-thinking leg (REASONING_EFFORT=low ignored)"
+done
+run_qt REASONING_EFFORT=low -- --quick --enable-thinking
+assert_contains "$args" "--reasoning-effort low"
+assert_contains "$out" "reasoning effort: low (forwarded to benchlocal-cli)"
+# no thinking flag (each pack at its own default): forwarded, as before
+run_qt REASONING_EFFORT=low -- --quick
+assert_contains "$args" "--reasoning-effort low"
+# --both-modes re-runs this script once per leg with REASONING_EFFORT still set:
+# only the thinking leg's run may carry it
+run_qt REASONING_EFFORT=low -- --quick --both-modes
+off_run="$(printf '%s\n' "$args" | command grep -- ' --no-thinking' || true)"
+on_run="$(printf '%s\n' "$args" | command grep -- ' --enable-thinking' || true)"
+if [[ -z "$off_run" || -z "$on_run" ]]; then
+  echo "ASSERTION FAILED: --both-modes did not run both legs" >&2; echo "$args" >&2; exit 1
+fi
+assert_not_contains "$off_run" "--reasoning-effort"
+assert_contains "$on_run" "--reasoning-effort low"
 rm -f "$tmp_env"
 
 echo "test-quality-thinking: ok"
