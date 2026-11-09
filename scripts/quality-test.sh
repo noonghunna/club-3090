@@ -1603,7 +1603,7 @@ fi
 # benchlocal-cli use the effort control without reading the template, so its
 # thinking-off requests carry `reasoning_effort: "none"` and no
 # `enable_thinking: false`. Templates read that `none` differently: QEngine's
-# renders an effort it doesn't know as medium, with thinking on; ExLlamaV3's and
+# rendered it as medium, with thinking on, before 1.3.5.5; ExLlamaV3's and
 # Swift-1.5's reject it. Left out, benchlocal picks the off switch from the
 # template itself (GET /props, where the server has it). This covers
 # --both-modes and rebench-full.sh's thinking-off step too, since both run this
