@@ -258,8 +258,16 @@ Historical rows and captions explicitly marked **time-bounded** predate this cor
 | 5090 | air | vLLM `gemma-mtp` (TP=1) | Gemma 4 31B + MTP | 600W (stock) | 600.65 | 756.67 | 1.103 | same |
 | 5090 | air | vLLM `long-text` (Qwen3.6 27B) | **prefill-heavy** | **400W** ⭐ | 247.33 | (n/a) | **0.618** | [@apnar #86](https://github.com/noonghunna/club-3090/discussions/86#discussioncomment-16844473) |
 | 5090 | air | vLLM `long-text` (Qwen3.6 27B) | **prefill-heavy** | 600W (stock) | 294.63 | (n/a) | 0.491 | same — **599.98W actual draw, full TDP saturation** |
+| **5080** (4× TP4, one card capped at a time) | air | QEngine 1.3.5 (own build, TP4) `decode-concurrent` | Qwen3.8 27B INT4 | 250–252W (floor) | 531.9–533.7 | 531.5–533.3 | (not given) | [@Hazelhof #86](https://github.com/noonghunna/club-3090/discussions/86#discussioncomment-19518990): cards 0–2; card 3 691.8 / 689.6, because `--concurrency auto` picked a higher stream count on it (compare within a card). The cap binds here (pwr-throttle 93–98% on cards 1 and 2), and only the SM clock drops (2,895 → 2,827 MHz) |
+| **5080** | air | QEngine 1.3.5 (own build, TP4) `decode-concurrent` | Qwen3.8 27B INT4 | 300W | 528.9–535.3 | 531.6–532.4 | (not given) | same, cards 0–2: median draw ~290W; flat within ~1% from the floor up |
+| **5080** | air | QEngine 1.3.5 (own build, TP4) `prefill-heavy` (Qwen3.8 27B) | **prefill-heavy** | 250–252W (floor) | 7,320–7,330 | (n/a) | (not given) | same, all four cards |
+| **5080** | air | QEngine 1.3.5 (own build, TP4) `prefill-heavy` (Qwen3.8 27B) | **prefill-heavy** | 300W | 7,316–7,370 | (n/a) | (not given) | same: median draw ~260W |
+| **5080** | air | QEngine 1.3.5 (own build, TP4) `decode-concurrent` | Qwen3.8-Flash-Next INT4 (6 slots, host KV) | 250–252W (floor) | 322.9–332.6 | 293.3–306.4 | (not given) | same: 316.1–337.8 / 286.5–302.5 at 300W; draw 145–187W |
+| **5080** | air | QEngine 1.3.5 (own build, TP4) `prefill-heavy` (Flash-Next) | **prefill-heavy** | 250–252W (floor) | 5,524–5,728 | (n/a) | (not given) | same: 5,586–5,772 at 300W; draw 123–152W |
 
 ⭐ = peak TPS/W efficiency on that rig.
+
+The 5080 rows have no ⭐: throughput is flat from the cards' floor (`nvidia-smi -pl` refuses below 250W, 252W on card 0) to 300W on both load classes, so the knee, if there is one, is below the reachable range, and the post gives median draw rather than draw per cap, so there's no TPS/W. Capping these cards at the floor cost nothing measurable; above ~290W the cap is a no-op because the serving load never draws it. Not a club compose, so compare the curve's shape, not its absolute TPS.
 
 #### Single-card efficiency curves (10W resolution)
 
