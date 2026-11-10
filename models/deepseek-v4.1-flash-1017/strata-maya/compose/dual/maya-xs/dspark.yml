@@ -23,7 +23,9 @@
 #              to spare (--mmap-experts auto); a host that falls short reads them in place from the files through
 #              the page cache instead, which is much slower at reading prompts (the UD-IQ3_S slug measured 7x on a
 #              near-miss host). ⚠️ This rig's 92 GB boot landed in that second mode: the engine read 85.0 GB free
-#              for the 74.1 GB the cards left over and left all 10,427 CPU-lane experts in place in the files,
+#              against the 74.1 GB it prices that choice with — its own line is "the most-routed 74.1 GB read
+#              ahead", a read-ahead set, not the whole lane: the 10,427 experts on it together are the 74.5 GB the
+#              measured note below and the registry quote. It left every one of them in place in the files,
 #              nothing pinned. It served the 8-pack that way (its own log: ~40 tok/s decode, a cold 11,199-token
 #              prompt read at 697 tok/s). What the in-place mode costs here is unmeasured — there is no pinned
 #              boot of this quant to compare it against, and the 7x above came from another quant's logit-dump
