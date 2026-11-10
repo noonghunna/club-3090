@@ -74,7 +74,7 @@ The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<releas
   - no prompt logprobs: one request per position with `max_tokens: 1` gives them.
 - **Log:** Flash-Next's `[qflash] parallel mode` line names prefill's path and, with `auto`, says decode's is timed at the end of the start-up; a closing line gives the result, e.g. `[qflash] parallel mode tp, decode collectives: single sequence P2P SM stores, batched P2P SM stores` ([bpx03/QEngine#19](https://github.com/bpx03/QEngine/issues/19)). `bench.sh` / `report.sh` still read the `[comm] decode collectives` line.
 - **Fixes:** a setting written while the load threads were already reading settings could crash the load (bpx03/QEngine#11); on exactly four equal cards, `FLASH_PAR=auto` picks `tp` when peer access passes the data check and `tp` fits, and restarts in `pp` if `tp` can't start (bpx03/QEngine#12, not run on four cards upstream).
-- **Not forwarded:** `QE_NUMA` (sets the NUMA nodes of pinned host memory by hand, for boards that report no node for a card; the reference rig has one node) and `FLASH_SLOT_LOG` (a log switch).
+- **Not forwarded:** `QE_NUMA` (sets the NUMA nodes of pinned host memory by hand, for boards that report no node for a card; the reference rig has one node) and `FLASH_SLOT_LOG` (a log switch). From 2026-11-10 the three- and four-card slugs forward `QE_NUMA`: those machines are more often multi-node boards (EPYC, Threadripper, dual-socket); the two-card slugs still don't.
 - **Booted on both slugs** (2026-11-07, 230 W):
   - verify-full passes on both, vision 4/4, MTP acceptance length 3.97 on Flash-Next and 6.05 on the 27B;
   - an omitted effort renders as `low` on both, and `probe-effort-budget.sh --positive` passes on both;

@@ -90,6 +90,11 @@
 #   QE_KV_ARCHIVE_GB  pinned host-RAM archive of evicted conversations (32; 0 = off)
 #   QE_PREFIX_GB      host RAM for pinned system-prompt prefixes (8)
 #   QE_MEM_MARGIN_GB  host RAM the archive always leaves free (max(8 GB, 5% of RAM))
+#   QE_NUMA           machines with several NUMA nodes: the nodes of the engine's pinned host buffers,
+#                     e.g. 0,1,2,3; several nodes interleave the pages, one prefers it. Unset: each card's
+#                     node from sysfs, and the pages interleaved over all nodes when the board reports
+#                     none (`GPU NUMA ID: N/A`, seen on Threadripper Pro boards set to several nodes).
+#                     No effect on one node
 #   QE_P2P            0 forces the host-memory path (auto)
 #   QE_COMM           prefill transfer path: auto (startup probe), p2p, ce, host
 #   QE_COMM_CHECK     rounds of the start-up P2P data check per pair and transport (4; 0 = off)
@@ -202,6 +207,7 @@ services:
       - QE_KV_ARCHIVE_GB
       - QE_PREFIX_GB
       - QE_MEM_MARGIN_GB
+      - QE_NUMA
       - QE_P2P
       - QE_COMM
       - QE_COMM_CHECK

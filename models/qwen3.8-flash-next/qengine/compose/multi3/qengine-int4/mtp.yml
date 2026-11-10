@@ -37,8 +37,9 @@
 #              conversation at about half the speed (132 against 244 tok/s) and turns lookup drafts
 #              off (upstream, 2026-11-01). auto picks pp only when it wins upstream's mix (an 8K-token
 #              prompt at 1, 4 and 8 conversations) by 10%, which on equal cards with P2P it never does.
-#              8 sequence slots, as on the two-card slug and in upstream's own rebench-full run on three
-#              cards (QEngine's default is 16).
+#              16 sequence slots, QEngine's default. The two-card slug runs 8: there about half the
+#              expert groups sit in host RAM, and fewer slots leave the expert cache more VRAM; on
+#              three or more cards far fewer do.
 #              From 1.3.4.3 our THINKING_BUDGET_* map (4096 / 16384 / 32768 by effort, as on
 #              the vLLM and SGLang slugs) reaches QEngine's own per-effort QE_THINKING_BUDGET; a
 #              request's own budget wins. The default effort is low, as on the other Qwen3.8 slugs,
@@ -95,7 +96,7 @@
 #   KV_OFFLOAD_DISK_GB  cap on the disk cache, GiB in total (unset = QEngine's own 200); oldest files go first.
 #                     Needs KV_OFFLOAD_DISK=1. Flash-Next keeps 1 GB of the disk free.
 # The Flash-Next engine's own settings, passed through when set (its defaults otherwise):
-#   FLASH_MAX_SEQS       sequence slots, 1-16 (8 here, as on the two-card slug; QEngine's default is 16). Each slot holds ~103 MB
+#   FLASH_MAX_SEQS       sequence slots, 1-16 (16 here, QEngine's default; the two-card slug runs 8). Each slot holds ~103 MB
 #                        of recurrent state a card, and the VRAM fewer slots free goes to the expert cache.
 #                        2026-11-01 on two 3090s (1.3.3.1, one boot each), 16 / 8 / 4 slots: single-user
 #                        decode 162 / 181 / 175 narrative, 150 / 156 / 189 code; prefill @90K 2,583 / 3,338
@@ -190,6 +191,11 @@
 #                        copy engine (3.0 on any layout; 1.90 on one NUMA node over a narrow link)
 #   QE_P2P               0 forces the host-memory path (auto)
 #   QE_MEM_MARGIN_GB     host RAM the archive always leaves free (max(8 GB, 5% of RAM))
+#   QE_NUMA              machines with several NUMA nodes: the nodes of the pinned host buffers (n-gram
+#                        table, host-backed experts, staging buffers), e.g. 0,1,2,3; several nodes interleave
+#                        the pages, one prefers it. Unset: each card's node from sysfs, and the pages
+#                        interleaved over all nodes when the board reports none (`GPU NUMA ID: N/A`, seen on
+#                        Threadripper Pro boards set to several nodes). No effect on one node
 #   QE_PRESENCE_PENALTY, QE_FREQUENCY_PENALTY  defaults for sampled requests that send none (frequency 0).
 #                        From 1.3.5.3 a request that sends no sampler values gets the Qwen3.8 card's row
 #                        for its mode: thinking 1.0 / 0.95 / 20 / 0, non-thinking 0.7 / 0.80 / 20 / 0 with
@@ -250,7 +256,7 @@ services:
       - QE_GPUS=0,1,2
       - QE_PORT=8080
       - QE_MODEL=/app/models/Qwen3.8-Flash-Next-QE-INT4
-      - FLASH_MAX_SEQS=${FLASH_MAX_SEQS:-8}
+      - FLASH_MAX_SEQS=${FLASH_MAX_SEQS:-16}
       - FLASH_KV_ARCHIVE_GB
       - FLASH_NGRAM_PIN
       - FLASH_EC_MARGIN_MB
@@ -292,6 +298,7 @@ services:
       - QE_COMM_TAX_1NODE
       - QE_P2P
       - QE_MEM_MARGIN_GB
+      - QE_NUMA
       - QE_PRESENCE_PENALTY
       - QE_FREQUENCY_PENALTY
       - QE_LOOP_GUARD_TURNS
