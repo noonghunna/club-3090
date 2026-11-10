@@ -3,7 +3,7 @@
  "engines": {
   "strata": {
    "engine_profile": "scripts/lib/profiles/engines/strata.yml",
-   "verified_image": "ghcr.io/niko1221/strata@sha256:c3a853420670f4c0f5a948c2d9e9904af4cedf52b11bc8cf167602dc5c578bcc",
+   "verified_image": "ghcr.io/niko1221/strata@sha256:b6e1876515d5663047a7cd8dfee5223c8b2d117710eb2a9c285a433fb6e4a703",
    "render": "strata_config",
    "programs": [
     "models/qwen3.8-flash-next/strata/launcher/strata_config.py"

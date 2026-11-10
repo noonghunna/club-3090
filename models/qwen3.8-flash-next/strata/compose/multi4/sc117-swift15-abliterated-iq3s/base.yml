@@ -66,7 +66,7 @@
 #   cache; switch.sh's generation probe (one token) is the real gate.
 services:
   strata:
-    image: ${STRATA_IMAGE:-ghcr.io/niko1221/strata@sha256:c3a853420670f4c0f5a948c2d9e9904af4cedf52b11bc8cf167602dc5c578bcc}
+    image: ${STRATA_IMAGE:-ghcr.io/niko1221/strata@sha256:b6e1876515d5663047a7cd8dfee5223c8b2d117710eb2a9c285a433fb6e4a703}
     container_name: ${ESTATE_CONTAINER:-strata-qwen38-flash-next-swift15-abl-iq3s-multi4}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # root, with the launcher's group: what Strata writes to the data volume stays
