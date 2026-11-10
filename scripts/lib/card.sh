@@ -276,7 +276,13 @@ def parse_log(path):
     grab(r"^\s*status:\s*([A-Z_]+)", "integrity.status")
     grab(r"health counters:\s*(.+)$", "integrity.health")
     grab(r"swap check\s+:\s*(.+)$", "integrity.swap")
-    grab(r"->\s*([0-9.]+)% divergence", "integrity.divergence")
+    # One cross-check line per shape (#1862); bench.sh records the WORST shape, so take
+    # the max here too (the first on a tie, as bench.sh's awk does). Taking the first line
+    # let a saved log tick the ±5% check while a later shape was over it.
+    divs = [m.group(1) for ln in lines
+            for m in [re.search(r"->\s*([0-9.]+)% divergence", ln)] if m]
+    if divs:
+        rec["integrity.divergence"] = max(divs, key=float)
     grab(r"triad ceiling\s+:\s*([0-9.]+) GB/s", "integrity.stream_ceiling")
     m = re.search(r"idle=(\d+) MiB\s+peak=(\S+) MiB\s+post=(\S+) MiB",
                   "\n".join(lines))
