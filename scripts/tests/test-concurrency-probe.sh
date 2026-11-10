@@ -635,7 +635,7 @@ DOCK
 chmod +x "$CTX_STUB/docker"
 got_q="$(PATH="$CTX_STUB:$PATH" STUB_IMAGE="ghcr.io/bpx03/qengine@sha256:2d790174baee2eb89d8afa5b6eb0ab68eb3a05bebf73e627e92e7686a889e124" \
   CONTAINER=qengine-qwen38-flash-next-dual URL=http://127.0.0.1:9 python3 "$LIB" --served-max-len)"
-got_n="$(PATH="$CTX_STUB:$PATH" STUB_IMAGE="vllm/vllm-openai:v0.32.0" CONTAINER=vllm-x URL=http://127.0.0.1:9 python3 "$LIB" --served-max-len)"
+got_n="$(PATH="$CTX_STUB:$PATH" STUB_IMAGE="vllm/vllm-openai:v0.33.0" CONTAINER=vllm-x URL=http://127.0.0.1:9 python3 "$LIB" --served-max-len)"
 rm -rf "$CTX_STUB"
 [[ "$got_q" == "131072" ]] || fail "--served-max-len should read a QEngine container's 'ready, context N' line: got '$got_q'"
 [[ -z "$got_n" ]] || fail "--served-max-len must not read QEngine's words in another engine's log: got '$got_n'"

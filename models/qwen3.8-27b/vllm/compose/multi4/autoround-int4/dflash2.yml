@@ -76,7 +76,7 @@
 # ===========================================================================
 services:
   vllm-qwen38-27b-multi4-ultrafast:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.32.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.33.0}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-multi4-ultrafast}"
     user: "0:${DOCKER_GID:-1000}"
     # Repo contract (test-compose-restart-policy): every shipped vLLM compose uses
@@ -140,7 +140,7 @@ services:
       - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton:/root/.triton/cache
     environment:
       - MAMBA_SSM_CACHE_DTYPE=${MAMBA_SSM_CACHE_DTYPE:-}
-      - FA2_ARTIFACT_ID=${FA2_ARTIFACT_ID:-b0ce0370c7ca5c0d0e688e744f3665f3a099407fc2a38a4102d81eaaf5707a2d}
+      - FA2_ARTIFACT_ID=${FA2_ARTIFACT_ID:-30f761b1c2a54edbb182be234e0ccb7071db9dae06d4827679e00aed1653e41f}
       - TP=${TP:-4}
       # Drafter toggle — docker only forwards what is declared here. The DEFAULT
       # lives in the entrypoint, not in these lines, so it cannot drift.
@@ -417,7 +417,7 @@ services:
       - "8000"
 
   vllm-qwen38-27b-multi4-ultrafast-kernels:
-    image: ${FA2_KERNEL_IMAGE:-ghcr.io/antonprokopyev/fa2-fp8kv-sm86@sha256:ec26059d1c7a7eb4b4d916ddac495a0b937eae8e4594297f7ed625368c30cd7e}
+    image: ${FA2_KERNEL_IMAGE:-ghcr.io/noonghunna/fa2-fp8kv-sm86@sha256:ff2971a4824f86374b4cb05d3726251b12fbef529b887c5fbab1d923518d6cb8}
     restart: "no"
     volumes:
       - fa2-kernels:/export

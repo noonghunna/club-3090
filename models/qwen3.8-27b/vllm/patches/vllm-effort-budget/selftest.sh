@@ -2,7 +2,7 @@
 # selftest.sh [image] — offline proof that patch B (vllm-effort-budget) still hooks the pinned
 # vLLM. This is the patch's drift_guard.check in patches.yml: run it at every vLLM pin bump.
 #
-#   bash models/qwen3.8-27b/vllm/patches/vllm-effort-budget/selftest.sh [vllm/vllm-openai:v0.32.0]
+#   bash models/qwen3.8-27b/vllm/patches/vllm-effort-budget/selftest.sh [vllm/vllm-openai:v0.33.0]
 #
 # No GPU, no network (`docker run --rm --network none`, the image's own python). Legs:
 #   main  install.sh twice (the 2nd a verified no-op that leaves serving.py byte-identical);
@@ -18,7 +18,7 @@
 # site-packages freely.
 set -uo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"
-IMAGE="${1:-vllm/vllm-openai:v0.32.0}"
+IMAGE="${1:-vllm/vllm-openai:v0.33.0}"
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$HERE/../../../../.." && pwd)"
 MAP='{"high":256,"low":64,"max":256,"medium":128,"minimal":64,"xhigh":256}'

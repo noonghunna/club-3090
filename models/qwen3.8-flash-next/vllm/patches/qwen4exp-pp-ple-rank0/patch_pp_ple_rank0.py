@@ -4,14 +4,14 @@
     patch_pp_ple_rank0.py patch    apply (marker-gated; a second run is a verified no-op)
     patch_pp_ple_rank0.py verify   check the installed result
 
-Stock vLLM (0.31.0, 0.32.0rc3) refuses PP>1 for any Qwen4Exp model with an n-gram PLE,
+Stock vLLM (0.31.0 to 0.33.0) refuses PP>1 for any Qwen4Exp model with an n-gram PLE,
 because later pipeline ranks never see the raw input_ids the PLE reads. Flash-Next has a
 single PLE layer (config `ple_layer_ids: [2]`, decoder layer 1), which always lands on
 rank 0, so the check is stricter than it needs to be. This overlay:
 
   1. model_executor/models/config.py and models/qwen4_exp/nvidia/model_state.py:
      refuse PP only when a PLE layer falls outside rank 0's layer range.
-  2. v1/core/kv_cache_utils.py: when a UniformTypeKVCacheSpecs group lists layers of
+  2. v1/core/kv_cache_planning.py (v1/core/kv_cache_utils.py before vLLM 0.33): when a UniformTypeKVCacheSpecs group lists layers of
      every pipeline rank, allocate only this rank's layers (which can be none).
 
 Ported from Minachist's flash-next-vllm.patch (Apache-2.0,
@@ -74,7 +74,9 @@ EDITS = [
                       layers="config.num_hidden_layers", exc="RuntimeError"),
     ),
     (
-        Path("v1/core/kv_cache_utils.py"),
+        # vLLM 0.33 moved this loop, unchanged, from kv_cache_utils.py to kv_cache_planning.py;
+        # the first of these files that exists is the one patched (0.32 and earlier: kv_cache_utils.py).
+        (Path("v1/core/kv_cache_planning.py"), Path("v1/core/kv_cache_utils.py")),
         "            for layer_name, spec in group_spec.kv_cache_specs.items():\n"
         "                layers_by_spec[spec].append(layer_name)\n",
         f"            {MARKER} keep only this rank's layers (PP); can be none\n"
@@ -104,6 +106,8 @@ def run(mode: str) -> None:
     root = vllm_dir()
     applied = 0
     for rel, anchor, replacement in EDITS:
+        if isinstance(rel, tuple):
+            rel = next((r for r in rel if (root / r).is_file()), rel[0])
         path = root / rel
         if not path.is_file():
             die(f"{rel} not found under {root}")

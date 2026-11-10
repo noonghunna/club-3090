@@ -1,6 +1,6 @@
 schema_version: 1
 id: vllm-stable
-display_name: vLLM stable v0.32.0 (overlay-free)
+display_name: vLLM stable v0.33.0 (overlay-free)
 type: vllm
 # #1365: the compose env var this engine's image is injected as.
 image_env: VLLM_IMAGE
@@ -19,9 +19,9 @@ install:
   # The pin's record: pin-current is what spec pins now; pin-earlier lists earlier pins, newest first (the first
   # is the rollback). docs/UPSTREAM.md's Pinned images table holds why it's pinned, not these.
   # Each bump's validation is its dated row in docs/UPSTREAM.md (Active follow-ups).
-  # pin-current: v0.32.0 · overlay-free · pinned 2026-10-18 (#1738)
-  # pin-earlier: v0.31.0 (2026-10-06, #1570); v0.30.0 (2026-09-23); v0.29.0 (2026-09-12); v0.27.1 (2026-08-16); v0.25.1 (2026-07-16, #682)
-  spec: vllm/vllm-openai:v0.32.0
+  # pin-current: v0.33.0 · overlay-free · pinned 2026-11-10 (torch 2.14.0+cu130; the FA2 FP8-KV sidecar from our fork, noonghunna/fa2-fp8kv-sm86)
+  # pin-earlier: v0.32.0 (2026-10-18, #1738); v0.31.0 (2026-10-06, #1570); v0.30.0 (2026-09-23); v0.29.0 (2026-09-12); v0.27.1 (2026-08-16); v0.25.1 (2026-07-16, #682)
+  spec: vllm/vllm-openai:v0.33.0
 min_sm: 7.5
 supported_model_families:
   - dense

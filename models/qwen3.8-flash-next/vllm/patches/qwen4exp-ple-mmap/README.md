@@ -25,7 +25,7 @@ Constraints: ETP=1, so **PP only, not TP** (pair with `qwen4exp-pp-ple-rank0`). 
 ships it. The file is the table in the checkpoint's storage dtype: 51.2 GB for an FP8 PLE
 (albucino), ~102 GB for BF16.
 
-**Provenance.** Port to stock vLLM (first v0.31.0, now v0.32.0) of Minachist's `flash-next-vllm.patch` (its
+**Provenance.** Port to stock vLLM (first v0.31.0, then v0.32.0, now v0.33.0) of Minachist's `flash-next-vllm.patch` (its
 ngram_embedding hunks only), `decode-01-ple-host-gather`, `decode-02-model-state-hook`,
 `ttft-01-ple-page-prefetch` and `decode-06-ple-gather-advise` (Apache-2.0),
 `huggingface.co/Minachist/Qwen3.8-Flash-Next-INT4-Mixed-AutoRound`, `vllm-patch/`.
@@ -34,7 +34,7 @@ dropped; the mmap class reuses the common base classes), added the missing impor
 Co-authored-by: Minachist <84688797+aiueonicked@users.noreply.github.com>
 
 **Versions.** One diff per vLLM version (`ple-mmap-v<version>.diff`); the installer refuses
-any other version. Today: `ple-mmap-v0.32.0.diff` only (the `vllm-stable` pin since #1740). A `vllm-stable` bump needs a new diff first; until then `PLE_PLACEMENT=ram` serves from the stock path.
+any other version. Today: `ple-mmap-v0.33.0.diff` (the `vllm-stable` pin from 2026-11-10) and `ple-mmap-v0.32.0.diff` (the rollback). The 0.33.0 port is the 0.32.0 diff with one import-block hunk re-anchored (0.33 added an import next to it); the other seven hunks applied unchanged, and it carries the same +690/-6 lines. Checked offline on `vllm/vllm-openai:v0.33.0`: the installer applies it, a second run is a no-op, and the module imports with `Qwen4ExpPLEMmapHostEmbedding`. Not booted: the slug needs 64 GB cards. A `vllm-stable` bump needs a new diff first; until then `PLE_PLACEMENT=ram` serves from the stock path.
 The v0.32.0 port follows upstream's new prefetch interface: `start_prefetch(ngram_ids)` lost
 its `hidden_states` argument, the forward now calls `finalize_prefetch(total_tokens)` (which
 replaces the mmap class's `forward(hidden_states)`), and PLE embeddings take a
