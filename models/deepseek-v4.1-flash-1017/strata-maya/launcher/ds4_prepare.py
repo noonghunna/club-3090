@@ -33,7 +33,7 @@ import ds4_settings                                   # beside this file: club-3
 
 MAYA = Path("/opt/maya")
 # Every file a tag reads, with its SHA-256 (the Hugging Face LFS oid at the pinned revision; the .json is a plain git
-# file: its SHA-256 measured from that revision's copy). Folder: "gguf" = /gguf, "dspark" = /dspark.
+# file: its SHA-256 measured from that revision's copy). Folder: "gguf" = /gguf, "engram" = /engram, "dspark" = /dspark.
 WEIGHTS = {
     "ista-iq2-xxs": {
         "gguf": {   # ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF @85d6710f (files unchanged since cb02422c)
@@ -75,12 +75,41 @@ WEIGHTS = {
         },
         "dspark": {},   # no drafter: neither DSpark build sped it up on two 3090s (compose header)
     },
+    "maya-xs": {
+        "gguf": {   # peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF @c33d87b8, Maya-XS/ (the SHA-256s Maya v1.1.56's
+                    # tools/ds4/download_gguf.json pins as the quant's model files: its three v2 shards)
+            "DeepSeek-V4.1-Flash-1017-Maya-XS-v2-IQ1_S-00001-of-00003.gguf":
+                "9d92dd13d4603dbf07720845419963693f4c07ae098e55a5aae2f207dd44d04d",
+            "DeepSeek-V4.1-Flash-1017-Maya-XS-v2-IQ1_S-00002-of-00003.gguf":
+                "b7f26bae6d6fccfb256c911f645289c0aec8459766ef83f6a04d7ed47c7e06c8",
+            "DeepSeek-V4.1-Flash-1017-Maya-XS-v2-IQ1_S-00003-of-00003.gguf":
+                "62b98172562543126204fa2ff18f7d72d75353445ff93f4135d037355b409f35",
+        },
+        "engram": {   # the Q6_K n-gram-table pair Maya-XS shares with Maya-S, as Maya's own setup reads it: a GGUF set
+                      # of its own, NOT shards of the model's split. The Hugging Face repo keeps the two files inside
+                      # Maya-XS/ (they are v1's files 4-5; v2 replaced the model files only), and pack_gguf.py refuses
+                      # a folder holding two splits - "the shards of more than one GGUF split (-of-00003, -of-00005):
+                      # name the model's own with --shards" - so the compose mounts just these two at /engram and the
+                      # pack indexes them as the set, recording each by its path relative to the model folder the way
+                      # Maya's own Engram-Q6_K/ folder does. Their own metadata is only split.count / split.no /
+                      # split.tensors.count and one tensor each: the tables, never the model's.
+            "DeepSeek-V4.1-Flash-1017-Maya-XS-IQ1_S-00004-of-00005.gguf":
+                "0d93315942c523d82f6dbc0a6e0e1751548e309f3963f96b82f92e8f9bc52e36",
+            "DeepSeek-V4.1-Flash-1017-Maya-XS-IQ1_S-00005-of-00005.gguf":
+                "39bbc8cde8b17604fed9a7ba7fc6bc9c5e72e34733657943ac049b4b9ca2d340",
+        },
+        "dspark": {   # the quant's own drafter (the manifest's maya/quants/Maya-XS/drafter): the same two files the
+                      # ista tag reads
+            "dspark-xs2.bin": "8dfe21082a6cb320f334fddb454630c241c6d44e0463eef4f8b0b07334511779",
+            "dspark-xs2.json": "56d47ad12d6548a8d3d50a79be96451411f18d5b77064de7b8544bb2da22988f",
+        },
+    },
 }
 # Each tag's files as Maya shows them (its dashboard, /health and /metrics' model_label: tools/maya_quants.config_label,
 # from the installer record's ds4_quant - without one it names Maya's own EXL3 2.9 bpw quant). ISTA's quant is not one
 # of Maya's, so the name is shown as given; UD-IQ3_S is in Maya's setup list, so its key is recorded and Maya shows it
 # as "UD-IQ3_S" (maya_quants.py's table), as its own setup would.
-SHOWN = {"ista-iq2-xxs": "ISTA IQ2_XXS", "ud-iq3-s": "gguf-iq3_s"}
+SHOWN = {"ista-iq2-xxs": "ISTA IQ2_XXS", "ud-iq3-s": "gguf-iq3_s", "maya-xs": "maya-xs"}
 
 
 def say(msg: str) -> None:
@@ -109,16 +138,18 @@ def stamp(files: list[Path]) -> list[dict]:
     return [{"name": f.name, "size": f.stat().st_size, "mtime_ns": f.stat().st_mtime_ns} for f in files]
 
 
-def files_of(tag: str, src: Path, dspark: Path) -> tuple[list[Path], list[Path]]:
-    """(the model's files in /gguf, the drafter's in /dspark), all present, else a stop naming what's missing."""
+def files_of(tag: str, src: Path, dspark: Path, engram: Path) -> tuple[list[Path], list[Path], list[Path]]:
+    """(the model's files in /gguf, its Engram set in /engram, the drafter's in /dspark), all present, else a stop
+    naming what's missing. A tag whose tables are among its own shards has no "engram" key and gets an empty list."""
     w = WEIGHTS[tag]
     model = [src / n for n in w["gguf"]]
+    tables = [engram / n for n in w.get("engram", {})]
     drafter = [dspark / n for n in w["dspark"]]
-    missing = [str(f) for f in model + drafter if not f.is_file()]
+    missing = [str(f) for f in model + tables + drafter if not f.is_file()]
     if missing:
         die(f"missing: {', '.join(missing)} (a download still running, or the wrong folder mounted? "
             "bash scripts/setup.sh <slug> downloads both)")
-    return model, drafter
+    return model, tables, drafter
 
 
 def sha256(f: Path) -> str:
@@ -135,7 +166,7 @@ def verify(tag: str, files: list[Path], d: Path) -> None:
     if read_json(rec).get("files") == now:
         say("files already verified")
         return
-    want = {**WEIGHTS[tag]["gguf"], **WEIGHTS[tag]["dspark"]}
+    want = {**WEIGHTS[tag]["gguf"], **WEIGHTS[tag].get("engram", {}), **WEIGHTS[tag]["dspark"]}
     gb = sum(f.stat().st_size for f in files) / 1e9
     say(f"checking {len(files)} files' SHA-256 (once; minutes for {gb:.0f} GB) ...")
     with ThreadPoolExecutor(max_workers=min(4, len(files))) as pool:   # hashlib frees the GIL: the disk sets the pace
@@ -147,9 +178,9 @@ def verify(tag: str, files: list[Path], d: Path) -> None:
     say("every file matches its SHA-256")
 
 
-def pack(model: list[Path], drafter: list[Path], d: Path, repack: bool) -> Path:
+def pack(model: list[Path], tables: list[Path], drafter: list[Path], d: Path, repack: bool) -> Path:
     p = d / "pack"
-    files = model + drafter
+    files = model + tables + drafter
     rec = read_json(p / "sources.json").get("files")
     if not repack and (p / "tensors.txt").is_file() and rec == stamp(files):
         say(f"pack up to date: {p}")
@@ -163,8 +194,11 @@ def pack(model: list[Path], drafter: list[Path], d: Path, repack: bool) -> Path:
     # of such a tag doesn't mount, so the pack holds no drafter
     dspark_json = next((f for f in drafter if f.suffix == ".json"), None)
     want = ["--drafter", str(dspark_json)] if dspark_json else []
+    # a quant whose Engram tables are a GGUF set of their own names the folder: the pack indexes those files by their
+    # path relative to the model folder, which is how Maya's own setup's Engram-Q6_K/ beside the quant reaches them
+    eg = ["--engram", str(tables[0].parent)] if tables else []
     r = subprocess.run([str(MAYA / ".venv/bin/python"), str(MAYA / "tools/ds4/pack_gguf.py"),
-                        "--model", str(model[0].parent), "--out", str(tmp), *want,
+                        "--model", str(model[0].parent), "--out", str(tmp), *want, *eg,
                         "--shards", *[f.name for f in model]], cwd=str(MAYA))
     if r.returncode != 0:
         die(f"tools/ds4/pack_gguf.py stopped (exit {r.returncode}); the old pack, if any, is unchanged")
@@ -226,6 +260,7 @@ def main() -> int:
     ap.add_argument("--tag", required=True, choices=sorted(WEIGHTS))
     ap.add_argument("--src", default="/gguf")
     ap.add_argument("--dspark", default="/dspark")
+    ap.add_argument("--engram", default="/engram")
     ap.add_argument("--data", default="/data")
     ap.add_argument("--context", type=int, default=65536)
     ap.add_argument("--gpus", default="0,1")
@@ -239,12 +274,12 @@ def main() -> int:
         die(str(e))
     d = Path(a.data) / a.tag
     d.mkdir(parents=True, exist_ok=True)
-    model, drafter = files_of(a.tag, Path(a.src), Path(a.dspark))
+    model, tables, drafter = files_of(a.tag, Path(a.src), Path(a.dspark), Path(a.engram))
     if a.verify != "0":
-        verify(a.tag, model + drafter, d)
+        verify(a.tag, model + tables + drafter, d)
     else:
         say("VERIFY=0: the files' SHA-256 is not checked")
-    p = pack(model, drafter, d, a.repack == "1")
+    p = pack(model, tables, drafter, d, a.repack == "1")
     seed_profile(p)
     config(a.tag, d, p, a)
     return 0

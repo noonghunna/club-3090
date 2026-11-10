@@ -561,6 +561,75 @@ finally:
     HF.repo_tree, HF.shutil.which, HF.subprocess.run, HF.raw_resolve_fetch = (
         _orig_tree, _orig_which, _orig_run, _orig_raw)
 
+# ---------------------------------------------------------------------------
+# 14. resolve_head tells a SHA-256 apart from a git blob SHA-1.
+#     `x-linked-etag` carries the canonical sha256 for an LFS/Xet object, but for
+#     a PLAIN (non-LFS) git file the hub puts that file's 40-hex blob SHA-1 in the
+#     SAME header. Taken as a sha256 it can never equal `sha256sum`, so every
+#     small file in a repo reports FAIL while every large one passes — and the
+#     advice printed with it ("delete the model folder and re-run setup.sh")
+#     throws away correctly-verified hundreds of GB. Measured 2026-11-09 on a
+#     99 KB drafter .json next to its own 4.25 GB .bin in the same repo.
+#     The right answer is "the hub published no sha256 here", which setup.sh
+#     counts as UNVERIFIED and the sha256 gate already hard-fails on.
+# ---------------------------------------------------------------------------
+
+class _Headers:
+    """`.get` like the real `email.message.Message`: case-insensitive."""
+
+    def __init__(self, hdrs):
+        self._d = {k.lower(): v for k, v in hdrs.items()}
+
+    def get(self, name, default=None):
+        return self._d.get(name.lower(), default)
+
+
+class _Hop:
+    """The 302 hop resolve_head reads its headers off."""
+
+    def __init__(self, **hdrs):
+        self.headers = _Headers(hdrs)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _Opener:
+    def __init__(self, resp):
+        self._resp = resp
+
+    def open(self, req, timeout=None):
+        return self._resp
+
+
+SHA64 = "62b98172562543126204fa2ff18f7d72d75353445ff93f4135d037355b409f35"
+BLOB40 = "29ff31c17ed050c0d37779d2f0f5873b98c8c99b"     # a real hub response
+
+m = HF.resolve_head("peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF",
+                    "Maya-XS/DeepSeek-V4.1-Flash-1017-Maya-XS-v2-IQ1_S-00003-of-00003.gguf",
+                    opener=_Opener(_Hop(**{"x-linked-etag": f'"{SHA64}"',
+                                           "x-linked-size": "21422979296"})))
+check(m.sha256 == SHA64, f"a 64-hex x-linked-etag is the sha256 (got {m.sha256!r})")
+check(m.size == 21422979296, "the size rides along")
+check(m.source == "resolve-head", "a real hash marks the observation's source")
+
+m = HF.resolve_head("peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF",
+                    "dspark/dspark-xs2.json",
+                    opener=_Opener(_Hop(**{"x-linked-etag": f'"{BLOB40}"',
+                                           "x-linked-size": "99146"})))
+check(m.sha256 is None,
+      f"a 40-hex git blob SHA-1 is NOT a sha256: no hash published (got {m.sha256!r})")
+check(m.size == 99146, "the size still comes back, so the file is size-checked at least")
+check(m.source == "", "a rejected header does not claim a resolve-head hash")
+
+m = HF.resolve_head("o/m", "f.bin",
+                    opener=_Opener(_Hop(**{"x-linked-etag": SHA64.upper(),
+                                           "x-linked-size": "1"})))
+check(m.sha256 == SHA64, "an uppercase sha256 is still lowercased for comparison")
+
 if failures:
     print(f"\n{len(failures)} assertion(s) failed.", file=sys.stderr)
     sys.exit(1)
