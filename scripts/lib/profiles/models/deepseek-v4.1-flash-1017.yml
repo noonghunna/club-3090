@@ -71,6 +71,30 @@ weights:
       - UD-IQ3_S/DeepSeek-V4.1-Flash-1017-UD-IQ3_S-00008-of-00008.gguf
     verify_glob: "UD-IQ3_S/DeepSeek-V4.1-Flash-1017-UD-IQ3_S-*.gguf"
     manual_note: "🐣 unsloth's UD-IQ3_S: routed experts IQ2_S / IQ3_XXS / IQ3_S / Q3_K / MXFP4 by layer, dense weights Q8_0 / BF16, the two Engram hash tables Q6_K in the last shard (161.3 GB, the same bytes as Maya's own Q6_K pair). In Project Maya's own setup list (--ds4-quant gguf-iq3_s, KL 0.061 from the full-precision model on Maya's scorer, Q8 0.047); the launcher checks the 8 files against the SHA-256s Maya v1.1.48 pins. Served by the strata-maya engine's maya-ds4, which needs ~240 GB of host RAM to copy the CPU lane's 219 GB of experts; the Engram shard stays on the disk. Text only."
+  maya-xs:
+    path: deepseek-v4.1-flash-1017-maya-gguf/Maya-XS
+    # local_subdir is the BUCKET: the repo keeps each Maya quant in a folder of its own (Maya-XS/, Maya-S/) with the
+    # shared dspark/ drafter folder beside them, so files and the glob carry the Maya-XS/ prefix (the shape of
+    # maya-dspark-xs2 below). The folder holds the three v2 model shards AND the two n-gram-table shards, which are
+    # v1's files 4-5: v2 changed the model files only, so Maya's manifest lists the pair as the quant's "tables", not
+    # among its model files. They are a GGUF set, not shards of the model's split (pack_gguf.py refuses a folder that
+    # holds two splits), so the compose mounts just those two at /engram and the pack reads them with --engram - the
+    # shape of Maya's own setup, which keeps an Engram-Q6_K/ folder beside the quant.
+    local_subdir: deepseek-v4.1-flash-1017-maya-gguf
+    size_gb: 278.12
+    format: gguf
+    status: incubating
+    hf_repo: peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF
+    revision: c33d87b8c7a3b7d55e71324dc82395587a870b0b
+    shards: 5
+    files:
+      - Maya-XS/DeepSeek-V4.1-Flash-1017-Maya-XS-v2-IQ1_S-00001-of-00003.gguf
+      - Maya-XS/DeepSeek-V4.1-Flash-1017-Maya-XS-v2-IQ1_S-00002-of-00003.gguf
+      - Maya-XS/DeepSeek-V4.1-Flash-1017-Maya-XS-v2-IQ1_S-00003-of-00003.gguf
+      - Maya-XS/DeepSeek-V4.1-Flash-1017-Maya-XS-IQ1_S-00004-of-00005.gguf
+      - Maya-XS/DeepSeek-V4.1-Flash-1017-Maya-XS-IQ1_S-00005-of-00005.gguf
+    verify_glob: "Maya-XS/DeepSeek-V4.1-Flash-1017-Maya-XS-*.gguf"
+    manual_note: "🐣 Project Maya's own smallest DeepSeek quant (peasantsmith): every routed expert IQ1_S with error-feedback rounding, dense weights Q8_0, the two Engram hash tables Q6_K (161.3 GB, read from the disk a few rows a token, never copied into RAM). v2, about 12% closer to the original than v1 and ~20% faster at writing: 116.8 GB of model in three shards + the 161.3 GB table pair Maya-XS shares with Maya-S = 278.1 GB. Maya's manifest (tools/ds4/download_gguf.json, maya/quants/Maya-XS) puts the VRAM + RAM that hold it at 121 GB, its drafter included, and its quality card gives 87.5% the same top token as the original, +8.7% next-token loss. Served by the strata-maya engine's maya-ds4: the hot experts in VRAM, as much of the rest as the host can pin in RAM, the remainder streamed from the SSD. Its own DSpark drafter is maya-dspark-xs2. Text only."
   maya-dspark-xs2:
     path: deepseek-v4.1-flash-1017-maya-gguf/dspark
     # local_subdir is the BUCKET: the repo keeps the drafters in its dspark/ folder, which --local-dir preserves, so
