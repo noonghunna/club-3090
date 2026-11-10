@@ -93,6 +93,19 @@ _HF = "https://huggingface.co"
 _NET_TIMEOUT = 60
 _SHA_CHUNK = 8 * 1024 * 1024
 
+# A SHA-256 is 64 hex characters, and the hub's `x-linked-etag` carries one only
+# for an LFS/Xet object. For a **plain (non-LFS) git file** the same header carries
+# that file's 40-hex *git blob SHA-1* — a different hash function over the same
+# bytes, so it can never equal `sha256sum`. Measured on this rig 2026-11-09 on a
+# 99 KB drafter `.json`: `x-linked-etag: "29ff31c17ed050c0d37779d2f0f5873b98c8c99b"`
+# (40 hex) while its sibling 4.25 GB `.bin` in the same folder came back 64 hex.
+# Reading the short one as a SHA-256 makes every small file in a repo report FAIL
+# while every large one passes, and the advice that follows ("delete the model
+# folder and re-run setup.sh") discards correctly-verified hundreds of GB. So: a
+# header that is not 64 hex means the hub published **no SHA-256** for the file,
+# which callers already treat as UNVERIFIED rather than as a pass or a mismatch.
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}\Z", re.IGNORECASE)
+
 # The verbatim client-side refusal (hf 1.25.1 file_download.py). Matched on a
 # lowercased haystack; both markers must be present so an unrelated "too large"
 # from the filesystem or a proxy cannot false-trigger an escalation.
@@ -256,9 +269,11 @@ def resolve_head(repo_id: str, filename: str, *, revision: str = "main",
                  opener: Optional[Any] = None) -> FileMeta:
     """Non-redirect-following HEAD on the resolve endpoint -> size + sha256.
 
-    Reads `x-linked-etag` (canonical LFS sha256) / `x-linked-size` /
-    `x-repo-commit` off the 302 itself. `opener` is injectable so tests never
-    touch the network."""
+    Reads `x-linked-etag` (the canonical sha256 of an LFS/Xet object) /
+    `x-linked-size` / `x-repo-commit` off the 302 itself. A header that is not 64
+    hex is not a sha256 — it is a plain git file's blob SHA-1 (see `_SHA256_HEX`) —
+    and reports as no hash published. `opener` is injectable so tests never touch
+    the network."""
     url = f"{_HF}/{repo_id}/resolve/{revision}/{urllib.parse.quote(filename)}"
     req = urllib.request.Request(url, method="HEAD")
     if token:
@@ -286,6 +301,8 @@ def resolve_head(repo_id: str, filename: str, *, revision: str = "main",
         return None
 
     sha = _h("x-linked-etag", "X-Linked-Etag")
+    if sha is not None:
+        sha = sha.lower() if _SHA256_HEX.match(sha) else None
     size = _h("x-linked-size", "X-Linked-Size") or _h("content-length")
     try:
         size_i = int(size) if size is not None else None
@@ -293,7 +310,7 @@ def resolve_head(repo_id: str, filename: str, *, revision: str = "main",
         size_i = None
     return FileMeta(
         name=filename, size=size_i,
-        sha256=sha.lower() if sha else None,
+        sha256=sha,
         commit=_h("x-repo-commit", "X-Repo-Commit"),
         source="resolve-head" if sha else "",
     )
