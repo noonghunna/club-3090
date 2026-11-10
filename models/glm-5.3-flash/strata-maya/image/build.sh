@@ -54,9 +54,10 @@ CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES:-75;80;86;89;120}"
 REQUIRED_SERVER_FLAGS="${REQUIRED_SERVER_FLAGS:---engine --config --host --port --api-key}"
 REQUIRED_PACK_FLAGS="${REQUIRED_PACK_FLAGS:---gguf --out --compat-bf16}"
 # What our DeepSeek launcher (the DeepSeek-V4.1-Flash-1017 strata-maya slugs') writes into the engine's config,
-# and passes to the pack builder: the same rule, for build/maya-ds4 and tools/ds4/pack_gguf.py
+# and passes to the pack builder: the same rule, for build/maya-ds4 and tools/ds4/pack_gguf.py. --engram is for a quant
+# whose Engram tables are a GGUF set of their own rather than among its shards (Maya-XS, #1983)
 REQUIRED_DS4_FLAGS="${REQUIRED_DS4_FLAGS:---pack --max-context --tp --cpu-threads --dspark --vision --serve}"
-REQUIRED_DS4_PACK_FLAGS="${REQUIRED_DS4_PACK_FLAGS:---model --out --drafter --shards}"
+REQUIRED_DS4_PACK_FLAGS="${REQUIRED_DS4_PACK_FLAGS:---model --out --drafter --engram --shards}"
 # ... and our MiniMax launcher (the MiniMax-M3.1-Flash strata-maya slugs'), for build/maya-mm3 and tools/mm3/pack_gguf.py.
 # maya-mm3's usage text leaves out flags its parser takes (--profile, --serve), so these are checked in the binary
 # itself: each must be one of its strings, exactly (the parser compares the argument against that literal).
