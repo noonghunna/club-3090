@@ -146,25 +146,26 @@ command grep -q "SHA-256 mismatch" <<<"$out" && ! command grep -q "NOT STOPPED" 
 echo "== 7. the pinned engine reads every key a setting writes (engine-config-reads.json; no docker)"
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/lib/profiles/engine_config_reads.py check --engine strata-maya:ds4 || rc=1
 
-echo "== 8. ud-iq3-s: no drafter (DSpark off, no --drafter), Maya's own quant key, its files = the model profile's"
+echo "== 8. the per-tag files: no drafter for ud-iq3-s, maya-xs's separate Engram set, each tag's files = the model profile's"
 out="$(env $(clean) python3 - "$L" "$work" <<'PY' 2>&1
 import json, re, subprocess, sys, types
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 import ds4_prepare as p
 w = Path(sys.argv[2])
-for tag in ("ista-iq2-xxs", "ud-iq3-s"):
+for tag in ("ista-iq2-xxs", "ud-iq3-s", "maya-xs"):
     d = w / ("c-" + tag); d.mkdir()
     p.config(tag, d, d / "pack", types.SimpleNamespace(gpus="0,1", tp=1, context=65536))
     c = json.loads((d / "maya-ds4.json").read_text())
     a = c["args"]
     print(f"{tag} dspark={a[a.index('--dspark') + 1]} ds4_quant={c['installer']['ds4_quant']}")
-# files_of(): the 8 shards present and no /dspark folder at all is enough for ud-iq3-s
+# files_of(): the 8 shards present and neither a /dspark nor an /engram folder at all is enough for
+# ud-iq3-s - its Engram tables are inside its own shards, so it has no "engram" key
 src = w / "UD-IQ3_S"; src.mkdir()
 for n in p.WEIGHTS["ud-iq3-s"]["gguf"]:
     (src / n).write_bytes(b"x")
-model, drafter = p.files_of("ud-iq3-s", src, w / "no-dspark-folder")
-print(f"files_of ud-iq3-s: {len(model)} model files, {len(drafter)} drafter files")
+model, tables, drafter = p.files_of("ud-iq3-s", src, w / "no-dspark-folder", w / "no-engram-folder")
+print(f"files_of ud-iq3-s: {len(model)} model files, {len(tables)} table files, {len(drafter)} drafter files")
 # pack(): the argv pack_gguf.py gets, without running it
 seen = []
 def fake_run(argv, cwd=None):
@@ -173,27 +174,62 @@ def fake_run(argv, cwd=None):
     (out / "tensors.txt").write_text("")
     return types.SimpleNamespace(returncode=0)
 p.subprocess = types.SimpleNamespace(run=fake_run)
-p.pack(model, drafter, w / "p-ud", False)
+p.pack(model, tables, drafter, w / "p-ud", False)
 dj = w / "dspark-xs2.json"; dj.write_text("{}"); db = w / "dspark-xs2.bin"; db.write_bytes(b"x")
 (w / "p-ista").mkdir()
-p.pack(model, [db, dj], w / "p-ista", False)
+p.pack(model, tables, [db, dj], w / "p-ista", False)
 print("pack ud-iq3-s drafter arg:", "--drafter" in seen[0])
 print("pack with a drafter:", seen[1][seen[1].index("--drafter") + 1] == str(dj) if "--drafter" in seen[1] else False)
-# the SHA-256 table: 64 hex digits each, and the names the model profile's ud-iq3-s files: list downloads
+print("pack with no Engram set passes no --engram:", "--engram" not in seen[0])
+# maya-xs: its Q6_K tables are a GGUF set of their own mounted at /engram, and the pack has to be
+# told where they are - pack_gguf.py stops at "the shards of more than one GGUF split" on a folder
+# that holds both, which is why the compose mounts the two files rather than the folder.
+xs = w / "Maya-XS"; xs.mkdir(); eg = w / "engram"; eg.mkdir(); dsp = w / "dspark"; dsp.mkdir()
+for n in p.WEIGHTS["maya-xs"]["gguf"]:
+    (xs / n).write_bytes(b"x")
+for n in p.WEIGHTS["maya-xs"]["engram"]:
+    (eg / n).write_bytes(b"x")
+for n in p.WEIGHTS["maya-xs"]["dspark"]:
+    (dsp / n).write_bytes(b"x")
+xm, xt, xd = p.files_of("maya-xs", xs, dsp, eg)
+(w / "p-xs").mkdir()
+p.pack(xm, xt, xd, w / "p-xs", False)
+print(f"files_of maya-xs: {len(xm)} model files, {len(xt)} table files, {len(xd)} drafter files")
+print("pack maya-xs --engram is the table folder:",
+      seen[2][seen[2].index("--engram") + 1] == str(eg) if "--engram" in seen[2] else False)
+print("pack maya-xs --shards names only the model's own:",
+      seen[2][seen[2].index("--shards") + 1:] == [f.name for f in xm])
+# the SHA-256 table: 64 hex digits each, and the names the model profile's files: list downloads
 bad = [n for n, h in p.WEIGHTS["ud-iq3-s"]["gguf"].items() if not re.fullmatch(r"[0-9a-f]{64}", h)]
 prof = Path("scripts/lib/profiles/models/deepseek-v4.1-flash-1017.yml").read_text(encoding="utf-8")
 listed = sorted(m.group(1) for m in re.finditer(r"^\s+- UD-IQ3_S/(\S+\.gguf)$", prof, re.M))
 print("sha table ok:", not bad, "| profile files == launcher table:", listed == sorted(p.WEIGHTS["ud-iq3-s"]["gguf"]))
+xs_bad = [n for k in ("gguf", "engram", "dspark") for n, h in p.WEIGHTS["maya-xs"][k].items()
+          if not re.fullmatch(r"[0-9a-f]{64}", h)]
+xs_listed = sorted(m.group(1) for m in re.finditer(r"^\s+- Maya-XS/(\S+\.gguf)$", prof, re.M))
+print("maya-xs sha table ok:", not xs_bad, "| profile files == launcher gguf+engram:",
+      xs_listed == sorted(list(p.WEIGHTS["maya-xs"]["gguf"]) + list(p.WEIGHTS["maya-xs"]["engram"])))
 PY
 )"
 command grep -q "^ista-iq2-xxs dspark=on ds4_quant=ISTA IQ2_XXS$" <<<"$out" && command grep -q "^ud-iq3-s dspark=off ds4_quant=gguf-iq3_s$" <<<"$out" \
   && ok "ista-iq2-xxs: --dspark on; ud-iq3-s: --dspark off, ds4_quant gguf-iq3_s (Maya shows UD-IQ3_S)" || bad "config per tag: $out"
-command grep -q "files_of ud-iq3-s: 8 model files, 0 drafter files" <<<"$out" \
-  && ok "files_of(): 8 shards, no drafter folder needed" || bad "files_of: $out"
+command grep -q "^maya-xs dspark=on ds4_quant=maya-xs$" <<<"$out" \
+  && ok "maya-xs: --dspark on, ds4_quant maya-xs (one of Maya's own quants, so Maya names it)" || bad "maya-xs config: $out"
+command grep -q "files_of ud-iq3-s: 8 model files, 0 table files, 0 drafter files" <<<"$out" \
+  && ok "files_of(): 8 shards, no drafter folder and no Engram folder needed" || bad "files_of: $out"
 command grep -q "pack ud-iq3-s drafter arg: False" <<<"$out" && command grep -q "pack with a drafter: True" <<<"$out" \
   && ok "pack(): no --drafter without a drafter; the drafter's .json passed with one" || bad "pack argv: $out"
+command grep -q "pack with no Engram set passes no --engram: True" <<<"$out" \
+  && ok "pack(): a tag whose tables are among its shards passes no --engram" || bad "pack engram argv: $out"
+command grep -q "files_of maya-xs: 3 model files, 2 table files, 2 drafter files" <<<"$out" \
+  && ok "files_of(): maya-xs reads 3 shards + the 2-file Engram set + the drafter pair" || bad "files_of maya-xs: $out"
+command grep -q "pack maya-xs --engram is the table folder: True" <<<"$out" \
+  && command grep -q "pack maya-xs --shards names only the model's own: True" <<<"$out" \
+  && ok "pack(): maya-xs passes --engram <table folder> and --shards without the table files" || bad "pack maya-xs argv: $out"
 command grep -q "sha table ok: True | profile files == launcher table: True" <<<"$out" \
   && ok "ud-iq3-s: 8 SHA-256s, the same files the model profile downloads" || bad "sha table: $out"
+command grep -q "maya-xs sha table ok: True | profile files == launcher gguf+engram: True" <<<"$out" \
+  && ok "maya-xs: 7 SHA-256s (Maya's own), the same files the model profile downloads" || bad "maya-xs sha table: $out"
 
 if [[ "$rc" -eq 0 ]]; then echo "test-maya-ds4-config: ok"; else echo "test-maya-ds4-config: FAILED" >&2; fi
 exit "$rc"
