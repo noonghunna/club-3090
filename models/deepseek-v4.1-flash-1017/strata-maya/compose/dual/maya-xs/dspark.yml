@@ -74,7 +74,7 @@
 # files rather than a folder of their own; the pack records them as ../engram/<name> against model_dir /gguf.
 #   bash scripts/switch.sh --force strata-maya/deepseek41-flash-dual-maya-xs
 # The launcher (../../../launcher/) checks the files' SHA-256 once, builds Maya's pack on the data volume, writes
-# the config and starts Maya's server. By hand: SETUP_ONLY=1 docker compose -f base.yml run --rm strata-maya,
+# the config and starts Maya's server. By hand: SETUP_ONLY=1 docker compose -f dspark.yml run --rm strata-maya,
 # then up -d.
 services:
   strata-maya:

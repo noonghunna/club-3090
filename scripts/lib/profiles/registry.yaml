@@ -7031,7 +7031,7 @@ entries:
     max_ctx: 65536
     max_num_seqs: 1
     mem_util: null
-    compose_path: models/deepseek-v4.1-flash-1017/strata-maya/compose/dual/maya-xs/base.yml
+    compose_path: models/deepseek-v4.1-flash-1017/strata-maya/compose/dual/maya-xs/dspark.yml
     requires_nvlink: false
     requires_homogeneous_arch: false
     required_engine_features: []
