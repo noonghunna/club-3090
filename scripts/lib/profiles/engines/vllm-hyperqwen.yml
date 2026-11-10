@@ -1,6 +1,6 @@
 schema_version: 1
 id: vllm-hyperqwen
-display_name: HyperQwen (syv-ai's vLLM 0.32.0 + patch series for Qwen3.8-27B on one 24 GB card)
+display_name: HyperQwen (syv-ai's vLLM 0.33.0 + patch series for Qwen3.8-27B on one 24 GB card)
 type: vllm
 # The compose env var this engine's image is injected as. Shared with the other vLLM
 # profiles, as vllm-lmcache does: each launch injects its own engine's pin, so no
@@ -11,9 +11,9 @@ min_sm: 8.6
 lineage:
   relation: derivative
   base: vllm
-  base_version: "0.32.0"
+  base_version: "0.33.0"
   source: https://github.com/syv-ai/HyperQwen
-  source_ref: 6ab9bd05cb84b538a6595d634f3e337ac8a80856
+  source_ref: 3d6c9543292efc17372b824071ef8d9f33366b21
   chain: []
   delta: "syv-ai's patch series on vLLM 0.32.0 (PATCHES.md) plus its own launchers (single-user/, batch/) and a first-start model preparation (prepare/: int8 lm_head / embeddings / MTP, a calibrated draft vocabulary, the single-user fast variant). Shipped as syv-ai's own CI image"
 install:
@@ -24,9 +24,9 @@ install:
   # so a bump moves to a newer :sha-<7> digest after a rig boot and verify-full.
   # The pin's record: pin-current is what spec pins now; pin-earlier lists earlier pins, newest first (the first
   # is the rollback). docs/UPSTREAM.md's Pinned images table holds why it's pinned, not these.
-  # pin-current: :sha-6ab9bd0 · commit 6ab9bd05 (2026-11-03) · vLLM 0.32.0 + their patch series · pinned 2026-11-07 · booted vllm-hyperqwen/qwen38-27b-single-ultrafast (verify-full, DFlash2 acceptance 3.68)
-  # pin-earlier: :sha-f382342 `f6baf148…` (commit f382342d, 2026-10-30, pinned 2026-10-31); :sha-6cd7265 `ae2bedce…` (commit 6cd7265d, 2026-10-30, pinned 2026-10-30); :sha-ce9615c `57d8c784…` (commit ce9615c4, 2026-10-21, vLLM 0.31.0, pinned 2026-10-28); :sha-95ee3b6 `e99df7e6…` (commit 95ee3b64, 2026-10-11, pinned 2026-10-14)
-  spec: ghcr.io/syv-ai/hyperqwen@sha256:f706b092aabb156c23fe98c312ba7912fb8dbc0c107d4f152382113e33762f1c
+  # pin-current: :sha-3d6c954 · commit 3d6c9543 (2026-11-10) · vLLM 0.33.0 (torch 2.14.0+cu130) + their patch series · pinned 2026-11-10 · booted vllm-hyperqwen/qwen38-27b-single-ultrafast (vLLM 0.33.0 in the image, no restarts, verify-full all checks, DFlash2 acceptance 3.03)
+  # pin-earlier: :sha-6ab9bd0 `f706b092…` (commit 6ab9bd05, 2026-11-03, vLLM 0.32.0, pinned 2026-11-07; booted vllm-hyperqwen/qwen38-27b-single-ultrafast, verify-full, DFlash2 acceptance 3.68); :sha-f382342 `f6baf148…` (commit f382342d, 2026-10-30, pinned 2026-10-31); :sha-6cd7265 `ae2bedce…` (commit 6cd7265d, 2026-10-30, pinned 2026-10-30); :sha-ce9615c `57d8c784…` (commit ce9615c4, 2026-10-21, vLLM 0.31.0, pinned 2026-10-28); :sha-95ee3b6 `e99df7e6…` (commit 95ee3b64, 2026-10-11, pinned 2026-10-14)
+  spec: ghcr.io/syv-ai/hyperqwen@sha256:e0e4f9db81c0ce6eda3089d1df445fd50b1abdac8ae92c6eb985b498ec4fd7a4
 supported_model_families:
   - qwen35-dense          # Qwen3.8-27B. HyperQwen is written and measured for this checkpoint
 supported_weight_formats:
