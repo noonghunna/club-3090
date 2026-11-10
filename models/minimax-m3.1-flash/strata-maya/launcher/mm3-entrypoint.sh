@@ -12,7 +12,8 @@
 #                       split: maya-mm3's tensor parallel is its EXL3 path's); the compose sets it
 #   CONTEXT             --max-context (default 204800; Maya's own setup defaults to 65536 and recommends more
 #                       where memory holds it: the model reaches 1M, Maya has run 256K end to end). Every
-#                       position's K / V is pinned in RAM: 63,360 bytes a token at INT8, ~13.0 GB at 204800
+#                       position's K / V is pinned in RAM: 63,360 bytes a token at INT8, ~13.0 GB at 204800;
+#                       mm3_settings.py validates it (>= 4096)
 #   REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, TEMP, TOP_P, TOP_K, MIN_P, PRESENCE_PENALTY,
 #   REPEAT_PENALTY, SERVED_NAME, LOOP_GUARD, KV, DSPARK, THREADS
 #                       written into maya-mm3.json at every boot by mm3_prepare.py through mm3_settings.py

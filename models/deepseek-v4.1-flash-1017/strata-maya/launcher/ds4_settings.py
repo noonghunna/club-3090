@@ -27,6 +27,9 @@ boot. Maya's serve/server.py (the strata-maya-club3090 image) reads:
   THREADS                args: --cpu-threads   the CPU lane's threads (the experts VRAM doesn't hold are computed
                                                there, from RAM); whole number >= 1. Unset: half the CPUs this
                                                container may use, at least 1 (threads(), below)
+  CONTEXT                args: --max-context   KV capacity, a whole number >= 4096 (the same floor the Strata
+                                               recipe checks). Unset: the entrypoint's default (65536 here);
+                                               ds4_prepare.py writes it, this file only checks it
 
 KV is not one of them: maya-ds4 has no --kv (its latent cache is fp16). Nor SPEC_N: DSpark's block length comes from
 the pack's geometry (ds4.txt dspark_block_size), and maya-ds4 has no depth flag.
@@ -44,6 +47,7 @@ DEFAULT_EFFORT = "high"
 DEFAULT_SAMPLING = {"temperature": 1.0, "top_p": 1.0}      # DeepSeek's own, as Maya's setup writes it
 DEFAULT_NAME = "deepseek-v4.1-flash"
 EFFORTS = {"none": "none", "low": "low", "medium": "high", "high": "high", "xhigh": "max", "max": "max"}
+MIN_CONTEXT = 4096                   # the floor the Strata recipe checks for the same engine flag
 
 
 class Bad(ValueError):
@@ -93,9 +97,17 @@ def threads(cpus=None):
     return max(1, len(cpus) // 2)
 
 
+def context():
+    """CONTEXT from the environment, checked; None when unset (the entrypoint's own default applies).
+    ds4_prepare.py passes the value to --max-context; `validate` proves the domain for the knob guard."""
+    v = _env("CONTEXT")
+    return None if v is None else _int("CONTEXT", v, MIN_CONTEXT)
+
+
 def settings():
     """(config keys to set, sampling block, extra engine args, notes) from the environment, checked."""
     keys, notes, args = {}, [], []
+    context()                                 # CONTEXT is checked here too: a bad value stops the boot
     effort = _env("REASONING_EFFORT")
     if effort is not None and effort not in EFFORTS:
         raise Bad(f"REASONING_EFFORT={effort!r}: expected none, low, high, max (or medium / xhigh, which Maya runs "

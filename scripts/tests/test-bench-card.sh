@@ -249,6 +249,33 @@ command grep -qE 'baseline unparseable:.*(CONFIG FINGERPRINT|summary)' <<<"$out"
   || fail "the unparseable reason must name what was missing, got: $out"
 echo "  ✓ unparseable/missing baselines fail loudly, naming what was missing"
 
+# A log carries one cross-check line per shape (#1862). bench.sh records the WORST
+# shape; the parser took the FIRST, so a saved log ticked ±5% with a later shape over
+# it — and tier 1d's round-trip failed whenever the fake server's second shape came
+# out higher (79.0 vs 78.9), i.e. by timing, intermittently. Pinned here both ways round.
+for order in low-first high-first; do
+  python3 - "$CFIX/live-offload-run.log" "$TMP/two-shape-$order.log" "$order" <<'PY' || exit 1
+import sys
+src, dst, order = sys.argv[1:4]
+lines = open(src, encoding="utf-8").read().splitlines(keepends=True)
+idx = [k for k, ln in enumerate(lines) if "cross-check:" in ln]
+assert len(idx) == 1, f"fixture should carry exactly one cross-check line, has {len(idx)}"
+two = ["  cross-check: client-observed 18.47 vs engine-side 18.25 tok/s -> 1.2% divergence "
+       "(narrative: medians over its 5 measured runs; engine n=5)\n",
+       "  cross-check: client-observed 19.70 vs engine-side 18.34 tok/s -> 7.4% divergence "
+       "(code: medians over its 5 measured runs; engine n=5)\n"]
+lines[idx[0]:idx[0] + 1] = two if order == "low-first" else two[::-1]
+open(dst, "w", encoding="utf-8").writelines(lines)
+PY
+  card_parse_log "$TMP/two-shape-$order.log" > "$TMP/two-shape-$order.kv" \
+    || fail "could not parse the two-shape log ($order)"
+  command grep -qx 'integrity.divergence=7.4' "$TMP/two-shape-$order.kv" \
+    || fail "parsed divergence must be the WORST shape (7.4), $order got: $(command grep '^integrity.divergence' "$TMP/two-shape-$order.kv")"
+  card_render snapshot "$TMP/two-shape-$order.kv" | command grep -qF -- '- [ ] wall-TPS scrape agrees with engine-side timings (±5%) — 7.4% divergence' \
+    || fail "a shape over 5% must leave the ±5% check unticked ($order)"
+done
+echo "  ✓ per-shape cross-checks: the parsed divergence is the worst shape, either order"
+
 # ===========================================================================
 # TIER 1d — end-to-end through bench.sh, incl. the round-trip
 # ===========================================================================

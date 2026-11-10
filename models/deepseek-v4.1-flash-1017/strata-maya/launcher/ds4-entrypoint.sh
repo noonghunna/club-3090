@@ -14,7 +14,7 @@
 #                       whole experts; 2 is tensor parallel (each expert split between the cards: on two 3090s,
 #                       in a hand-run test at 8K context, 2026-10-25: decode +9% / +5%, a 6K prompt -35%)
 #   CONTEXT             --max-context (default 65536: Maya's own DeepSeek default until v1.1.30, which picks 256K
-#                       where the PC's VRAM and RAM hold the model)
+#                       where the PC's VRAM and RAM hold the model); ds4_settings.py validates it (>= 4096)
 #   REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, TEMP, TOP_P, TOP_K, MIN_P, PRESENCE_PENALTY,
 #   REPEAT_PENALTY, SERVED_NAME, THREADS
 #                       written into maya-ds4.json at every boot by ds4_prepare.py through ds4_settings.py

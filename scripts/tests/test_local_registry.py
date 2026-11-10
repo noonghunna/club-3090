@@ -14,7 +14,6 @@ provenance lives in the `origin` field instead. See TestNamespaceHardCut.
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +21,11 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO))
+
+# The fixture helper only; the code under test still runs in subprocesses against the tmp root.
+from scripts.tests.lib_fixture_tree import copy_trees  # noqa: E402
+
 _COPY_TREES = ("scripts/lib", "tools/tui-core", "models")
 
 # A complete _entry kwargs set (what promote.py --layer local writes).
@@ -50,25 +54,23 @@ LOCAL_SLUG = "vllm/my-model-dual-x"
 
 @pytest.fixture()
 def root(tmp_path):
-    for rel in _COPY_TREES:
-        shutil.copytree(
-            REPO / rel,
-            tmp_path / rel,
-            # #1142: skip root-owned container torch_compile caches under
-            # models/ — copytree dies on them (Permission denied) on any
-            # rig that has served a model. Pure build artifact.
-            #
-            # ⚠️⚠️ `profiles-local` is skipped for a DIFFERENT and sharper reason
-            # (#1316 follow-up): it is the REAL local layer of whoever is running
-            # the suite. Copying it in makes these tests inherit that machine's
-            # promoted models — so they pass on a clean checkout and fail on any
-            # rig that has ever run `promote.py --layer local`, which is the very
-            # feature under test. `_write_local` seeds what each test needs; the
-            # real layer must never be visible. Note the FIRST test here asserts
-            # "no local layer → core identity", which is precisely the assertion
-            # a stray real layer silently destroys.
-            ignore=shutil.ignore_patterns("__pycache__", "cache", "profiles-local"),
-        )
+    # Only what git lists (tracked + untracked-not-ignored): not the gitignored engine data and state
+    # a rig keeps under models/, which copytree copied once per case (#1983; lib_fixture_tree.py).
+    # Never copied either, whatever git lists:
+    # #1142: skip root-owned container torch_compile caches under
+    # models/ — copytree dies on them (Permission denied) on any
+    # rig that has served a model. Pure build artifact.
+    #
+    # ⚠️⚠️ `profiles-local` is skipped for a DIFFERENT and sharper reason
+    # (#1316 follow-up): it is the REAL local layer of whoever is running
+    # the suite. Copying it in makes these tests inherit that machine's
+    # promoted models — so they pass on a clean checkout and fail on any
+    # rig that has ever run `promote.py --layer local`, which is the very
+    # feature under test. `_write_local` seeds what each test needs; the
+    # real layer must never be visible. Note the FIRST test here asserts
+    # "no local layer → core identity", which is precisely the assertion
+    # a stray real layer silently destroys.
+    copy_trees(REPO, tmp_path, _COPY_TREES)
     return tmp_path
 
 

@@ -3,7 +3,7 @@
  "engines": {
   "strata": {
    "engine_profile": "scripts/lib/profiles/engines/strata.yml",
-   "verified_image": "ghcr.io/niko1221/strata@sha256:c3a853420670f4c0f5a948c2d9e9904af4cedf52b11bc8cf167602dc5c578bcc",
+   "verified_image": "ghcr.io/niko1221/strata@sha256:b6e1876515d5663047a7cd8dfee5223c8b2d117710eb2a9c285a433fb6e4a703",
    "render": "strata_config",
    "programs": [
     "models/qwen3.8-flash-next/strata/launcher/strata_config.py"
@@ -71,7 +71,7 @@
     "SERVED_NAME": "llm"
    },
    "setup_only": {
-    "CONTEXT": "Strata's own entrypoint passes it to `strata launch --context` (setup owns it: it sizes the KV and expert cache); strata_config.py only checks it",
+    "CONTEXT": "Strata's own entrypoint passes it to `strata launch --context` (setup owns it: it sizes the KV and expert cache); strata_config.py only checks it (a whole number >= 4096)",
     "KV": "Strata's own entrypoint passes it to `strata launch --kv`; strata_config.py only checks it",
     "API_KEY": "Strata's own entrypoint passes it to `strata launch` (--api-key-env); strata_config.py only checks its length"
    },
@@ -105,7 +105,7 @@
   },
   "strata-maya": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3cf8d5dd9f91719f6ef7e8187a4658093482bb464e4b9435de72c2b37e92365f",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:5a33892afd8bb428301b7285dfcca275c2adffbcd57931017cc23cc94c4b57f8",
    "render": "maya_prepare",
    "programs": [
     "models/glm-5.3-flash/strata-maya/launcher/maya_settings.py",
@@ -158,7 +158,7 @@
   },
   "strata-maya:ds4": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3cf8d5dd9f91719f6ef7e8187a4658093482bb464e4b9435de72c2b37e92365f",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:5a33892afd8bb428301b7285dfcca275c2adffbcd57931017cc23cc94c4b57f8",
    "render": "maya_ds4_prepare",
    "programs": [
     "models/deepseek-v4.1-flash-1017/strata-maya/launcher/ds4_settings.py",
@@ -211,7 +211,7 @@
   },
   "strata-maya:mm3": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3cf8d5dd9f91719f6ef7e8187a4658093482bb464e4b9435de72c2b37e92365f",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:5a33892afd8bb428301b7285dfcca275c2adffbcd57931017cc23cc94c4b57f8",
    "render": "maya_mm3_prepare",
    "programs": [
     "models/minimax-m3.1-flash/strata-maya/launcher/mm3_settings.py",

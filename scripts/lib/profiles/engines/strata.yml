@@ -9,7 +9,7 @@ lineage:
   base: null
   base_version: null
   source: "https://github.com/Niko1221/Strata"
-  source_ref: "146df3c468739147f520ac3816de806f71232571"
+  source_ref: "d2f096475817d4666c364c820b0ca830f751cfc5"
   chain: []
   delta: "Independent C++/CUDA engine for Qwen3.8-Flash-Next with its own Python server and Terminal; uses ggml's CPU backend and llama.cpp's mtmd/gguf-py as libraries. Pinned to the image upstream publishes (ghcr.io/niko1221/strata:<release>-cuda13, from 0.2.1 on), built from its signed engine packages"
 image_env: STRATA_IMAGE
@@ -18,9 +18,9 @@ install:
   # Upstream's own image `<release>-cuda13` (RTX 20-50, driver >= 580), built by their docker-images
   # workflow from the signed engine packages; the engine version is its com.strata.engine label.
   # scripts/strata-pin-bump.sh writes the two pin- lines (the first earlier pin is the rollback).
-  # pin-current: 0.2.12 · upstream 146df3c4 · engine 0.1.58 · pinned 2026-11-07 · booted strata/qwen3.8-flash-next-ud-iq4xs-dual (ready 48 s, verify-full 8/0, draft acceptance 0.98 over 195 drafted; Auto still runs the standard DFlash2 drafter, --draft dflash2 --spec 6, not 0.2.12's tuned one; MemAvailable 140.8 GiB after)
-  # pin-earlier: 0.2.11 `871e1e79…` (upstream c3b3f503, engine 0.1.57, 2026-11-05); 0.2.9 `83e37db8…` (upstream c62d5e3a, engine 0.1.55, 2026-10-31); 0.2.8 `27f04a74…` (upstream 870aedd9, engine 0.1.54, 2026-10-30); 0.2.7 `db96cd9b…` (upstream 5e8a4cca, engine 0.1.52, 2026-10-27); 0.2.3 `d39ca9fc…` (upstream 5c8dd322, engine 0.1.48, 2026-10-23); 0.2.2 `17e96f76…` (upstream 011c9e60, engine 0.1.47, 2026-10-22); 0.2.1 `a0398afb…` (upstream 90767252, engine 0.1.46, #1764, 2026-10-20); club-3090's own builds of upstream's Dockerfile (strata-club3090): v0.1.45 `75deea40…` (2026-10-17), v0.1.44.1 `fb97d83b…` (2026-10-14), v0.1.43.1 `7f8643c8…` (2026-10-13, the one that also carried sm_90)
-  spec: ghcr.io/niko1221/strata@sha256:c3a853420670f4c0f5a948c2d9e9904af4cedf52b11bc8cf167602dc5c578bcc
+  # pin-current: 0.2.13 · upstream d2f09647 · engine 0.1.59 · pinned 2026-11-09 · booted strata/qwen3.8-flash-next-ud-iq4xs-dual (ready 48 s, verify-full 8/0, draft acceptance 0.98 over 195 drafted; Auto still runs the standard DFlash2 drafter, --draft dflash2 --spec 6 --draft-conf 0.35, each flag once on the engine's command line, as 0.2.13 changes the DFlash2 defaults only on Strix Halo and 48 GB+ Blackwell cards; MemAvailable 140.8 GiB at ready, swap 0.9 GiB after). 0.2.13.1 (Control 0.1.59.1, an Intel Arc fix for the Linux app) has no -cuda13 image and doesn't reach us
+  # pin-earlier: 0.2.12 `c3a85342…` (upstream 146df3c4, engine 0.1.58, 2026-11-07); 0.2.11 `871e1e79…` (upstream c3b3f503, engine 0.1.57, 2026-11-05); 0.2.9 `83e37db8…` (upstream c62d5e3a, engine 0.1.55, 2026-10-31); 0.2.8 `27f04a74…` (upstream 870aedd9, engine 0.1.54, 2026-10-30); 0.2.7 `db96cd9b…` (upstream 5e8a4cca, engine 0.1.52, 2026-10-27); 0.2.3 `d39ca9fc…` (upstream 5c8dd322, engine 0.1.48, 2026-10-23); 0.2.2 `17e96f76…` (upstream 011c9e60, engine 0.1.47, 2026-10-22); 0.2.1 `a0398afb…` (upstream 90767252, engine 0.1.46, #1764, 2026-10-20); club-3090's own builds of upstream's Dockerfile (strata-club3090): v0.1.45 `75deea40…` (2026-10-17), v0.1.44.1 `fb97d83b…` (2026-10-14), v0.1.43.1 `7f8643c8…` (2026-10-13, the one that also carried sm_90)
+  spec: ghcr.io/niko1221/strata@sha256:b6e1876515d5663047a7cd8dfee5223c8b2d117710eb2a9c285a433fb6e4a703
 supported_model_families:
   - qwen4exp              # Qwen3.8-Flash-Next family: Strata is written for this model only
 supported_weight_formats:

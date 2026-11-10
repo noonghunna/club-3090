@@ -315,6 +315,14 @@ dotenv.write_text("")
 sys.exit(1 if bad else 0)
 PY
 
+# The host the real switch.sh / launch.sh runs below see. Their RAM and /dev/shm rules (launch_settings.py)
+# read this machine unless told otherwise, and a 64 GiB SGLang tier needs 64 × 74/64 + 28 = 102 GiB of RAM: on
+# a smaller host every delivery case was refused before compose up, so the suite failed for the machine, not
+# the code (#1983). The python block above pins both per call; this pins them for the rest. A case that tests
+# a refusal still passes its own MEM64, which wins: it comes later on its env line.
+MEMBIG="$T/meminfo-1t"; printf 'MemTotal:       1073741824 kB\nMemFree:        1073741824 kB\nMemAvailable:   1073741824 kB\n' > "$MEMBIG"
+export CLUB3090_MEMINFO_FILE="$MEMBIG" CLUB3090_SHM_STATVFS="1024:1024"
+
 # ── 3. delivery on the real switch.sh path ──────────────────────────────────────
 echo "[3] delivery: switch.sh → docker compose"
 sw() {  # <config dir> [VAR=val …] -- <switch.sh args…>  (docker shimmed; compose only renders)

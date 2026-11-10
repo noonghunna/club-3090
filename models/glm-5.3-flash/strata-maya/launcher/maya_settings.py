@@ -23,6 +23,10 @@ serve/server.py (the strata-maya-club3090 image) reads:
   LOOP_GUARD             loop_guard            true | false: the server's loop guard (serve/loop_guard.py, v1.1.30
                                                on), which breaks an answer or a thinking block stuck repeating one
                                                block of tokens; unset = Maya's own (on)
+  CONTEXT                args: --max-context   KV/state capacity, a whole number >= 4096 (the same floor the Strata
+                                               recipe checks for its setup's --context). Unset: the entrypoint's
+                                               default (131072 here); maya_prepare.py writes it, this file only
+                                               checks it, like the Strata recipe's CONTEXT
 
 SPEC_N is not one of them: Maya's --spec is documented for its DFlash2 drafter, not for GLM's MTP block.
 Nor is MAX_TOKENS: the server takes a default output cap only from the Chat settings its web page saves
@@ -41,6 +45,7 @@ DEFAULT_EFFORT = "max"
 DEFAULT_SAMPLING = {"temperature": 1.0, "top_p": 0.95}      # GLM-5.3's vendor sampling, as Maya's setup writes it
 EFFORTS = {"none": "none", "low": "low", "medium": "high", "high": "high", "xhigh": "max", "max": "max"}
 KV_FORMATS = ("fp16", "int8")        # the GLM path (generate.cpp glm_pack_generate) reads only int8; q4_0 / k8v4 run fp16
+MIN_CONTEXT = 4096                   # the floor the Strata recipe checks for the same engine flag
 
 
 class Bad(ValueError):
@@ -71,9 +76,17 @@ def _float(name, v, ok, rule):
     return x
 
 
+def context():
+    """CONTEXT from the environment, checked; None when unset (the entrypoint's own default applies).
+    maya_prepare.py passes the value to --max-context; `validate` proves the domain for the knob guard."""
+    v = _env("CONTEXT")
+    return None if v is None else _int("CONTEXT", v, MIN_CONTEXT)
+
+
 def settings():
     """(config keys to set, sampling block, extra engine args, notes) from the environment, checked."""
     keys, notes, args = {}, [], []
+    context()                                 # CONTEXT is checked here too: a bad value stops the boot
     effort = _env("REASONING_EFFORT")
     if effort is not None and effort not in EFFORTS:
         raise Bad(f"REASONING_EFFORT={effort!r}: expected none, low, high, max (or medium / xhigh, which Maya runs "
