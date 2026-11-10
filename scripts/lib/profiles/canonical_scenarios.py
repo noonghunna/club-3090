@@ -3,6 +3,9 @@
 CANONICAL_SCENARIOS = [
     {"name": "2x-3090-pcie", "hardware": ["rtx-3090", "rtx-3090"], "nvlink_active": False},
     {"name": "2x-3090-nvlink", "hardware": ["rtx-3090", "rtx-3090"], "nvlink_active": True},
+    # Added 2026-11-10 with the first multi3 slugs, QEngine's (qengine/qwen38-27b-multi3,
+    # qengine/qwen38-flash-next-multi3): QEngine is tuned for three cards.
+    {"name": "3x-3090-pcie", "hardware": ["rtx-3090", "rtx-3090", "rtx-3090"], "nvlink_active": False},
     {"name": "4x-3090-pcie", "hardware": ["rtx-3090", "rtx-3090", "rtx-3090", "rtx-3090"], "nvlink_active": False},
     # Added 2026-08-15 with vllm/qwen38-27b-multi8-max. ⚠️ This list must COVER every
     # `tp` value present in COMPOSE_REGISTRY or the self-test in test-profiles-compat

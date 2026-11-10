@@ -1,0 +1,427 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-Flash-Next — bpx03's QEngine layout of Intel's W4A16 AutoRound, its revision for
+#              QEngine 1.3.4.1 and later (routed experts INT4 bit-exact; DeltaNet projections INT8; shared
+#              expert INT4 GPTQ; attention and lm_head INT8 at load), the INT8 n-gram table, its INT4 MTP
+#              head (129 GB)
+#   Engine:    QEngine 1.3.5.7 (bpx03; upstream's stable release): its second
+#              engine, libqflash.so, in the author's own image ghcr.io/bpx03/qengine (source 5028c500, the
+#              :vision image: PyTorch for the encoder)
+#   Topology:  Four 3090s PCIe (experts split over the cards in 128-wide groups; tensor parallel when
+#              peer access between all four passes QEngine's start-up check, else a 4-stage pipeline:
+#              FLASH_PAR=auto decides) — NOT the reference rig
+#   Drafter:   MTP, up to 3 drafts a step (adaptive; SPEC_N sets the most, 0 turns MTP off) + lookup
+#              drafts from the conversation history (tensor parallel only; pipeline mode turns them off)
+#   KV:        fp8_e4m3 (QEngine's attention KV, split by position over the cards)
+#   Vision:    yes (VISION=0 turns it off). The encoder runs on the last card; in pipeline mode image
+#              input is experimental upstream (from 1.3.5.1). Not measured on four cards
+#   Max ctx:   262144
+#   Genesis:   none
+#   Status:    🐣 Incubating
+#   Caveats:   ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
+#              Not booted here: the reference rig has two cards, so this slug is community-validated
+#              by design. It is the four-card copy of qengine/qwen38-flash-next-dual and 🐣 like it:
+#              upstream calls this engine a preview, and has no four-card machine ("Reports from 4-card
+#              machines are welcome"). Its four-card rules rest on one community rig, four RTX 5080
+#              16 GB behind one PCIe switch (sm_120, their own containers; #1942, #1952, #1966):
+#              - On exactly 4 equal cards FLASH_PAR=auto runs tensor parallel only when peer access
+#                between all four passes the start-up data check and tp fits the free VRAM; otherwise
+#                a 4-stage pipeline (pp), which decoded one 1,000-token stream at 145.4 tok/s against
+#                tp's 310.3 there (1.3.5), turns lookup drafts off, refuses FLASH_KV=ram and serves
+#                images only as an experiment. If tp can't start, the server restarts itself in pp.
+#                The start-up line `[qflash] parallel mode: ...` says which.
+#              - 1.3.5.5 fixed a four-card fault found on that rig (a DeltaNet projection overwrote
+#                part of the next token's gate values, so long prompts lost details). Upstream checked
+#                the fix with four ranks on three cards, not on four real cards, and the community TP4
+#                rows in BENCHMARKS.md (1.3.4.3 and 1.3.5) predate it.
+#              The two-card slug's findings and the release history are in its compose and
+#              docs/engines/QENGINE.md; its measurements don't carry over.
+#              16 sequence slots, QEngine's default. The two-card slug runs 8: there about half the
+#              expert groups sit in host RAM, and fewer slots leave the expert cache more VRAM; on
+#              three or more cards far fewer do.
+#              From 1.3.4.3 our THINKING_BUDGET_* map (4096 / 16384 / 32768 by effort, as on
+#              the vLLM and SGLang slugs) reaches QEngine's own per-effort QE_THINKING_BUDGET; a
+#              request's own budget wins. The default effort is low, as on the other Qwen3.8 slugs,
+#              through QEngine's QE_REASONING_EFFORT (its template's own default is xhigh); a
+#              request's own effort wins, and maps high and max -> xhigh, minimal -> low (1.3.4.3 on),
+#              none -> thinking off (1.3.5.5 on); other unknown efforts -> medium.
+#   Best for:  Qwen3.8-Flash-Next on four equal 3090s with P2P between all of them
+# ---------------------------------------------------------------------------
+# CPU-Offload-Host-RAM-GB: 75
+#   ⤷ ESTIMATE, not measured: the two-card slug's measured 94 GB at ready (1.3.4.2, vision on) less
+#     the host-resident expert groups that more cards hold in VRAM instead, about 31 GB on two cards
+#     against about 12 GB on three (upstream's host-memory table).
+#     Four cards hold at least as many expert groups as three, so this is an upper bound here;
+#     upstream gives no four-card figure.
+#   ⤷ The 51.8 GB INT8 n-gram table stays pinned either way. The archive (FLASH_KV_ARCHIVE_GB, 48 GB) and
+#     the pinned system prompts (FLASH_PREFIX_GB, 8 GB) come on top as conversations arrive and give memory
+#     back when the host is short; QEngine plans all of it from MemTotal / MemAvailable at start.
+#     Upstream started at full speed (the table pinned) from about 85 GB free on three cards.
+# Requires-min-vram-gb: 24
+# Requires-min-gpu-count: 4
+# Tensor-parallel: 4
+#
+# The four-card copy of qengine/qwen38-flash-next-dual: the same weights, image, knobs and entrypoint;
+# only the cards, the port and the container name differ. QEngine's Flash-Next engine (from 1.3; README
+# "Qwen3.8-Flash-Next"): the 512 routed experts split over the cards in 128-wide groups, an expert
+# cache that copies hot host-resident groups into free VRAM, FP8 attention KV split by position with
+# the indexer's top-512 block selection past 2K tokens, MTP (k = 3) plus lookup drafts, up to 16
+# slots with batched decode. Tensor parallel exchanges data between the cards in every layer; pipeline
+# mode passes one 40 KB row per token between stages and needs no P2P.
+#
+#   bash scripts/setup.sh qengine/qwen38-flash-next-multi4          # 129 GB, ready to run
+#   READY_TIMEOUT=1800 bash scripts/switch.sh --force qengine/qwen38-flash-next-multi4   # a cold start reads 129 GB
+#
+# The engine opens every .safetensors file in the model folder, so nothing else may sit in it.
+#
+# Knobs (ours, mapped onto QEngine's flags and variables by the entrypoint below):
+#   ENABLE_THINKING   true (default) | false: --think 1 | 0, the default for requests that set none
+#   REASONING_EFFORT  low (default) | medium | xhigh: QE_REASONING_EFFORT, the default effort for requests
+#                     that send none
+#   SPEC_N=<n>        --mtp-k, the most MTP drafts a step (default 3; the engine adapts below it);
+#                     0 = no MTP (lookup drafts stay on; FLASH_LOOKUP=0 turns them off)
+#   VISION            1 (default) | 0: --vision 1 | 0, image input (OpenAI image_url, Anthropic image blocks)
+#   THINKING_BUDGET_LOW / _MEDIUM / _XHIGH  thinking tokens per effort (unset = 4096 / 16384 / 32768, as
+#                     on the vLLM and SGLang slugs): QE_THINKING_BUDGET=low:N,medium:N,xhigh:N, QEngine's
+#                     own budget per effort (from 1.3.4.3; high and max use xhigh's, minimal low's).
+#                     THINKING_BUDGETS=off: no budget. A QE_THINKING_BUDGET set by hand wins.
+#   KV_OFFLOAD_DISK   0 (default) | 1: QEngine's disk cache (--disk-cache, Flash-Next from 1.3.5.3, in
+#                     upstream's stable from 1.3.5.6), at /kv-offload/qengine-qwen3.8-flash-next, i.e. KV_OFFLOAD_DIR on the host
+#                     (else <data dir>/kv-offload, ~/.local/share/club-3090). A tier under the host-RAM archive
+#                     (FLASH_KV_ARCHIVE_GB, which it needs on): a conversation of 2,048 tokens or more is written
+#                     in the background when it leaves VRAM (at most once a minute), after --persist-idle (120 s)
+#                     and at shutdown, so it survives a restart; a new one with the same system prompt reads only
+#                     the part it needs. Upstream: ~2.3 GB for a 95K-token conversation. Each file is checked
+#                     (checksum, build, weights, cards, layout, YaRN): another setup starts empty, a damaged file
+#                     is removed and prefilled. A failing disk costs only the cache. Measured here: QENGINE.md
+#   KV_OFFLOAD_DISK_GB  cap on the disk cache, GiB in total (unset = QEngine's own 200); oldest files go first.
+#                     Needs KV_OFFLOAD_DISK=1. Flash-Next keeps 1 GB of the disk free.
+# The Flash-Next engine's own settings, passed through when set (its defaults otherwise):
+#   FLASH_MAX_SEQS       sequence slots, 1-16 (16 here, QEngine's default; the two-card slug runs 8). Each slot holds ~103 MB
+#                        of recurrent state a card, and the VRAM fewer slots free goes to the expert cache.
+#                        2026-11-01 on two 3090s (1.3.3.1, one boot each), 16 / 8 / 4 slots: single-user
+#                        decode 162 / 181 / 175 narrative, 150 / 156 / 189 code; prefill @90K 2,583 / 3,338
+#                        / 3,212; decode at 90K depth 71 / 107 / 136; 8 streams at 4K 153 / 189 tok/s in all
+#                        (4 slots: a fifth request waits). 4 suits one user; 16 more than 8 streams at once
+#   FLASH_KV_ARCHIVE_GB  pinned host-RAM archive of conversations (48; 0 = off)
+#   FLASH_NGRAM_PIN      0 = disk mode: the n-gram table read through the file mapping, not pinned
+#   FLASH_EC_MARGIN_MB   VRAM per card left free next to the expert cache (256); a list sets each card
+#                        (1024 was #1846's workaround for a CUDA-graph out-of-memory on 1.3; 1.3.1
+#                        drops the cached graphs and retries instead, and from 1.3.4.1 the graphs have
+#                        their own room, FLASH_GRAPH_MB, so the default is enough upstream)
+#   FLASH_GRAPH_MB       VRAM per card for cached CUDA graphs (256, from 1.3.4.1): 128 MB of it out of
+#                        FLASH_EC_MARGIN_MB, the rest on top; the least recently used graphs are freed to
+#                        stay in it. 0 = off (graphs share the margin, as in 1.3.4). Raise it if
+#                        /api/stats graphs.budget_evictions grows quickly under steady traffic. Upstream
+#                        cost: ~0.8% fewer expert groups on the GPU, decode within 1% (0.9% lower for one
+#                        conversation on two cards)
+#   FLASH_PFGRAPH_WINDOW a prompt-shaped CUDA graph is built only when its shape came back within the last
+#                        N prompt steps, and never frees a per-token graph (64, from 1.3.4.1; 0 = off:
+#                        every prompt shape gets a graph, as before)
+#   FLASH_ATTN_DMIN      decode attention of batched steps: a row uses one key split per N key tiles, at
+#                        most 8, so short contexts don't pay for 8 splits (16, from 1.3.4.2; 0 = always 8)
+#   FLASH_LOOKUP         0 turns lookup drafts off (1)
+#   FLASH_COMM           prefill transfers between the cards: auto (startup probe), p2p, pull, push,
+#                        ce, host
+#   FLASH_KV             where the KV of all conversations lives: vram (default) or ram, pinned host
+#                        RAM with a VRAM cache of recent blocks (bit-identical output). Upstream on two
+#                        3090s: 4 x 64K-token conversations' follow-ups 232.7 -> 332.1 tok/s, about 12%
+#                        less on short agent requests
+#   FLASH_KV_RAM_TOKENS  with FLASH_KV=ram, the host-RAM pool of all conversations (1M; K / M / G):
+#                        13.5 GB per 1M tokens, pinned at start, on top of the header's 75 GB
+#   FLASH_PFB_BIG        rows of a large prefill batch (8192 on two cards from 1.3.2; 4096 on three or
+#                        with FLASH_KV=ram). Upstream on two 3090s against 4096: server prefill +5% at 10K
+#                        and +4% at 90K, decode and 8-agent throughput unchanged
+#   FLASH_PFB_ALIAS      1 (default): the rows past 4096 share the unused end of the KV arrays, used
+#                        while the KV in use stays under 75% of the pool; 0 gives them memory of their
+#                        own, about 880 expert groups a card
+#   FLASH_PREFIX_GB      pinned host RAM for each agent kind's system prompt, kept out of the archive's
+#                        eviction so a new agent of a known kind starts after it (8; 0 = off; needs
+#                        the archive)
+#   FLASH_YARN           YaRN RoPE factor by hand (0 = off); --max-ctx above 262144 sets it
+#   FLASH_EC_RECLAIM_S   a conversation idle this many seconds moves to the host-RAM archive (30;
+#                        0 keeps it in VRAM); its next turn is restored from there
+#   FLASH_MAX_PREFILLS   prompts prefilled at the same time, sharing batches (8)
+#   FLASH_GUARD_MAX      distinct non-finite faults within 5 minutes before the server stops (4)
+#   FLASH_LEND_CHECK     1: a debug check that no buffer overlaps memory lent to the expert cache
+#   FLASH_QSA_PIPE_CE    0 turns off the prefill pipeline on the copy-engine path (on whenever
+#                        FLASH_COMM resolves to ce); 1.3.2's fault in it is fixed in 1.3.3 (caveat above)
+#   FLASH_RUN_TIMEOUT_S  an engine step that doesn't finish in this many seconds ends the server
+#                        with a diagnosis, exit 75, and the restart policy restarts it (120; 0 = off)
+#   QE_HANG_S            no scheduler progress for this many seconds: stacks to the log, open requests
+#                        fail, exit 75 (180; 0 = off)
+#   FLASH_PAR            parallel mode (1.3.4): auto | tp | pp | pptp. On exactly 4 equal cards auto runs
+#                        tp when peer access between all four passes the start-up check and tp fits,
+#                        otherwise pp (caveat above). pptp, a pipeline over tensor-parallel pairs (0,1 |
+#                        2,3), is for cards with P2P only inside pairs: opt-in, untested on 4 cards upstream
+#   QE_THINKING_BUDGET   default thinking budget for requests that send none: a number (from 1.3.4; 0 =
+#                        off, the default) or a map per effort, low:N,medium:N,xhigh:N (from 1.3.4.3).
+#                        Unset here, the entrypoint sets the map from THINKING_BUDGET_*; at the budget the server closes </think> itself. A request
+#                        sets its own with thinking_budget (OpenAI) or thinking.budget_tokens (Anthropic)
+#   QE_THINK_TAIL        room kept for the answer when max_tokens would end inside <think> (auto =
+#                        1/8 of max_tokens, 64-2048; 0 = off, from 1.3.4)
+#   QE_EMPTY_RETRY       a non-streamed sampled reply with no text and no tool call is sampled again up
+#                        to N times (2, from 1.3.4; 0 = off)
+#   QE_HOST_RESERVE_GB   host RAM the start-up plan leaves to the system (max(8, 8% of RAM), 1.3.4)
+#   QE_RAM_WAIT_S        seconds a start waits for host RAM when MemAvailable is short of its plan (20,
+#                        from 1.3.5; 0 = plan at once)
+#   QE_LOAD_DROP         1.3.5.7: during the load, each layer's file pages leave the page cache once both
+#                        cards have read it, so the load doesn't make the kernel reclaim hard next to the
+#                        memory it pins (on by default; the n-gram table keeps its pages). 0 goes back to
+#                        paging them out at the end of the load, as before 1.3.5.7; either way a restart
+#                        reads them from disk (only QEngine's FLASH_WEIGHTS_COLD=0, not forwarded, keeps them)
+#   QE_DECODE_COMM       the decode exchanges' path (1.3.5): auto (both timed on real decode steps at the end
+#                        of start-up, the faster kept, cached per hardware and settings) | remeasure | p2p |
+#                        host; the `[comm] decode collectives` log line says which. Prefill keeps FLASH_COMM's.
+#                        The setting bpx03/QEngine#19 asked for (docs/UPSTREAM.md)
+#   QE_COMM_CACHE        the start-up cache of the link probe and that timing (1; 0 = off, refresh = measure
+#                        again)
+#   FLASH_VRAM_ADAPT     1.3.5: when another process takes GPU memory while serving, resident expert groups
+#                        move to host memory and come back once it's free (1; 0 = off)
+#   FLASH_VRAM_LOW_MB, FLASH_VRAM_TARGET_MB  free memory per card below which groups move out / up to
+#                        which they move (128 / 256)
+#   FLASH_CTX_FIT        1.3.5: at start, a context that doesn't fit the smallest card is lowered to the
+#                        largest that does, with a log line (1; 0 keeps --max-ctx as given)
+#   FLASH_PRELOAD        1.3.5: with the vision encoder starting CUDA first, load the engine's kernels at
+#                        start, not at first use (1; 0 = off)
+#   FLASH_ATTN_CHUNK     1: the same request gives the same text whatever shares a step or ran before
+#                        (1.3.5; off by default: upstream 8 agents -8.6%, ~+125 ms first token for short
+#                        prompts that arrive together). For comparing runs, not for closeness to BF16
+#   QE_COMM_CHECK        rounds of the start-up P2P data check per pair and transport (4; 0 = off)
+#   QE_COMM_TAX_SEVERE, QE_COMM_TAX_1NODE  the P2P co-run tax at which FLASH_COMM=auto takes the
+#                        copy engine (3.0 on any layout; 1.90 on one NUMA node over a narrow link)
+#   QE_P2P               0 forces the host-memory path (auto)
+#   QE_MEM_MARGIN_GB     host RAM the archive always leaves free (max(8 GB, 5% of RAM))
+#   QE_NUMA              machines with several NUMA nodes: the nodes of the pinned host buffers (n-gram
+#                        table, host-backed experts, staging buffers), e.g. 0,1,2,3; several nodes interleave
+#                        the pages, one prefers it. Unset: each card's node from sysfs, and the pages
+#                        interleaved over all nodes when the board reports none (`GPU NUMA ID: N/A`, seen on
+#                        Threadripper Pro boards set to several nodes). No effect on one node
+#   QE_PRESENCE_PENALTY, QE_FREQUENCY_PENALTY  defaults for sampled requests that send none (frequency 0).
+#                        From 1.3.5.3 a request that sends no sampler values gets the Qwen3.8 card's row
+#                        for its mode: thinking 1.0 / 0.95 / 20 / 0, non-thinking 0.7 / 0.80 / 20 / 0 with
+#                        presence 1.5 (was 1.0 / 0.95, no penalty). QE_PRESENCE_PENALTY, once set, is one
+#                        value for BOTH modes
+#   QE_LOOP_GUARD_TURNS, QE_LOOP_GUARD_NOTE, QE_LOOP_GUARD_PENALTY  the server's cross-turn loop
+#                        guard (3, 1, 1.5; 0 turns the guard or its note off)
+#   QE_LOOP_GUARD_THINK  from 1.3.5 a guarded turn reasons even when the request turned thinking off, at
+#                        most this many reasoning tokens on top of max_tokens (2048; 0 = off)
+#   QE_METRICS_PORT      its dashboard, /metrics and qetop's /api/stats, on 9393 in the container and
+#                        not published: <port> publishes them on 127.0.0.1:<port> only (switch.sh
+#                        adds the mapping); 0 turns the metrics server off
+#   QE_EXTRA_ARGS        more server/app.py flags (--max-ctx, --served-name, ...), after ours.
+#                        --max-ctx 1M with FLASH_KV=ram serves conversations up to 1,048,576 tokens
+#                        with YaRN (1.3.2 on), on every request of that server; on two cards it costs
+#                        5.6 GB of expert cache a card (~2% slower short decode), and the host-RAM pool
+#                        is at least the context, ~14.2 GB for 1M (upstream)
+# `switch.sh --set` saves only our three knobs for this slug; it refuses QEngine's own names, because
+# they aren't catalogued launch settings. Set those for one launch, or for every QEngine slug:
+#   FLASH_KV_ARCHIVE_GB=0 READY_TIMEOUT=3600 bash scripts/switch.sh --force qengine/qwen38-flash-next-multi4
+#   bash scripts/settings.sh set FLASH_MAX_SEQS=4      # one user at a time: faster still (above)
+services:
+  qengine-qwen38-flash-next-multi4:
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:2d790174baee2eb89d8afa5b6eb0ab68eb3a05bebf73e627e92e7686a889e124}
+    # qengine- is the container prefix our tooling discovers the engine by
+    container_name: "${ESTATE_CONTAINER:-qengine-qwen38-flash-next-multi4}"
+    user: "0:${DOCKER_GID:-1000}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    # upstream's docker run: --ipc=host --ulimit memlock=-1 (the engine pins the n-gram table,
+    # the host-resident expert groups and its archive)
+    ipc: host
+    ulimits:
+      memlock: -1
+    # 120 s, not 30: with KV_OFFLOAD_DISK=1 the server saves conversations at shutdown, and upstream asks
+    # for a longer `docker stop -t` so that save isn't cut off (the last idle save stays either way)
+    stop_grace_period: 120s
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8205}}:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              # the container sees only the chosen cards, numbered 0 to 3 (QE_GPUS below)
+              device_ids: ['${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0,1,2,3}}']
+              capabilities: [gpu]
+    volumes:
+      # bpx03/Qwen3.8-Flash-Next-QEngine, the ready-to-run folder (no conversion step)
+      - ${MODEL_DIR:-../../../../../../models-cache}/qwen3.8-flash-next-qengine-int4:/app/models/Qwen3.8-Flash-Next-QE-INT4:ro
+      # ~/.cache/qengine: tune tables, stats, logs and the one-engine-per-GPU locks
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/qengine:/root/.cache/qengine
+      # KV_OFFLOAD_DISK=1: QEngine's disk cache, in qengine-qwen3.8-flash-next/ under this folder
+      - ${KV_OFFLOAD_DIR:-${CLUB3090_DATA_DIR:-../../../../../..}/kv-offload}:/kv-offload
+      # the effort -> thinking-budget map, the same file the vLLM and SGLang composes mount
+      - ../../../../../../scripts/lib/effort_budget.py:/etc/club3090/effort_budget.py:ro
+    environment:
+      # the cards as the container numbers them (device_ids above picks which)
+      - QE_GPUS=0,1,2,3
+      - QE_PORT=8080
+      - QE_MODEL=/app/models/Qwen3.8-Flash-Next-QE-INT4
+      - FLASH_MAX_SEQS=${FLASH_MAX_SEQS:-16}
+      - FLASH_KV_ARCHIVE_GB
+      - FLASH_NGRAM_PIN
+      - FLASH_EC_MARGIN_MB
+      - FLASH_LOOKUP
+      - FLASH_COMM
+      - FLASH_KV
+      - FLASH_KV_RAM_TOKENS
+      - FLASH_PFB_BIG
+      - FLASH_EC_RECLAIM_S
+      - FLASH_MAX_PREFILLS
+      - FLASH_GUARD_MAX
+      - FLASH_PFB_ALIAS
+      - FLASH_PREFIX_GB
+      - FLASH_YARN
+      - FLASH_LEND_CHECK
+      - FLASH_QSA_PIPE_CE
+      - FLASH_RUN_TIMEOUT_S
+      - QE_HANG_S
+      - FLASH_PAR
+      - FLASH_GRAPH_MB
+      - FLASH_PFGRAPH_WINDOW
+      - FLASH_ATTN_DMIN
+      - FLASH_VRAM_ADAPT
+      - FLASH_VRAM_LOW_MB
+      - FLASH_VRAM_TARGET_MB
+      - FLASH_CTX_FIT
+      - FLASH_PRELOAD
+      - FLASH_ATTN_CHUNK
+      - QE_THINKING_BUDGET
+      - QE_THINK_TAIL
+      - QE_EMPTY_RETRY
+      - QE_HOST_RESERVE_GB
+      - QE_RAM_WAIT_S
+      - QE_LOAD_DROP
+      - QE_DECODE_COMM
+      - QE_COMM_CACHE
+      - QE_COMM_CHECK
+      - QE_COMM_TAX_SEVERE
+      - QE_COMM_TAX_1NODE
+      - QE_P2P
+      - QE_MEM_MARGIN_GB
+      - QE_NUMA
+      - QE_PRESENCE_PENALTY
+      - QE_FREQUENCY_PENALTY
+      - QE_LOOP_GUARD_TURNS
+      - QE_LOOP_GUARD_NOTE
+      - QE_LOOP_GUARD_PENALTY
+      - QE_LOOP_GUARD_THINK
+      - QE_METRICS_PORT
+      - QE_EXTRA_ARGS
+      # our launch knobs, mapped onto QEngine's flags by the entrypoint below
+      - ENABLE_THINKING
+      - REASONING_EFFORT
+      - SPEC_N
+      - VISION
+      - THINKING_BUDGET_LOW
+      - THINKING_BUDGET_MEDIUM
+      - THINKING_BUDGET_XHIGH
+      - THINKING_BUDGETS
+      - KV_OFFLOAD_DISK
+      - KV_OFFLOAD_DISK_GB
+    entrypoint:
+      - bash
+      - -c
+      - |
+        umask 0002
+        set -euo pipefail
+        _args=()
+        # The model id the Qwen3.8-Flash-Next slugs share, so the gateway routes and omp's effort overrides
+        # (scripts/omp-setup.sh) apply; QEngine's own default is qwen3.8-flash-next-qengine.
+        _args+=( --served-name qwen3.8-flash-next )
+        # ENABLE_THINKING (our knob) -> --think 1|0, QEngine's default for requests that set none.
+        _think="$${ENABLE_THINKING:-true}"
+        case "$$_think" in
+          true)  _args+=(--think 1) ;;
+          false) _args+=(--think 0) ;;
+          *) echo "[thinking] ENABLE_THINKING='$$_think' must be true or false" >&2; exit 1 ;;
+        esac
+        echo "[thinking] default enable_thinking=$$_think (a request's own setting wins)" >&2
+        # SPEC_N (our knob) -> --mtp-k, the most MTP drafts a step. Unset keeps QEngine's 3.
+        if [ -n "$${SPEC_N:-}" ]; then
+          case "$$SPEC_N" in
+            *[!0-9]*) echo "[spec] SPEC_N='$$SPEC_N' is not a non-negative integer." >&2
+                      echo "[spec] Fix: SPEC_N=<n> sets the most MTP drafts a step; SPEC_N=0 turns MTP off." >&2
+                      exit 1 ;;
+          esac
+          _args+=(--mtp-k "$$SPEC_N")
+          if [ "$$SPEC_N" -eq 0 ]; then
+            echo "[spec] MTP OFF (SPEC_N=0); lookup drafts stay on unless FLASH_LOOKUP=0" >&2
+          else
+            echo "[spec] MTP ON, at most $$SPEC_N drafts a step (SPEC_N)" >&2
+          fi
+        fi
+        # REASONING_EFFORT (our knob) -> QE_REASONING_EFFORT, QEngine's default effort for requests that
+        # send none (1.3.1 on). Unset, it is its template's own default, xhigh.
+        _reff="$${REASONING_EFFORT:-low}"
+        case "$$_reff" in low|medium|xhigh) : ;; *) echo "[reasoning] REASONING_EFFORT='$$_reff' must be low|medium|xhigh" >&2; exit 1 ;; esac
+        if ! grep -qF QE_REASONING_EFFORT /app/server/app.py; then
+          echo "[reasoning] this image's server/app.py doesn't read QE_REASONING_EFFORT, so the default effort can't be set." >&2
+          echo "[reasoning] Fix: QEngine 1.3.1 or later; see docs/engines/QENGINE.md." >&2
+          exit 1
+        fi
+        export QE_REASONING_EFFORT="$$_reff"
+        echo "[reasoning] default reasoning_effort=$$_reff (QE_REASONING_EFFORT; a request's own effort wins)" >&2
+        # THINKING_BUDGET_LOW / _MEDIUM / _XHIGH (ours) -> QE_THINKING_BUDGET=low:N,medium:N,xhigh:N, QEngine's own
+        # thinking budget per effort (1.3.4.3 on: the server picks the entry from the effort the prompt is rendered
+        # with). Unset = 4096 / 16384 / 32768; THINKING_BUDGETS=off = none; a hand-set QE_THINKING_BUDGET wins; a bad
+        # value stops the boot. The boot log carries one [effort-budget] v1 readback line.
+        if ! grep -qF budget_from /app/server/think_budget.py; then
+          echo "[effort-budget] this image's server can't take a thinking budget per effort (QEngine 1.3.4.2 and older ignore the map)." >&2
+          echo "[effort-budget] Fix: QEngine 1.3.4.3 or later; see docs/engines/QENGINE.md." >&2
+          exit 1
+        fi
+        _eb="$$(python3 /etc/club3090/effort_budget.py shell-env --engine qengine --default-effort "$$_reff" --low 4096 --medium 16384 --xhigh 32768)" || exit 1; eval "$$_eb"
+        # VISION (our knob) -> --vision 1|0: image input, the encoder on the last card. Needs the :vision image
+        # (PyTorch); engines/qengine.yml pins it.
+        _vis="$${VISION:-1}"
+        case "$$_vis" in
+          1) if ! python3 -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("torch") is None)'; then
+               echo "[vision] VISION=1, but this image has no PyTorch for the vision encoder." >&2
+               echo "[vision] Fix: VISION=0, or QEngine's :<release>-vision image (the one engines/qengine.yml pins)." >&2
+               exit 1
+             fi
+             _args+=(--vision 1) ;;
+          0) _args+=(--vision 0) ;;
+          *) echo "[vision] VISION='$$_vis' must be 1 or 0" >&2; exit 1 ;;
+        esac
+        echo "[vision] image input $$( [ "$$_vis" = 1 ] && echo on || echo off ) (VISION=$$_vis)" >&2
+        # KV_OFFLOAD_DISK / KV_OFFLOAD_DISK_GB (ours) -> --disk-cache / --disk-cache-gb: QEngine's disk tier under its
+        # host-RAM archive (Flash-Next from 1.3.5.3; 1.3.5 and older stop the start on the flag), in a folder of its own.
+        _disk_args=()
+        case "$${KV_OFFLOAD_DISK:-0}" in
+          0|1) ;;
+          *) echo "[kv-offload] KV_OFFLOAD_DISK='$$KV_OFFLOAD_DISK' must be 0 or 1" >&2; exit 1 ;;
+        esac
+        if [ -n "$${KV_OFFLOAD_DISK_GB:-}" ]; then
+          case "$$KV_OFFLOAD_DISK_GB" in
+            *[!0-9]*|0) echo "[kv-offload] KV_OFFLOAD_DISK_GB='$$KV_OFFLOAD_DISK_GB' must be a whole number of GiB, 1 or more" >&2; exit 1 ;;
+          esac
+          [ "$${KV_OFFLOAD_DISK:-0}" = "1" ] || { echo "[kv-offload] KV_OFFLOAD_DISK_GB is set but KV_OFFLOAD_DISK is not 1" >&2; exit 1; }
+        fi
+        if [ "$${KV_OFFLOAD_DISK:-0}" = "1" ]; then
+          _disk_args+=(--disk-cache /kv-offload/qengine-qwen3.8-flash-next)
+          _cap="200 GiB (QEngine's default)"
+          if [ -n "$${KV_OFFLOAD_DISK_GB:-}" ]; then _disk_args+=(--disk-cache-gb "$$KV_OFFLOAD_DISK_GB"); _cap="$$KV_OFFLOAD_DISK_GB GiB"; fi
+          echo "[kv-offload] QEngine disk cache at /kv-offload/qengine-qwen3.8-flash-next (KV_OFFLOAD_DIR on the host), cap $$_cap" >&2
+        fi
+        _args+=( "$${_disk_args[@]}" )
+        # The engine library makes ~/.cache/qengine/locks 0755 whatever the umask; group-writable, the
+        # lock files it leaves in the shared engine cache stay removable by the user.
+        mkdir -p /root/.cache/qengine/locks && chmod g+w /root/.cache/qengine/locks
+        # The same for the disk cache's folder (QEngine creates it 0755), so you can delete its files without root.
+        if [ "$${KV_OFFLOAD_DISK:-0}" = "1" ]; then
+          mkdir -p /kv-offload/qengine-qwen3.8-flash-next && chmod g+w /kv-offload/qengine-qwen3.8-flash-next
+        fi
+        # Ours first, so a flag in QE_EXTRA_ARGS wins (server/app.py takes the last one).
+        export QE_EXTRA_ARGS="$${_args[*]} $${QE_EXTRA_ARGS:-}"
+        exec /usr/local/bin/qengine-entrypoint
+    healthcheck:
+      # The image has no curl. The container's own hostname, not loopback, so a bad bind
+      # address can't look healthy.
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://' + os.environ['HOSTNAME'] + ':8080/health', timeout=4)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # 129 GB to read and about 64 GB to pin before the server answers
+      start_period: 3600s

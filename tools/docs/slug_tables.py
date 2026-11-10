@@ -104,6 +104,7 @@ STATUS_ORDER = ["production", "caveats", "preview", "experimental", "incubating"
 PAGES = {
     "single": ROOT / "docs" / "SINGLE_CARD.md",
     "dual": ROOT / "docs" / "DUAL_CARD.md",
+    "multi3": ROOT / "docs" / "MULTI_CARD.md",
     "multi4": ROOT / "docs" / "MULTI_CARD.md",
     "multi8": ROOT / "docs" / "MULTI_CARD.md",
 }

@@ -1,7 +1,8 @@
 # Three or more GPUs — what to run
 
-For **4 or 8 cards**. With 3, 5, 6 or 7 cards, run the 4-card slugs (or the 2-card ones) and leave
-the rest idle: see [card counts](#card-counts-that-work) below.
+For **3, 4 or 8 cards**. The 3-card slugs are QEngine's, which runs its own tensor parallel and is tuned for
+three cards. With any other engine, run the 2-card slugs on 3 cards and the 4-card ones on 5, 6 or 7, and
+leave the rest idle: see [card counts](#card-counts-that-work) below.
 
 ⚠️ The maintainer's rig has two GPUs, so every slug on this page was validated on a community rig
 or not yet at all. If you have the hardware, your run is the validation:
@@ -22,9 +23,23 @@ or not yet at all. If you have the hardware, your run is the validation:
   [#1418](https://github.com/noonghunna/club-3090/discussions/1418).
 - **Qwen3.6-27B:** `vllm/qwen-27b-multi-fast` and `vllm/qwen-27b-multi-max` (⚠️) are the older
   generation, validated on several community rigs.
+- **QEngine** (bpx03's own engine; ⚠️ PolyForm Noncommercial): Qwen3.8-27B (🧪) and Qwen3.8-Flash-Next (🐣)
+  on 3 cards, its tuned setup, and on 4, `qengine/qwen38-27b-multi3` and the like. Copies of the 2-card
+  slugs; the headers give upstream's own 3-card numbers. Engine page: [engines/QENGINE.md](engines/QENGINE.md).
 - **Very large MoE models on 4–8 cards** (GLM-5.3-Flash, DeepSeek-V4-Flash, Qwen3.8-Flash-Next):
   [#1117](https://github.com/noonghunna/club-3090/discussions/1117). They still need a lot of system
   RAM (Notes column).
+
+### 3 cards
+
+<!-- BEGIN GENERATED: slug-table multi3 -->
+| Model | Slug | Status | Max ctx | Compose | Announced in | Notes |
+|---|---|---|--:|---|---|---|
+| **Qwen 3.8 27B** | `qengine/qwen38-27b-multi3` | 🧪 experimental | 262144 | [multi3/redhat-int4/mtp.yml](../models/qwen3.8-27b/qengine/compose/multi3/redhat-int4/mtp.yml) | — |  |
+| **Qwen3.8-Flash-Next (MoE, Qwen)** | `qengine/qwen38-flash-next-multi3` | 🐣 incubating | 262144 | [multi3/qengine-int4/mtp.yml](../models/qwen3.8-flash-next/qengine/compose/multi3/qengine-int4/mtp.yml) | — | host RAM ≥ 75 GB |
+
+2 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+<!-- END GENERATED: slug-table multi3 -->
 
 ### 4 cards
 
@@ -48,7 +63,8 @@ or not yet at all. If you have the hardware, your run is the validation:
 | **Nemotron-3 Puzzle 75B-A9B (hybrid Mamba2+attn MoE)** | `vllm/nemotron-75b-multi-mtp` | ⚠️ caveats | 200000 | [multi4/nvfp4/mtp.yml](../models/nemotron-3-puzzle-75b/vllm/compose/multi4/nvfp4/mtp.yml) | [#706](https://github.com/noonghunna/club-3090/discussions/706) | needs sm 9.0+ (not a 3090) |
 | **Qwen 3.6 27B** | `vllm/qwen-27b-multi-fast` | ⚠️ caveats | 262144 | [multi4/autoround-int4/mtp.yml](../models/qwen3.6-27b/vllm/compose/multi4/autoround-int4/mtp.yml) | [#733](https://github.com/noonghunna/club-3090/discussions/733) |  |
 |  | `vllm/qwen-27b-multi-max` | ⚠️ caveats | 262144 | [multi4/fp8/mtp.yml](../models/qwen3.6-27b/vllm/compose/multi4/fp8/mtp.yml) | — |  |
-| **Qwen 3.8 27B** | `sgl/qwen38-27b-multi4-fast` | 🧪 experimental | 262144 | [multi4/autoround-int4/mtp.yml](../models/qwen3.8-27b/sglang/compose/multi4/autoround-int4/mtp.yml) | [#1245](https://github.com/noonghunna/club-3090/discussions/1245) |  |
+| **Qwen 3.8 27B** | `qengine/qwen38-27b-multi4` | 🧪 experimental | 262144 | [multi4/redhat-int4/mtp.yml](../models/qwen3.8-27b/qengine/compose/multi4/redhat-int4/mtp.yml) | — |  |
+|  | `sgl/qwen38-27b-multi4-fast` | 🧪 experimental | 262144 | [multi4/autoround-int4/mtp.yml](../models/qwen3.8-27b/sglang/compose/multi4/autoround-int4/mtp.yml) | [#1245](https://github.com/noonghunna/club-3090/discussions/1245) |  |
 |  | `sgl/qwen38-27b-multi4-max` | 🧪 experimental | 262144 | [multi4/fp8/mtp.yml](../models/qwen3.8-27b/sglang/compose/multi4/fp8/mtp.yml) | [#1245](https://github.com/noonghunna/club-3090/discussions/1245) |  |
 |  | `sgl/qwen38-27b-multi4-superfast` | 🧪 experimental | 262144 | [multi4/autoround-int4/dflash2.yml](../models/qwen3.8-27b/sglang/compose/multi4/autoround-int4/dflash2.yml) | [#1245](https://github.com/noonghunna/club-3090/discussions/1245) |  |
 |  | `sgl/qwen38-27b-multi4-supermax` | 🧪 experimental | 262144 | [multi4/fp8/dflash2.yml](../models/qwen3.8-27b/sglang/compose/multi4/fp8/dflash2.yml) | [#1245](https://github.com/noonghunna/club-3090/discussions/1245) |  |
@@ -59,6 +75,7 @@ or not yet at all. If you have the hardware, your run is the validation:
 |  | `vllm/qwen38-27b-multi4-ultrafast` | 🧪 experimental | 262144 | [multi4/autoround-int4/dflash2.yml](../models/qwen3.8-27b/vllm/compose/multi4/autoround-int4/dflash2.yml) | [#1076](https://github.com/noonghunna/club-3090/discussions/1076) |  |
 |  | `vllm/qwen38-27b-multi4-ultramax` | 🧪 experimental | 262144 | [multi4/fp8/dflash2.yml](../models/qwen3.8-27b/vllm/compose/multi4/fp8/dflash2.yml) | [#1076](https://github.com/noonghunna/club-3090/discussions/1076) |  |
 | **Qwen3.8-Flash-Next (MoE, Qwen)** | `llamacpp-club3090/qwen38-flash-next-multi4-q4kxl-moecache` | 🧪 experimental | 204800 | [multi4/unsloth-ud-q4kxl/moecache.yml](../models/qwen3.8-flash-next/llamacpp-club3090/compose/multi4/unsloth-ud-q4kxl/moecache.yml) | [#1117](https://github.com/noonghunna/club-3090/discussions/1117) | host RAM ≥ 110 GB |
+|  | `qengine/qwen38-flash-next-multi4` | 🐣 incubating | 262144 | [multi4/qengine-int4/mtp.yml](../models/qwen3.8-flash-next/qengine/compose/multi4/qengine-int4/mtp.yml) | — | host RAM ≥ 75 GB |
 |  | `strata/qwen3.8-flash-next-swift15-abliterated-iq3s-multi4` | 🐣 incubating | 131072 | [multi4/sc117-swift15-abliterated-iq3s/base.yml](../models/qwen3.8-flash-next/strata/compose/multi4/sc117-swift15-abliterated-iq3s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 93 GB |
 | **ThinkingCap Qwen3.8-27B** | `sgl/thinkingcap38-27b-multi4-fast` | 🧪 experimental | 262144 | [multi4/autoround-int4/mtp.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi4/autoround-int4/mtp.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 |  | `sgl/thinkingcap38-27b-multi4-max` | 🧪 experimental | 262144 | [multi4/fp8/mtp.yml](../models/thinkingcap-qwen3.8-27b/sglang/compose/multi4/fp8/mtp.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
@@ -71,7 +88,7 @@ or not yet at all. If you have the hardware, your run is the validation:
 |  | `vllm/thinkingcap38-27b-multi4-ultrafast` | 🧪 experimental | 262144 | [multi4/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/autoround-int4/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 |  | `vllm/thinkingcap38-27b-multi4-ultramax` | 🧪 experimental | 262144 | [multi4/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/fp8/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 
-39 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+41 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table multi4 -->
 
 ### 8 cards
@@ -141,6 +158,10 @@ bash scripts/switch.sh --list            # what your machine can run (--all adds
 Tensor parallelism has to divide the model's attention heads. Qwen3.6/3.8-27B has 24 attention heads
 and 4 KV heads, so it runs at **TP = 1, 2, 4 or 8**. With 3 cards use 2; with 5–7 use 4; with 9 or 10
 use 8. Other models have other head counts: check the model's `config.json`.
+
+QEngine is the exception: its own tensor parallel runs Qwen3.8-27B and Qwen3.8-Flash-Next on 3 cards
+(its tuned setup), so its slugs come in `multi3` too. Its engine profile lists the card counts it
+runs (`valid_tp_by_family` in `scripts/lib/profiles/engines/qengine.yml`).
 
 ## More
 

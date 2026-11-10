@@ -287,6 +287,12 @@ class EngineProfile:
     # profile that predates the field (local engines written by `catalog.sh
     # register`); every core profile declares it (test-engine-lineage).
     lineage: Optional[dict[str, Any]] = None
+    # Tensor-parallel sizes this engine runs, per model family, when they differ
+    # from the model's own `valid_tp` (which records what vLLM accepts). C2 reads
+    # the engine's list in place of the model's for that family. QEngine has its
+    # own tensor parallel and is tuned for three cards, a size vLLM's list leaves
+    # out. Empty for every engine that runs the model's list.
+    valid_tp_by_family: dict[str, tuple[int, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -709,9 +715,31 @@ def _lineage(value: Any, path: Path) -> Optional[dict[str, Any]]:
     return out
 
 
+def _valid_tp_by_family(raw: Any, families: tuple[str, ...], path: Path) -> dict[str, tuple[int, ...]]:
+    """`valid_tp_by_family:` -> {family: (tp, ...)}. Each family must be one the
+    engine lists in supported_model_families, and each size a positive integer."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ProfileError(f"{path}: valid_tp_by_family must map a model family to a list of TP sizes, got {raw!r}")
+    out: dict[str, tuple[int, ...]] = {}
+    for family, sizes in raw.items():
+        if family not in families:
+            raise ProfileError(
+                f"{path}: valid_tp_by_family names family {family!r}, which supported_model_families "
+                f"does not list ({list(families)})")
+        if (not isinstance(sizes, list) or not sizes
+                or not all(isinstance(t, int) and not isinstance(t, bool) and t > 0 for t in sizes)):
+            raise ProfileError(
+                f"{path}: valid_tp_by_family.{family} must be a non-empty list of positive integers, got {sizes!r}")
+        out[family] = tuple(sizes)
+    return out
+
+
 def _engine(data: dict[str, Any], path: Path) -> EngineProfile:
     _check_profile_keys(path, data, ENGINE_PROFILE_KEYS,
                         nested={"lineage": (data.get("lineage"), LINEAGE_KEYS)})
+    families = _tuple(data.get("supported_model_families"))
     return EngineProfile(
         schema_version=data["schema_version"],
         id=data["id"],
@@ -733,6 +761,7 @@ def _engine(data: dict[str, Any], path: Path) -> EngineProfile:
         notes=data.get("notes"),
         image_env=data.get("image_env"),
         lineage=_lineage(data.get("lineage"), path),
+        valid_tp_by_family=_valid_tp_by_family(data.get("valid_tp_by_family"), families, path),
     )
 
 
@@ -1214,7 +1243,14 @@ def fits(
     else:
         ok("C1")
 
-    if tp not in model.valid_tp:
+    engine_tp = engine.valid_tp_by_family.get(model.family)
+    if engine_tp:
+        if tp not in engine_tp:
+            fail("C2", f"tp={tp} not in engine {engine.id}'s valid_tp_by_family.{model.family} "
+                       f"{list(engine_tp)} for {model.id}")
+        else:
+            ok("C2")
+    elif tp not in model.valid_tp:
         fail("C2", f"tp={tp} not in model.valid_tp {list(model.valid_tp)} for {model.id}")
     else:
         ok("C2")

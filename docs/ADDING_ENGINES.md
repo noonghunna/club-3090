@@ -117,6 +117,7 @@ The file lives at `scripts/lib/profiles/engines/<id>.yml`, loaded by `scripts/li
 | `supported_kv_formats` | every KV format a slug on this engine uses | C4 |
 | `supported_drafters` | **`spec_method` values** (`mtp`, `dflash`, `eagle3`, `ngram-mod`, …), not drafter ids | C7 |
 | `supported_weight_formats` | every weights `format:` its slugs use | C14 |
+| `valid_tp_by_family` | optional `{family: [tp, …]}`: the tensor-parallel sizes the engine runs for a model family, in place of the model's own `valid_tp` (vLLM's list). Only for an engine whose own tensor parallel differs (QEngine: three cards) | C2 |
 | `features` | `{name: value}`, tested for truthiness against a slug's `required_engine_features` | C15 |
 | `feature_provenance` | `{feature: {author, source, status}}`, for attribution | (record only) |
 | `vendored_overlays` | overlays baked into the image (`image_baked: true`) or delivered from `patches/` | diagnose-profile [6/6] |

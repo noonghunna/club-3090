@@ -183,6 +183,46 @@ assert not r.valid
 assert any(reason.startswith("C2:") for reason in r.reasons), r.reasons
 PY
 
+run_test "C2 engine TP list: QEngine runs three cards, vLLM still may not" <<'PY'
+# An engine's valid_tp_by_family replaces the model's valid_tp (vLLM's list) for
+# that family only. Positive: QEngine at tp=3 passes C2 for both of its models.
+# Negative: the same model at tp=3 on vLLM is still refused, and QEngine at a
+# size its own list leaves out (Flash-Next on one card) is refused too.
+from scripts.lib.profiles.compat import load_profiles, fits
+p = load_profiles()
+qe = p.engines["qengine"]
+assert qe.valid_tp_by_family == {"qwen35-dense": (1, 2, 3, 4), "qwen4exp": (2, 3, 4)}, qe.valid_tp_by_family
+hw3 = [p.hardware["rtx-3090"]] * 3
+wl = p.workloads["multi-stream-tenant"]
+def c2(model, engine, tp, hw):
+    r = fits(hw, p.models[model], wl, p.engines[engine], tp=tp, project_vram=False)
+    return [x for x in r.reasons if x.startswith("C2:")]
+for model in ("qwen3.8-27b", "qwen3.8-flash-next"):
+    assert 3 not in p.models[model].valid_tp, f"{model}'s own valid_tp gained 3; this test no longer proves the engine list"
+    assert not c2(model, "qengine", 3, hw3), c2(model, "qengine", 3, hw3)
+    bad = c2(model, "vllm-stable", 3, hw3)
+    assert bad and "model.valid_tp" in bad[0], bad
+bad = c2("qwen3.8-flash-next", "qengine", 1, [p.hardware["rtx-3090"]])
+assert bad and "valid_tp_by_family.qwen4exp" in bad[0], bad
+# an engine with no list keeps the model's: vLLM at tp=2 passes C2
+assert not c2("qwen3.8-27b", "vllm-stable", 2, hw3[:2])
+PY
+
+run_test "C2 engine TP list: a malformed valid_tp_by_family fails at load" <<'PY'
+from pathlib import Path
+from scripts.lib.profiles.compat import _valid_tp_by_family, ProfileError
+fams = ("qwen35-dense", "qwen4exp")
+assert _valid_tp_by_family(None, fams, Path("x.yml")) == {}
+assert _valid_tp_by_family({"qwen4exp": [2, 3]}, fams, Path("x.yml")) == {"qwen4exp": (2, 3)}
+for raw in ({"gemma4-swa-dense": [2]}, {"qwen4exp": []}, {"qwen4exp": [0]}, {"qwen4exp": ["3"]},
+            {"qwen4exp": [True]}, {"qwen4exp": 3}, [2, 3]):
+    try:
+        _valid_tp_by_family(raw, fams, Path("x.yml"))
+    except ProfileError:
+        continue
+    raise AssertionError(f"accepted {raw!r}")
+PY
+
 run_test "C3 SM floor: low-SM card rejected" <<'PY'
 from dataclasses import replace
 from scripts.lib.profiles.compat import load_profiles, fits

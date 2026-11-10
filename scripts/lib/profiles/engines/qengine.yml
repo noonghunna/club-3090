@@ -30,6 +30,13 @@ supported_model_families:
   - qwen35-dense          # Qwen3.8-27B, RedHatAI's INT4 only (libqengine.so)
   - qwen4exp              # Qwen3.8-Flash-Next, the author's own INT4 layout (libqflash.so, from 1.3; upstream calls it a
                           # preview: tested on one machine, no quality benchmark yet)
+# The card counts QEngine runs, in place of the models' valid_tp (vLLM's list: 1, 2, 4, 8). QEngine has its own tensor
+# parallel and is tuned for three cards. README "Recipes by card count" (1.3.5.7): the 27B on 3 (tuned), 2, and 1 as an
+# experiment; Flash-Next on 3 (tuned) and 2, 4 or more in tensor parallel or pipeline mode (FLASH_PAR), never on 1.
+# The 27B at 4 isn't in upstream's table: community runs only (4x RTX 5080, #1942 / #1966, its own containers).
+valid_tp_by_family:
+  qwen35-dense: [1, 2, 3, 4]
+  qwen4exp: [2, 3, 4]
 supported_weight_formats:
   - compressed-tensors    # RedHatAI/Qwen3.8-27B-INT4 (pack-quantized W4A16, group 128, symmetric). It reads only
                           # weight_packed / weight_scale, so other INT4 formats (AutoRound's auto_gptq packing) don't load
