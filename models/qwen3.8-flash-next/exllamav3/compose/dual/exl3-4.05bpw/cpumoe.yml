@@ -10,7 +10,7 @@
 #              `_h5_ng5`, and it ships a DIFFERENT file set (this branch factors
 #              the vision tower into `vision_k6.safetensors` and carries no MTP
 #              patch file). The layouts are not interchangeable.
-#   Engine:    ExLlamaV3 1.6.5 + TabbyAPI (TabbyAPI's own :cu13 image @ b1c2253, ZERO patches)
+#   Engine:    ExLlamaV3 1.6.6 + TabbyAPI (TabbyAPI's own :cu13 image @ ea66a3f, ZERO patches)
 #   Topology:  Dual 3090 PCIe (exl3 autosplit layer-split, NOT tensor-parallel)
 #   Spec-dec:  ✅ Built-in MTP, ON by default. draft_num_tokens=4 as a CEILING
 #              with dynamic_draft — NOT a fixed depth. Needs NO drafter file:
@@ -146,7 +146,7 @@ services:
     # The engine profile (engines/exllamav3.yml) is authoritative; keep in step.
     # TabbyAPI's own :cu13 image (their CI builds docker/Dockerfile.cu13 per push to
     # main), from b1c2253, 2026-10-30. Until then: our build of the same Dockerfile.
-    image: ${EXLLAMAV3_IMAGE:-ghcr.io/theroyallab/tabbyapi@sha256:40635baf5a4117a706bc0da6252c74af888b2f11854e0863d4d8c2dfb763a1b7}
+    image: ${EXLLAMAV3_IMAGE:-ghcr.io/theroyallab/tabbyapi@sha256:bce9f76f9ff36df82181d6e595052b5c391e744b33ef7795296efb9692821010}
     container_name: ${ESTATE_CONTAINER:-tabbyapi-qwen38-flash-next-exl3-405}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # Reap orphaned children — without it a wedged server becomes a <defunct>
