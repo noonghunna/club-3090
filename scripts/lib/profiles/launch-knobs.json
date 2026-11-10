@@ -558,6 +558,180 @@
     }
    ]
   },
+  "CONTEXT": {
+   "status": "candidate",
+   "description": "The engine's context capacity (--max-context; Strata: setup's --context): the KV/state ceiling every request shares.",
+   "type": "int",
+   "unset": "the launcher's default for the slug's compose: 131072 (Strata and the GLM-5.3-Flash Maya composes), 65536 (DeepSeek-V4.1-Flash), 204800 (MiniMax-M3.1-Flash)",
+   "engines": [
+    "strata"
+   ],
+   "variants": [
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "qwen3.8-flash-next"
+      ]
+     },
+     "enforced": "boot",
+     "min": 4096,
+     "source": {
+      "file": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+      "what": "settings(): CONTEXT must be a whole number >= 4096 or the boot exits 2; setup owns the value itself (it sizes the KV and expert cache from it) and re-runs when it changes"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/qwen3.8-flash-next/strata/compose/dual/ista-iq3s/base.yml",
+       "program": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+       "args": [
+        "validate"
+       ],
+       "accept": [
+        "4096",
+        "65536",
+        "131072"
+       ],
+       "reject": [
+        "0",
+        "4095",
+        "-1",
+        "x",
+        "64K"
+       ]
+      }
+     ]
+    },
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "glm-5.3-flash"
+      ]
+     },
+     "enforced": "boot",
+     "min": 4096,
+     "source": {
+      "file": "models/glm-5.3-flash/strata-maya/launcher/maya_settings.py",
+      "what": "context(): CONTEXT must be a whole number >= 4096 or the boot exits 2 (settings() calls it, so a bad value stops before the SHA-256 check); the prepare script writes it into the run config's engine args as --max-context"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/glm-5.3-flash/strata-maya/compose/dual/maya-m/base.yml",
+       "program": "models/glm-5.3-flash/strata-maya/launcher/maya_settings.py",
+       "args": [
+        "validate"
+       ],
+       "accept": [
+        "4096",
+        "65536",
+        "131072"
+       ],
+       "reject": [
+        "0",
+        "4095",
+        "-1",
+        "x",
+        "64K"
+       ]
+      }
+     ]
+    },
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "deepseek-v4.1-flash-1017"
+      ]
+     },
+     "enforced": "boot",
+     "min": 4096,
+     "source": {
+      "file": "models/deepseek-v4.1-flash-1017/strata-maya/launcher/ds4_settings.py",
+      "what": "context(): CONTEXT must be a whole number >= 4096 or the boot exits 2 (settings() calls it, so a bad value stops before the SHA-256 check); the prepare script writes it into the run config's engine args as --max-context"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/deepseek-v4.1-flash-1017/strata-maya/compose/dual/ud-iq3-s/base.yml",
+       "program": "models/deepseek-v4.1-flash-1017/strata-maya/launcher/ds4_settings.py",
+       "args": [
+        "validate"
+       ],
+       "accept": [
+        "4096",
+        "65536",
+        "131072"
+       ],
+       "reject": [
+        "0",
+        "4095",
+        "-1",
+        "x",
+        "64K"
+       ]
+      }
+     ]
+    },
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "minimax-m3.1-flash"
+      ]
+     },
+     "enforced": "boot",
+     "min": 4096,
+     "source": {
+      "file": "models/minimax-m3.1-flash/strata-maya/launcher/mm3_settings.py",
+      "what": "context(): CONTEXT must be a whole number >= 4096 or the boot exits 2 (settings() calls it, so a bad value stops before the SHA-256 check); the prepare script writes it into the run config's engine args as --max-context"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/minimax-m3.1-flash/strata-maya/compose/dual/maya-s/dspark.yml",
+       "program": "models/minimax-m3.1-flash/strata-maya/launcher/mm3_settings.py",
+       "args": [
+        "validate"
+       ],
+       "accept": [
+        "4096",
+        "65536",
+        "131072",
+        "204800"
+       ],
+       "reject": [
+        "0",
+        "4095",
+        "-1",
+        "x",
+        "64K"
+       ]
+      }
+     ]
+    }
+   ],
+   "interacts": [
+    {
+     "knob": "ROPE_SCALING",
+     "effect": "Strata: past the model's trained 262144 setup resolves yarn from CONTEXT unless ROPE_SCALING / ROPE_SCALE say otherwise",
+     "source": {
+      "file": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+      "what": "settings(): the rope pair derives its factor from CONTEXT (ctx / 262144, min 1) exactly as setup does"
+     }
+    }
+   ]
+  },
   "ENABLE_THINKING": {
    "status": "first-batch",
    "description": "Server-default thinking mode for requests that don't set their own.",

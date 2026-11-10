@@ -48,6 +48,10 @@
   "KV_OFFLOAD_DISK_GB": {
    "applies": "never",
    "why": "an opt-in feature of the KV-offload composes"
+  },
+  "CONTEXT": {
+   "applies": "never",
+   "why": "the engine's context capacity is a per-compose choice: each compose fixes its own default (`CONTEXT: \"${CONTEXT:-N}\"`) and the launcher hands it to the engine (Maya: --max-context, Strata: setup's --context); left unset, a compose that does not interpolate CONTEXT serves its fixed context, which is legitimate — same class as ROPE_SCALING"
   }
  },
  "models": {

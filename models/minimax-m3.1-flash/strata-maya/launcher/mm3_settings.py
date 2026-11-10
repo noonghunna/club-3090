@@ -36,6 +36,9 @@ removed is gone at the next boot. Maya's serve/server.py (the strata-maya-club30
   THREADS                args: --cpu-threads   the CPU lane's threads (the experts VRAM doesn't hold are computed
                                                there, from RAM); whole number >= 1. Unset: half the CPUs this
                                                container may use, at least 1 (threads(), below)
+  CONTEXT                args: --max-context   K/V capacity, a whole number >= 4096 (the same floor the Strata
+                                               recipe checks). Unset: the entrypoint's default (204800 here);
+                                               mm3_prepare.py writes it, this file only checks it
 
 Nor SPEC_N: DSpark's block length comes from the drafter's own config, and maya-mm3 has no depth flag.
 
@@ -54,6 +57,7 @@ DEFAULT_NAME = "minimax-m3.1-flash"
 EFFORTS = ("none", "auto", "low", "medium", "high", "xhigh", "max")
 KV_FORMATS = ("int8", "bf16")
 DSPARK = ("on", "off")
+MIN_CONTEXT = 4096                   # the floor the Strata recipe checks for the same engine flag
 
 
 class Bad(ValueError):
@@ -99,9 +103,17 @@ def threads(cpus=None):
     return max(1, len(cpus) // 2)
 
 
+def context():
+    """CONTEXT from the environment, checked; None when unset (the entrypoint's own default applies).
+    mm3_prepare.py passes the value to --max-context; `validate` proves the domain for the knob guard."""
+    v = _env("CONTEXT")
+    return None if v is None else _int("CONTEXT", v, MIN_CONTEXT)
+
+
 def settings():
     """(config keys to set, sampling block, extra engine args, notes) from the environment, checked."""
     keys, notes, args = {}, [], []
+    context()                                 # CONTEXT is checked here too: a bad value stops the boot
     effort = _env("REASONING_EFFORT")
     if effort is not None and effort not in EFFORTS:
         raise Bad(f"REASONING_EFFORT={effort!r}: expected one of {', '.join(EFFORTS)}")

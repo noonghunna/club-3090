@@ -71,7 +71,7 @@
     "SERVED_NAME": "llm"
    },
    "setup_only": {
-    "CONTEXT": "Strata's own entrypoint passes it to `strata launch --context` (setup owns it: it sizes the KV and expert cache); strata_config.py only checks it",
+    "CONTEXT": "Strata's own entrypoint passes it to `strata launch --context` (setup owns it: it sizes the KV and expert cache); strata_config.py only checks it (a whole number >= 4096)",
     "KV": "Strata's own entrypoint passes it to `strata launch --kv`; strata_config.py only checks it",
     "API_KEY": "Strata's own entrypoint passes it to `strata launch` (--api-key-env); strata_config.py only checks its length"
    },
