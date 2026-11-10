@@ -46,8 +46,12 @@ for v in abc 70000 09393 -1 9393x; do
     && ok "'$v' refused with a Fix line" || bad "'$v': rc=$rc out=$out"
 done
 qm check --port 8443 && qm check --port '' && ok "check passes a port and an unset value" || bad "check refused a valid value"
-for c in "$C27" "$CFN"; do
-  command grep -qxE '      - QE_METRICS_PORT' "$c" && ok "$(basename "$(dirname "$(dirname "$c")")")/…: the compose forwards QE_METRICS_PORT (bare)" \
+# every QEngine compose, the multi-card ones too (2026-11-10), not just the two named above
+mapfile -t QE_COMPOSES < <(ls models/*/qengine/compose/*/*/*.yml)
+[[ ${#QE_COMPOSES[@]} -ge 6 && " ${QE_COMPOSES[*]} " == *" $C27 "* && " ${QE_COMPOSES[*]} " == *" $CFN "* ]] \
+  && ok "${#QE_COMPOSES[@]} QEngine composes found" || bad "QEngine compose glob found ${#QE_COMPOSES[@]}: ${QE_COMPOSES[*]}"
+for c in "${QE_COMPOSES[@]}"; do
+  command grep -qxE '      - QE_METRICS_PORT' "$c" && ok "${c#models/}: the compose forwards QE_METRICS_PORT (bare)" \
     || bad "$c doesn't forward QE_METRICS_PORT as a bare passthrough"
   command grep -qE '^\s+- "[^"]*9393' "$c" && bad "$c publishes 9393 itself" || ok "$(basename "$c"): publishes no metrics port of its own"
 done

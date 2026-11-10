@@ -885,12 +885,14 @@ def profile_templates(
     return out
 
 
-# Card counts that have REAL composes, smallest first.  Scanned from the registry
-# 2026-09-08: single 34 · dual 52 · multi4 17 · multi8 9 — and NO multi3, even
-# though `_TOPO_ORDER` still lists one (that entry is vestigial: `_variant_topology`
-# would accept a multi3 path, but no compose has ever used it).  Deriving the ladder
-# from card counts rather than from `_TOPO_ORDER` keeps a topology nobody ships out
-# of the default path.
+# Card counts the default path walks, smallest first.  Scanned from the registry
+# 2026-09-08: single 34 · dual 52 · multi4 17 · multi8 9, and no multi3.  Since
+# 2026-11-10 the only multi3 composes are QEngine's two (`qengine/qwen38-*-multi3`,
+# 🧪 / 🐣, PolyForm Noncommercial), and multi3 stays OUT of this ladder on purpose.
+# Today the picker's status floor would still choose a functional dual slug, but once
+# a multi3 slug is promoted, a multi3 rung here would make that non-commercial-licence
+# slug every 3-card rig's default ("any slug whose topology matches").  The multi3
+# slugs are listed and launchable like any other; only the default skips them.
 _TOPO_BY_CARDS: tuple[tuple[int, str], ...] = (
     (1, "single"), (2, "dual"), (4, "multi4"), (8, "multi8"),
 )
@@ -904,7 +906,7 @@ def _topology_ladder(num_gpus: int) -> list[str]:
     4 cards → multi4, dual, single; 8 → multi8, multi4, dual, single; 1 → single.
 
     Counts with no exact topology take the largest that fits rather than inventing a
-    slug: **3 → dual** (there are no multi3 composes) and **5-7 → multi4**.
+    slug: **3 → dual** (multi3 is left out on purpose: see `_TOPO_BY_CARDS`) and **5-7 → multi4**.
 
     The DEGRADING half matters as much as the exact fit.  Before this, a ≥2-card rig
     asked only for "dual" and, when no dual option existed, fell through to "the first

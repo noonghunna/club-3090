@@ -13804,11 +13804,18 @@ class TestRigTopologyLadder:
         assert default_profile_template(opts, 8) == "vllm/multi8"
 
     def test_counts_without_a_topology_take_the_largest_that_fits(self):
-        """3 -> dual (no multi3 composes exist), 5-7 -> multi4, >8 -> multi8.  The
-        alternative — inventing multi3/multi5 — names slugs the registry does not
-        have."""
+        """3 -> dual, 5-7 -> multi4, >8 -> multi8.  The alternative — inventing
+        multi5 — names slugs the registry does not have.  multi3 exists only for
+        QEngine (PolyForm Noncommercial) and stays out of the default on purpose,
+        so a 3-card rig still defaults to dual with a multi3 slug in the list, even
+        a functional one (the status floor alone would pick a promoted multi3)."""
         opts = profile_templates(self._full_ladder_rows())
         assert default_profile_template(opts, 3) == "vllm/dual"
+        with_multi3 = self._full_ladder_rows() + [
+            self._mk("qengine/qwen38-27b-multi3", "qengine",
+                     "models/q/qengine/compose/multi3/redhat-int4/mtp.yml", status="caveats"),
+        ]
+        assert default_profile_template(profile_templates(with_multi3), 3) == "vllm/dual"
         for n in (5, 6, 7):
             assert default_profile_template(opts, n) == "vllm/multi4", f"{n} cards"
         assert default_profile_template(opts, 16) == "vllm/multi8"
