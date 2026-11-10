@@ -18,14 +18,13 @@
 #   Genesis:   none
 #   Status:    ⚠️ Production w/ caveats — promoted 2026-10-31 (the full gate on a community rig, #1862)
 #   Caveats:   ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
-#              QEngine 1.3.4's known issue: with vision on (the default here), agent workloads may
-#              briefly drop CUDA graphs under VRAM pressure; the engine recovers. 1.3.4.1 fixes it in
-#              the Flash-Next engine; this 27B engine is unchanged (1.3.4.2's 27B output is bit for bit
-#              1.3.4.1's, upstream).
-#              The full gate passed on another rig, not this one: eddietheengineer's #1862 (QEngine 1.3,
+#              The full gate passed on two other rigs, not this one: eddietheengineer's #1862 (QEngine 1.3,
 #              3090 + 3090 Ti at 260 / 240 W) ran verify-full, verify-stress 8/8 with the ceiling ladder
 #              filled to 240K, both soaks (PASS, 0 MB growth) and the 8-pack (108 / 132 of 150, thinking
-#              off / on); here it has bench and verify-full. 1.3.1 to 1.3.5.6 were boot-tested. From 1.3.4.3
+#              off / on); bpx03's, QEngine's author (#1979: 1.3.5.5, two 3090s at stock power, our scripts
+#              at 3e395893), ran verify-full, verify-stress 8/8 with the ladder filled to 240,664 tokens,
+#              both soaks (0 silent, 0 MiB growth) and the 8-pack (110 / 131 of 150). Here it has bench
+#              and verify-full. 1.3.1 to 1.3.5.6 were boot-tested. From 1.3.4.3
 #              our THINKING_BUDGET_* map (4096 / 16384 / 32768 by effort, as on the vLLM and SGLang
 #              slugs) reaches QEngine's own per-effort QE_THINKING_BUDGET; a request's own budget wins.
 #              The default effort is low, as on the other Qwen3.8 slugs, through QEngine's
