@@ -3,7 +3,7 @@
 Lets Qwen3.8-Flash-Next run with pipeline parallelism (`--pipeline-parallel-size 2`) on the
 stock `vllm/vllm-openai` image.
 
-**Why.** Stock vLLM (checked on v0.31.0, v0.32.0rc3 and v0.32.0) refuses PP > 1 for any Qwen4Exp
+**Why.** Stock vLLM (checked on v0.31.0, v0.32.0rc3, v0.32.0 and v0.33.0) refuses PP > 1 for any Qwen4Exp
 model with an n-gram PLE, because later pipeline ranks never receive the raw `input_ids`
 the PLE reads. Flash-Next has one PLE layer (`ple_layer_ids: [2]`, decoder layer 1), so it
 is always on rank 0 and the refusal is stricter than needed.
@@ -14,7 +14,7 @@ is always on rank 0 and the refusal is stricter than needed.
 |---|---|
 | `model_executor/models/config.py` | refuse PP only when a PLE layer is outside rank 0 |
 | `models/qwen4_exp/nvidia/model_state.py` | same check, worker side |
-| `v1/core/kv_cache_utils.py` | a KV group listing every rank's layers allocates only this rank's |
+| `v1/core/kv_cache_planning.py` (`kv_cache_utils.py` before v0.33.0: vLLM moved the loop, unchanged) | a KV group listing every rank's layers allocates only this rank's |
 
 **Provenance.** A port of the PP parts of Minachist's `flash-next-vllm.patch` (Apache-2.0),
 from `huggingface.co/Minachist/Qwen3.8-Flash-Next-INT4-Mixed-AutoRound`, `vllm-patch/`.

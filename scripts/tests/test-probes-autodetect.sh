@@ -42,7 +42,7 @@ if [[ "$1" == ps ]]; then
   f=""; for a in "$@"; do case "$a" in name=*) f="$a" ;; esac; done
   # preflight's scan of running containers: one engine container, publishing the stub server's port
   if [[ -z "$f" && -n "${STUB_DEEP_PORT:-}" && "$*" == *"{{.Names}}|{{.Ports}}"* ]]; then
-    echo "${STUB_DEEP_NAME:-deep-x}|0.0.0.0:${STUB_DEEP_PORT}->8000/tcp|vllm/vllm-openai:v0.32.0"; exit 0
+    echo "${STUB_DEEP_NAME:-deep-x}|0.0.0.0:${STUB_DEEP_PORT}->8000/tcp|vllm/vllm-openai:v0.33.0"; exit 0
   fi
   case "$f" in
     'name=^qengine-x$') echo "9393/tcp, 0.0.0.0:8198->8080/tcp, [::]:8198->8080/tcp" ;;

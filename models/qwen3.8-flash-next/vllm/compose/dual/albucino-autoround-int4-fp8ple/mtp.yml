@@ -7,12 +7,12 @@
 #   Overlays:  qwen4exp-pp-ple-rank0 (stock refuses PP>1 for this model)
 #              qwen4exp-mtp-pp (stock MTP asserts under PP>1)
 #              qwen4exp-mtp-draft-head (DRAFT_HEAD=1: INT4 lm_head for the MTP drafter only)
-#              qwen4exp-ple-mmap (PLE_PLACEMENT=nvme only; a port pinned to v0.32.0)
-#              qwen4exp-qsa-fp8kv-ampere (FP8 KV on sm_80/86: e4m3 decoded in the QSA kernel,
-#              fused QSA prepare off because it writes the cache in fp8e4nv)
+#              qwen4exp-ple-mmap (PLE_PLACEMENT=nvme only; a port per vLLM version: 0.32.0, 0.33.0)
 #              vllm-pr48375-mamba-drop-eagle-block (MTP x prefix-cache recurrent state)
 #              w4a8-int8-act + w4a8-inc-moe (W4A8=1 only; INT8-activation Marlin for
-#              AutoRound dense linears + MoE experts; off by default, see MEASURED 2)
+#              AutoRound dense linears + MoE experts; off by default, see MEASURED 2).
+#              ⚠️ w4a8-inc-moe isn't ported to vLLM 0.33.0 (its anchor in inc_wna16_scheme.py is
+#              gone), so W4A8=1 stops the boot there; the default W4A16 path is unaffected
 #              qwen38-reasoning-effort-template (Flash-Next's upstream template is
 #              byte-identical to Qwen3.8-27B's, md5 519239a4…, so the club patch applies)
 #              vllm-effort-budget + vllm-default-thinking-budget (reasoning budget by
@@ -25,8 +25,10 @@
 #              (DRAFT_HEAD=1, built on first boot). The albucino checkpoint carries no MTP
 #              head, so DRAFT_SUBDIR points at its separate draft (runtime/mtp-int4-g32:
 #              INT4 g32 routed experts, compressed-tensors target "RoutedExperts", a stock class)
-#   KV:        fp8_e4m3 via overlay qwen4exp-qsa-fp8kv-ampere (stock fails to compile the
-#              QSA kernels on sm_80/86: no fp8e4nv in Triton). Measured 2026-10-17 (v0.31.0):
+#   KV:        fp8_e4m3, native from vLLM 0.33.0 (#60602, #60992: FP8 QSA KV on Ampere, stored as
+#              uint8 with a byte decode). Up to 0.32.0 it took our overlay qwen4exp-qsa-fp8kv-ampere
+#              (stock failed to compile the QSA kernels on sm_80/86), dropped 2026-11-10. Measured
+#              2026-10-17 (v0.31.0, with the overlay):
 #              pool 1.03M -> 1.80M tokens vs bf16; decode -2..-3%, prefill -7..-12%;
 #              needle 6K/42K/96K pass. KV_CACHE_DTYPE=auto for bf16.
 #   Vision:    yes (VISION=0 for --language-model-only); verify-full vision 4/4
@@ -36,9 +38,12 @@
 #   Caveats:   needs two cards of 64 GB: more than 80 GiB of VRAM goes to weights before
 #              any KV cache, so the entrypoint refuses smaller cards (on 3090s use
 #              strata/qwen3.8-flash-next-iq3s-dual or bucko-vllm/qwen3.8-flash-next-ple-dual).
-#              Measured on ONE rig (2x CMP 170HX 64 GB, Gen2 x8, no P2P, 175 W). Ten overlays
-#              on the stock image, one of them a port pinned to v0.32.0 (ple-mmap; refuses
-#              any other vLLM, PLE_PLACEMENT=ram avoids it). No KV offload to RAM: it does not
+#              Measured on ONE rig (2x CMP 170HX 64 GB, Gen2 x8, no P2P, 175 W). Nine overlays
+#              on the stock image; ple-mmap is a port per vLLM version (0.32.0, 0.33.0; it
+#              refuses any other, PLE_PLACEMENT=ram avoids it). ⚠️ Not booted on vLLM 0.33.0
+#              (the pin from 2026-11-10; no 64 GB cards here): each overlay was checked offline on
+#              the image (applies, a second run is a no-op; pp-ple-rank0 and ple-mmap re-anchored),
+#              and W4A8=1 isn't ported (above). The numbers below are v0.32.0's. No KV offload to RAM: it does not
 #              start under PP=2 (vllm#50653). Concurrent requests: vllm#61281 (prompt-boundary
 #              state freed mid-request) can make a follow-up miss its whole prompt in the
 #              prefix cache, and PREFIX_MATCH_UNIT=16 makes nearly every prompt end mid-block;
@@ -132,7 +137,7 @@
 #   rm -f "$f"
 services:
   vllm-qwen38-flash-next-dual:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.32.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.33.0}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen38-flash-next-dual}"
     user: "0:${DOCKER_GID:-1000}"
     # ⚠️ When debugging a boot failure set CLUB3090_RESTART=no: under unless-stopped a
@@ -161,7 +166,6 @@ services:
       - ../../../patches/qwen4exp-mtp-pp:/etc/club3090/mtp-pp:ro
       - ../../../patches/qwen4exp-mtp-draft-head:/etc/club3090/mtp-draft-head:ro
       - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/draft-head:/draft-head
-      - ../../../patches/qwen4exp-qsa-fp8kv-ampere:/etc/club3090/qsa-fp8kv:ro
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
       - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
       - ../../../patches/w4a8-inc-moe:/etc/club3090/w4a8-moe:ro
@@ -307,9 +311,6 @@ services:
         fi
         bash /etc/club3090/mtp-draft-head/install.sh || exit 1
         bash /etc/club3090/pr48375/install.sh || exit 1
-        # FP8 KV on sm_80/86: QSA kernel reads the cache as bytes and decodes e4m3 (halt95/Merlin);
-        # the fused QSA prepare, which writes the cache in fp8e4nv, is turned off there.
-        bash /etc/club3090/qsa-fp8kv/install.sh || exit 1
         if [ -z "$${VLLM_MARLIN_INPUT_DTYPE:-}" ] && [ "$${W4A8:-0}" = "1" ]; then
           export VLLM_MARLIN_INPUT_DTYPE=int8
         fi

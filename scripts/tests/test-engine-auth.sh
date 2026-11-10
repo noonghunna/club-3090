@@ -49,7 +49,7 @@ case "$name" in
   strata-nokey)  img=ghcr.io/niko1221/strata:0.2.1-cuda13;          env='' ;;
   strata-old)    img=ghcr.io/noonghunna/strata-club3090:v0.1.45;     env='' ;;
   maya)          img=ghcr.io/noonghunna/strata-maya-club3090:v1.1.17; env='MAYA_GPUS=0,1' ;;
-  vllm-keyed)    img=vllm/vllm-openai:v0.32.0;                       env='API_KEY=not-for-us-0000000000' ;;
+  vllm-keyed)    img=vllm/vllm-openai:v0.33.0;                       env='API_KEY=not-for-us-0000000000' ;;
   *) echo "Error: No such object: $name" >&2; exit 1 ;;
 esac
 case "$fmt" in

@@ -3,7 +3,7 @@
 # to the pinned vLLM. This is the patch's drift_guard.check in patches.yml: run it at every
 # vLLM pin bump.
 #
-#   bash models/qwen3.8-27b/vllm/patches/vllm-default-thinking-budget/selftest.sh [vllm/vllm-openai:v0.32.0]
+#   bash models/qwen3.8-27b/vllm/patches/vllm-default-thinking-budget/selftest.sh [vllm/vllm-openai:v0.33.0]
 #
 # No GPU, no network (`docker run --rm --network none`, the image's own python). Legs:
 #   main  the compose's own entrypoint line exports the floor (effort_budget.py shell-env,
@@ -19,7 +19,7 @@
 #         anchor and the README's re-anchor steps.
 set -uo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"
-IMAGE="${1:-vllm/vllm-openai:v0.32.0}"
+IMAGE="${1:-vllm/vllm-openai:v0.33.0}"
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$HERE/../../../../.." && pwd)"
 
