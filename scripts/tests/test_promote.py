@@ -24,6 +24,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from scripts.lib.profiles import promote  # noqa: E402
+from scripts.tests.lib_fixture_tree import copy_trees  # noqa: E402
 
 # Everything the post-write checks need: the compose_registry import and
 # registry-emit.sh both resolve against the tmp root, so the copy has to carry
@@ -33,25 +34,23 @@ _COPY_TREES = ("scripts/lib", "tools/tui-core", "models")
 
 @pytest.fixture()
 def root(tmp_path):
-    for rel in _COPY_TREES:
-        shutil.copytree(
-            REPO / rel,
-            tmp_path / rel,
-            # #1142: `models/` accumulates ROOT-OWNED torch_compile caches written
-            # by containers, and copytree dies on them with Permission denied —
-            # taking every test in this file down on any rig that has served a
-            # model. They are pure build artifact (1 tracked file under those
-            # paths), so skip them.
-            #
-            # ⚠️⚠️ `profiles-local` is skipped for a DIFFERENT and sharper reason
-            # (#1316 follow-up): it is the REAL local layer of whoever is running
-            # the suite. Copying it in makes these tests inherit that machine's
-            # promoted models — so they pass on a clean checkout and fail on any
-            # rig that has ever run `promote.py --layer local`, which is the very
-            # feature under test. promote.py creates the layer it needs; the real
-            # one must never be visible.
-            ignore=shutil.ignore_patterns("__pycache__", "cache", "profiles-local"),
-        )
+    # Only what git lists (tracked + untracked-not-ignored): not the gitignored engine data and state
+    # a rig keeps under models/, which copytree copied once per case (#1983; lib_fixture_tree.py).
+    # Never copied either, whatever git lists:
+    # #1142: `models/` accumulates ROOT-OWNED torch_compile caches written
+    # by containers, and copytree dies on them with Permission denied —
+    # taking every test in this file down on any rig that has served a
+    # model. They are pure build artifact (1 tracked file under those
+    # paths), so skip them.
+    #
+    # ⚠️⚠️ `profiles-local` is skipped for a DIFFERENT and sharper reason
+    # (#1316 follow-up): it is the REAL local layer of whoever is running
+    # the suite. Copying it in makes these tests inherit that machine's
+    # promoted models — so they pass on a clean checkout and fail on any
+    # rig that has ever run `promote.py --layer local`, which is the very
+    # feature under test. promote.py creates the layer it needs; the real
+    # one must never be visible.
+    copy_trees(REPO, tmp_path, _COPY_TREES)
     return tmp_path
 
 
