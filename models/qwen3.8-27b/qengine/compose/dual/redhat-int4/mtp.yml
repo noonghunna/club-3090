@@ -3,8 +3,8 @@
 #   Model:     Qwen3.8-27B — RedHatAI INT4 (compressed-tensors W4A16, group 128, symmetric) with
 #              its MTP head, plus QEngine's fine-tuned MTP head and draft vocabulary (its release
 #              assets, unchanged since v1.0; the server downloads them when they're missing)
-#   Engine:    QEngine 1.3.5.6 (bpx03; upstream's stable release): its own
-#              C++/CUDA engine and server, the author's own image ghcr.io/bpx03/qengine (source 0330e7e4, the
+#   Engine:    QEngine 1.3.5.7 (bpx03; upstream's stable release): its own
+#              C++/CUDA engine and server, the author's own image ghcr.io/bpx03/qengine (source 5028c500, the
 #              :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (tensor parallel 2; GPU-to-GPU P2P when the driver grants it)
 #   Drafter:   MTP, up to 7 drafts a step (adaptive; SPEC_N sets the most, 0 turns MTP off) + lookup
@@ -24,7 +24,7 @@
 #              off / on); bpx03's, QEngine's author (#1979: 1.3.5.5, two 3090s at stock power, our scripts
 #              at 3e395893), ran verify-full, verify-stress 8/8 with the ladder filled to 240,664 tokens,
 #              both soaks (0 silent, 0 MiB growth) and the 8-pack (110 / 131 of 150). Here it has bench
-#              and verify-full. 1.3.1 to 1.3.5.6 were boot-tested. From 1.3.4.3
+#              and verify-full. 1.3.1 to 1.3.5.7 were boot-tested. From 1.3.4.3
 #              our THINKING_BUDGET_* map (4096 / 16384 / 32768 by effort, as on the vLLM and SGLang
 #              slugs) reaches QEngine's own per-effort QE_THINKING_BUDGET; a request's own budget wins.
 #              The default effort is low, as on the other Qwen3.8 slugs, through QEngine's
@@ -147,18 +147,27 @@
 #   QE_SNAPSHOTS      the store of recurrent-state snapshots a new turn resumes from (from 1.3.5.6: 4 per
 #                     sequence slot, at least 32, so 128 at our 32 slots, ~80 MB each; it was 32 for every slot
 #                     count). The first 32 are pinned at start, the rest as the store fills while the host has
-#                     room; the host-RAM plan counts them all. 32 = the old size, for a host short of RAM
+#                     room; from 1.3.5.7 the host-RAM plan counts only those 32 (1.3.5.6 counted them all).
+#                     32 = the old size, for a host short of RAM
+#   QE_LOAD_DROP      the model files' pages leave the page cache during the load, a layer once both cards
+#                     have read it (1.3.5.7): automatic on the 27B, on only when MemAvailable is short of the
+#                     files plus the archive and pinned prompts; 1 forces it on, 0 off. The start-up line
+#                     `load: model file pages ...` says which
+#   QE_LSA            auto: --lsa, sparse attention for long prompts (1.3.5.7; opt-in, lossy, one long
+#                     conversation at a time; upstream docs/advanced.md). The first start downloads the
+#                     authors' 6.3 MB index map, checks its sha256 and caches it in ~/.cache/qengine/lsa (the
+#                     engine cache); offline, or QE_FETCH_ASSETS=0 with none cached, it serves full attention
+#                     and logs `LSA: off: ...`. A path: that map file. Unset = off
 #   QE_EXTRA_ARGS     more server/app.py flags (--max-ctx, --served-name, ...), after ours. From 1.3.5,
 #                     --max-ctx 512K or 1M turns on YaRN for every request of that server (opt-in; upstream
-#                     found needles at 524K and 1.04M on three cards), and --lsa MAP sparse attention for
-#                     long prompts (a map you fetch and convert yourself; upstream docs/advanced.md)
+#                     found needles at 524K and 1.04M on three cards), and --lsa (QE_LSA above)
 # `switch.sh --set` saves only our knobs above for this slug; it refuses QEngine's own names, because
 # they aren't catalogued launch settings. Set those for one launch, or for every QEngine slug:
 #   QE_MAX_SEQS=16 bash scripts/switch.sh --force qengine/qwen38-27b-dual
 #   bash scripts/settings.sh set QE_KV_ARCHIVE_GB=8
 services:
   qengine-qwen38-27b-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:126929905654fd80f7245794b656fcaacedd56a081772f2db752aaec6ecdd4da}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:2d790174baee2eb89d8afa5b6eb0ab68eb3a05bebf73e627e92e7686a889e124}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-27b-dual}"
     user: "0:${DOCKER_GID:-1000}"
@@ -229,6 +238,8 @@ services:
       - QE_PAUSE_TIMEOUT_S
       - QE_GRAPH_RESERVE_MB
       - QE_SNAPSHOTS
+      - QE_LOAD_DROP
+      - QE_LSA
       - QE_EXTRA_ARGS
       # our launch knobs, mapped onto QEngine's flags by the entrypoint below
       - ENABLE_THINKING

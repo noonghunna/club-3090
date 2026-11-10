@@ -4,8 +4,8 @@
 #              QEngine 1.3.4.1 and later (routed experts INT4 bit-exact; DeltaNet projections INT8; shared
 #              expert INT4 GPTQ; attention and lm_head INT8 at load), the INT8 n-gram table, its INT4 MTP
 #              head (129 GB)
-#   Engine:    QEngine 1.3.5.6 (bpx03; upstream's stable release): its second
-#              engine, libqflash.so, in the author's own image ghcr.io/bpx03/qengine (source 0330e7e4, the
+#   Engine:    QEngine 1.3.5.7 (bpx03; upstream's stable release): its second
+#              engine, libqflash.so, in the author's own image ghcr.io/bpx03/qengine (source 5028c500, the
 #              :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (experts split evenly over the two cards; GPU-to-GPU P2P when the
 #              driver grants it)
@@ -214,6 +214,11 @@
 #   QE_HOST_RESERVE_GB   host RAM the start-up plan leaves to the system (max(8, 8% of RAM), 1.3.4)
 #   QE_RAM_WAIT_S        seconds a start waits for host RAM when MemAvailable is short of its plan (20,
 #                        from 1.3.5; 0 = plan at once)
+#   QE_LOAD_DROP         1.3.5.7: during the load, each layer's file pages leave the page cache once both
+#                        cards have read it, so the load doesn't make the kernel reclaim hard next to the
+#                        memory it pins (on by default; the n-gram table keeps its pages). 0 goes back to
+#                        paging them out at the end of the load, as before 1.3.5.7; either way a restart
+#                        reads them from disk (only QEngine's FLASH_WEIGHTS_COLD=0, not forwarded, keeps them)
 #   QE_DECODE_COMM       the decode exchanges' path (1.3.5): auto (both timed on real decode steps at the end
 #                        of start-up, the faster kept, cached per hardware and settings) | remeasure | p2p |
 #                        host; the `[comm] decode collectives` log line says which. Prefill keeps FLASH_COMM's.
@@ -259,7 +264,7 @@
 #   bash scripts/settings.sh set FLASH_MAX_SEQS=4      # one user at a time: faster still (above)
 services:
   qengine-qwen38-flash-next-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:126929905654fd80f7245794b656fcaacedd56a081772f2db752aaec6ecdd4da}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:2d790174baee2eb89d8afa5b6eb0ab68eb3a05bebf73e627e92e7686a889e124}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-flash-next-dual}"
     user: "0:${DOCKER_GID:-1000}"
@@ -330,6 +335,7 @@ services:
       - QE_EMPTY_RETRY
       - QE_HOST_RESERVE_GB
       - QE_RAM_WAIT_S
+      - QE_LOAD_DROP
       - QE_DECODE_COMM
       - QE_COMM_CACHE
       - QE_COMM_CHECK
