@@ -13,7 +13,8 @@
 #   KV:        fp8_e4m3 (QEngine's only K / V format, one shared pool per GPU)
 #   Vision:    yes (VISION=0 turns it off). The encoder and PyTorch's CUDA context sit on the last
 #              card, and tensor parallel sizes the KV pool by the card with the least room: on two
-#              cards that cost 23% of the pool (2026-10-31, the dual slug). Not measured on four
+#              cards that cost 23% of the pool (2026-10-31, the dual slug); on four RTX 5080 16 GB,
+#              16.8% at 8 seats on 1.3.4.3 (#1953). Not measured at this slug's 32 slots
 #   Max ctx:   262144
 #   Genesis:   none
 #   Status:    🧪 Experimental — not booted here: the reference rig has two cards, so this slug is
@@ -35,8 +36,9 @@
 # different samplers: bench.sh sends no presence penalty). At this slug's 32 slots on those 16 GB
 # cards (#1999, 1.3.5.7, VISION=0, the shape run as a service of its own, not this compose):
 # 362.07 / 599.69 decode, verify-full, verify-stress and the soak passing, a KV pool of 790,528
-# tokens (3.0 windows) shared by the 32 slots. That run is why Requires-min-vram-gb is 16; with
-# vision on, the encoder takes pool from the last card, not measured there. BENCHMARKS.md,
+# tokens (3.0 windows) shared by the 32 slots. That run is why Requires-min-vram-gb is 16. It ran
+# with vision off, and this compose defaults to VISION=1: the encoder takes pool from the last card,
+# 16.8% of it at 8 seats on 1.3.4.3 (#1953), not measured at 32 slots. BENCHMARKS.md,
 # Qwen3.8-27B. Nothing here is measured on 3090s at four cards. The two-card slug's results and the
 # release history are in its compose and docs/engines/QENGINE.md.
 # ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
