@@ -224,6 +224,14 @@ On the 27B, the engine is faster with its two release assets (`token_rank.bin`, 
 
 The composes give the container only the two chosen cards (`device_ids`, so `launch.sh --gpus` picks them) and set `QE_GPUS=0,1`, the cards as the container numbers them. QEngine's own entrypoint overrides `CUDA_VISIBLE_DEVICES` with `QE_GPUS` (default `0,1,2`), so a forwarded mask would not reach it. The engine cache (`~/.cache/qengine`: the GEMM tune table, stats, logs and the one-engine-per-GPU locks) is mounted from the engine cache directory, so the GEMMs are tuned once per image.
 
+**On cards smaller than 24 GB.** Every QEngine compose declares `Requires-min-vram-gb: 24`, the card size its slot counts were set for: 32 on the 27B, 8 on the two-card Flash-Next and 16 on the three- and four-card ones. So `switch.sh --list` hides these slugs on smaller cards. A launch by name still works, and on two or more cards preflight only warns.
+
+QEngine itself starts on smaller cards, fitting fewer slots or a smaller context at start. Upstream measured:
+- the 27B on 3 × 8 GB and 2 × 12 GB;
+- Flash-Next on 3 × 8 GB, and on 2 × 8 GB at a 65K context.
+
+@Hazelhof ran both models on 4 × RTX 5080 16 GB ([#1966](https://github.com/noonghunna/club-3090/issues/1966)), with 8 slots on the 27B and 6 on Flash-Next. None of those runs used these composes' slot counts, so the minimum stays 24 until one does. On smaller cards, launch by name and lower `QE_MAX_SEQS` or `FLASH_MAX_SEQS`.
+
 ## Thinking and effort
 
 Our knobs reach QEngine through its server flags (in `QE_EXTRA_ARGS`) or its own variables:
