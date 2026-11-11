@@ -15,13 +15,17 @@
 #   Max ctx:   262144
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   Not gate-passing yet: quality unmeasured (no 8-pack), no bench row, one request at a time.
-#              Nothing measured on this rig yet — the host-RAM figure below is carried from the maya-s
-#              compose, not measured here. Upstream's own note says Maya-S24 measured faster than Maya-S v2
-#              on both card counts (its maya.py MODELS entry: "about 1.5 GB less that stays on the GPU, so
-#              24 GB cards hold more experts (decode about 14% faster there, 11% on 32 GB)"). GLM-5.3's
-#              template thinks by default; Maya's server closes
-#              the thinking block when a request sends enable_thinking false or reasoning_effort none.
+#   Caveats:   🐣 incubating like its maya-s/m/l siblings, one request at a time. Measured 2026-11-11 on
+#              this rig (91.9 GiB host, 260/240 W caps — NOT the reference rig's 224 GB / 370/420 W):
+#              bench 49.70 / 50.45 decode, 1,146 prefill @10K (BENCHMARKS.md, GLM-5.3-Flash / Project
+#              Maya); verify-stress ladder filled to 240,626 tok (91% of 262144); soak-continuous PASS
+#              (0 MiB growth); 8-pack thinking OFF 112/150 (75%) pass@1 — InstructFollow 67% is the weak
+#              pack — thinking ON 124/150 (83%). Upstream's own note says Maya-S24 measured faster than
+#              Maya-S v2 on both card counts (its maya.py MODELS entry: "about 1.5 GB less that stays on
+#              the GPU, so 24 GB cards hold more experts (decode about 14% faster there, 11% on 32 GB)");
+#              on this rig S24 and S v2 decode within ~2% of each other, so the S24 win did not show here.
+#              GLM-5.3's template thinks by default; Maya's server closes the thinking block when a
+#              request sends enable_thinking false or reasoning_effort none.
 #              Server defaults for requests that name none: effort max (as the other GLM-5.3-Flash slugs),
 #              temperature 1.0 / top_p 0.95, Maya's own 32K reasoning budget. The FIRST start SHA-256-checks
 #              the shards against Maya's own table and builds Maya's pack on the data volume (minutes,
@@ -36,15 +40,23 @@
 #              docs/MEMORY.md: "longer contexts barely change the numbers above"). What 262K costs is
 #              PREFILL time, not memory: the indexer picks 2,048 positions a token and copies the ones
 #              outside the 32K VRAM window over PCIe, and its work grows with the square of the prompt.
-#              Nothing here is measured at 262K on this rig.
+#              Measured here: the stress ladder filled to 240,626 tokens (91% of 262144) at 1,238-1,509
+#              prefill tok/s across depths, and prefill @90K bench ran at 1,347 tok/s.
 # CPU-Offload-Host-RAM-GB: 68
-#   ⤷ CARRIED from ../maya-s/base.yml (same expert quant, 1.8 GB smaller overall), NOT measured on
-#     this rig. Maya sizes its RAM tier from FREE memory at start, so a smaller host keeps fewer experts
-#     in RAM and reads the rest from the model files while it answers (slower). Registry `host_ram_gb`
-#     is the NOMINAL figure and must stay <= this. The 262144 context adds 1.6-3.1 GB of it (GLM-5.3-Flash
-#     keeps its context in RAM, 6-12 KB a token), which is inside the margin the carried figure already has.
+#   ⤷ MEASURED 2026-11-11 on this rig (91.9 GiB host): MemAvailable fell to 28 GiB at the post-run state
+#     (~63 GiB used, ~68 GB decimal) — the figure carried from ../maya-s/base.yml held. Maya sizes its
+#     RAM tier from FREE memory at start, so a smaller host keeps fewer experts in RAM and reads the rest
+#     from the model files while it answers (slower). Registry `host_ram_gb` is the NOMINAL figure and
+#     must stay <= this. The 262144 context adds 1.6-3.1 GB of it (GLM-5.3-Flash keeps its context in
+#     RAM, 6-12 KB a token), which is inside the margin the measured figure already has.
 #   Best for:  GLM-5.3-Flash on 24 GB cards with lots of host RAM, wanting Maya-S quality with more of the
-#              expert pool resident (S24 = Maya-S with Q4_K attention)
+#   Quality:   ToolCall-15 13/15 (87%) · InstructFollow-15 10/15 (67%) · StructOutput-15 13/15 (87%)
+#              · DataExtract-15 11/15 (73%) · ReasonMath-15 13/15 (87%) · BugFind-15 13/15 (87%)
+#              · HermesAgent-20 13/20 (65%) · CLI-40 26/40 (65%)
+#              (--full, thinking OFF, sampling=server, validity=valid,
+#               packs tc1.0.1·if2.0.0·so2.1.0·de1.2.0·rm1.1.0·bf1.0.1·hermes1.0.0·cli1.0.2, 2026-11-11;
+#               thinking ON: 124/150 (83%) pass@1 — tc 80% · if 100% · so 87% · de 73% · rm 100% ·
+#               bf 87% · hermes 55% · cli 85%)
 # ---------------------------------------------------------------------------
 # Project Maya (github.com/mw00/project-maya) is its own engine for this model: see docs/engines/STRATA_MAYA.md.
 # Siblings: ../../single/maya-s/base.yml (single), ../../multi4/maya-s/base.yml (multi4); the other quants
