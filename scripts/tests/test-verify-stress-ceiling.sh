@@ -184,7 +184,7 @@ assert_eq "get_n_ctx: QEngine Flash-Next's boot log (ready, context)" "131072" \
 assert_eq "get_n_ctx: a restarted QEngine container: the last boot's context" "65536" \
   "$(qe_ctx "$QE_IMG" '[qflash 46s] ready, context 262144\n[qflash 51s] ready, context 65536\n' qengine-qwen38-flash-next-dual)"
 assert_eq "get_n_ctx: the same words in a non-QEngine container's log are not read" "0" \
-  "$(qe_ctx "vllm/vllm-openai:v0.32.0" 'ready, context 131072\n' some-vllm)"
+  "$(qe_ctx "vllm/vllm-openai:v0.33.0" 'ready, context 131072\n' some-vllm)"
 assert_eq "get_n_ctx: CONTAINER=none reads no container log" "0" \
   "$(qe_ctx "$QE_IMG" '[qflash 46s] ready, context 262144\n' none)"
 rm -rf "$qe_dir"

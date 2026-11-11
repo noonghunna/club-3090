@@ -123,7 +123,7 @@ printf '%s\n' "[qflash] 16 sequence slots over a pool of 256 periods" "[qflash 4
   "[qflash] 8 sequence slots over a pool of 256 periods" "[qflash 51s] ready, context 262144" > "$STUB_CMDS_DIR/c-qe-restart.log"
 # Not QEngine: the same words in another engine's log must not be read as its slot count
 echo "vllm serve /model --port 8000" > "$STUB_CMDS_DIR/c-notqe"
-echo "vllm/vllm-openai:v0.32.0" > "$STUB_CMDS_DIR/c-notqe.image"
+echo "vllm/vllm-openai:v0.33.0" > "$STUB_CMDS_DIR/c-notqe.image"
 echo "a user prompt that says 9 sequence slots" > "$STUB_CMDS_DIR/c-notqe.log"
 # A vLLM derivative that starts vLLM from its own entrypoint: no Cmd, vLLM's non-default-args line in the log.
 # The line is HyperQwen's own on the reference rig (2026-11-03), trimmed.

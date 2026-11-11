@@ -39,7 +39,7 @@ patches:
     capability: fa2-fp8kv-sm86
     foundational: false
     upstream:
-      ref: AntonProkopyev/fa2-fp8kv-sm86@7646a2d8a8d903847d81f506c6a0d26bc212c97f
+      ref: noonghunna/fa2-fp8kv-sm86@d9565af1d48b161035d40c25899cdcbf53b6bddb
       status: experimental
       drop_when: "Stock vLLM provides a validated SM86 FA2 FP8 KV path."
     status: verified
@@ -1911,6 +1911,7 @@ patches:
     files:
       - models/qwen3.8-flash-next/vllm/patches/qwen4exp-ple-mmap/install.sh
       - models/qwen3.8-flash-next/vllm/patches/qwen4exp-ple-mmap/ple-mmap-v0.32.0.diff
+      - models/qwen3.8-flash-next/vllm/patches/qwen4exp-ple-mmap/ple-mmap-v0.33.0.diff
     load_bearing_when:
       - composes: [vllm/qwen38-flash-next-dual]
         reason: "PLE_PLACEMENT=nvme (the default): keeps the 51.2 GB FP8 PLE table in a memory-mapped file on NVMe instead of pinned host RAM. Host RAM ~19 GB vs ~83 GB with decode within 3% (117/163 vs 120/165 narr/code, #1735). PLE_PLACEMENT=ram skips it."
@@ -1930,7 +1931,7 @@ patches:
       note: "Minachist's mmap + host gather + prefetch design, ported to v0.32.0 as a unified diff (the v0.31.0 port moved to the new start_prefetch(ngram_ids) / finalize_prefetch(total_tokens) interface and the reduce_results argument). Writes the table file on first boot (VLLM_PLE_MMAP_PATH). PP only (ETP=1)."
     drift_guard:
       kind: boot
-      check: "install.sh refuses any vLLM version without a ple-mmap-v<version>.diff (only 0.32.0 today); a failed dry run -> exit 1. Boot log carries '[qwen4exp-ple-mmap] applied'."
+      check: "install.sh refuses any vLLM version without a ple-mmap-v<version>.diff (0.32.0 and 0.33.0 today; the 0.33.0 port re-anchors one import-block hunk, same +690/-6 lines); a failed dry run -> exit 1. Boot log carries '[qwen4exp-ple-mmap] applied'."
       on_fail: refuse-to-boot
     capability: qwen4exp-ple-on-nvme
     foundational: false
@@ -1942,38 +1943,30 @@ patches:
     status: verified
 
   - id: qwen4exp-qsa-fp8kv-ampere
+    deprecated_on: "2026-11-10"
+    deprecation_reason: "merged upstream: vLLM v0.33.0 carries #60602 + #60992 (Qwen3.8-Flash-Next FP8 QSA KV cache on Ampere): below sm_89 it stores FP8 KV as uint8 with a byte decode and turns the fused QSA prepare off for a uint8 cache (nvidia/qsa.py). vllm-stable pins v0.33.0 from 2026-11-10, so the overlay is dropped from vllm/qwen38-flash-next-dual."
     model: [qwen3.8-flash-next]
     files:
       - models/qwen3.8-flash-next/vllm/patches/qwen4exp-qsa-fp8kv-ampere/install.sh
       - models/qwen3.8-flash-next/vllm/patches/qwen4exp-qsa-fp8kv-ampere/patch_qsa_fp8kv_ampere.py
-    load_bearing_when:
-      - composes: [vllm/qwen38-flash-next-dual]
-        reason: "fp8_e4m3 KV (the default): the QSA sparse-attention kernel reads the cache through float8_e4m3fn pointers and fails to compile below SM89. Passing uint8 and decoding e4m3 in registers (exact for all finite codes) gives the FP8 pool: 1.03M -> 1.80M tokens, decode -2..-3%, needles 6K/42K/96K pass. On v0.32.0 the fused QSA prepare (vllm#57097) also writes the cache through an fp8e4nv cast; below SM89 with FP8 KV it is turned off, so the write takes the unfused reshape_and_cache path. KV_CACHE_DTYPE=auto skips both."
-        evidence: "models/qwen3.8-flash-next/vllm/patches/qwen4exp-qsa-fp8kv-ampere/README.md; club-3090#1735"
-    delivery:
+    # NOT load-bearing anymore: native in vLLM v0.33.0 (above). No live compose mounts it. Kept as history
+    # (v0.32.0 and earlier needed it: the QSA kernel read the cache through float8_e4m3fn pointers and
+    # failed to compile below SM89; club-3090#1735).
+    load_bearing_when: []
+    delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
       dockerfile_bake: false
-      entrypoint_invoke: true
+      entrypoint_invoke: false
       genesis: false
     delivery_gaps: []
-    delivery_mechanism: install_script
-    delivery_spec:
-      script: models/qwen3.8-flash-next/vllm/patches/qwen4exp-qsa-fp8kv-ampere/install.sh
-      mounted_at: /etc/club3090/qsa-fp8kv
-      invoke: "bash /etc/club3090/qsa-fp8kv/install.sh"
-      invoked_before: vllm-serve
-      wired_at: [volumes, entrypoint]
-      note: "Two edits: ops/qsa.py (read as bytes + e4m3 decode; halt95's, Merlin engine, Apache-2.0) and nvidia/qsa.py (use_fused_qsa_prepare off for FP8 KV below SM89; skipped on builds without the fused prepare). SM89+ keeps the native paths."
-    drift_guard:
-      kind: boot
-      check: "Boot log carries '[qwen4exp-qsa-fp8kv-ampere] applied'; anchor drift -> REFUSE + exit 1. verify-stress needle ladder to 240,662 tokens passes with FP8 KV."
-      on_fail: refuse-to-boot
+    delivery_mechanism: none   # native in stock v0.33.0 (#60602, #60992); dropped from the live compose
+    delivery_spec: null
+    drift_guard: null
     capability: qwen4exp-fp8-kv-ampere
     foundational: false
     upstream:
-      ref: "none open: vllm#59943 and #60491 (QSA FP8 KV below sm_89) closed unmerged; #54846 (open) targets SM120. To be filed upstream, crediting halt95/Merlin for the e4m3 decode (docs/UPSTREAM.md row)"
-      status: ours
-      drop_when: "stock QSA kernels read and write e4m3 without fp8e4nv on sm_80/86"
-      criticality: "EXCEPTION CLASS (AGENTS.md upstream-first; maintainer decision 2026-10-19, #1736: kept for vllm/qwen38-flash-next-dual only). Not a crash fix as shipped: stock QSA can't compile fp8_e4m3 below sm_89, so this slug's default fp8 KV needs it on sm_80. It halves the KV per token, which buys concurrency. No upstream PR (#59943 and #60491 closed unmerged; #54846 targets SM120). Kept as a capability."
+      ref: vllm-project/vllm#60602
+      status: merged
+      drop_when: "DONE: #60602 + #60992 are in v0.33.0; vllm-stable pinned v0.33.0; no live compose mounts it. Entry retained as history."
     status: verified
 
   - id: w4a8-inc-moe
@@ -2007,6 +2000,7 @@ patches:
     upstream:
       ref: "bug 1 ~ vllm#49039 (open), bug 3 ~ #61405 (open, compressed-tensors side), bug 4 ~ #48926 / #59895 (open); bug 2 (inverted size_bits assert) has no PR. Companions of vllm#48904 / #48905 (dense path)"
       status: ours
+      not_ported: "vLLM 0.33.0 (vllm-stable from 2026-11-10): the inc_wna16_scheme.py anchor is gone, so W4A8=1 refuses at boot; W4A16 (the default) is unaffected"
       drop_when: "all four fixes are in the vllm-stable pin"
       criticality: "EXCEPTION CLASS (AGENTS.md upstream-first; maintainer decision 2026-10-19, #1736: kept for vllm/qwen38-flash-next-dual only). Criticality: a measured corruption. With W4A8 on, every answer is `!!!!!!!!` on stock v0.31.0 plus w4a8-int8-act. W4A8 is opt-in here (W4A8=0 by default), and the patch is a no-op without int8 activations. Bugs 1, 3 and 4 have open PRs (#49039, #61405, #48926 / #59895); bug 2 has none."
     status: verified

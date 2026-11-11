@@ -157,7 +157,7 @@ llama_compose() {   # <path under models/> <model file> [drafter file]
   entry llamacpp/fx-linkfile      linkfile "$(llama_compose linkfile/base.yml fx-lf/fx-lf.gguf)"
   entry llamacpp/fx-up            up       "$(llama_compose up/base.yml fx-up/outside-up/victim.gguf)"
   mkdir -p "$R/models/fx/vllm/compose/single/awq"
-  printf 'services:\n  fx:\n    image: vllm/vllm-openai:v0.32.0\n    command: >\n      --model /root/.cache/huggingface/fx-awq\n' \
+  printf 'services:\n  fx:\n    image: vllm/vllm-openai:v0.33.0\n    command: >\n      --model /root/.cache/huggingface/fx-awq\n' \
     > "$R/models/fx/vllm/compose/single/awq/base.yml"
   entry vllm/fx-awq               awq      models/fx/vllm/compose/single/awq/base.yml
   echo

@@ -1,5 +1,10 @@
 # w4a8-inc-moe
 
+> ⚠️ **Not ported to vLLM 0.33.0** (the `vllm-stable` pin from 2026-11-10). 0.33 rewrote
+> `inc_wna16_scheme.py` (318 → 265 lines) and the `if use_marlin:` block this patch anchors on is gone, so
+> with `W4A8=1` the installer refuses and the boot stops. The default, W4A16, never runs it. Porting means
+> re-deriving the four fixes below against 0.33's MoE path and re-checking them end to end on 64 GB cards.
+
 Makes `VLLM_MARLIN_INPUT_DTYPE=int8` (W4A8) work for Marlin MoE experts. Companion to
 `qwen3.6-27b/vllm/patches/w4a8-int8-act`, which fixes the dense Marlin linears; run it
 after that one. No-op without int8 activations.

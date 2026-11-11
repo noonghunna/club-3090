@@ -32,6 +32,9 @@ fails = 0
 class FakeServing:
     chat_template = None
     chat_template_content_format = "auto"
+    # vLLM 0.33 reads the server's --reasoning-effort-map through online_renderer (#61094);
+    # unset, it is {}, as here. 0.32 never reads it.
+    online_renderer = type("FakeRenderer", (), {"reasoning_effort_map": {}})()
 
     def __init__(self, defaults):
         self.default_chat_template_kwargs = defaults
