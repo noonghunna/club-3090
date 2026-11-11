@@ -20,21 +20,21 @@ install:
   # TabbyAPI's OWN image since 2026-10-30: theroyallab's CI
   # (.github/workflows/docker-image.yml) builds docker/Dockerfile.cu13 on every push to
   # main and tags it ghcr.io/theroyallab/tabbyapi:cu13. This is the :cu13 OCI index
-  # digest built from b1c22539 (2026-10-30, the image's org.opencontainers.image.revision
-  # label): torch 2.11.0+cu130 and exllamav3 1.6.5+cu132.torch2.11.0. It pulls without
+  # digest built from ea66a3fe (2026-11-09, the image's org.opencontainers.image.revision
+  # label): torch 2.11.0+cu130 and exllamav3 1.6.6+cu132.torch2.11.0. It pulls without
   # credentials. Their cu12 tags (:latest) pin torch+cu128 and were NOT validated here.
   # Until then we built ghcr.io/noonghunna/tabbyapi-club3090 ourselves from the same
   # Dockerfile.cu13, from a `git archive` context (upstream's .dockerignore misses `.venv`
   # and `config-*.yml`, so a working-tree build bakes them in).
   # The pin's record: pin-current is what spec pins now; pin-earlier lists earlier pins,
   # newest first (the first is the rollback).
-  # pin-current: :cu13 · tabbyAPI b1c22539 (2026-10-30) · exllamav3 1.6.5 · torch 2.11.0+cu130 · pinned 2026-10-30 · booted exllamav3/qwen38-flash-next-dual-exl3-305-cpumoe (verify-full; its 2x24 GB split re-calibrated 144 → 120)
-  # pin-earlier: ours, ghcr.io/noonghunna/tabbyapi-club3090:exl3-1.5.0-cu13 `87490d21…` (tabbyAPI 53da7919, exllamav3 1.5.0, built 2026-09-17)
+  # pin-current: :cu13 · tabbyAPI ea66a3fe (2026-11-09) · exllamav3 1.6.6 · torch 2.11.0+cu130 · pinned 2026-11-10 · NOT booted here: neither exllamav3 slug's EXL3 weights are on the reference rig (pin bumps download no weights)
+  # pin-earlier: :cu13 `40635baf…` (tabbyAPI b1c22539, 2026-10-30, exllamav3 1.6.5, pinned 2026-10-30; booted exllamav3/qwen38-flash-next-dual-exl3-305-cpumoe, verify-full, its 2x24 GB split re-calibrated 144 → 120); ours, ghcr.io/noonghunna/tabbyapi-club3090:exl3-1.5.0-cu13 `87490d21…` (tabbyAPI 53da7919, exllamav3 1.5.0, built 2026-09-17)
   #
   # ⚠️ NO PATCHES ARE VENDORED. This engine runs stock upstream — it is the only
   # engine on this stack serving a frontier MoE with zero deltas. Consequently the
   # pin exists for trigger (2) reproducibility only, not to protect patch hooks.
-  spec: ghcr.io/theroyallab/tabbyapi@sha256:40635baf5a4117a706bc0da6252c74af888b2f11854e0863d4d8c2dfb763a1b7
+  spec: ghcr.io/theroyallab/tabbyapi@sha256:bce9f76f9ff36df82181d6e595052b5c391e744b33ef7795296efb9692821010
 
 # ---------------------------------------------------------------------------
 # WHY THIS ENGINE EXISTS ON THE STACK
