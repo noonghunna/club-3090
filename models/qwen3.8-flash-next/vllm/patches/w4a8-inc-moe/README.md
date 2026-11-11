@@ -1,9 +1,20 @@
 # w4a8-inc-moe
 
-> ⚠️ **Not ported to vLLM 0.33.0** (the `vllm-stable` pin from 2026-11-10). 0.33 rewrote
-> `inc_wna16_scheme.py` (318 → 265 lines) and the `if use_marlin:` block this patch anchors on is gone, so
-> with `W4A8=1` the installer refuses and the boot stops. The default, W4A16, never runs it. Porting means
-> re-deriving the four fixes below against 0.33's MoE path and re-checking them end to end on 64 GB cards.
+> **Ported to vLLM 0.33.0** (2026-11-11). 0.33 moved the INC GPTQ MoE builder out of `inc_wna16_scheme.py`
+> into `INCWNA16MoEScheme._build_gptq_method` in `inc_wna16_moe.py`, with the same logic one indent deeper.
+> The script patches that file when it exists and `inc_wna16_scheme.py` otherwise, so v0.32.0 still applies.
+> The other three target files are byte-identical between the two releases.
+>
+> **Checked on 0.33:** offline on the image, and again on v0.32.0:
+> - it applies after `w4a8-int8-act`;
+> - a second run is a no-op, and `verify` passes;
+> - the patched modules import;
+> - with the env unset, nothing is touched.
+>
+> A CPU check showed the 0.33 builder now hands the method `torch.int8`; unpatched, it gets `None`.
+>
+> **Not checked on 0.33:** a boot, the kernel-level test and GSM8K. The reference rig has no 64 GB cards
+> and no AutoRound MoE checkpoint. The figures below are v0.31.0's.
 
 Makes `VLLM_MARLIN_INPUT_DTYPE=int8` (W4A8) work for Marlin MoE experts. Companion to
 `qwen3.6-27b/vllm/patches/w4a8-int8-act`, which fixes the dense Marlin linears; run it
@@ -15,8 +26,8 @@ about 1.8 accepted tokens per step.
 
 **Bugs fixed** (details in `patch_w4a8_inc_moe.py`):
 
-1. INC MoE never gets the input dtype: `_resolve_gptq_moe` builds `AutoGPTQMoEMethod`
-   directly, so its experts are packed for 16-bit activations while `MarlinExperts`
+1. INC MoE never gets the input dtype: `_resolve_gptq_moe` (from 0.33,
+   `INCWNA16MoEScheme._build_gptq_method`) builds `AutoGPTQMoEMethod` directly, so its experts are packed for 16-bit activations while `MarlinExperts`
    reads the env and feeds int8.
 2. `AutoGPTQMoEMethod` asserts 8-bit weights under int8 activations. The check is
    inverted (the dense path requires 4-bit under the same message).
@@ -35,9 +46,10 @@ draft acceptance 3.52.
 **Is it worth it here?** Mixed. Prefill +6-9%; decode +15% on code, -3..5% on prose, and
 a c=8 GSM8K run took 280 s vs 257 s. Off by default in the CMP compose.
 
-**Upstream.** Not yet filed; add `docs/UPSTREAM.md` rows (four bugs) before filing.
+**Upstream.** `docs/UPSTREAM.md` has the row. The third-party PRs for bugs 1, 3 and 4 were closed
+unmerged on 2026-11-04, and bug 2 has none.
 
-**Re-anchoring.** Seven anchors across `fused_moe/oracle/int_wna16.py`,
-`quantization/inc/schemes/inc_wna16_scheme.py`, `quantization/auto_gptq.py` and
-`compressed_tensors_moe/compressed_tensors_moe_wna16.py`. All are checked before any file
+**Re-anchoring.** Seven anchors across `fused_moe/oracle/int_wna16.py`, the INC file
+(`quantization/inc/schemes/inc_wna16_moe.py` from 0.33, `inc_wna16_scheme.py` before it),
+`quantization/auto_gptq.py` and `compressed_tensors_moe/compressed_tensors_moe_wna16.py`. All are checked before any file
 is written; missing or not unique -> the installer exits 1.
