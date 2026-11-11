@@ -14,7 +14,8 @@
 #              four full-attention KV heads by position over three cards with P2P)
 #   Vision:    yes (VISION=0 turns it off). The encoder and PyTorch's CUDA context sit on the last
 #              card, and tensor parallel sizes the KV pool by the card with the least room: on two
-#              cards that cost 23% of the pool (2026-10-31, the dual slug). Not measured on three
+#              cards that cost 23% of the pool (2026-10-31, the dual slug); on three RTX 5080 16 GB at
+#              this slug's 32 slots, 25.4% (414,720 to 309,248 tokens, 1.18 windows; #1999)
 #   Max ctx:   262144
 #   Genesis:   none
 #   Status:    🧪 Experimental — not booted here: the reference rig has two cards, so this slug is
@@ -33,8 +34,10 @@
 # KV pool of about 1M tokens. On three RTX 5080 16 GB at this slug's 32 slots (#1999, 1.3.5.7,
 # VISION=0, the shape run as a service of its own, not this compose): 291.73 / 459.16 decode,
 # verify-full, verify-stress and the soak passing, a KV pool of 414,720 tokens (1.6 windows) shared
-# by the 32 slots. That run is why Requires-min-vram-gb is 16; with vision on, the encoder takes
-# pool from the last card, not measured there. Nothing here is measured on this compose. The
+# by the 32 slots. That run is why Requires-min-vram-gb is 16. It ran with vision off; at this
+# compose's default VISION=1 the same shape's pool was 309,248 tokens (1.18 windows, verify-full
+# vision 4/4, #1999): one 262K conversation fits, a second of that size doesn't, and VISION=0 gives
+# the quarter back. Nothing here is measured on this compose. The
 # two-card slug's results and the release history are in its compose and docs/engines/QENGINE.md.
 # ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
 # 32 sequence slots, as on the two-card slug (QEngine's own default is 16): each slot holds its
