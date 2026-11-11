@@ -11,8 +11,8 @@
 #              vllm-pr48375-mamba-drop-eagle-block (MTP x prefix-cache recurrent state)
 #              w4a8-int8-act + w4a8-inc-moe (W4A8=1 only; INT8-activation Marlin for
 #              AutoRound dense linears + MoE experts; off by default, see MEASURED 2).
-#              ⚠️ w4a8-inc-moe isn't ported to vLLM 0.33.0 (its anchor in inc_wna16_scheme.py is
-#              gone), so W4A8=1 stops the boot there; the default W4A16 path is unaffected
+#              w4a8-inc-moe ported to vLLM 0.33.0 on 2026-11-11 (its INC anchor moved to
+#              inc_wna16_moe.py): checked offline on the image only, W4A8=1 not booted on 0.33
 #              qwen38-reasoning-effort-template (Flash-Next's upstream template is
 #              byte-identical to Qwen3.8-27B's, md5 519239a4…, so the club patch applies)
 #              vllm-effort-budget + vllm-default-thinking-budget (reasoning budget by
@@ -43,7 +43,7 @@
 #              refuses any other, PLE_PLACEMENT=ram avoids it). ⚠️ Not booted on vLLM 0.33.0
 #              (the pin from 2026-11-10; no 64 GB cards here): each overlay was checked offline on
 #              the image (applies, a second run is a no-op; pp-ple-rank0 and ple-mmap re-anchored),
-#              and W4A8=1 isn't ported (above). The numbers below are v0.32.0's. No KV offload to RAM: it does not
+#              and W4A8=1 was checked offline only (above). The numbers below are v0.32.0's. No KV offload to RAM: it does not
 #              start under PP=2 (vllm#50653). Concurrent requests: vllm#61281 (prompt-boundary
 #              state freed mid-request) can make a follow-up miss its whole prompt in the
 #              prefix cache, and PREFIX_MATCH_UNIT=16 makes nearly every prompt end mid-block;

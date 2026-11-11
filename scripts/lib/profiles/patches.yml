@@ -1998,9 +1998,9 @@ patches:
     capability: w4a8-int8-activations-moe
     foundational: false
     upstream:
-      ref: "bug 1 ~ vllm#49039 (open), bug 3 ~ #61405 (open, compressed-tensors side), bug 4 ~ #48926 / #59895 (open); bug 2 (inverted size_bits assert) has no PR. Companions of vllm#48904 / #48905 (dense path)"
+      ref: "bug 1 ~ vllm#49039, bug 3 ~ #61405 (compressed-tensors side), bug 4 ~ #48926 / #59895: all four closed unmerged 2026-11-04 (checked 2026-11-11), so none of the fixes is in v0.33.0; bug 2 (inverted size_bits assert) has no PR. Companions of vllm#48904 / #48905 (dense path, issues still open)"
       status: ours
-      not_ported: "vLLM 0.33.0 (vllm-stable from 2026-11-10): the inc_wna16_scheme.py anchor is gone, so W4A8=1 refuses at boot; W4A16 (the default) is unaffected"
+      ported: "vLLM 0.33.0 (2026-11-11): 0.33 moved the INC GPTQ MoE builder into inc_wna16_moe.py (INCWNA16MoEScheme._build_gptq_method, one indent deeper); the script picks that file when it exists, else inc_wna16_scheme.py, so v0.32.0 still applies. The other three target files are byte-identical between 0.32.0 and 0.33.0. Checked offline on both images (applies after w4a8-int8-act, a second run is a no-op, verify passes, the patched modules import, no-op with the env unset) plus a CPU check that the 0.33 builder now hands the method torch.int8. Not booted and no kernel-level or GSM8K re-run on 0.33 (no 64 GB cards and no AutoRound MoE checkpoint here)"
       drop_when: "all four fixes are in the vllm-stable pin"
-      criticality: "EXCEPTION CLASS (AGENTS.md upstream-first; maintainer decision 2026-10-19, #1736: kept for vllm/qwen38-flash-next-dual only). Criticality: a measured corruption. With W4A8 on, every answer is `!!!!!!!!` on stock v0.31.0 plus w4a8-int8-act. W4A8 is opt-in here (W4A8=0 by default), and the patch is a no-op without int8 activations. Bugs 1, 3 and 4 have open PRs (#49039, #61405, #48926 / #59895); bug 2 has none."
+      criticality: "EXCEPTION CLASS (AGENTS.md upstream-first; maintainer decision 2026-10-19, #1736: kept for vllm/qwen38-flash-next-dual only). Criticality: a measured corruption. With W4A8 on, every answer is `!!!!!!!!` on stock v0.31.0 plus w4a8-int8-act. W4A8 is opt-in here (W4A8=0 by default), and the patch is a no-op without int8 activations. Bugs 1, 3 and 4 had PRs (#49039, #61405, #48926 / #59895), all closed unmerged 2026-11-04; bug 2 has none."
     status: verified

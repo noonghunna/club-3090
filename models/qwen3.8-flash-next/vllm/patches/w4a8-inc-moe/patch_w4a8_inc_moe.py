@@ -11,11 +11,13 @@ own bugs; on stock v0.31.0 an AutoRound MoE model such as Qwen3.8-Flash-Next out
 Fixed here, each found on 2x CMP 170HX (sm_80) and checked with a kernel-level test
 against a torch reference:
 
-1. INC never sets the MoE input dtype. inc/schemes/inc_wna16_scheme.py
-   `_resolve_gptq_moe` builds AutoGPTQMoEMethod directly, so its input_dtype stays None
-   and the experts are packed for 16-bit activations, while MarlinExperts reads the env
-   itself and feeds them int8. Fix: set input_dtype from get_marlin_input_dtype(), as
-   AutoGPTQConfig.get_quant_method does.
+1. INC never sets the MoE input dtype. The INC GPTQ MoE builder (vLLM <= 0.32:
+   `_resolve_gptq_moe` in inc/schemes/inc_wna16_scheme.py; from 0.33:
+   `INCWNA16MoEScheme._build_gptq_method` in inc/schemes/inc_wna16_moe.py) builds
+   AutoGPTQMoEMethod directly, so its input_dtype stays None and the experts are packed
+   for 16-bit activations, while MarlinExperts reads the env itself and feeds them int8.
+   Fix: set input_dtype from get_marlin_input_dtype(), as AutoGPTQConfig.get_quant_method
+   does.
 2. Inverted asserts. AutoGPTQMoEMethod (quantization/auto_gptq.py) requires
    `size_bits == 8` under int8 activations, with the message "W8A8-INT8 is not
    supported by marlin kernel". The dense path (utils/marlin_utils.py) requires uint4b8
@@ -35,7 +37,8 @@ against a torch reference:
 
 No effect without int8 activations. Every anchor must appear exactly once (scoped ones:
 the first match after a reference line); missing or not unique -> exit 1, and nothing is written
-unless every anchor matches. Stdlib only.
+unless every anchor matches. The INC file is picked by release: inc_wna16_moe.py when it exists
+(vLLM 0.33+), else inc_wna16_scheme.py, so one script serves the pin and its rollback. Stdlib only.
 """
 from __future__ import annotations
 
@@ -48,7 +51,10 @@ TAG = "[w4a8-inc-moe]"
 MARKER = "# [club3090 w4a8-inc-moe]"
 
 ORACLE = "model_executor/layers/fused_moe/oracle/int_wna16.py"
-INC = "model_executor/layers/quantization/inc/schemes/inc_wna16_scheme.py"
+# vLLM <= 0.32 builds the INC GPTQ MoE method in inc_wna16_scheme.py; 0.33 moved it into a class
+# in inc_wna16_moe.py (same logic, one indent deeper). targets() picks whichever exists.
+INC_V032 = "model_executor/layers/quantization/inc/schemes/inc_wna16_scheme.py"
+INC_V033 = "model_executor/layers/quantization/inc/schemes/inc_wna16_moe.py"
 GPTQ = "model_executor/layers/quantization/auto_gptq.py"
 CT = "model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_wna16.py"
 
@@ -101,7 +107,7 @@ EDITS: dict[str, list[tuple[str, str, str | None]]] = {
         ("\n\ndef _process_weights_marlin(\n", FOLD_HELPER, None),
         (FOLD_CALL_ANCHOR, FOLD_CALL, None),
     ],
-    INC: [
+    INC_V032: [
         ("    if use_marlin:\n"
          "        return AutoGPTQMoEMethod(\n",
          "    if use_marlin:\n"
@@ -122,6 +128,29 @@ EDITS: dict[str, list[tuple[str, str, str | None]]] = {
          "\n"
          "    moe_config = MoeWNA16Config.from_config(\n",
          "        _club_m = AutoGPTQMoEMethod(\n"),
+    ],
+    INC_V033: [
+        ("        if use_marlin:\n"
+         "            return AutoGPTQMoEMethod(\n",
+         "        if use_marlin:\n"
+         f"            {MARKER} thread the int8 activation dtype into the INC MoE method\n"
+         "            from vllm.model_executor.layers.quantization.utils.marlin_utils import (\n"
+         "                get_marlin_input_dtype as _club_gmid,\n"
+         "            )\n"
+         "            _club_m = AutoGPTQMoEMethod(\n",
+         None),
+        # the AWQ builder below ends the same way: scoped to the first match after the GPTQ one
+        ("                layer.moe_config,\n"
+         "            )\n"
+         "\n"
+         "        moe_config = MoeWNA16Config.from_config(\n",
+         "                layer.moe_config,\n"
+         "            )\n"
+         "            _club_m.input_dtype = _club_gmid()\n"
+         "            return _club_m\n"
+         "\n"
+         "        moe_config = MoeWNA16Config.from_config(\n",
+         "            _club_m = AutoGPTQMoEMethod(\n"),
     ],
     GPTQ: [
         ("            assert self.quant_config.quant_type.size_bits == 8, (\n"
@@ -164,6 +193,12 @@ EDITS: dict[str, list[tuple[str, str, str | None]]] = {
 }
 
 
+def targets(root: Path) -> list[str]:
+    """The files this release needs patched: the INC one depends on the vLLM version."""
+    inc = INC_V033 if (root / INC_V033).is_file() else INC_V032
+    return [ORACLE, inc, GPTQ, CT]
+
+
 def die(msg: str) -> None:
     print(f"{TAG} REFUSE: {msg}", file=sys.stderr)
     print(f"{TAG} Fix: re-anchor for this vLLM version "
@@ -194,7 +229,8 @@ def main(mode: str) -> None:
     if spec is None or not spec.origin:
         die("the vllm package is not importable")
     root = Path(spec.origin).resolve().parent
-    files = {rel: root / rel for rel in EDITS}
+    # marker checks cover only this release's targets: on 0.33 inc_wna16_scheme.py stays unmarked
+    files = {rel: root / rel for rel in targets(root)}
     for rel, p in files.items():
         if not p.is_file():
             die(f"{rel} not found")
