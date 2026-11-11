@@ -349,10 +349,23 @@ compatible_drafters:
 #                         size so each GPU has at least one KV head."
 #                         `return max(1, total_num_kv_heads // tensor_parallel_size)`
 # There is NO divisibility assertion on KV heads anywhere in config/model.py or
-# config/parallel.py. So the binding constraint is ATTENTION heads (24 here), not
-# KV heads (4).
+# config/parallel.py. So the binding constraint is not KV heads (4).
 #
-#   24 attn heads % TP:  1 ✅  2 ✅  4 ✅  8 ✅   |  3 ❌ 5 ❌ 6 ❌ 7 ❌
+# ⚠️ CORRECTED 2026-11-11 (re-read on the v0.33.0 image): this table used to read
+# `24 attn heads % TP: 1 2 4 8 ✅ | 3 5 6 7 ❌`, but 24 divides by 3 and by 6, so the
+# attention heads are not what rules out 3 and 6. The tensor-parallel linear layers
+# are: they split their output width with divide() (layers/linear.py:497 and :502 ->
+# distributed/utils.py:53, an assert), and two widths here do not divide by 3 or 6:
+#
+#                                         1   2   3   4   5   6   7   8
+#   24 attention heads                    ✅  ✅  ✅  ✅  ❌  ✅  ❌  ✅
+#   MLP width 17,408                      ✅  ✅  ❌  ✅  ❌  ❌  ❌  ✅
+#   linear-attention keys 16 x 128 = 2,048 ✅  ✅  ❌  ✅  ❌  ❌  ❌  ✅
+#
+# So valid_tp stays [1, 2, 4, 8] for vLLM and SGLang. Read from the source, not booted
+# at TP=3. QEngine is its own engine and runs this model on three cards (its tuned
+# setup): engines/qengine.yml's valid_tp_by_family lists 3 for qwen35-dense, and the
+# C2 compat check reads that list instead of this one for qengine slugs (#1990).
 #
 # TP=8 ADDED 2026-08-15 with vllm/qwen38-27b-multi8-max. ⚠️ VALID IS NOT THE SAME
 # AS GOOD: at TP=8, 4 KV heads < 8 ranks, so KV heads REPLICATE across rank pairs —

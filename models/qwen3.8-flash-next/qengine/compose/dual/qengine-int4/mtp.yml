@@ -200,9 +200,10 @@
 #   QE_HANG_S            no scheduler progress for this many seconds: stacks to the log, open requests
 #                        fail, exit 75 (180; 0 = off)
 #   FLASH_PAR            parallel mode (1.3.4): auto (tensor parallel on 2 equal cards) | tp | pp (a layer
-#                        pipeline: faster long uncached prompts, ~0.6x one-conversation decode on 3090s; no
-#                        vision). A slow link narrows the cost: 2x CMP 170HX on PCIe Gen2 x8 measured pp
-#                        prefill 2.0-2.4x and one-conversation decode ~0.89x of tp (discussion #1841)
+#                        pipeline: faster long uncached prompts, ~0.6x one-conversation decode on 3090s;
+#                        image input experimental upstream from 1.3.5.1). A slow link narrows the cost:
+#                        2x CMP 170HX on PCIe Gen2 x8 measured pp prefill 2.0-2.4x and one-conversation
+#                        decode ~0.89x of tp (discussion #1841)
 #   QE_THINKING_BUDGET   default thinking budget for requests that send none: a number (from 1.3.4; 0 =
 #                        off, the default) or a map per effort, low:N,medium:N,xhigh:N (from 1.3.4.3).
 #                        Unset here, the entrypoint sets the map from THINKING_BUDGET_*; at the budget the server closes </think> itself. A request
