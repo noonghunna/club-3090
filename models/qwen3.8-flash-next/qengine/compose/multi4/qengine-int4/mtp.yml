@@ -32,8 +32,15 @@
 #                The start-up line `[qflash] parallel mode: ...` says which.
 #              - 1.3.5.5 fixed a four-card fault found on that rig (a DeltaNet projection overwrote
 #                part of the next token's gate values, so long prompts lost details). Upstream checked
-#                the fix with four ranks on three cards, not on four real cards, and the community TP4
-#                rows in BENCHMARKS.md (1.3.4.3 and 1.3.5) predate it.
+#                the fix with four ranks on three cards; on 1.3.5.7 the same rig confirmed it on four
+#                real cards, the 262K ladder passing every rung at 3 seats (#1966, #2001) and at this
+#                slug's 16 slots (#1999).
+#              - On 16 GB cards (#1999: that rig, 1.3.5.7, VISION=0, this slug's shape run as a
+#                service of its own, not this compose) 16 slots boot at 262K with FLASH_PAR=auto
+#                picking tp; verify-full, verify-stress and the soak pass, 343.25 / 398.03 tok/s
+#                decode. The KV pool comes out at one 262K window shared by all 16 slots, so a
+#                conversation larger than what is left of it ends early; 24 GB cards leave more.
+#                That run is why Requires-min-vram-gb is 16.
 #              The two-card slug's findings and the release history are in its compose and
 #              docs/engines/QENGINE.md; its measurements don't carry over.
 #              16 sequence slots, QEngine's default. The two-card slug runs 8: there about half the
@@ -57,7 +64,7 @@
 #     the pinned system prompts (FLASH_PREFIX_GB, 8 GB) come on top as conversations arrive and give memory
 #     back when the host is short; QEngine plans all of it from MemTotal / MemAvailable at start.
 #     Upstream started at full speed (the table pinned) from about 85 GB free on three cards.
-# Requires-min-vram-gb: 24
+# Requires-min-vram-gb: 16
 # Requires-min-gpu-count: 4
 # Tensor-parallel: 4
 #

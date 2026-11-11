@@ -20,7 +20,7 @@
 #              community-validated by design
 #   Best for:  the widest KV pool and the most decode for the 27B, on four 3090s
 # ---------------------------------------------------------------------------
-# Requires-min-vram-gb: 24
+# Requires-min-vram-gb: 16
 # Requires-min-gpu-count: 4
 # Tensor-parallel: 4
 #
@@ -30,10 +30,15 @@
 # 16 GB (sm_120, PCIe Gen5 x8 behind one PCIe switch, P2P granted) in the contributor's own
 # containers (#1942, #1953, #1966). There, on 1.3.5: 386.0 / 610.2 tok/s decode, 7,740 / 7,203
 # prefill at 10K / 90K, a KV pool of 1,090,560 tokens, the verify-stress ladder to 240,664 tokens
-# and, at --max-ctx 1M, to 962,553; on 1.3.5.7, 366.4 / 578.0 decode (the two releases ran under
-# different samplers: bench.sh sends no presence penalty). BENCHMARKS.md, Qwen3.8-27B. Nothing here
-# is measured on 3090s at four cards. The two-card slug's results and the release history are in
-# its compose and docs/engines/QENGINE.md.
+# and, at --max-ctx 1M, to 962,553; on 1.3.5.7, 366.4 / 578.0 and 380.1 / 586.2 decode on two
+# nights, the second with verify, the ladder and the soak passing (#2001; the two releases ran under
+# different samplers: bench.sh sends no presence penalty). At this slug's 32 slots on those 16 GB
+# cards (#1999, 1.3.5.7, VISION=0, the shape run as a service of its own, not this compose):
+# 362.07 / 599.69 decode, verify-full, verify-stress and the soak passing, a KV pool of 790,528
+# tokens (3.0 windows) shared by the 32 slots. That run is why Requires-min-vram-gb is 16; with
+# vision on, the encoder takes pool from the last card, not measured there. BENCHMARKS.md,
+# Qwen3.8-27B. Nothing here is measured on 3090s at four cards. The two-card slug's results and the
+# release history are in its compose and docs/engines/QENGINE.md.
 # ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
 # 32 sequence slots, as on the two-card slug (QEngine's own default is 16).
 # From 1.3.4.3 our THINKING_BUDGET_* map (4096 / 16384 / 32768 by effort, as on
