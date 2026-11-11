@@ -474,6 +474,7 @@ while IFS='|' read -r slug reg_gb; do
     *qwen3.8-flash-next-ud-iq4xs-dual)  f="models/qwen3.8-flash-next/strata/compose/dual/unsloth-ud-iq4xs-v31/base.yml" ;;
     *qwen3.8-flash-next-ud-iq3xxs-dual) f="models/qwen3.8-flash-next/strata/compose/dual/unsloth-ud-iq3xxs/base.yml" ;;
     *glm53-flash-dual-maya-s) f="models/glm-5.3-flash/strata-maya/compose/dual/maya-s/base.yml" ;;
+    *glm53-flash-dual-maya-s24) f="models/glm-5.3-flash/strata-maya/compose/dual/maya-s24/base.yml" ;;
     *glm53-flash-single-maya-s) f="models/glm-5.3-flash/strata-maya/compose/single/maya-s/base.yml" ;;
     *glm53-flash-multi4-maya-s) f="models/glm-5.3-flash/strata-maya/compose/multi4/maya-s/base.yml" ;;
     *glm53-flash-dual-maya-m) f="models/glm-5.3-flash/strata-maya/compose/dual/maya-m/base.yml" ;;

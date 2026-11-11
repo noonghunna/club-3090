@@ -28,13 +28,14 @@
 # reasoning_effort / chat_template_kwargs win, and so do the Chat settings saved from Maya's web page
 # (maya.shared-settings.json next to the config).
 #
-# Its one argument is the quant (maya-s | maya-m | maya-l), fixed by the compose, never a setting, so
-# a saved value can't point a slug at another quant's pack. Each quant has its own folder on /data.
+# Its one argument is the quant (maya-s | maya-s24 | maya-m | maya-l), fixed by the compose, never a
+# setting, so a saved value can't point a slug at another quant's pack. Each quant has its own folder
+# on /data.
 # serve/server.py passes its environment on to the engine, which is how MAYA_PCIE_SHARE /
 # MAYA_CPU_LANE reach it.
 set -eu
 umask 0002                   # group-writable, so the launcher's user can clear /data
-TAG="${1:?the quant (maya-s, maya-m or maya-l) is this script's argument}"
+TAG="${1:?the quant (maya-s, maya-s24, maya-m or maya-l) is this script's argument}"
 here="$(dirname "$0")"
 
 /opt/maya/.venv/bin/python "$here/maya_prepare.py" --tag "$TAG" --context "${CONTEXT:-131072}" \

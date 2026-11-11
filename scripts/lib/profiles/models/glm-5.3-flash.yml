@@ -203,7 +203,7 @@ weights:
       - Maya-S-v2-IQ2_XXS/GLM-5.3-Flash-Maya-S-v2-IQ2_XXS-00002-of-00003.gguf
       - Maya-S-v2-IQ2_XXS/GLM-5.3-Flash-Maya-S-v2-IQ2_XXS-00003-of-00003.gguf
     verify_glob: "Maya-S-v2-IQ2_XXS/*.gguf"
-    manual_note: "🐣 Maya-S v2: IQ2_XXS gate/up experts (error-feedback rounding), IQ2_S/IQ3_XXS down projections, Q6_K attention. Project Maya's own quant (peasantsmith, made from Z.ai's FP8 release; the MTP draft block included), served by the strata-maya engine (Project Maya, a Strata fork for GLM-5.3-Flash), NOT by llamacpp-club3090. The launcher SHA-256-checks the shards against Maya's own table once, then builds Maya's pack on the data volume. Text only. MEASURED natively on v1.1.9 2026-10-15 (2× 3090): 46.91 / 47.92 decode, 1,059 prefill @10K; 1×: 27.13 / 25.92. Upstream's KL vs FP8 0.428 (its own harness). ⚠️ Maya-S24 (not catalogued) measured faster on both card counts: its Q4_K attention leaves more VRAM for experts."
+    manual_note: "🐣 Maya-S v2: IQ2_XXS gate/up experts (error-feedback rounding), IQ2_S/IQ3_XXS down projections, Q6_K attention. Project Maya's own quant (peasantsmith, made from Z.ai's FP8 release; the MTP draft block included), served by the strata-maya engine (Project Maya, a Strata fork for GLM-5.3-Flash), NOT by llamacpp-club3090. The launcher SHA-256-checks the shards against Maya's own table once, then builds Maya's pack on the data volume. Text only. MEASURED natively on v1.1.9 2026-10-15 (2× 3090): 46.91 / 47.92 decode, 1,059 prefill @10K; 1×: 27.13 / 25.92. Upstream's KL vs FP8 0.428 (its own harness). ⚠️ Maya-S24 (the sibling entry below) measured faster on both card counts: its Q4_K attention leaves more VRAM for experts."
   maya-m:
     path: glm-5.3-flash-maya-gguf/Maya-M
     # local_subdir is the BUCKET; `files:`/`verify_glob` carry the quant-folder prefix (the HF repo
@@ -239,6 +239,23 @@ weights:
       - Maya-L/GLM-5.3-Flash-Maya-L-IQ3_S-00004-of-00004.gguf
     verify_glob: "Maya-L/*.gguf"
     manual_note: "🐣 Maya-L: IQ3_S gate/up experts, IQ4_XS down projections (Q5_K in the most sensitive layers), Q6_K attention; upstream: KL 0.188 vs FP8, 99.2% of FP8's zero-shot accuracy (its own harness). Project Maya's own quant (peasantsmith, made from Z.ai's FP8 release; the MTP draft block included), served by the strata-maya engine (Project Maya, a Strata fork for GLM-5.3-Flash), NOT by llamacpp-club3090. The launcher SHA-256-checks the shards against Maya's own table once, then builds Maya's pack on the data volume. Text only. MEASURED natively on v1.1.9 2026-10-14 (2× 3090): 29.61 / 26.67 decode, 984 prefill @10K; 1×: 17.22 / 16.36. The largest Maya quant: the slowest here, as the fewest experts fit in VRAM."
+  maya-s24:
+    path: glm-5.3-flash-maya-gguf/Maya-S24
+    # local_subdir is the BUCKET; `files:`/`verify_glob` carry the quant-folder prefix (the HF repo
+    # keeps one folder per quant), same as the maya siblings above.
+    local_subdir: glm-5.3-flash-maya-gguf
+    size_gb: 94.7
+    format: gguf
+    status: experimental
+    hf_repo: peasantsmith/GLM-5.3-Flash-Maya-GGUF
+    revision: f16ee4ba50d8fd2bb726ea1862ca6ca14ba188da
+    shards: 3
+    files:
+      - Maya-S24/GLM-5.3-Flash-Maya-S24-IQ2_XXS_S-00001-of-00003.gguf
+      - Maya-S24/GLM-5.3-Flash-Maya-S24-IQ2_XXS_S-00002-of-00003.gguf
+      - Maya-S24/GLM-5.3-Flash-Maya-S24-IQ2_XXS_S-00003-of-00003.gguf
+    verify_glob: "Maya-S24/*.gguf"
+    manual_note: "🐣 Maya-S24: Maya-S v2's error-feedback-rounded IQ2_XXS gate/up experts with Q4_K attention and shared experts, so ~1.5 GB less stays on the GPU and more of the expert pool fits in VRAM (upstream maya.py's own note: decode about 14% faster on 24 GB cards, 11% on 32 GB). Project Maya's own quant (peasantsmith, made from Z.ai's FP8 release; the MTP draft block included), served by the strata-maya engine, NOT by llamacpp-club3090. The launcher SHA-256-checks the shards against Maya's own table once, then builds Maya's pack on the data volume. Text only. 94.7 GB in 3 shards, 1.8 GB smaller than Maya-S v2. The revision is the maya siblings' pin: the Maya-S24 folder's LFS OIDs are identical at f16ee4ba and on main, so the pin costs nothing. NOT measured on this rig yet."
   dflash2-q4km:
     path: glm-5.3-flash-gguf/dflash2
     # ⚠️ REPO-ROOT artifact (the Anbeeld repo has no subfolder), so it lands FLAT and
@@ -308,6 +325,7 @@ setup:
     q2k: devquasar-q2k
     q3km: devquasar-q3km
     maya-s: maya-s
+    maya-s24: maya-s24
     maya-m: maya-m
     maya-l: maya-l
   vision: mmproj-f16
