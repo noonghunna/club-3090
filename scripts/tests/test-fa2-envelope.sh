@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 # test-fa2-envelope.sh — fp8-KV FA2 composes must stay inside the kernel's envelope (#1358).
 #
-# WHY: the fa2-fp8kv-sm86 split-KV kernel refuses (fatally, killing the engine) any
-# batch whose longest query exceeds 2048 tokens. The plugin avoids that kernel for
-# prefill only when a step holds ONE request, so with fp8 KV and --max-num-seqs > 1
-# a prefill chunk above 2048 — vLLM's --long-prefill-token-threshold, or the whole
-# --max-num-batched-tokens budget when the threshold is 0 — crashes it. The multi*
-# composes shipped threshold 4096 / seqs 2, and dual-ultrafast's own concurrency
-# recipe (SPEC_N=0, raise MAX_NUM_SEQS) reaches the same state. envelope.sh caps the
-# chunk at 2048 in exactly that case.
+# WHY: the fa2-fp8kv-sm86 kernel refuses (fatally, killing the engine) a context past
+# max_k = 262144 tokens, so with fp8 KV a --max-model-len above it must refuse to
+# start. It also refuses a query chunk past max_q = 2048, and until 2026-11-11
+# envelope.sh capped the per-request prefill chunk at 2048 whenever fp8 KV ran with
+# --max-num-seqs > 1. The artifact's v0.1.0 (in the fork build the composes pin)
+# splits long causal prefill in a mixed batch itself, so that cap is GONE: measured on
+# 2x 3090 with MAX_NUM_SEQS=2 and threshold 4096 (36K-token prompts beside a decode,
+# DFlash2 off and on), while the pre-v0.1.0 artifact crashed on the same workload.
+# This guard now holds the opposite of what it used to: the chunk passes through.
 #
 # Legs: (1) the helper's decisions on synthetic argument lists; (2) every compose
 # that mounts the plugin calls it before `exec vllm serve`; (3) the DELIVERY PATH:
-# render each such compose with the risky overrides through `docker compose config`,
-# run the real argv through the helper, and assert the chunk that reaches vLLM is
-# <= 2048 — with a NEGATIVE CONTROL showing the same argv WITHOUT the helper is over.
+# render each such compose through `docker compose config` with fp8 KV and 2 seqs,
+# assert the real argv passes through unchanged (and that a >2048 chunk reaches
+# vLLM somewhere, so a cap creeping back in reds), then render it with
+# MAX_MODEL_LEN=300000 and assert the helper refuses, with a NEGATIVE CONTROL that the
+# override reaches argv.
 set -euo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
@@ -62,21 +65,24 @@ case_ok() { # <label> <expect-rc> <expect-chunk|same> args...
     [[ "$got" == "$want" ]] || fail "helper [$label]: chunk $got, want $want (${FA2_ARGS[*]})"
   fi
 }
-case_ok "fp8, 2 seqs, threshold 4096"       0 2048 --kv-cache-dtype fp8_e4m3 --max-num-seqs 2 --max-num-batched-tokens 8192 --long-prefill-token-threshold 4096
-case_ok "fp8, 2 seqs, threshold 0"          0 2048 --kv-cache-dtype fp8_e4m3 --max-num-seqs 2 --max-num-batched-tokens 8192 --long-prefill-token-threshold 0
-case_ok "fp8, 2 seqs, no threshold flag"    0 2048 --kv-cache-dtype fp8 --max-num-seqs 2 --max-num-batched-tokens 8192
-case_ok "fp8, seqs unset (vLLM default>1)"  0 2048 --kv-cache-dtype fp8_e4m3 --long-prefill-token-threshold 4096
-case_ok "fp8, --flag=value forms"           0 2048 --kv-cache-dtype=fp8_e4m3 --max-num-seqs=4 --long-prefill-token-threshold=4096
+# formerly capped to 2048; since the v0.1.0 artifact they pass through unchanged
+case_ok "fp8, 2 seqs, threshold 4096"       0 same --kv-cache-dtype fp8_e4m3 --max-num-seqs 2 --max-num-batched-tokens 8192 --long-prefill-token-threshold 4096
+case_ok "fp8, 2 seqs, threshold 0"          0 same --kv-cache-dtype fp8_e4m3 --max-num-seqs 2 --max-num-batched-tokens 8192 --long-prefill-token-threshold 0
+case_ok "fp8, 2 seqs, no threshold flag"    0 same --kv-cache-dtype fp8 --max-num-seqs 2 --max-num-batched-tokens 8192
+case_ok "fp8, seqs unset (vLLM default>1)"  0 same --kv-cache-dtype fp8_e4m3 --long-prefill-token-threshold 4096
+case_ok "fp8, --flag=value forms"           0 same --kv-cache-dtype=fp8_e4m3 --max-num-seqs=4 --long-prefill-token-threshold=4096
 case_ok "fp8, 1 seq (shipped dual)"         0 same --kv-cache-dtype fp8_e4m3 --max-num-seqs 1 --max-num-batched-tokens 8192 --long-prefill-token-threshold 4096
 case_ok "fp8, 2 seqs, budget 2048 (ultramax)" 0 same --kv-cache-dtype fp8_e4m3 --max-num-seqs 2 --max-num-batched-tokens 2048 --long-prefill-token-threshold 0
 case_ok "fp8, 2 seqs, budget under threshold" 0 same --kv-cache-dtype fp8_e4m3 --max-num-seqs 2 --max-num-batched-tokens 1024 --long-prefill-token-threshold 4096
 case_ok "bf16 (stock FlashAttention)"       0 same --kv-cache-dtype bfloat16 --max-num-seqs 2 --max-num-batched-tokens 8192 --long-prefill-token-threshold 4096
 case_ok "fp8, max-model-len past max_k"     1 -    --kv-cache-dtype fp8_e4m3 --max-num-seqs 1 --max-model-len 300000
+case_ok "fp8=, max-model-len= past max_k"   1 -    --kv-cache-dtype=fp8 --max-num-seqs 2 --max-model-len=262145
+case_ok "fp8, max-model-len at max_k"       0 same --kv-cache-dtype fp8_e4m3 --max-num-seqs 2 --max-model-len 262144
 case_ok "bf16, max-model-len past max_k"    0 same --kv-cache-dtype bfloat16 --max-model-len 300000
-# the threshold is REPLACED, not duplicated, and nothing else moves
+# nothing moves: arguments around the ones the helper reads keep their order
 fa2_envelope --model m --kv-cache-dtype fp8_e4m3 --max-num-seqs 2 --long-prefill-token-threshold 4096 --port 8000 2>/dev/null
-[[ "${FA2_ARGS[*]}" == "--model m --kv-cache-dtype fp8_e4m3 --max-num-seqs 2 --long-prefill-token-threshold 2048 --port 8000" ]] \
-  || fail "helper [replace in place]: ${FA2_ARGS[*]}"
+[[ "${FA2_ARGS[*]}" == "--model m --kv-cache-dtype fp8_e4m3 --max-num-seqs 2 --long-prefill-token-threshold 4096 --port 8000" ]] \
+  || fail "helper [pass-through]: ${FA2_ARGS[*]}"
 
 # --- 2. every plugin compose calls the helper before exec ----------------------
 composes=()
@@ -99,30 +105,40 @@ PY
 done
 
 # --- 3. delivery path + negative control ---------------------------------------
+render() { # <compose> [ENV=VALUE ...] -> the rendered command, one argument a line
+  local f="$1"; shift
+  env MODEL_DIR=/tmp KV_CACHE_DTYPE=fp8_e4m3 MAX_NUM_SEQS=2 SPEC_N=0 "$@" \
+    docker compose -f "$f" config --format json 2>/dev/null \
+    | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; print("\n".join(next(v["command"] for v in s.values() if v.get("command"))))'
+}
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-  over_raw=0
+  over_2048=0 long_reached=0 fp8_composes=0
   for f in "${composes[@]}"; do
     raw=()
-    while IFS= read -r a; do raw+=("$a"); done < <(
-      MODEL_DIR=/tmp KV_CACHE_DTYPE=fp8_e4m3 MAX_NUM_SEQS=2 SPEC_N=0 \
-        docker compose -f "$f" config --format json 2>/dev/null \
-        | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; print("\n".join(next(v["command"] for v in s.values() if v.get("command"))))')
+    while IFS= read -r a; do raw+=("$a"); done < <(render "$f")
     if [[ ${#raw[@]} -eq 0 ]]; then fail "$f: could not render its command"; continue; fi
     kv=""; for ((i=0; i<${#raw[@]}; i++)); do [[ "${raw[i]}" == --kv-cache-dtype ]] && kv="${raw[i+1]}"; done
-    before="$(chunk_of "${raw[@]}")"
     if ! fa2_envelope "${raw[@]}" 2>/dev/null; then fail "$f: helper refused the rendered argv"; continue; fi
+    [[ "${FA2_ARGS[*]}" == "${raw[*]}" ]] || fail "$f: the helper changed the rendered argv: ${FA2_ARGS[*]}"
     after="$(chunk_of "${FA2_ARGS[@]}")"
-    [[ "$before" == unbounded || "$before" -gt 2048 ]] && over_raw=$((over_raw+1))
+    [[ "$kv" == fp8* && ( "$after" == unbounded || "$after" -gt 2048 ) ]] && over_2048=$((over_2048+1))
+    # max_k through the delivery path: the same compose with a context past the kernel's
+    long=()
+    while IFS= read -r a; do long+=("$a"); done < <(render "$f" MAX_MODEL_LEN=300000)
+    for ((i=0; i<${#long[@]}; i++)); do [[ "${long[i]}" == --max-model-len && "${long[i+1]}" == 300000 ]] && long_reached=$((long_reached+1)); done
     if [[ "$kv" == fp8* ]]; then
-      seqs=""; for ((i=0; i<${#FA2_ARGS[@]}; i++)); do [[ "${FA2_ARGS[i]}" == --max-num-seqs ]] && seqs="${FA2_ARGS[i+1]}"; done
-      if [[ "$seqs" != 1 && ( "$after" == unbounded || "$after" -gt 2048 ) ]]; then
-        fail "$f: fp8 KV, max-num-seqs $seqs, chunk $after reaches vLLM (limit 2048)"
+      fp8_composes=$((fp8_composes+1))
+      if printf '%s\n' "${long[@]}" | command grep -qx 300000 && fa2_envelope "${long[@]}" 2>/dev/null; then
+        fail "$f: fp8 KV with --max-model-len 300000 starts (kernel max_k 262144)"
       fi
     fi
   done
-  # Negative control: without the helper the risky overrides DO exceed the envelope
-  # somewhere, or this leg proves nothing.
-  [[ $over_raw -gt 0 ]] || fail "negative control: no compose exceeds 2048 without the helper — the overrides no longer reach argv"
+  [[ $fp8_composes -gt 0 ]] || fail "no compose rendered with fp8 KV — the KV_CACHE_DTYPE override no longer reaches argv"
+  # The chunk cap is gone: somewhere a >2048 chunk must reach vLLM with fp8 + 2 seqs, or
+  # a cap crept back in (or the overrides stopped reaching argv).
+  [[ $over_2048 -gt 0 ]] || fail "no fp8 compose lets a >2048 prefill chunk through with MAX_NUM_SEQS=2 — is a chunk cap back?"
+  # Negative control for the max_k leg: the override must reach argv, or the refusal proves nothing.
+  [[ $long_reached -gt 0 ]] || fail "negative control: MAX_MODEL_LEN=300000 reached no compose's argv"
 else
   echo "NOTE: docker compose unavailable — the delivery-path leg did NOT run." >&2
 fi
@@ -131,4 +147,4 @@ if [[ $fails -gt 0 ]]; then
   echo "$fails fa2 envelope check(s) failed" >&2
   exit 1
 fi
-echo "PASS: fa2 envelope — helper cases, ${#composes[@]} composes wired, fp8 + MAX_NUM_SEQS=2 renders a <=2048 chunk through docker compose config"
+echo "PASS: fa2 envelope — helper cases, ${#composes[@]} composes wired, fp8 + MAX_NUM_SEQS=2 passes through unchanged and a context past max_k refuses, through docker compose config"

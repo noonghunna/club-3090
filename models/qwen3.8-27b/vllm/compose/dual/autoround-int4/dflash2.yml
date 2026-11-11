@@ -292,9 +292,9 @@ services:
         # FLASH_ATTN API, which is the backend this compose already selects.
         bash /etc/club3090/fa2/install.sh
         source /etc/club3090/fa2-runtime.env
-        # FA2 kernel envelope (#1358): with fp8 KV and more than one sequence, cap
-        # each request's prefill chunk at the kernel's max_q (2048); refuse a
-        # max-model-len past its max_k. A no-op for this file's shipped defaults.
+        # FA2 kernel envelope (#1358): with fp8 KV, refuse a max-model-len past the
+        # kernel's max_k (262144). Since the v0.1.0 artifact the plugin splits long
+        # prefill in mixed batches itself, so no prefill-chunk cap (envelope.sh).
         source /etc/club3090/fa2/envelope.sh
         fa2_envelope "$$@" || exit 1
         set -- "$${FA2_ARGS[@]}"
