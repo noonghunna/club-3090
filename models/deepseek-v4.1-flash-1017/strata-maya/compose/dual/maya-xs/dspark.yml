@@ -15,23 +15,32 @@
 #   Max ctx:   65536
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   Not gate-passing yet: no bench, no verify-stress or soak run, one request at a time.
+#   Caveats:   Not promoted yet: measured on one community rig (#1989), and its v1.1.56 run lost the engine
+#              twice (below). One request at a time. That rig has run bench, verify-full, verify-stress,
+#              soak-continuous (PASS) and the 8-pack on both legs (BENCHMARKS.md).
 #              This is the DeepSeek-V4.1-Flash quant for a ~92 GB host: Maya's manifest
 #              (tools/ds4/download_gguf.json, maya/quants/Maya-XS) says 121 GB of VRAM + RAM hold it, its drafter
 #              included, so on two 24 GB cards the CPU lane's share is ~75-80 GB — under this rig's 91.9 GiB, but
 #              not by much. Maya pins the CPU experts in RAM only when they fit with DS4_RAM_MARGIN_GB (Maya's 8)
 #              to spare (--mmap-experts auto); a host that falls short reads them in place from the files through
-#              the page cache instead, which is much slower at reading prompts (the UD-IQ3_S slug measured 7x on a
-#              near-miss host). ⚠️ This rig's 92 GB boot landed in that second mode: the engine read 85.0 GB free
-#              against the 74.1 GB it prices that choice with — its own line is "the most-routed 74.1 GB read
+#              the page cache instead. ⚠️ This rig's 92 GB boot landed in that second mode: the engine read 85.0 GB
+#              free against the 74.1 GB it prices that choice with — its own line is "the most-routed 74.1 GB read
 #              ahead", a read-ahead set, not the whole lane: the 10,427 experts on it together are the 74.5 GB the
 #              measured note below and the registry quote. It left every one of them in place in the files,
-#              nothing pinned. It served the 8-pack that way (its own log: ~40 tok/s decode, a cold 11,199-token
-#              prompt read at 697 tok/s). What the in-place mode costs here is unmeasured — there is no pinned
-#              boot of this quant to compare it against, and the 7x above came from another quant's logit-dump
-#              path. DS4_RAM_MARGIN_GB is the knob that decides which mode a host gets. Stop whatever else holds
-#              RAM before booting. The 161.3 GB Engram tables stay on the disk either way (read a few rows a
-#              token, ~0.3 MB a token) — a fast NVMe is part of the design.
+#              nothing pinned. DS4_RAM_MARGIN_GB is the knob that decides which mode a host gets.
+#              What the mode costs on this rig (#1989, one boot each, v1.1.56 / v1.1.57): in place, 45.6 /
+#              40.8 tok/s narrative decode, 54.7 code, 1,034 / 1,105 prefill at 10K; DS4_RAM_MARGIN_GB=0 pinned the
+#              whole CPU lane (10,416 experts, 74.7 GB, ~34 s at boot) and gave 52.0 / 60.4 decode but 907 prefill,
+#              with 8.1 GiB left to the host. So 0 is the faster interactive setting on a ~92 GB host that runs
+#              nothing else, at a prefill cost; the default stays Maya's 8 until the pinned arm has a second boot
+#              and a continuous soak. (The UD-IQ3_S slug's 7x slower prompt reads on a near-miss host came from
+#              another quant's logit-dump path; on this quant the in-place mode read prompts faster at 10K.)
+#              ⚠️ In place on a 92 GiB host, once (v1.1.56, a host 38.5 h up): the kernel's global OOM killer took
+#              maya-ds4 (77.1 GiB of it file-backed) and, 20 minutes later, 14 more processes, the restarted
+#              engine and the gateway among them. Not seen since on a fresh host boot, in place or pinned. The
+#              same run's other death was a segfault (-11) reading a 247-token prompt, with no OOM record near it.
+#              Stop whatever else holds RAM before booting. The 161.3 GB Engram tables stay on the disk either way
+#              (read a few rows a token, ~0.3 MB a token) — a fast NVMe is part of the design.
 #              The FIRST start SHA-256-checks the 7 files (278 GB of model and tables plus 4.25 GB of drafter) and
 #              builds Maya's pack on the data volume (an index, no weights copied); later starts skip both.
 #              Quality vs the sibling quants: Maya's card gives Maya-XS 87.5% the same top token as the original and
@@ -44,7 +53,7 @@
 #              Total 130/150 pass@1, 137/150 pass@3, 7 flaky, 1 runaway (cli-40 CLI-33, token_limit). v1.1.56
 #              image on its own boot through switch.sh, REASONING_EFFORT=low (the slug's default is high), the
 #              wrapper's budgets (4,096 an answer, 16,384 of thinking), the server's sampler (temperature 1.0,
-#              top_p 1.0), 1h33m. The thinking leg only — no thinking-off leg yet.
+#              top_p 1.0), 1h33m. The thinking leg only; #1989's rig has run both legs since (BENCHMARKS.md).
 #              Against the UD-IQ3_S slug's thinking leg (2026-11-03, effort HIGH, so not a controlled A/B), the
 #              totals are identical, 130/150 and 137/150, reached differently: this quant +2 on reasonmath, -2 on
 #              dataextract, -1 on hermesagent, +1 on cli-40. The 87.5%-top-token quant holds the 423.6 GB one on
