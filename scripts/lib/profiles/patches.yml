@@ -35,7 +35,7 @@ patches:
       invoked_before: vllm-serve
     drift_guard:
       kind: boot
-      check: "Installer verifies artifact identity, payload checksums, CUDA/PyTorch/Python ABI, and the FlashAttention metadata/layout interface before installing the prebuilt plugin. No vLLM source files are changed. envelope.sh (sourced before exec) keeps fp8-KV argv inside the kernel's max_q <= 2048 / max_k <= 262144 envelope: with more than one sequence it caps --long-prefill-token-threshold at 2048, and it refuses max-model-len > 262144 (#1358; guarded by test-fa2-envelope)."
+      check: "Installer verifies artifact identity, payload checksums, CUDA/PyTorch/Python ABI, and the FlashAttention metadata/layout interface before installing the prebuilt plugin. No vLLM source files are changed. envelope.sh (sourced before exec) refuses an fp8-KV max-model-len > 262144, the kernel's max_k (#1358; guarded by test-fa2-envelope). It no longer caps --long-prefill-token-threshold at 2048 (dropped 2026-11-11): the v0.1.0 artifact and our fork's build split long causal prefill in mixed batches into per-request calls within max_q themselves, measured at MAX_NUM_SEQS=2 on 2x 3090 with DFlash2 off and on, while the pre-v0.1.0 artifact crashed on the same workload."
     capability: fa2-fp8kv-sm86
     foundational: false
     upstream:
