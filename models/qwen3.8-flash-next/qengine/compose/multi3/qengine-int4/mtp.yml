@@ -32,6 +32,12 @@
 #              soak PASS. On a community box with three 3090s on an EPYC host (#1926, 1.3.4.3), decode
 #              was 41-46% faster with peer access off and prefill 11-16% slower; from 1.3.5,
 #              QE_DECODE_COMM=auto times both decode paths at start and keeps the faster.
+#              On 16 GB cards (#1999: four RTX 5080 16 GB, 1.3.5.7, VISION=0, this slug's shape run as
+#              a service of its own; speed and concurrency only) 16 slots boot at 262K with
+#              FLASH_PAR=auto picking tp: 186.19 / 183.76 tok/s decode, a KV pool of one window
+#              (262,656) shared by the 16 slots. Three 16 GB cards keep 36.6 GB of expert groups in
+#              host RAM, so with the n-gram table about 88 GB is pinned at start, above the estimate
+#              below, which is for 24 GB cards. That run is why Requires-min-vram-gb is 16.
 #              For mostly long uncached prompts (RAG, long documents, short answers), FLASH_PAR=pp
 #              prefills a 90K prompt in 9.9 s against 13.6 s on three cards with P2P, but decodes one
 #              conversation at about half the speed (132 against 244 tok/s) and turns lookup drafts
@@ -51,12 +57,13 @@
 # CPU-Offload-Host-RAM-GB: 75
 #   ⤷ ESTIMATE, not measured: the two-card slug's measured 94 GB at ready (1.3.4.2, vision on) less
 #     the host-resident expert groups that more cards hold in VRAM instead, about 31 GB on two cards
-#     against about 12 GB on three (upstream's host-memory table).
+#     against about 12 GB on three (upstream's host-memory table). On three 16 GB cards about 88 GB
+#     is pinned at start (#1999: 36.6 GB of expert groups plus the n-gram table).
 #   ⤷ The 51.8 GB INT8 n-gram table stays pinned either way. The archive (FLASH_KV_ARCHIVE_GB, 48 GB) and
 #     the pinned system prompts (FLASH_PREFIX_GB, 8 GB) come on top as conversations arrive and give memory
 #     back when the host is short; QEngine plans all of it from MemTotal / MemAvailable at start.
 #     Upstream started at full speed (the table pinned) from about 85 GB free on three cards.
-# Requires-min-vram-gb: 24
+# Requires-min-vram-gb: 16
 # Requires-min-gpu-count: 3
 # Tensor-parallel: 3
 #
