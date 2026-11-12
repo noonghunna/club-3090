@@ -51,6 +51,9 @@ ENGINE_PREFIXES = (
     "QE_",
 )
 ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
+                # Project Maya's maya-ds4 (DeepSeek-V4.1-Flash-1017) reads these three straight from its environment
+                # (the NVLink tensor-parallel recipe of the maya-s slug); named one by one, not as a MAYA_DS4_ prefix
+                "MAYA_DS4_TP_GGUF_UNEVEN", "MAYA_DS4_AR2_DECODE", "MAYA_DS4_Q8MV_TC",
                 "DEBIAN_FRONTEND", "PYTHONUNBUFFERED", "PYTHONUTF8",
                 # QEngine's Flash-Next engine (libqflash.so) reads these; named one by one,
                 # because a FLASH_ prefix would also excuse FLASH_ATTN on the vLLM composes

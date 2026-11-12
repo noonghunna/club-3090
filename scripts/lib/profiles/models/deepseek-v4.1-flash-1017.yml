@@ -19,7 +19,7 @@ moe_intermediate_size: 2304      # moe_intermediate_size
 vision_capable: false            # the model has a vision tower, but the GGUF leaves it out and our image never fetches it
 default_weight_variant: ista-iq2-xxs
 valid_tp: [2]                    # the registry's tp counts GPUs: the dual slug's layer split (--tp 1 on two GPUs) is 2
-compatible_drafters: [maya-dspark-xs2]
+compatible_drafters: [maya-dspark-xs2, maya-dspark-s]
 # kv-calc has no model for MLA + a sliding window + the DSA indexer + Engram: every slug sets kvcalc_key="SKIP",
 # the same call as deepseek4-moe and glm5next-moe.
 kv_calc_supported: false
@@ -95,6 +95,27 @@ weights:
       - Maya-XS/DeepSeek-V4.1-Flash-1017-Maya-XS-IQ1_S-00005-of-00005.gguf
     verify_glob: "Maya-XS/DeepSeek-V4.1-Flash-1017-Maya-XS-*.gguf"
     manual_note: "🐣 Project Maya's own smallest DeepSeek quant (peasantsmith): every routed expert IQ1_S with error-feedback rounding, dense weights Q8_0, the two Engram hash tables Q6_K (161.3 GB, read from the disk a few rows a token, never copied into RAM). v2, about 12% closer to the original than v1 and ~20% faster at writing: 116.8 GB of model in three shards + the 161.3 GB table pair Maya-XS shares with Maya-S = 278.1 GB. Maya's manifest (tools/ds4/download_gguf.json, maya/quants/Maya-XS) puts the VRAM + RAM that hold it at 121 GB, its drafter included, and its quality card gives 87.5% the same top token as the original, +8.7% next-token loss. Served by the strata-maya engine's maya-ds4: the hot experts in VRAM, as much of the rest as the host can pin in RAM, the remainder streamed from the SSD. Its own DSpark drafter is maya-dspark-xs2. Text only."
+  maya-s:
+    path: deepseek-v4.1-flash-1017-maya-gguf/Maya-S
+    # local_subdir is the BUCKET (see maya-xs above): the quant's folder Maya-S/ holds all six shards of its split - the
+    # four backbone shards and, as shards 5-6, the two Q6_K Engram tables. The compose mounts the folder at /gguf (the
+    # pack is given the four backbone shards with --shards) and the two table files one by one at /engram (--engram).
+    local_subdir: deepseek-v4.1-flash-1017-maya-gguf
+    size_gb: 339.5
+    format: gguf
+    status: incubating
+    hf_repo: peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF
+    revision: d1fc01009f21e26157acb6858c315d0365483b72
+    shards: 6
+    files:
+      - Maya-S/DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00001-of-00006.gguf
+      - Maya-S/DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00002-of-00006.gguf
+      - Maya-S/DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00003-of-00006.gguf
+      - Maya-S/DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00004-of-00006.gguf
+      - Maya-S/DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00005-of-00006.gguf
+      - Maya-S/DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00006-of-00006.gguf
+    verify_glob: "Maya-S/DeepSeek-V4.1-Flash-1017-Maya-S-*.gguf"
+    manual_note: "🐣 Project Maya's own larger DeepSeek quant (peasantsmith): routed experts IQ2_XXS (gate/up) + IQ3_XXS (down), attention / shared / embeddings / output Q8_0, and the two Engram hash tables Q6_K (shards 5-6, 161.3 GB, read from the disk a few rows a token, never copied into RAM). 178.2 GB of backbone in four shards + the 161.3 GB table pair = 339.5 GB. Maya's quality card gives 92.6% the same top token as the original, +3.2% next-token loss (Maya-XS: 87.5% / +8.7%). Served by the strata-maya engine's maya-ds4: the hot experts in VRAM, ~140 GB of the rest pinned in RAM on a host that has it, the remainder streamed from the SSD; it wants a ~190 GB host. Its own DSpark drafter is maya-dspark-s. Text only."
   maya-dspark-xs2:
     path: deepseek-v4.1-flash-1017-maya-gguf/dspark
     # local_subdir is the BUCKET: the repo keeps the drafters in its dspark/ folder, which --local-dir preserves, so
@@ -111,3 +132,17 @@ weights:
       - dspark/dspark-xs2.json
     verify_glob: "dspark/dspark-xs2.*"
     manual_note: "Maya-XS's DSpark drafter (peasantsmith, Project Maya's quant author): experts IQ2_XXS 3.50 GB, dense Q8_0 0.60 + BF16 0.14 GB, in Maya's drafter_pack.py format (a .bin and its .json tensor table), which Maya's pack reads with --drafter. It does not read unsloth's dspark GGUF. ISTA's GGUF carries no DSpark geometry, so the launcher writes DeepSeek-V4.1-Flash's own into the pack (docs/UPSTREAM.md)."
+  maya-dspark-s:
+    path: deepseek-v4.1-flash-1017-maya-gguf/dspark
+    local_subdir: deepseek-v4.1-flash-1017-maya-gguf
+    size_gb: 8.0
+    format: maya-dspark
+    status: incubating
+    hf_repo: peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF
+    revision: d1fc01009f21e26157acb6858c315d0365483b72
+    kind: draft
+    files:
+      - dspark/dspark.bin
+      - dspark/dspark.json
+    verify_glob: "dspark/dspark.*"
+    manual_note: "Maya-S's DSpark drafter (peasantsmith, Project Maya's quant author), 8.0 GB: a .bin and its .json tensor table in Maya's drafter_pack.py format, which Maya's pack reads with --drafter. Not interchangeable with maya-dspark-xs2, the smaller drafter of Maya-XS and the ISTA quant."

@@ -1,0 +1,156 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     DeepSeek-V4.1-Flash-1017 — Project Maya's Maya-S GGUF (4 backbone shards, 178.2 GB: routed experts
+#              IQ2_XXS gate/up + IQ3_XXS down, attention / shared / embeddings / output Q8_0) + the Q6_K Engram
+#              table pair that is shards 5-6 of the same split (161.3 GB) — 339.5 GB
+#              (peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF @d1fc0100)
+#   Engine:    Project Maya's maya-ds4 (DeepSeek's engine in Project Maya, a Strata fork) —
+#              ghcr.io/noonghunna/strata-maya-club3090, built by club-3090 at the release commit
+#              (models/glm-5.3-flash/strata-maya/image/)
+#   Topology:  Dual 3090, layer split by default (--tp 1 on two GPUs): each card holds its own layers' dense part and
+#              an expert pool of whole experts. No NCCL, no P2P needed. With an NVLink bridge MAYA_TP=2 is the faster
+#              setting — see "NVLink" below
+#   Drafter:   DSpark: peasantsmith's dspark (Maya-S's own drafter, 8.0 GB)
+#   KV:        fp16 latent cache (maya-ds4 has no other)
+#   Vision:    no (the image never fetches DeepSeek's vision tower: --vision off)
+#   Max ctx:   65536 (the slug default; 262144 booted and ran on the NVLink rig below with no measurable cost)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   Not promoted. Measured on one rig so far (NVLink-bridged 2x 3090 Ti, 325 W caps, 236 GB RAM,
+#              Threadripper PRO 9975WX); the numbers are in BENCHMARKS.md with their settings. The 8-pack ran once
+#              (below); verify-full, verify-stress and the soak have NOT been run on this slug. One request at a time.
+#              HOST RAM: this is the big DeepSeek quant. 161.3 GB of the 339.5 GB are the Engram tables, read from the
+#              disk a few rows a token and never copied into RAM; of the 178.2 GB + 8.0 GB drafter that remain, the
+#              two cards' expert pools hold ~2.3k experts each and the CPU lane's ~140 GB of experts is pinned in RAM.
+#              On the measured rig the engine's process held ~165 GB of 236 GB, ~45 GB left. A host below ~190 GB
+#              will make the engine read part of the CPU experts in place from the files (--mmap-experts auto);
+#              DS4_RAM_MARGIN_GB decides the mode. The Engram tables want a fast NVMe (a SN8100 here).
+#              The FIRST start SHA-256-checks the 8 files (339.5 GB of model and tables plus 8.0 GB of drafter) and
+#              builds Maya's pack on the data volume (an index, no weights copied); later starts skip both.
+#              Quality: Maya's card gives Maya-S 92.6% the same top token as the original and +3.2% next-token loss
+#              (Maya-XS: 87.5% / +8.7%). The 8-pack, one run per leg, is the Quality: lines below (119 / 150 pass@1
+#              thinking off, 131 / 150 on; the thinking-on leg is stamped CONTAMINATED, see there).
+#              Thinking: on by default (effort high, Maya's own for DeepSeek); a request's enable_thinking false or
+#              reasoning_effort none answers in DeepSeek's chat mode.
+#              Host needs NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only.
+#   NVLink:    With the bridge (nvidia-smi nvlink -s: 4 links x 14 GB/s; peer access measured 52.9 GB/s a direction),
+#              MAYA_TP=2 plus MAYA_DS4_TP_GGUF_UNEVEN=1 (the odd 15488 / 15616 expert split of this GGUF) and
+#              MAYA_DS4_AR2_DECODE=1 read prompts ~50% faster (2,070 vs 1,385 tok/s at 10K) and decode +9% narrative / +18% code on
+#              the club prompts than the layer split. Leave DS4_FLOW_TP off: it cut prefill to ~1,150 here.
+#              WITHOUT NVLink keep MAYA_TP=1: project-maya #888 measured tensor parallel 2-5x slower at prefill on
+#              PCIe. The slug default is therefore the layer split, which is also what the other DeepSeek slugs use:
+#                MAYA_TP=2 MAYA_DS4_TP_GGUF_UNEVEN=1 MAYA_DS4_AR2_DECODE=1 bash scripts/switch.sh --force \
+#                  strata-maya/deepseek41-flash-dual-maya-s
+# Measured (the NVLink rig, v1.1.57, bench.sh canonical protocol; see BENCHMARKS.md): layer split ~58-61 tok/s narrative
+#   and 72-80 tok/s code decode, 1,380-1,390 prefill at 10K, drafts ~82% accepted; MAYA_TP=2: 62-68 / 82-90 decode,
+#   ~2,070 prefill. On 16 DIFFERENT prompts (fresh text, which the canonical bench's repeated prompt flatters)
+#   decode is ~56-64 tok/s either way.
+#   Quality:   toolcall-15 13/15 (87%) · instructfollow-15 13/15 (87%) · structoutput-15 11/15 (73%) · dataextract-15 11/15 (73%) · reasonmath-15 11/15 (73%) · bugfind-15 15/15 (100%) · hermesagent-20 15/20 (75%) · cli-40 30/40 (75%) (--full, thinking OFF, sampling=server, validity=valid, packs tc1.0.1·if2.0.0·so2.0.0·de1.2.0·rm1.0.0·bf1.0.1·hm1.0.0·cli1.0.2, 2026-11-12)
+#   Quality:   toolcall-15 13/15 (87%) · instructfollow-15 15/15 (100%) · structoutput-15 12/15 (80%) · dataextract-15 13/15 (87%) · reasonmath-15 14/15 (93%) · bugfind-15 15/15 (100%) · hermesagent-20 16/20 (80%) · cli-40 33/40 (82%) (--full, thinking ON, sampling=server, validity=CONTAMINATED, packs tc1.0.1·if2.0.0·so2.0.0·de1.2.0·rm1.0.0·bf1.0.1·hm1.0.0·cli1.0.2, 2026-11-12)
+#     ⤷ Run on the NVLink rig's TP=2 settings at context 262144 and effort high (not on the slug's layer-split default),
+#       through a local harness compose, not switch.sh. 119 / 150 pass@1 and 134 pass@3 thinking off; 131 / 150 and 136 on,
+#       one run each. The thinking-on leg is CONTAMINATED only because toolcall-15 returned reasoning in 5 of 15 responses
+#       (the model chose not to think there); the other seven packs show reasoning in 12-15 of 15 (cli-40: 39 of 40).
+#       Two cli-40 scenarios hit the token limit on that leg. Sampler: the server's 1.0 / 1.0, not temp 0.
+# CPU-Offload-Host-RAM-GB: 190
+#   ⤷ ESTIMATE, not derived from a pack on a small host: measured 163-169 GB of process memory on a 236 GB rig
+#     (CPU-lane experts 140.4 GB pinned, drafter, pinned buffers, KV, prompt caches) with ~45 GB free afterwards.
+#     The Engram tables (161.3 GB) stay on disk. Treat 190 as the gate until a smaller host has booted it.
+# ===========================================================================
+# One folder of 4 shards at /gguf, the 2 Engram-only shards (5-6 of the split) as single-file mounts at /engram, the
+# drafter folder at /dspark. The Engram files are mounted one by one for the same reason as Maya-XS's: pack_gguf.py
+# stops at "the shards of more than one GGUF split" when handed a folder holding the model's and the tables' files, and
+# here shards 5-6 are named as shards of the model's split, so the pack gets the model's own with --shards and the
+# tables with --engram.
+#   bash scripts/switch.sh --force strata-maya/deepseek41-flash-dual-maya-s
+# The launcher (../../../launcher/) checks the files' SHA-256 once, builds Maya's pack on the data volume, writes
+# the config and starts Maya's server. By hand: SETUP_ONLY=1 docker compose -f dspark.yml run --rm strata-maya,
+# then up -d.
+services:
+  strata-maya:
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:5a33892afd8bb428301b7285dfcca275c2adffbcd57931017cc23cc94c4b57f8}
+    container_name: ${ESTATE_CONTAINER:-strata-maya-deepseek41-flash-dual-maya-s}
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
+    # (the entrypoint sets umask 0002)
+    user: "0:${DOCKER_GID:-1000}"
+    entrypoint: ["/bin/sh", "/opt/club3090/ds4-entrypoint.sh", "maya-s"]
+    ulimits:
+      memlock: -1            # Maya pins (locks) the experts it copies into RAM for the GPUs
+    stop_grace_period: 180s  # the engine writes its expert profile and state on exit
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8206}}:8080"
+    environment:
+      CONTEXT: "${CONTEXT:-65536}"
+      SETUP_ONLY: "${SETUP_ONLY:-0}"
+      REPACK: "${REPACK:-0}"
+      VERIFY: "${VERIFY:-1}"
+      MAYA_GPUS: "${MAYA_GPUS:-0,1}"
+      MAYA_TP: "${MAYA_TP:-1}"
+      # Maya's server defaults, written into maya-ds4.json at every boot by ds4_prepare.py
+      # (launcher/ds4_settings.py maps each); unset = effort high, sampling 1.0 / 1.0, the name deepseek-v4.1-flash,
+      # a CPU lane of half the CPUs (nproc / 2), the loop guard on (Maya's own)
+      REASONING_EFFORT:
+      ENABLE_THINKING:
+      THINKING_BUDGET:
+      TEMP:
+      TOP_P:
+      TOP_K:
+      MIN_P:
+      PRESENCE_PENALTY:
+      REPEAT_PENALTY:
+      SERVED_NAME:
+      LOOP_GUARD:
+      THREADS:
+      # Maya's model load/unload endpoints (/models/load, /models/unload, /models/sse; on by default from
+      # v1.1.47) and, from v1.1.50, its model API (/api/tags, /api/ps, /api/chat, ...). These composes set
+      # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
+      # switch are refused from outside the container. MAYA_MODEL_MANAGEMENT=0 turns all of them off
+      MAYA_MODEL_MANAGEMENT:
+      # maya-ds4's RAM headroom (from v1.1.51): the GiB its memory planning leaves to everything else when it
+      # sizes the expert copies, the warm-up and the prompt caches (0 to 4096). Unset = Maya's 8. On a host that
+      # is short of the ~190 GB this quant wants, this is the knob that decides whether the CPU experts get
+      # pinned or read in place
+      DS4_RAM_MARGIN_GB:
+      # maya-ds4's prompt reading on a layer split (MAYA_TP=1, from v1.1.53): DS4_FLOW_COPY_DMA=1 DMAs a
+      # streamed expert straight from its pinned RAM copy instead of copying it into staging first (the
+      # same bytes). Measured here (NVLink rig): no effect on either decode or prefill. Unset = off
+      DS4_FLOW_COPY_DMA:
+      # --- the NVLink recipe (MAYA_TP=2). Each is read by maya-ds4 straight from the environment; unset = off.
+      # MAYA_DS4_TP_GGUF_UNEVEN=1: split each expert unevenly between the cards the way this GGUF's blocks fall
+      #   (without it tensor parallel refuses this quant's tensor shapes)
+      MAYA_DS4_TP_GGUF_UNEVEN:
+      # MAYA_DS4_AR2_DECODE=1: the pipelined all-reduce (reads the partner card's rows directly) for decode steps
+      # too; the prompt-reading all-reduce already uses it under --tp 2. ~+5% decode on the NVLink rig
+      MAYA_DS4_AR2_DECODE:
+      # MAYA_DS4_Q8MV_TC=1: tensor-core Q8 mat-vec for the dense layers (project-maya #810). Included in the
+      # combined NVLink arm, whose +14% over the previous arm was not split by knob: a single-knob fresh-text arm
+      # read +3.8% and is inside the boot-to-boot noise (up to ~±9%)
+      MAYA_DS4_Q8MV_TC:
+      # the Engram tables are read from the disk a few rows a token. EG_RANDOM=1 (read each row on its own,
+      # not the zone around it) and 16 reader threads were what every arm of the measurement ran with; the row
+      # cache is held at 4096 MB (the engine's default is 256 MB; a 24576 MB arm gave no gain that survived the
+      # boot-to-boot noise, so more RAM for it is not worth it)
+      MAYA_DS4_EG_RANDOM: "${MAYA_DS4_EG_RANDOM:-1}"
+      DS4_ENGRAM_THREADS: "${DS4_ENGRAM_THREADS:-16}"
+      DS4_ENGRAM_CACHE_MB: "${DS4_ENGRAM_CACHE_MB:-4096}"
+      # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
+    volumes:
+      # the quant's own folder (Maya's repo layout: one folder a quant) and, beside it, the shared dspark/ folder the
+      # pack reads with --drafter. The folder holds all six shards; the pack gets the four backbone shards from here
+      - "${MODEL_DIR:-../../../../../../models-cache}/deepseek-v4.1-flash-1017-maya-gguf/Maya-S:/gguf:ro"
+      - "${MODEL_DIR:-../../../../../../models-cache}/deepseek-v4.1-flash-1017-maya-gguf/dspark:/dspark:ro"
+      # shards 5-6 of the split, the Q6_K Engram table pair, as a folder of their own (see above)
+      - "${MODEL_DIR:-../../../../../../models-cache}/deepseek-v4.1-flash-1017-maya-gguf/Maya-S/DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00005-of-00006.gguf:/engram/DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00005-of-00006.gguf:ro"
+      - "${MODEL_DIR:-../../../../../../models-cache}/deepseek-v4.1-flash-1017-maya-gguf/Maya-S/DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00006-of-00006.gguf:/engram/DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00006-of-00006.gguf:ro"
+      # one folder per quant (Maya's pack, the config, the engine's log); the launchers put it under
+      # ~/.local/share/club-3090, beside the other DeepSeek quants' folders
+      - "${STRATA_MAYA_DATA_DIR:-${CLUB3090_DATA_DIR:-../../..}/strata-maya-data}:/data"
+      - "../../../launcher:/opt/club3090:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0,1}}']
+              capabilities: [gpu]
