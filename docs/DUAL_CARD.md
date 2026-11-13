@@ -52,6 +52,7 @@ detected at boot, so you don't choose a compose for it.
 |  | `strata-maya/glm53-flash-dual-maya-l` | 🐣 incubating | 131072 | [dual/maya-l/base.yml](../models/glm-5.3-flash/strata-maya/compose/dual/maya-l/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 129 GB |
 |  | `strata-maya/glm53-flash-dual-maya-m` | 🐣 incubating | 131072 | [dual/maya-m/base.yml](../models/glm-5.3-flash/strata-maya/compose/dual/maya-m/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 86 GB |
 |  | `strata-maya/glm53-flash-dual-maya-s` | 🐣 incubating | 131072 | [dual/maya-s/base.yml](../models/glm-5.3-flash/strata-maya/compose/dual/maya-s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 66 GB |
+|  | `strata-maya/glm53-flash-dual-maya-s24` | 🐣 incubating | 262144 | [dual/maya-s24/base.yml](../models/glm-5.3-flash/strata-maya/compose/dual/maya-s24/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 68 GB |
 | **Inkling-Small (263B MoE, Thinking Machines)** | `llamacpp-club3090/inkling-small-dual-iq4xs-moecache` | 🧪 experimental | 262144 | [dual/unsloth-ud-iq4xs/moecache.yml](../models/inkling-small/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/moecache.yml) | [#959](https://github.com/noonghunna/club-3090/discussions/959) | host RAM ≥ 121 GB |
 |  | `llamacpp-club3090/inkling-small-dual-iq4xs-residency` | 🧪 experimental | 262144 | [dual/unsloth-ud-iq4xs/residency.yml](../models/inkling-small/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/residency.yml) | [#959](https://github.com/noonghunna/club-3090/discussions/959) | host RAM ≥ 99 GB |
 | **MiniMax-M3.1-Flash (428B MoE, MiniMax)** | `strata-maya/minimax31-flash-dual-maya-s` | 🐣 incubating | 204800 | [dual/maya-s/dspark.yml](../models/minimax-m3.1-flash/strata-maya/compose/dual/maya-s/dspark.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 102 GB |
@@ -102,7 +103,7 @@ detected at boot, so you don't choose a compose for it.
 |  | `vllm/thinkingcap38-27b-dual-ultrafast` | 🧪 experimental | 262144 | [dual/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/dual/autoround-int4/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 |  | `vllm/thinkingcap38-27b-dual-ultramax` | 🧪 experimental | 262144 | [dual/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/dual/fp8/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 
-69 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+70 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table dual -->
 
 ## Launch

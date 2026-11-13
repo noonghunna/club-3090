@@ -34,6 +34,7 @@ A release that renames a flag the launchers pass (`serve/server.py`, `tools/iq_p
 | Quant | Single (1 card) | Dual (2 cards) | Multi4 (4 cards) |
 |---|---|---|---|
 | **Maya-S v2** (`maya-s`, IQ2_XXS experts, 96.5 GB) | `strata-maya/glm53-flash-single-maya-s` · 8027 | `strata-maya/glm53-flash-dual-maya-s` · 8026 | `strata-maya/glm53-flash-multi4-maya-s` · 8028 |
+| **Maya-S24** (`maya-s24`, Maya-S v2's IQ2_XXS experts with Q4_K attention and shared experts, 94.7 GB) | — | `strata-maya/glm53-flash-dual-maya-s24` · 8194 | — |
 | **Maya-M** (`maya-m`, IQ2_S experts, 116 GB) | `strata-maya/glm53-flash-single-maya-m` · 8035 | `strata-maya/glm53-flash-dual-maya-m` · 8029 | `strata-maya/glm53-flash-multi4-maya-m` · 8037 |
 | **Maya-L** (`maya-l`, IQ3_S experts, 156.3 GB) | `strata-maya/glm53-flash-single-maya-l` · 8044 | `strata-maya/glm53-flash-dual-maya-l` · 8043 | `strata-maya/glm53-flash-multi4-maya-l` · 8045 |
 
