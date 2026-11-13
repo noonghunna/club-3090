@@ -103,6 +103,8 @@ case "\$1" in
   inspect)
     for a in "\$@"; do
       [[ "\$a" == "{{.State.Running}}" ]] && { echo true; exit 0; }
+      # the image a hand-started container runs (soak-test.sh names the engine from it, #2006)
+      [[ "\$a" == "{{.Config.Image}}" ]] && { echo "\${SOAK_STUB_IMAGE:-}"; exit 0; }
     done
     exit 0 ;;
   stats) echo '{}' ;;

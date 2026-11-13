@@ -336,10 +336,11 @@ p2p_classify_engagement() {
   echo unknown
 }
 
-# Pure verdict matrix: p2p_verdict <gpu_count> <capability> <engagement>.
-# Prints zero or one line; silent cases print nothing (exit 0 always).
+# Pure verdict matrix: p2p_verdict <gpu_count> <capability> <engagement> [engine_kind].
+# Prints zero or one line; silent cases print nothing (exit 0 always). engine_kind is the
+# resolver's answer (scripts/lib/engine-kind.sh) when the caller has it; empty keeps the old matrix.
 p2p_verdict() {
-  local count="$1" cap="$2" eng="$3" state
+  local count="$1" cap="$2" eng="$3" kind="${4:-}" state
   [[ "${count:-0}" -ge 2 ]] || return 0
   # A forced-but-unverified P2P request is worth flagging EVEN when the
   # capability probe says "none": the request asked for P2P, the driver didn't
@@ -370,6 +371,13 @@ p2p_verdict() {
       echo "⚠️ interconnect WARN: custom all-reduce was requested (disable_custom_all_reduce=False) but its SETUP FAILED and the engine fell back to NCCL — the kernel is NOT running, whatever the boot args say. The engine log's 'Setup Custom allreduce failed with …' line names the cause; UUID-form CUDA_VISIBLE_DEVICES was one (club-3090#1462, now remapped in the SGLang composes). Custom-AR benchmarks from this boot measure NCCL."
       return 0 ;;
   esac
+  # SGLang prints none of the lines the classifier reads unless its custom all-reduce logs, and its
+  # NCCL picks the transport (NVLink included) by itself, so "no signal" there is not "idle". #2008:
+  # a bridged SGLang stack read as idle while NCCL_DEBUG=INFO showed `type NVL` and `via P2P/IPC`.
+  if [[ "$eng" == "unknown" && "$kind" == "sglang" && "$cap" == "nvlink" ]]; then
+    echo "ℹ interconnect: an NVLink bridge is present on this host. This SGLang container prints no line this probe reads, and its NCCL chooses the transport itself, so the probe can't tell whether the bridge is in use. To check, start it with NCCL_DEBUG=INFO and look for 'type NVL' and 'via P2P/IPC' in its log. Full guide: docs/PCIE_P2P.md"
+    return 0
+  fi
   case "$eng" in
     on|nccl_only_gated) state="" ;;
     off)     state="is running with P2P OFF" ;;

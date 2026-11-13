@@ -647,4 +647,17 @@ r="$(printf '%s\n%s' '[nvlink] STATE v=2 transport=off kernel=off' '[nvlink] P2P
 [[ "$r" == "on" ]] || fail "a v=2 STATE line must fall through to legacy (got $r)"
 echo "  ✓ STATE: emitted exactly once on every boot mode, epoch sliced, veto catch-all, legacy fallback intact"
 
+# #2008: a bridged SGLang stack read as "the bridge is idle" while NCCL_DEBUG=INFO showed `type NVL`
+# and `via P2P/IPC`: SGLang prints none of the lines the classifier reads. With the resolver's answer
+# passed in, "no signal" on SGLang says it can't tell and how to check; vLLM and an unknown engine keep
+# the WARN (the positive controls: vLLM DOES print the lines, so silence there is a real signal).
+out="$(p2p_verdict 2 nvlink unknown sglang)"
+assert_contains "$out" "can't tell whether the bridge is in use"
+assert_contains "$out" "NCCL_DEBUG=INFO"
+[[ "$out" != *"the bridge is idle"* ]] || fail "SGLang with no readable signal must not be called idle (#2008): $out"
+out="$(p2p_verdict 2 nvlink unknown vllm)";  assert_contains "$out" "the bridge is idle"
+out="$(p2p_verdict 2 nvlink unknown)";       assert_contains "$out" "the bridge is idle"
+out="$(p2p_verdict 2 nvlink off sglang)";    assert_contains "$out" "⚠ interconnect WARN"   # a real off signal still warns
+echo "  ✓ SGLang with no readable engagement signal: can't tell, not idle (#2008)"
+
 echo "test-p2p-state: ok"

@@ -120,6 +120,8 @@ source "$REPO_ROOT/scripts/lib/gpu-select.sh"
 source "$REPO_ROOT/scripts/lib/report_calib.sh"
 # strata_maya_log_path: Project Maya's engine log, which is not where Strata's is (#1706, #1752)
 source "$REPO_ROOT/scripts/lib/strata-log.sh"
+# shellcheck source=lib/results-dir.sh
+source "$REPO_ROOT/scripts/lib/results-dir.sh"
 # shellcheck source=lib/p2p-state.sh
 source "$REPO_ROOT/scripts/lib/p2p-state.sh"
 
@@ -1359,7 +1361,7 @@ else
       echo "**Interconnect verdict:** ℹ driver P2P capability is reported above; QEngine runs its own collectives (no NCCL/custom all-reduce), so the shared engagement verdict is not applicable. Its own transport is the line above."
     else
       _p2p_verdict_line="$(p2p_verdict "$(p2p_gpu_count)" "$(p2p_host_capability)" \
-        "$(printf '%s\n%s' "$_p2p_class_stream" "$p2p_env" | p2p_classify_engagement)")"
+        "$(printf '%s\n%s' "$_p2p_class_stream" "$p2p_env" | p2p_classify_engagement)" "${ENGINE_KIND:-}")"
       [[ -n "$_p2p_verdict_line" ]] && { echo; echo "**Interconnect verdict:** ${_p2p_verdict_line}"; }
     fi
     # Kernel-module flavor — the WHY behind a P2P result on GeForce cards. A
@@ -1851,7 +1853,9 @@ if [[ $DO_SOAK -eq 1 ]]; then
   if [[ ! -f scripts/soak-test.sh ]]; then
     echo "_scripts/soak-test.sh not found_"
   elif stage_guard soak; then
-    soak_run_dir="results/report-soak-$(date +%Y%m%d-%H%M%S)"
+    # Resolved here, not inside soak-test.sh, so the summary below is read from where it went: a
+    # results/ this account can't write falls back to the data dir (#2006).
+    soak_run_dir="$(club_results_dir "results/report-soak-$(date +%Y%m%d-%H%M%S)" "$REPO_ROOT")" || true
     SOAK_MODE=continuous SOAK_SESSIONS=5 SOAK_TURNS=5 SOAK_OUTPUT="$soak_run_dir" \
       SOAK_TIMEOUT_S="${SOAK_TIMEOUT_S:-1800}" \
       bash scripts/soak-test.sh 2>&1 | tee "${STAGE_RAW_DIR}/soak" | redact | details "soak-test stdout (5-session × 5-turn ramping conversation, ~25 min)"

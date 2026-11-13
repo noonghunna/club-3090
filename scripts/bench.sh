@@ -2437,7 +2437,7 @@ bench_interconnect_block() {
 
   # ---- the cross-referenced verdict (same matrix report.sh renders) ---------
   verdict="$(p2p_verdict "$ngpu" "$cap" \
-    "$(printf '%s\n%s' "$eng_text" "$nccl_line" | p2p_classify_engagement 2>/dev/null || echo unknown)" 2>/dev/null || true)"
+    "$(printf '%s\n%s' "$eng_text" "$nccl_line" | p2p_classify_engagement 2>/dev/null || echo unknown)" "${ENGINE_KIND:-}" 2>/dev/null || true)"
   [[ -n "$verdict" ]] && echo "  verdict  : ${verdict}"
   return 0
 }

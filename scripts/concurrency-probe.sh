@@ -706,7 +706,10 @@ PY
   echo
   python3 "$PROBE_PY" --card < "$rec_json"
 
-  out_dir="$ROOT_DIR/results"
+  # A results/ this account can't write (D#2002) falls back to the data dir rather than losing the card.
+  # shellcheck source=lib/results-dir.sh
+  source "${ROOT_DIR}/scripts/lib/results-dir.sh"
+  out_dir="$(club_results_dir "$ROOT_DIR/results" "$ROOT_DIR")" || true
   mkdir -p "$out_dir"
   stamp="$(date +%Y%m%d-%H%M%S)"
   safe_model="$(printf '%s' "$MODEL" | tr '/ :' '___')"
