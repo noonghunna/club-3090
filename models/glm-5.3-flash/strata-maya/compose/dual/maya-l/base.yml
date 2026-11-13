@@ -15,7 +15,7 @@
 #   Max ctx:   131072
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   Not gate-passing yet: quality unmeasured here (8-pack pending), one request at a time. Thinking:
+#   Caveats:   Not gate-passing yet: no soak, and no 8-pack on the reference rig; one request at a time. Thinking:
 #              GLM-5.3's template thinks by default; Maya's server closes the thinking block when a request
 #              sends enable_thinking false or reasoning_effort none (unlike the llama.cpp GLM slugs, where
 #              thinking can't be turned off). Server defaults for requests that name none: effort max (as the
@@ -31,6 +31,10 @@
 #              Measured 2026-10-14 on a native v1.1.9 build with PCIE_SHARE 0.10 (not re-benched on this
 #              image): 29.61 / 26.67 decode (narrative / code), 984 / 1,158 prefill @10K / @90K
 #              (BENCHMARKS.md, GLM-5.3-Flash / Project Maya).
+#              On this image (v1.1.57, shipped defaults) Berberian007's 2x 3090 Ti, uncapped (#2007): 52.04 /
+#              55.61 decode, 1,671 / 2,013 prefill @10K / @90K, verify-stress 14 / 0, and the 8-pack at 114 /
+#              122 of 150 pass@1, 121 / 133 pass@3 (thinking off / on, one run a leg); no soak. paulp83's 2x 5090
+#              (#1700): 131 / 120 of 150 pass@1 (thinking max / instruct). Neither ran on capped 3090s.
 # CPU-Offload-Host-RAM-GB: 131
 #   ⤷ MEASURED 2026-10-14 on a native v1.1.9 build with PCIE_SHARE 0.10 (not re-benched on this image):
 #     MemAvailable fell 129 GB (decimal) at its peak.
