@@ -1047,7 +1047,7 @@ _hf_download_repo() {
   exit 1
 }
 
-# _hf_remote_meta <repo> <revision> <file> -> "<sha256> <size>" on stdout
+# _hf_remote_meta <repo> <revision> <file> -> "<sha256|-> <size|-> <git-sha1|->" on stdout
 #
 # Delegates to scripts/lib/profiles/hf_fetch.py::resolve_head (#855) rather than
 # re-implementing the lookup here. Two reasons that are not style preferences:
