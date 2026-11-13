@@ -10,12 +10,9 @@ services:
     restart: unless-stopped
     environment:
       PYTHONUNBUFFERED: "1"
-    # Xvfb's lock/socket live in the container's writable layer and survive a
-    # daemon restart (2026-11-13 apt upgrade → 10-restart loop: "Server is
-    # already active for display 99"). Clean them before starting; nothing else
-    # in this image uses /tmp state across restarts.
-    entrypoint: ["bash", "-c", "rm -f /tmp/.X99-lock /tmp/.X11-unix/X99; exec \"$@\"", "--"]
-    command: ["bash", "-c", "Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp & sleep 3; export DISPLAY=:99; stdbuf -oL -eL blender --python /opt/start-mcp-server.py"]
+    # The image's CMD clears a stale Xvfb lock before starting (a daemon restart
+    # once left one behind and the container restart-looped, 2026-11-13). Rebuild
+    # with `docker compose up -d --build` after pulling a Dockerfile change.
     ports:
       - "127.0.0.1:9876:9876"
     volumes:

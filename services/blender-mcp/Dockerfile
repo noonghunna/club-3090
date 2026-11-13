@@ -53,7 +53,11 @@ COPY start-mcp-server.py /opt/start-mcp-server.py
 # execute); a virtual display gives a real (software-GL) GUI context instead.
 # xvfb-run’s readiness loop can hang before exec’ing the client — launch Xvfb
 # and blender directly. No auth needed: display is loopback-only in-container.
-CMD ["bash", "-c", "Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp & sleep 3; export DISPLAY=:99; stdbuf -oL -eL blender --python /opt/start-mcp-server.py"]
+# Xvfb keeps its lock and socket in the container's writable layer, so a stop that doesn't
+# let it clean up (a daemon restart, a kill) leaves them behind, and the next start fails
+# with "Server is already active for display 99" and restart-loops. Remove them first;
+# nothing else in this image keeps /tmp state across restarts.
+CMD ["bash", "-c", "rm -f /tmp/.X99-lock /tmp/.X11-unix/X99; Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp & sleep 3; export DISPLAY=:99; stdbuf -oL -eL blender --python /opt/start-mcp-server.py"]
 
 EXPOSE 9876
 

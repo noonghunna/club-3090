@@ -54,5 +54,8 @@ not sed.
   blender-mcp` resolves to today. To hold that pairing, use `uvx blender-mcp@2.0.0`.
 - The addon needs `requests` inside Blender's **bundled** python (installed in
   the Dockerfile; Blender 4.2 bundles python 3.11).
+- A stop that doesn't let Xvfb clean up (a Docker daemon restart, a kill) leaves its
+  lock in the container; the image's start command removes it, so the container comes
+  back instead of restart-looping on "Server is already active for display 99".
 - GPU rendering (Cycles CUDA/OptiX) is unavailable in this container by design
   (software GL); Eevee/Cycles renders go through llvmpipe (slow but works).
