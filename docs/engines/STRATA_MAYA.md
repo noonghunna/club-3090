@@ -93,6 +93,28 @@ Measurements, with dates and settings, are in each compose's header and in [BENC
   - **DeepSeek:** a video in a request gets a clear 400 ("reads pictures, not videos") instead of an encoder error, or being dropped beside a picture.
   - **Prompt path:** the release also changes headers the GLM prompt path shares (`moe_mmq.hpp`, `glm_kv_stream.hpp`), so the bump ran a long-prompt needle: 72,139 tokens on the dual Maya-L slug, found.
   - **Not forwarded:** the release's new settings (`MAYA_GLM_IDX_FP16`, `MAYA_GLM_DSA_GRAPHS`, `MAYA_GLM_LANE_ROW4`, `MAYA_GLM_NGRAM_DRAFT` / `_MIN` / `_MAX`, `MAYA_GLM_PROMPT_CACHE_*`, `MAYA_GLM_SPLIT_CARDS`) are GLM-5.3 (744B)'s own, in upstream's `docs/SETTINGS.md`. No slug serves that model: its UD-IQ2_M files are 238.6 GB, and upstream recommends about 256 GB of VRAM and RAM together.
+- **v1.1.58 to v1.1.61 (pinned 2026-11-13), what reaches these slugs:**
+  - **GLM-5.3-Flash drafting (v1.1.58):** Q5_K weights take the fast multi-token path (the same answers), and answers in Chinese, Japanese, Korean and other scripts are drafted again.
+  - **The server, every model:**
+    - The loop guard no longer keeps a finished short answer going, and an answer it does keep continues on a new paragraph (v1.1.58, #921).
+    - Responses API pictures with any `detail` value are accepted (v1.1.58, #914).
+    - With `--parallel` and fair slices, one waiting request pauses one running answer, not all of them (v1.1.59). It doesn't reach these slugs: the launcher writes no `--parallel` (one conversation at a time).
+  - **MiniMax (v1.1.61):** on one GPU the prompt lookup is on by default: where an answer repeats earlier text (code edits, tool-call arguments, quotes), the tokens that followed it are checked in one step. Upstream measured code and tool calls about 6% faster with DSpark on. It reaches the single MiniMax slug, which this bump didn't boot. On two GPUs it stays opt-in (`--suffix-draft 3`), which the dual slug doesn't set.
+  - **DeepSeek:**
+    - On NVIDIA tensor-parallel pairs, the prompt all-reduce goes GPU to GPU again, as in v1.1.54 (v1.1.59). Our DeepSeek slugs run a layer split unless `MAYA_TP=2` is set, and `MAYA_DS4_HIP_PEER_AR` isn't forwarded.
+    - A failed `DS4_LENT_RAM_GB` copy no longer makes every request fail with HTTP 400 (v1.1.59, #884).
+  - **Packs:** v1.1.58 keeps the 744B GLM-5.3's Q8_0 attention weights in Q8_0. That is `tools/strata/glm_dsa_pack.py`; GLM-5.3-Flash's packer (`tools/iq_pack.py`) is unchanged, so a Flash pack on the data volume is reused (the bump's boot logged `pack up to date`).
+  - **The API key variable:** the server's `--api-key` now defaults to `$MAYA_API_KEY` (it was `$STRATA_API_KEY`). Our launcher passes neither, so the slugs stay keyless as before.
+  - **Not forwarded:**
+    - The release's new settings:
+      - `MAYA_GLM_PREFILL_STABLE`: GLM prompts that don't depend on what the expert cache holds, for A/B checks; opt-in, about 2-5% slower prompts.
+      - `MAYA_GLM_ROUTE_AFFINITY`: Turbo's routing on the 744B GLM-5.3; it changes the answers.
+      - `MAYA_GLM_PIN_ROOM_MB`: Windows only.
+      - `MAYA_DS4_LOOKUP_TRUST` / `MAYA_MM3_LOOKUP_TRUST`: on by default, and they apply only with `--suffix-draft`.
+      - `DS4_STREAM_ONE_WARM`: DeepSeek's one-GPU path, on by default.
+    - DeepSeek's opt-in fast prompt reading (`--fast-prefill on`; the answers can shift).
+    - The opt-in refusal ablation.
+    - The AMD-only and EXL3-only changes, and v1.1.60 as a whole (AMD, an EXL3 quant, DFlash2 for the 744B GLM-5.3).
 - **Runtime numbers from `/metrics`.** Maya serves Strata's `/metrics` document (its version in `engine.maya_version`), but its draft counts are only in its engine log (`/data/<quant>/maya.log`, "glm spec: N of M drafts accepted"). Given the container, `scripts/lib/strata_metrics.py` sums them, so `health.sh`, `verify-full` (its MTP acceptance check), `bench.sh` and `report.sh` read Maya's drafts the way they read Strata's.
 - **The club conventions:** the `CLUB3090_RESTART` knob, `BIND_HOST` / `ESTATE_PORT` / `ESTATE_CONTAINER` / `ESTATE_GPUS`, and the host GID plus `umask 0002` on the data volume.
 
