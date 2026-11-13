@@ -89,7 +89,7 @@
 # then up -d.
 services:
   strata-maya:
-    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:5a33892afd8bb428301b7285dfcca275c2adffbcd57931017cc23cc94c4b57f8}
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:7696232074064ea69012fcd9bc4366b84fcca7c03400b55661b5bde4b6204ec3}
     container_name: ${ESTATE_CONTAINER:-strata-maya-deepseek41-flash-dual-maya-xs}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
