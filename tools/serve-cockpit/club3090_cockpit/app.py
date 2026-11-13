@@ -17472,7 +17472,8 @@ class CockpitApp(App):
                 mmproj = str(p)
                 break
             # Brought-repo MTP draft (e.g. migtissera Tess: main + mtp-*.gguf).
-            main_name = Path(weights_file).name.lower()
+            from pathlib import Path as _Path
+            main_name = _Path(weights_file).name.lower()
             for p in pull.glob("**/*mtp*.gguf"):
                 n = p.name.lower()
                 if "mmproj" in n:
