@@ -23,7 +23,7 @@ or not yet at all. If you have the hardware, your run is the validation:
   [#1418](https://github.com/noonghunna/club-3090/discussions/1418).
 - **Qwen3.6-27B:** `vllm/qwen-27b-multi-fast` and `vllm/qwen-27b-multi-max` (⚠️) are the older
   generation, validated on several community rigs.
-- **QEngine** (bpx03's own engine; ⚠️ PolyForm Noncommercial): Qwen3.8-27B (🧪) and Qwen3.8-Flash-Next (🐣)
+- **QEngine** (bpx03's own engine; MIT from 1.3.5.8, PolyForm Noncommercial up to 1.3.5.7): Qwen3.8-27B (🧪) and Qwen3.8-Flash-Next (🐣)
   on 3 cards, its tuned setup, and on 4, `qengine/qwen38-27b-multi3` and the like. Copies of the 2-card
   slugs; the headers give upstream's own 3-card numbers. Engine page: [engines/QENGINE.md](engines/QENGINE.md).
 - **Very large MoE models on 4–8 cards** (GLM-5.3-Flash, DeepSeek-V4-Flash, Qwen3.8-Flash-Next):

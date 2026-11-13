@@ -320,7 +320,7 @@ does, and what to do by hand when it refuses.
 - The composes set the default effort with `QE_REASONING_EFFORT` (from 1.3.1) and refuse to start on an image whose
   `server/app.py` doesn't read it: a new image that drops or renames it stops the boot there, on purpose. Read its
   `--reasoning-effort` help before adapting the compose; the template's own default is `xhigh`.
-  ⚠️ PolyForm Noncommercial license.
+  MIT license from 1.3.5.8 (PolyForm Noncommercial up to 1.3.5.7).
 
 ### Luce DFlash / xtransformers / future engines
 

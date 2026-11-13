@@ -4,8 +4,8 @@
 #              QEngine 1.3.4.1 and later (routed experts INT4 bit-exact; DeltaNet projections INT8; shared
 #              expert INT4 GPTQ; attention and lm_head INT8 at load), the INT8 n-gram table, its INT4 MTP
 #              head (129 GB)
-#   Engine:    QEngine 1.3.5.7 (bpx03; upstream's stable release): its second
-#              engine, libqflash.so, in the author's own image ghcr.io/bpx03/qengine (source 5028c500, the
+#   Engine:    QEngine 1.3.5.9 (bpx03; upstream's stable release): its second
+#              engine, libqflash.so, in the author's own image ghcr.io/bpx03/qengine (source ee98bd10, the
 #              :vision image: PyTorch for the encoder)
 #   Topology:  Four 3090s PCIe (experts split over the cards in 128-wide groups; tensor parallel when
 #              peer access between all four passes QEngine's start-up check, else a 4-stage pipeline:
@@ -18,7 +18,8 @@
 #   Max ctx:   262144
 #   Genesis:   none
 #   Status:    🐣 Incubating
-#   Caveats:   ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
+#   Caveats:   QEngine is MIT-licensed from 1.3.5.8; the rollback images (1.3.5.7 and older) are
+#              PolyForm Noncommercial 1.0.0. The weights keep their own licences.
 #              Not booted here: the reference rig has two cards, so this slug is community-validated
 #              by design. It is the four-card copy of qengine/qwen38-flash-next-dual and 🐣 like it:
 #              upstream calls this engine a preview, and has no four-card machine ("Reports from 4-card
@@ -148,6 +149,10 @@
 #   FLASH_YARN           YaRN RoPE factor by hand (0 = off); --max-ctx above 262144 sets it
 #   FLASH_EC_RECLAIM_S   a conversation idle this many seconds moves to the host-RAM archive (30;
 #                        0 keeps it in VRAM); its next turn is restored from there
+#   FLASH_EC_RECLAIM_ABOVE_S  from 1.3.5.8, while the expert cache is short of VRAM: an idle
+#                        conversation above every generating one moves to the archive after this many
+#                        seconds (0.5; negative = off), so finished sub-agents don't hold the cache's
+#                        room. Idle ones now also move out of a growing conversation's way
 #   FLASH_MAX_PREFILLS   prompts prefilled at the same time, sharing batches (8)
 #   FLASH_GUARD_MAX      distinct non-finite faults within 5 minutes before the server stops (4)
 #   FLASH_LEND_CHECK     1: a debug check that no buffer overlaps memory lent to the expert cache
@@ -182,7 +187,8 @@
 #                        host; the `[comm] decode collectives` log line says which. Prefill keeps FLASH_COMM's.
 #                        The setting bpx03/QEngine#19 asked for (docs/UPSTREAM.md)
 #   QE_COMM_CACHE        the start-up cache of the link probe and that timing (1; 0 = off, refresh = measure
-#                        again)
+#                        again). From 1.3.5.8 its key holds each card's NVLink links too, so a bridge
+#                        fitted later is measured again (#2000)
 #   FLASH_VRAM_ADAPT     1.3.5: when another process takes GPU memory while serving, resident expert groups
 #                        move to host memory and come back once it's free (1; 0 = off)
 #   FLASH_VRAM_LOW_MB, FLASH_VRAM_TARGET_MB  free memory per card below which groups move out / up to
@@ -227,7 +233,7 @@
 #   bash scripts/settings.sh set FLASH_MAX_SEQS=4      # one user at a time: faster still (above)
 services:
   qengine-qwen38-flash-next-multi4:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:2d790174baee2eb89d8afa5b6eb0ab68eb3a05bebf73e627e92e7686a889e124}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:e670c0d98633d4e2b2c1dbeb75b7a1c19b776703d1dac2488f9f5cc621d6ac4c}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-flash-next-multi4}"
     user: "0:${DOCKER_GID:-1000}"
@@ -274,6 +280,7 @@ services:
       - FLASH_KV_RAM_TOKENS
       - FLASH_PFB_BIG
       - FLASH_EC_RECLAIM_S
+      - FLASH_EC_RECLAIM_ABOVE_S
       - FLASH_MAX_PREFILLS
       - FLASH_GUARD_MAX
       - FLASH_PFB_ALIAS
