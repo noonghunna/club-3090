@@ -102,9 +102,19 @@ _SHA_CHUNK = 8 * 1024 * 1024
 # Reading the short one as a SHA-256 makes every small file in a repo report FAIL
 # while every large one passes, and the advice that follows ("delete the model
 # folder and re-run setup.sh") discards correctly-verified hundreds of GB. So: a
-# header that is not 64 hex means the hub published **no SHA-256** for the file,
-# which callers already treat as UNVERIFIED rather than as a pass or a mismatch.
+# header that is not 64 hex means the hub published **no SHA-256** for the file.
+#
+# That 40-hex value is still a published hash, though: git's blob SHA-1, i.e.
+# sha1(b"blob <size>\0" + content), the same id `git hash-object` prints. The model
+# API carries it as `siblings[].blobId` and the repo tree as `oid` for every plain
+# file. So a non-LFS file is verified against it (`git_sha1` below, checked with
+# `git_blob_sha1_file`) instead of being left UNVERIFIED. Never for an LFS file:
+# there `blobId` / `oid` are the SHA-1 of the small LFS *pointer*, not of the
+# content, and the sha256 is the hash to use. Checked 2026-11-13 on the drafter
+# .json above: its git blob SHA-1 is exactly the `x-linked-etag` and the API's
+# `blobId` (29ff31c1…).
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}\Z", re.IGNORECASE)
+_GIT_SHA1_HEX = re.compile(r"[0-9a-f]{40}\Z", re.IGNORECASE)
 
 # The verbatim client-side refusal (hf 1.25.1 file_download.py). Matched on a
 # lowercased haystack; both markers must be present so an unrelated "too large"
@@ -219,10 +229,13 @@ def verify_in_place_enabled(env: Optional[dict] = None) -> bool:
 class FileMeta:
     """What the hub publishes about one file. `sha256` is the canonical LFS
     hash (`x-linked-etag` on the non-redirected resolve hop == the model API's
-    `siblings[].lfs.sha256`); None means genuinely unverifiable."""
+    `siblings[].lfs.sha256`). `git_sha1` is a PLAIN (non-LFS) file's git blob
+    SHA-1 (`blobId` / tree `oid` / a 40-hex `x-linked-etag`), set only when there
+    is no sha256. Both None means genuinely unverifiable."""
     name: str
     size: Optional[int] = None
     sha256: Optional[str] = None
+    git_sha1: Optional[str] = None
     commit: Optional[str] = None
     source: str = ""          # "api" | "resolve-head" | ""
 
@@ -300,9 +313,13 @@ def resolve_head(repo_id: str, filename: str, *, revision: str = "main",
                 return v.strip().strip('"')
         return None
 
-    sha = _h("x-linked-etag", "X-Linked-Etag")
-    if sha is not None:
-        sha = sha.lower() if _SHA256_HEX.match(sha) else None
+    raw = _h("x-linked-etag", "X-Linked-Etag")
+    sha = git = None
+    if raw is not None:
+        if _SHA256_HEX.match(raw):
+            sha = raw.lower()
+        elif _GIT_SHA1_HEX.match(raw):
+            git = raw.lower()            # a plain git file: its blob SHA-1
     size = _h("x-linked-size", "X-Linked-Size") or _h("content-length")
     try:
         size_i = int(size) if size is not None else None
@@ -311,8 +328,9 @@ def resolve_head(repo_id: str, filename: str, *, revision: str = "main",
     return FileMeta(
         name=filename, size=size_i,
         sha256=sha,
+        git_sha1=git,
         commit=_h("x-repo-commit", "X-Repo-Commit"),
-        source="resolve-head" if sha else "",
+        source="resolve-head" if (sha or git) else "",
     )
 
 
@@ -352,6 +370,9 @@ def tree_meta(tree: Iterable[dict]) -> dict[str, FileMeta]:
             continue
         lfs = e.get("lfs") if isinstance(e.get("lfs"), dict) else {}
         sha = lfs.get("sha256") or lfs.get("oid")
+        # the top-level oid is the git blob SHA-1: the content's for a plain file,
+        # the LFS pointer's for an LFS one, so it is used only without an lfs block
+        git = None if lfs else _git_sha1_or_none(e.get("oid"))
         size = lfs.get("size") if lfs.get("size") is not None else e.get("size")
         try:
             size_i = int(size) if size is not None else None
@@ -360,7 +381,8 @@ def tree_meta(tree: Iterable[dict]) -> dict[str, FileMeta]:
         out[name] = FileMeta(
             name=name, size=size_i,
             sha256=str(sha).lower() if sha else None,
-            source="api" if sha else "",
+            git_sha1=git,
+            source="api" if (sha or git) else "",
         )
     return out
 
@@ -378,6 +400,9 @@ def api_meta(api: dict) -> dict[str, FileMeta]:
             continue
         lfs = s.get("lfs") if isinstance(s.get("lfs"), dict) else {}
         sha = lfs.get("sha256")
+        # blobId is the git blob SHA-1 (`?blobs=true`): the content's for a plain
+        # file, the LFS pointer's for an LFS one, so only without an lfs block
+        git = None if lfs else _git_sha1_or_none(s.get("blobId"))
         size = lfs.get("size") if lfs.get("size") is not None else s.get("size")
         try:
             size_i = int(size) if size is not None else None
@@ -386,7 +411,8 @@ def api_meta(api: dict) -> dict[str, FileMeta]:
         out[name] = FileMeta(
             name=name, size=size_i,
             sha256=str(sha).strip().strip('"').lower() if sha else None,
-            source="api" if sha else "",
+            git_sha1=git,
+            source="api" if (sha or git) else "",
         )
     return out
 
@@ -410,6 +436,24 @@ def expand_includes(names: Iterable[str], patterns: Iterable[str]) -> list[str]:
 # ---------------------------------------------------------------------------
 # hashing + the HF local-dir metadata stub
 # ---------------------------------------------------------------------------
+def _git_sha1_or_none(v: Any) -> Optional[str]:
+    v = str(v).strip().strip('"') if v else ""
+    return v.lower() if _GIT_SHA1_HEX.match(v) else None
+
+
+def git_blob_sha1_file(path: Path, *, chunk: int = _SHA_CHUNK) -> str:
+    """git's blob id for a file: sha1(b"blob <size>\\0" + content), what `git
+    hash-object` prints and what the hub publishes for a plain (non-LFS) file."""
+    h = hashlib.sha1(b"blob %d\0" % Path(path).stat().st_size)
+    with open(path, "rb") as fh:
+        while True:
+            b = fh.read(chunk)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+
 def sha256_file(path: Path, *, chunk: int = _SHA_CHUNK) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -478,7 +522,8 @@ class PlanEntry:
 
 def plan_local_file(local_dir: Path, name: str, meta: Optional[FileMeta], *,
                     do_hash: bool,
-                    hasher: Callable[[Path], str] = sha256_file) -> PlanEntry:
+                    hasher: Callable[[Path], str] = sha256_file,
+                    git_hasher: Callable[[Path], str] = git_blob_sha1_file) -> PlanEntry:
     """Decide — and phrase — what happens to one already-present file.
 
     Order is deliberate: size first (a cheap, certain reject that needs no
@@ -496,6 +541,7 @@ def plan_local_file(local_dir: Path, name: str, meta: Optional[FileMeta], *,
 
     rsize = meta.size if meta else None
     rsha = meta.sha256 if meta else None
+    rgit = (meta.git_sha1 if meta else None) if rsha is None else None
     h = human_bytes(lsize)
 
     # 1. size mismatch -> certain reject, names BOTH sizes, no read needed.
@@ -515,6 +561,36 @@ def plan_local_file(local_dir: Path, name: str, meta: Optional[FileMeta], *,
             f"found {name} ({h}) with an HF download record for sha256 "
             f"{short_sha(rsha)} — already fetched by the downloader, skipping",
             local_size=lsize, remote_size=rsize)
+
+    # 2b. a plain (non-LFS) git file: the hub publishes its git blob SHA-1, not a
+    #     sha256. Checked against that, always: such files are small (the hub keeps
+    #     anything big in LFS), so the read costs nothing worth an opt-in.
+    if rgit is not None:
+        if md and md.get("etag") and md["etag"].lower() == rgit:
+            return PlanEntry(
+                name, "adopt", "metadata-match",
+                f"found {name} ({h}) with an HF download record for git blob "
+                f"SHA-1 {short_sha(rgit)} — already fetched by the downloader, "
+                f"skipping", local_size=lsize, remote_size=rsize)
+        try:
+            actual = git_hasher(fp)
+        except OSError as exc:
+            return PlanEntry(
+                name, "download", "hash-unreadable",
+                f"found {name} ({h}) but it could not be read for hashing "
+                f"({exc}) — re-downloading", local_size=lsize, remote_size=rsize)
+        if actual.lower() == rgit:
+            return PlanEntry(
+                name, "adopt", "hash-match",
+                f"verified in place: {name} ({h}) git blob SHA-1 "
+                f"{short_sha(rgit)} matches the repo (a plain git file: the hub "
+                f"publishes its git SHA-1, not a sha256) — adopting, 0 bytes "
+                f"re-downloaded", local_size=lsize, remote_size=rsize, hashed=True)
+        return PlanEntry(
+            name, "download", "hash-mismatch",
+            f"found {name} ({h}) but its git blob SHA-1 {short_sha(actual)} does "
+            f"NOT match the repo's {short_sha(rgit)} — corrupt, re-downloading",
+            local_size=lsize, remote_size=rsize, hashed=True)
 
     # 3. nothing published to check against -> say so, and say the cost.
     if rsha is None:
@@ -583,7 +659,7 @@ def plan_and_announce(local_dir: Path, names: Iterable[str],
             m = meta.get(name)
             try:
                 write_metadata(local_dir, name, commit=commit,
-                               etag=(m.sha256 if m and m.sha256 else ""))
+                               etag=((m.sha256 or m.git_sha1 or "") if m else ""))
             except OSError as exc:       # pragma: no cover - defensive
                 log(f"{prefix} (could not write the adoption record for "
                     f"{name}: {exc} — it will be re-checked next time)")
@@ -785,7 +861,8 @@ def verify_fetched(local_dir: Path, names: Iterable[str],
                    meta: dict[str, FileMeta], *,
                    log: Callable[[str], None] = default_log,
                    rung: str,
-                   hasher: Callable[[Path], str] = sha256_file) -> list[str]:
+                   hasher: Callable[[Path], str] = sha256_file,
+                   git_hasher: Callable[[Path], str] = git_blob_sha1_file) -> list[str]:
     """The MANDATORY sha256 gate for rungs 2 and 3.
 
     Rung 1 delegates integrity to `hf download` (which hashes as it writes);
@@ -795,12 +872,29 @@ def verify_fetched(local_dir: Path, names: Iterable[str],
     multi-GB weight left on disk is worse than no weight, because someone will
     serve it.
 
-    A file the hub publishes no sha256 for is an unverifiable-artifact hard
-    fail on these rungs; it is NOT quietly waved through."""
+    A plain (non-LFS) file is checked against its git blob SHA-1 instead. A file
+    the hub publishes neither hash for is an unverifiable-artifact hard fail on
+    these rungs; it is NOT quietly waved through."""
     verified: list[str] = []
     for name in names:
         fp = Path(local_dir) / name
         m = meta.get(name)
+        if m is not None and not m.sha256 and m.git_sha1:
+            actual = git_hasher(fp)
+            if actual.lower() != m.git_sha1:
+                try:
+                    fp.unlink()
+                except OSError:
+                    pass
+                raise LadderError(
+                    "sha-mismatch",
+                    f"rung {rung} fetched {name} but its git blob SHA-1 "
+                    f"{short_sha(actual)} != the hub's {short_sha(m.git_sha1)} — "
+                    f"artifact DELETED")
+            verified.append(name)
+            log(f"[hf-fetch] git blob SHA-1 OK: {name} ({short_sha(m.git_sha1)}, "
+                f"a plain git file; source={m.source or 'hub'})")
+            continue
         if m is None or not m.sha256:
             try:
                 fp.unlink()

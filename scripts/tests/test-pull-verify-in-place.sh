@@ -365,6 +365,23 @@ with tempfile.TemporaryDirectory() as td:
           f"no published hash -> honest 'cannot be verified', re-download "
           f"({e.message})")
 
+    # a plain (non-LFS) git file: checked against its git blob SHA-1, always (small
+    # files, so no VERIFY_IN_PLACE opt-in), adopted only on a match
+    git_ok = hashlib.sha1(b"blob %d\0" % len(BODY) + BODY).hexdigest()
+    meta_git = HF.FileMeta(WEIGHT, size=len(BODY), git_sha1=git_ok, source="api")
+    e = HF.plan_local_file(d, WEIGHT, meta_git, do_hash=False)
+    check(e.action == "adopt" and e.reason == "hash-match" and e.hashed
+          and "git blob SHA-1" in e.message,
+          f"git SHA-1 match -> adopt, without the opt-in, and says which hash ({e})")
+    meta_git_bad = HF.FileMeta(WEIGHT, size=len(BODY), git_sha1="0" * 40, source="api")
+    e = HF.plan_local_file(d, WEIGHT, meta_git_bad, do_hash=False)
+    check(e.action == "download" and e.reason == "hash-mismatch" and e.hashed,
+          f"git SHA-1 mismatch -> corrupt, re-download ({e})")
+    meta_both = HF.FileMeta(WEIGHT, size=len(BODY), sha256=SHA, git_sha1="0" * 40, source="api")
+    e = HF.plan_local_file(d, WEIGHT, meta_both, do_hash=True)
+    check(e.action == "adopt" and "sha256" in e.message,
+          f"with a sha256 published, the sha256 decides, never a git SHA-1 ({e})")
+
     e = HF.plan_local_file(d, "absent.bin", meta_ok, do_hash=True)
     check(e.action == "download" and e.reason == "absent",
           f"a missing file is simply 'absent' ({e.reason})")

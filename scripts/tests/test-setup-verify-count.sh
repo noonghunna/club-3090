@@ -92,14 +92,15 @@ ROOT_DIR="$ROOT_DIR"
 # Stub the metadata source: the real one is network-bound and its no-redirect
 # behaviour is hf_fetch's own contract (asserted in section 1 + its own suite).
 # What is under test HERE is what the counter does with each answer. Mirrors the
-# real contract exactly: "<sha|-> <size|->", non-zero only when the hub said
-# nothing at all.
+# real contract exactly: "<sha|-> <size|-> <git-sha1|->", non-zero only when the
+# hub said nothing at all. A .hubmeta line without a 4th field has no git SHA-1.
 _hf_remote_meta() {
   local key="\$3"
-  local line
+  local line g
   line="\$(command grep -m1 "^\${key}|" "$dir/.hubmeta" 2>/dev/null || true)"
   [[ -n "\$line" ]] || return 1
-  echo "\$(cut -d'|' -f2 <<<"\$line") \$(cut -d'|' -f3 <<<"\$line")"
+  g="\$(cut -d'|' -f4 -s <<<"\$line")"
+  echo "\$(cut -d'|' -f2 <<<"\$line") \$(cut -d'|' -f3 <<<"\$line") \${g:--}"
 }
 source "$TMP/fn.sh"
 _verify_downloaded_files "org/Repo" "weights" "*.safetensors" "main"
@@ -199,5 +200,33 @@ command grep -q '0/1 file(s) SHA-verified' <<<"$out" \
 command grep -q '1/1 file(s) UNVERIFIED' <<<"$out" \
   || { echo "$out" >&2; fail "the UNVERIFIED tally must cover it"; }
 echo "  ✓ no-metadata files: 0 verified, reported with the reason, not silently passed"
+
+# --- 8. a plain (non-LFS) git file: verified against its git blob SHA-1 -----
+# The hub publishes no sha256 for such a file, only its git blob SHA-1
+# (sha1(b"blob <size>\0" + content)), which setup.sh must check rather than leave
+# UNVERIFIED (#1983's drafter .json). A match counts as verified; a wrong one fails.
+D="$(new_case gitsha1)"
+printf 'drafter-json' > "$D/weights/d.safetensors"
+printf 'weights-w' > "$D/weights/w.safetensors"
+g="$(python3 -c 'import hashlib,sys; d=open(sys.argv[1],"rb").read(); print(hashlib.sha1(b"blob %d\0" % len(d) + d).hexdigest())' "$D/weights/d.safetensors")"
+command -v git >/dev/null 2>&1 && [[ "$g" != "$(git hash-object "$D/weights/d.safetensors")" ]] \
+  && fail "the test's own git SHA-1 must equal git hash-object"
+w="$(sha256sum "$D/weights/w.safetensors" | awk '{print $1}')"
+echo "d.safetensors|-|$(stat -c '%s' "$D/weights/d.safetensors")|$g" >> "$D/.hubmeta"
+echo "w.safetensors|$w|$(stat -c '%s' "$D/weights/w.safetensors")" >> "$D/.hubmeta"
+out="$(run_verify "$D")" || fail "a plain file matching its git SHA-1 must pass:\n$out"
+command grep -qE 'd\.safetensors +OK +\(git blob SHA-1' <<<"$out" \
+  || { echo "$out" >&2; fail "the plain file must be reported OK against its git blob SHA-1"; }
+command grep -q '2/2 file(s) SHA-verified' <<<"$out" \
+  || { echo "$out" >&2; fail "the git-SHA-1 file counts as verified alongside the sha256 one"; }
+command grep -q 'UNVERIFIED' <<<"$out" \
+  && { echo "$out" >&2; fail "a file with a published git SHA-1 must not be UNVERIFIED"; }
+D="$(new_case gitsha1bad)"
+printf 'drafter-json' > "$D/weights/d.safetensors"
+echo "d.safetensors|-|$(stat -c '%s' "$D/weights/d.safetensors")|$(printf '0%.0s' {1..40})" >> "$D/.hubmeta"
+out="$(run_verify "$D")" && fail "a git SHA-1 mismatch must fail the verify:\n$out"
+command grep -qE 'd\.safetensors +FAIL +git blob SHA-1' <<<"$out" \
+  || { echo "$out" >&2; fail "the mismatch must name itself as a git blob SHA-1 failure"; }
+echo "  ✓ plain git files: verified against the git blob SHA-1, a mismatch fails"
 
 echo "test-setup-verify-count: ok"

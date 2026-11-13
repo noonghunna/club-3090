@@ -621,9 +621,54 @@ m = HF.resolve_head("peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF",
                     opener=_Opener(_Hop(**{"x-linked-etag": f'"{BLOB40}"',
                                            "x-linked-size": "99146"})))
 check(m.sha256 is None,
-      f"a 40-hex git blob SHA-1 is NOT a sha256: no hash published (got {m.sha256!r})")
-check(m.size == 99146, "the size still comes back, so the file is size-checked at least")
-check(m.source == "", "a rejected header does not claim a resolve-head hash")
+      f"a 40-hex git blob SHA-1 is NOT a sha256 (got {m.sha256!r})")
+check(m.git_sha1 == BLOB40,
+      f"... but it IS the plain file's git blob SHA-1, kept to verify against (got {m.git_sha1!r})")
+check(m.size == 99146, "the size still comes back")
+check(m.source == "resolve-head", "a git SHA-1 is a published hash: the observation has a source")
+
+# the API and the tree carry the same id (blobId / oid) for EVERY file, but for an
+# LFS file it is the SHA-1 of the small LFS pointer, not of the content: it must
+# never become a git_sha1 there (the sha256 is the hash for those)
+api = HF.api_meta({"siblings": [
+    {"rfilename": "a.json", "blobId": BLOB40, "size": 99146},
+    {"rfilename": "w.bin", "blobId": "7cc42a149c9813fd0c4d72f7a3e0bc00d9e7a6d4",
+     "size": 4251725568, "lfs": {"sha256": SHA64, "size": 4251725568}}]})
+check(api["a.json"].git_sha1 == BLOB40 and api["a.json"].sha256 is None,
+      f"api_meta: a plain file's blobId is its git_sha1 ({api['a.json']})")
+check(api["w.bin"].git_sha1 is None and api["w.bin"].sha256 == SHA64,
+      f"api_meta: an LFS file's blobId (the pointer's) is NOT used ({api['w.bin']})")
+tree = HF.tree_meta([
+    {"type": "file", "path": "a.json", "oid": BLOB40, "size": 99146},
+    {"type": "file", "path": "w.bin", "oid": "7cc42a149c9813fd0c4d72f7a3e0bc00d9e7a6d4",
+     "size": 135, "lfs": {"oid": SHA64, "size": 4251725568}}])
+check(tree["a.json"].git_sha1 == BLOB40, f"tree_meta: a plain file's oid is its git_sha1 ({tree['a.json']})")
+check(tree["w.bin"].git_sha1 is None and tree["w.bin"].sha256 == SHA64,
+      f"tree_meta: an LFS file's oid (the pointer's) is NOT used ({tree['w.bin']})")
+
+# git's blob id: "hello\n" is ce013625… in every git, and the drafter json's is its etag
+with tempfile.TemporaryDirectory() as _td:
+    _f = Path(_td) / "hello.txt"
+    _f.write_bytes(b"hello\n")
+    check(HF.git_blob_sha1_file(_f) == "ce013625030ba8dba906f756967f9e9ca394464a",
+          f"git_blob_sha1_file is git's blob id (got {HF.git_blob_sha1_file(_f)})")
+
+    # verify_fetched: a plain file passes on its git SHA-1, and a mismatch deletes it
+    _good = Path(_td) / "good.json"; _good.write_bytes(b"hello\n")
+    _bad = Path(_td) / "bad.json"; _bad.write_bytes(b"hello?\n")
+    _meta = {"good.json": HF.FileMeta("good.json", size=6, git_sha1="ce013625030ba8dba906f756967f9e9ca394464a", source="api"),
+             "bad.json": HF.FileMeta("bad.json", size=7, git_sha1="ce013625030ba8dba906f756967f9e9ca394464a", source="api")}
+    _lines = []
+    check(HF.verify_fetched(Path(_td), ["good.json"], _meta, log=_lines.append, rung="2") == ["good.json"],
+          "verify_fetched: a matching git SHA-1 verifies a plain file")
+    check(any("git blob SHA-1 OK" in l for l in _lines), f"... and says which hash it checked ({_lines})")
+    _err = None
+    try:
+        HF.verify_fetched(Path(_td), ["bad.json"], _meta, log=_lines.append, rung="2")
+    except HF.LadderError as e:
+        _err = e
+    check(_err is not None and _err.token == "sha-mismatch" and not _bad.exists(),
+          "verify_fetched: a git SHA-1 mismatch raises sha-mismatch and DELETES the artifact")
 
 m = HF.resolve_head("o/m", "f.bin",
                     opener=_Opener(_Hop(**{"x-linked-etag": SHA64.upper(),
