@@ -601,6 +601,10 @@ ENGINE_SOURCE_LABELS = {
     "prom-tpot": "engine-reported: /metrics time_per_output_token_seconds",
     "sglang-log": "engine-reported: SGLang 'gen throughput (token/s)' log line",
     "llamacpp-log": "engine-reported: llama.cpp 'eval time' log line",
+    # QEngine prints its per-request timing in llama.cpp's "eval time" format, so the regex alone
+    # can't tell the two apart; soak-test.sh resolves the engine (scripts/lib/engine-kind.sh) and
+    # hands it down as SOAK_ENGINE_KIND (#2006, #2011).
+    "qengine-log": "engine-reported: QEngine's per-request 'eval time' log line",
     "strata-log": "engine-reported: Strata's '[strata] done' (or Project Maya's '[maya] done') log line (tokens since the first token)",
 }
 
@@ -695,6 +699,14 @@ def engine_rate_from_logs(text):
         if 0 < value < ENGINE_TPS_SANE_MAX:
             return round(value, 3), source
     return None, ""
+
+
+def log_source_for_engine(source, engine_kind):
+    """The decode-rate source named for the engine that wrote it. `engine_kind` is the resolver's
+    answer (scripts/lib/engine-kind.sh, passed down by soak-test.sh), not a guess made here."""
+    if source == "llamacpp-log" and (engine_kind or "").strip().lower() == "qengine":
+        return "qengine-log"
+    return source
 
 
 def decode_label(basis, source, window_ms, whole=False):
@@ -856,6 +868,7 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
             engine_source = "prom-tpot"
     elif completion_tokens > 0 and counter_kind == "log" and counter_container:
         engine_tps, engine_source = engine_rate_from_logs(_docker_logs_since(counter_container, t0))
+        engine_source = log_source_for_engine(engine_source, os.environ.get("SOAK_ENGINE_KIND", ""))
     # --- decode-rate basis (#809) --------------------------------------------
     # decode TPS = completion_tokens / (wall - ttft) assumes token-by-token
     # autoregressive streaming. Canvas-granularity (block-diffusion) models do

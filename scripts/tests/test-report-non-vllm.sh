@@ -59,6 +59,23 @@ command grep -qF '| `--max-model-len` | 262144 |' "$R" || fail "a vLLM report lo
 command grep -qF '| `--kv-cache-dtype` | `fp8_e4m3` |' "$R" || fail "a vLLM report lost its KV flag row"
 command grep -qE '^Config: `img-vllm` · .*`fp8_e4m3` KV · `262144` ctx' "$tmp/vllm/REPORT-discuss.md" || fail "a vLLM discussion summary changed"
 pass "a vLLM report keeps its flag table and summary line"
+command grep -qF -- '- **Served as:** `qwen3.8-27b` from `/m`' "$R" || fail "a vLLM report must still name the served model and path from its flags"
+
+# #2011: QEngine (like every non-vLLM engine) has no --served-model-name / --model on its command line,
+# so the Meta line read "Served as: `?` from `?`". The name comes from what the server reported, the
+# path from bench.sh's `serving argv` model= token.
+mk_tag qengine '["bash","-c","exec /app/server/run.sh"]' \
+  "  endpoint       : http://localhost:8203  (mode=chat)" \
+  "  model          : qwen3.8-flash-next" \
+  "  serving argv   : model=/app/models/Qwen3.8-Flash-Next-QE-INT4" \
+  "  KV cache type  : fp8_e4m3 (QEngine's only KV format)"
+R="$tmp/qengine/REPORT.md"
+command grep -qF -- '- **Served as:** `qwen3.8-flash-next` from `/app/models/Qwen3.8-Flash-Next-QE-INT4`' "$R" \
+  || fail "a QEngine report must name what it served and from where (#2011): $(command grep -F 'Served as' "$R")"
+R="$tmp/strata/REPORT.md"
+command grep -qxF -- '- **Served as:** `qwen3.8-flash-next-iq3_s`' "$R" \
+  || fail "with no model path anywhere, the Meta line names the served model and leaves the path out: $(command grep -F 'Served as' "$R")"
+pass "the Meta line's served name and path come from the fingerprint when the command line has none (#2011)"
 
 # --- 2. cap_kv_type on Strata: the engine child's flags -----------------------------------
 bin="$tmp/bin"; mkdir -p "$bin"

@@ -695,8 +695,16 @@ print(s.getsockname()[1], flush=True); time.sleep(120)'
   [[ "$(cap_url_local_port 'http://localhost:8020')" == "8020" ]] || fail "localhost:8020 is local, port 8020"
   [[ "$(cap_url_local_port 'http://[::1]:9393/v1')" == "9393" ]] || fail "[::1]:9393 is local, port 9393"
   cap_url_local_port 'http://example.invalid:8020' >/dev/null && fail "example.invalid is not this machine"
+  # #2006: a docker-served engine (QEngine, started by hand) on a host that also runs an unrelated
+  # llama-server (an embedder on another port). URL's port belongs to docker, so the pid must be the
+  # container's largest process, never the host llama-server. Real pgrep (the decoy is visible),
+  # stub docker only.
+  mkdir -p "$TMP/stub-docker"; cp "$TMP/stub/docker" "$TMP/stub-docker/docker"
+  v="$(PATH="$TMP/stub-docker:$PATH" URL="http://127.0.0.1:${_tp}" CONTAINER=qengine SERVER_PID= cap_server_pid || true)"
+  [[ "$v" == "999999902" ]] \
+    || fail "a container's engine with an unrelated host llama-server on another port: the pid must be the container's (#2006), got: '$v'"
   kill "$_decoy" "$_tunnel" 2>/dev/null || true; wait "$_decoy" "$_tunnel" 2>/dev/null || true
-  echo "  ✓ host runs: only a named server that owns URL's port is adopted (#1942)"
+  echo "  ✓ host runs: only a named server that owns URL's port is adopted, a container's process otherwise (#1942, #2006)"
 fi
 # The container command is read even when an argv was found: the adopted process
 # need not be the one the container command starts.

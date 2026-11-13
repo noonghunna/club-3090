@@ -129,6 +129,25 @@ def parse_fingerprint(bench_log: str) -> dict:
     return out
 
 
+def served_as(c: dict, fp: dict) -> tuple[str, str]:
+    """(served name, model path) for the report. vLLM's command line has --served-model-name / --model;
+    another engine (QEngine, llama.cpp, Strata, ...) has neither there, so the name falls back to the
+    model the server reported in bench.sh's fingerprint and the path to its `serving argv` model= token.
+    Either can stay "?" (#2011: "Served as: `?` from `?`" on a QEngine run)."""
+    c = c or {}
+    fp = fp or {}
+    name = c.get("served_model_name")
+    if name in (None, "", "?"):
+        name = fp.get("model") or "?"
+    path = c.get("model")
+    if path in (None, "", "?"):
+        path = "?"
+        m = re.search(r"(?:^|\s)model=(\S+)", fp.get("serving argv", ""))
+        if m:
+            path = m.group(1)
+    return name, path
+
+
 def parse_model_config_json(model_dir: Path) -> dict:
     """Read config.json from the served model dir to get quant metadata."""
     cfg_path = model_dir / "config.json"
@@ -439,7 +458,8 @@ def render(report: dict) -> str:
         lines.append(f"- **Quant:** {mc.get('quant_method', '?')} {mc.get('bits', '?')}-bit, group_size {mc.get('group_size', '?')}")
     if meta.get("container"):
         c = meta["container"]
-        lines.append(f"- **Served as:** `{c.get('served_model_name')}` from `{c.get('model')}`")
+        name, path = served_as(c, meta.get("fingerprint"))
+        lines.append(f"- **Served as:** `{name}`" + (f" from `{path}`" if path != "?" else ""))
         lines.append(f"- **Image:** `{c.get('image')}`")
         lines.append(f"- **Container:** `{c.get('name')}`")
     rig = meta.get("rig", {})
@@ -856,9 +876,7 @@ def compute_reproducer(meta: dict) -> dict:
         cmds.append(f"# image: {c['image']}")
     cmds.append("")
     cmds.append("# Bring the model up via gpu-mode (or docker compose -f <compose>.yml up -d):")
-    served = c.get("served_model_name")
-    if served in (None, "", "?"):
-        served = fp.get("model", "?")          # not a vLLM command line: the name the server reported
+    served = served_as(c, fp)[0]               # not a vLLM command line: the name the server reported
     cmds.append(f"# served_model_name = {served}")
     cmds.append("")
     cmds.append("bash scripts/rebench-full.sh")
