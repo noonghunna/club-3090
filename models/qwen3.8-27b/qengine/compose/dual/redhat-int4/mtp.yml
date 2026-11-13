@@ -3,12 +3,14 @@
 #   Model:     Qwen3.8-27B — RedHatAI INT4 (compressed-tensors W4A16, group 128, symmetric) with
 #              its MTP head, plus QEngine's fine-tuned MTP head and draft vocabulary (its release
 #              assets, unchanged since v1.0; the server downloads them when they're missing)
-#   Engine:    QEngine 1.3.5.7 (bpx03; upstream's stable release): its own
-#              C++/CUDA engine and server, the author's own image ghcr.io/bpx03/qengine (source 5028c500, the
+#   Engine:    QEngine 1.3.5.9 (bpx03; upstream's stable release): its own
+#              C++/CUDA engine and server, the author's own image ghcr.io/bpx03/qengine (source ee98bd10, the
 #              :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (tensor parallel 2; GPU-to-GPU P2P when the driver grants it)
-#   Drafter:   MTP, up to 7 drafts a step (adaptive; SPEC_N sets the most, 0 turns MTP off) + lookup
-#              drafts from the token history
+#   Drafter:   from 1.3.5.8 the DFlash2 block drafter (7 drafts a step) while one conversation decodes
+#              alone (QE_DRAFTER=auto loads it when the context and slots still fit), else MTP, up to 7
+#              drafts a step (adaptive; SPEC_N sets the most, 0 turns both drafters off) + lookup drafts
+#              from the token history
 #   KV:        fp8_e4m3 (QEngine's only K / V format, one shared pool per GPU)
 #   Vision:    yes (VISION=0 turns it off; verify-full vision 4/4, 2026-10-31). The encoder and PyTorch's
 #              CUDA context sit on GPU1, and tensor parallel sizes the KV pool by the smaller card: MEASURED
@@ -17,7 +19,8 @@
 #   Max ctx:   262144
 #   Genesis:   none
 #   Status:    ⚠️ Production w/ caveats — promoted 2026-10-31 (the full gate on a community rig, #1862)
-#   Caveats:   ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
+#   Caveats:   QEngine is MIT-licensed from 1.3.5.8; the rollback images (1.3.5.7 and older) are
+#              PolyForm Noncommercial 1.0.0. The weights keep their own licences.
 #              The full gate passed on two other rigs, not this one: eddietheengineer's #1862 (QEngine 1.3,
 #              3090 + 3090 Ti at 260 / 240 W) ran verify-full, verify-stress 8/8 with the ceiling ladder
 #              filled to 240K, both soaks (PASS, 0 MB growth) and the 8-pack (108 / 132 of 150, thinking
@@ -34,7 +37,8 @@
 #              Measured 2026-10-28 on two 3090s at 230 W (bench.sh on its own boot): 147.2 / 216.3
 #              decode, 2,430 prefill @10K, 1,786 @90K, MTP acceptance length 3.4, 23.4 GB a card
 #              (BENCHMARKS.md, Qwen3.8-27B); KV pool 374,784 tokens (289,792 with vision, the default from
-#              2026-10-31), P2P for the decode all-reduce.
+#              2026-10-31), P2P for the decode all-reduce. Those runs drafted with MTP; from 1.3.5.8 a
+#              conversation that decodes alone drafts with DFlash2 (not re-benched here).
 #              First start 25 s including the GEMM tuning, later starts 21 s.
 #   Best for:  many concurrent chats on two 3090s (32 slots, full 262K context)
 # ---------------------------------------------------------------------------
@@ -67,7 +71,9 @@
 #   REASONING_EFFORT  low (default) | medium | xhigh: QE_REASONING_EFFORT, the default effort for requests
 #                     that send none
 #   SPEC_N=<n>        --mtp-k, the most MTP drafts a step (default 7; the engine adapts below it);
-#                     0 = no MTP (lookup drafts stay on; QE_LOOKUP=0 turns them off)
+#                     0 = no MTP and, from 1.3.5.8, no DFlash2 block steps either (the drafter still
+#                     loads: QE_DRAFTER=mtp leaves it out); lookup drafts stay on (QE_LOOKUP=0 turns
+#                     them off). A DFlash2 block step drafts 7 whatever SPEC_N
 #   VISION            1 (default) | 0: --vision 1 | 0, image input (OpenAI image_url, Anthropic image blocks)
 #   THINKING_BUDGET_LOW / _MEDIUM / _XHIGH  thinking tokens per effort (unset = 4096 / 16384 / 32768, as
 #                     on the vLLM and SGLang slugs): QE_THINKING_BUDGET=low:N,medium:N,xhigh:N, QEngine's
@@ -133,7 +139,9 @@
 #   QE_DECODE_COMM    the decode all-reduces' path (1.3.5): auto (both timed on real decode steps at the end
 #                     of start-up, the faster kept, cached per hardware and settings) | remeasure | p2p | host;
 #                     the `[comm] decode collectives` log line says which. Prefill keeps QE_COMM's
-#   QE_COMM_CACHE     the start-up cache of the link probe and that timing (1; 0 = off, refresh = measure again)
+#   QE_COMM_CACHE     the start-up cache of the link probe and that timing (1; 0 = off, refresh = measure again).
+#                     From 1.3.5.8 its key holds each card's NVLink links too, so a bridge fitted later
+#                     is measured again (#2000); the first start of 1.3.5.8 measures everywhere
 #   QE_VRAM_ADAPT     1.3.5: when another process takes GPU memory while serving, the KV pool shrinks (idle
 #                     conversations to the archive) and grows back once it's free (1; 0 = off).
 #                     QE_VRAM_LOW_MB / QE_VRAM_TARGET_MB set the free-memory marks (QEngine's own)
@@ -158,6 +166,19 @@
 #                     authors' 6.3 MB index map, checks its sha256 and caches it in ~/.cache/qengine/lsa (the
 #                     engine cache); offline, or QE_FETCH_ASSETS=0 with none cached, it serves full attention
 #                     and logs `LSA: off: ...`. A path: that map file. Unset = off
+#   QE_DRAFTER        the drafter of a conversation that decodes alone (from 1.3.5.8): auto (default)
+#                     loads the DFlash2 block drafter when the requested context and slots still fit
+#                     with it (upstream: 0.82 GB a card on two cards, 0.70 on three), dflash2 always (the
+#                     context shrinks to fit), mtp never (nothing downloaded; 1.3.5.7's drafting). The
+#                     start-up line `DFlash2 drafter ...` says which. Two or more conversations decoding
+#                     in one step, and grammar-constrained replies (tool_choice, response_format), draft
+#                     with MTP either way. The first start downloads syvai/Qwen3.8-27B-DFlash2-W4A16
+#                     (1.28 GB, a pinned revision checked against its sha256) into ~/.cache/qengine/dflash2,
+#                     the engine cache (kept per image, like the release assets), waiting up to
+#                     QE_FETCH_WAIT_S; a slower download is used from the next start. Offline, or
+#                     QE_FETCH_ASSETS=0 with none cached, it drafts with MTP. A dflash2/ folder in the
+#                     checkpoint's folder is found first, and nothing is downloaded
+#   QE_DFLASH_URL     a mirror for that download (the sha256 pin still applies)
 #   QE_EXTRA_ARGS     more server/app.py flags (--max-ctx, --served-name, ...), after ours. From 1.3.5,
 #                     --max-ctx 512K or 1M turns on YaRN for every request of that server (opt-in; upstream
 #                     found needles at 524K and 1.04M on three cards), and --lsa (QE_LSA above)
@@ -167,7 +188,7 @@
 #   bash scripts/settings.sh set QE_KV_ARCHIVE_GB=8
 services:
   qengine-qwen38-27b-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:2d790174baee2eb89d8afa5b6eb0ab68eb3a05bebf73e627e92e7686a889e124}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:e670c0d98633d4e2b2c1dbeb75b7a1c19b776703d1dac2488f9f5cc621d6ac4c}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-27b-dual}"
     user: "0:${DOCKER_GID:-1000}"
@@ -240,6 +261,8 @@ services:
       - QE_SNAPSHOTS
       - QE_LOAD_DROP
       - QE_LSA
+      - QE_DRAFTER
+      - QE_DFLASH_URL
       - QE_EXTRA_ARGS
       # our launch knobs, mapped onto QEngine's flags by the entrypoint below
       - ENABLE_THINKING
@@ -274,14 +297,14 @@ services:
         if [ -n "$${SPEC_N:-}" ]; then
           case "$$SPEC_N" in
             *[!0-9]*) echo "[spec] SPEC_N='$$SPEC_N' is not a non-negative integer." >&2
-                      echo "[spec] Fix: SPEC_N=<n> sets the most MTP drafts a step; SPEC_N=0 turns MTP off." >&2
+                      echo "[spec] Fix: SPEC_N=<n> sets the most MTP drafts a step; SPEC_N=0 turns MTP and DFlash2 off." >&2
                       exit 1 ;;
           esac
           _args+=(--mtp-k "$$SPEC_N")
           if [ "$$SPEC_N" -eq 0 ]; then
-            echo "[spec] MTP OFF (SPEC_N=0); lookup drafts stay on unless QE_LOOKUP=0" >&2
+            echo "[spec] MTP and DFlash2 drafts OFF (SPEC_N=0); lookup drafts stay on unless QE_LOOKUP=0" >&2
           else
-            echo "[spec] MTP ON, at most $$SPEC_N drafts a step (SPEC_N)" >&2
+            echo "[spec] MTP ON, at most $$SPEC_N drafts a step (SPEC_N; a DFlash2 block step drafts 7)" >&2
           fi
         fi
         # REASONING_EFFORT (our knob) -> QE_REASONING_EFFORT, QEngine's default effort for requests that
