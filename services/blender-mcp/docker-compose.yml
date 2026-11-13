@@ -1,0 +1,25 @@
+# Blender headless + blender-mcp addon socket — shared 3D workbench for
+# omp / pi / dsh agents over MCP (blender-mcp bridge, stdio, spawned per agent).
+# Scene/state lives inside the single container; agents take turns on the
+# addon's socket (one client at a time — the addon serves sequentially).
+services:
+  blender:
+    build: .
+    image: club3090/blender-mcp:latest
+    container_name: blender-mcp
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "127.0.0.1:9876:9876"
+    volumes:
+      # persisted .blend files / agent artifacts survive container rebuilds
+      - blender-data:/data
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/9876"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+
+volumes:
+  blender-data:
