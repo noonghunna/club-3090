@@ -189,15 +189,21 @@ out_down = out_down.replace('"http://127.0.0.1:1/v1"', '"http://127.0.0.1:4000/v
 sys.exit(0 if block == out_down else 1)
 PY
 
-# 14. dsh itself accepts the file (when dsh is installed): --dump-config composes it, no model call
-if command -v dsh >/dev/null 2>&1; then
+# 14. dsh itself accepts the file (when dsh is installed): --dump-config composes it, no model call.
+#     dsh is a Node CLI (`#!/usr/bin/env node`): it can sit on PATH (an npm symlink in
+#     ~/.local/bin) while node itself does not, and then every dsh call dies with
+#     "env: 'node': No such file or directory" — a host gap, not a defect in the file.
+#     With node present the leg runs and fails for real, so a broken dsh is never skipped.
+if ! command -v dsh >/dev/null 2>&1; then
+  echo "SKIP (dsh acceptance): dsh is not installed; the structural checks ran"
+elif ! command -v node >/dev/null 2>&1; then
+  echo "SKIP (no node): dsh is installed but node is not on PATH, so dsh cannot run; the structural checks ran"
+else
   export DSH_HOME="$T/real"; rm -rf "$DSH_HOME"
   PATH="$REAL_PATH" bash "$ROOT/scripts/dsh-setup.sh" --gateway "$STUB" --profile headless >/dev/null 2>&1 || bad "a run with the real dsh failed"
   dump="$(cd "$T" && timeout 120 dsh --profile headless --dump-config 2>&1 </dev/null)"
   echo "$dump" | command grep -q "club" && echo "$dump" | command grep -q "qwen3.8-27b" \
     || bad "dsh must compose the club provider from the generated file: $(echo "$dump" | tail -3)"
-else
-  echo "SKIP (dsh acceptance): dsh is not installed; the structural checks ran"
 fi
 
 [ "$fail" -eq 0 ] && echo "test-dsh-setup: ok (print-only, profiles created without a model run, block + 0600 key, Qwen3.8 wiring, gateway windows, idempotent, other entries + mode kept, user's default kept, foreign llm-pi-ai refused, .env merged, legacy settings warned, name not a path, ids == omp-setup's, doc block == script, dsh accepts it)"
