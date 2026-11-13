@@ -15,7 +15,8 @@
 #   Vision:    yes (VISION=0 turns it off; verify-full vision 4/4, 2026-10-31). The encoder and PyTorch's
 #              CUDA context sit on GPU1, and tensor parallel sizes the KV pool by the smaller card: MEASURED
 #              374,784 -> 289,792 tokens (-23%, still a full 262K context); VISION=0 gives it back.
-#              On 1.3.5 the pool with vision is 368,640 tokens (2026-11-06, two boots; cause not traced)
+#              On 1.3.5 the pool with vision is 368,640 tokens (2026-11-06, two boots; cause not traced);
+#              on 1.3.5.9 with the DFlash2 drafter loaded (0.82 GB a card), 316,416 (2026-11-13)
 #   Max ctx:   262144
 #   Genesis:   none
 #   Status:    ⚠️ Production w/ caveats — promoted 2026-10-31 (the full gate on a community rig, #1862)
@@ -27,7 +28,7 @@
 #              off / on); bpx03's, QEngine's author (#1979: 1.3.5.5, two 3090s at stock power, our scripts
 #              at 3e395893), ran verify-full, verify-stress 8/8 with the ladder filled to 240,664 tokens,
 #              both soaks (0 silent, 0 MiB growth) and the 8-pack (110 / 131 of 150). Here it has bench
-#              and verify-full. 1.3.1 to 1.3.5.7 were boot-tested. From 1.3.4.3
+#              and verify-full. 1.3.1 to 1.3.5.9 were boot-tested. From 1.3.4.3
 #              our THINKING_BUDGET_* map (4096 / 16384 / 32768 by effort, as on the vLLM and SGLang
 #              slugs) reaches QEngine's own per-effort QE_THINKING_BUDGET; a request's own budget wins.
 #              The default effort is low, as on the other Qwen3.8 slugs, through QEngine's
