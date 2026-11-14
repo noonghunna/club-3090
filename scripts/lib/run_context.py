@@ -26,6 +26,10 @@ WHAT IT REPORTS — what the engine APPLIES to a chat request, not what it was t
       adapters declare them with a hard 0.0 default, so the server cannot change
       them. A client that wants them must send them.
     * llama.cpp — no sampling: benchlocal-cli reads GET /props itself.
+    * QEngine / Strata / Project Maya — their own start-up sampling line. From
+      1.3.5.3 on QEngine prints ONE ROW PER REASONING MODE, so `--thinking` names
+      the run's gate and the row recorded is the one THIS leg applied; before
+      1.3.5.3 (and on Strata) there is one mode-less line (#2030).
     * The rig — GPUs visible to the container (count × model, power cap, PCIe
       gen/width, NVLink) plus TP/PP, quant, KV, spec method, max ctx from the
       engine's own startup dump.
@@ -172,24 +176,59 @@ def sglang_context(text: str) -> tuple[dict | None, str | None, dict, list[str]]
     return defaults, source, meta, notes
 
 
-# QEngine: "sampling defaults (when the request has none): temperature 1.00, top_p 0.95, top_k 20, min_p 0.00"
-# Project Maya (a Strata fork): "[maya] sampling defaults from the config: temperature=1.0, top_p=1.0"
-_QE_SAMPLING = re.compile(r"sampling defaults \(when the request has none\): ([^\n]+)")
+# QEngine prints one line PER REASONING MODE from 1.3.5.3 on (#2030):
+#   "sampling defaults, thinking (when the request has none): temperature 1.00, top_p 0.95, top_k 20, min_p 0.00, presence_penalty 0.00"
+#   "sampling defaults, non-thinking (when the request has none): temperature 0.70, top_p 0.80, top_k 20, min_p 0.00, presence_penalty 1.50"
+# and before that a single, mode-less line. Project Maya (a Strata fork) prints
+#   "[maya] sampling defaults from the config: temperature=1.0, top_p=1.0"
+_QE_SAMPLING = re.compile(r"sampling defaults(?:, (thinking|non-thinking))? \(when the request has none\): ([^\n]+)")
 _STRATA_SAMPLING = re.compile(r"\[(?:maya|strata)\] sampling defaults from the config: ([^\n]+)")
+# QEngine applies presence_penalty from the server side (its request-absent
+# defaults carry one). vLLM and SGLang declare it with a hard 0.0 default and
+# cannot, so it stays out of their key set.
+_QE_SERVER_KEYS = SERVER_SETTABLE + ("presence_penalty",)
 
 
-def boot_line_sampling(engine: str, text: str) -> tuple[dict | None, str | None]:
-    """The sampler QEngine or Strata / Project Maya says it applies to requests that send none, from its
-    own start-up line; the last such line wins (a restarted container keeps its earlier boots')."""
-    pat, name = (_QE_SAMPLING, "QEngine") if engine == "qengine" else (_STRATA_SAMPLING, "Strata / Project Maya")
-    hits = pat.findall(text)
-    if not hits:
-        return None, None
-    pairs = re.findall(r"([a-z_]+)[ =](-?[0-9]+(?:\.[0-9]+)?)", hits[-1])
-    vals = {k: (float(v) if "." in v else int(v)) for k, v in pairs if k in SERVER_SETTABLE}
+def _boot_vals(body: str, keys) -> dict:
+    pairs = re.findall(r"([a-z_]+)[ =](-?[0-9]+(?:\.[0-9]+)?)", body)
+    return {k: (float(v) if "." in v else int(v)) for k, v in pairs if k in keys}
+
+
+def boot_line_sampling(engine: str, text: str,
+                       thinking: str = "unknown") -> tuple[dict | None, str | None, str | None]:
+    """The sampler QEngine or Strata / Project Maya says it applies to requests that send none, taken
+    from its own start-up line; the last line for the selected mode wins (a restarted container keeps
+    its earlier boots'). QEngine's per-mode pair is selected by the run's thinking gate (`--thinking`);
+    with the gate unknown and both modes present nothing is claimed and a note says why.
+    Returns (defaults, source, note)."""
+    if engine == "qengine":
+        rows = [(mode or None, vals) for mode, body in _QE_SAMPLING.findall(text)
+                for vals in [_boot_vals(body, _QE_SERVER_KEYS)] if vals]
+        if not rows:
+            return None, None, None
+        mode_less = [vals for mode, vals in rows if mode is None]
+        wanted = {"on": "thinking", "off": "non-thinking"}.get(thinking)
+        if wanted:
+            picked = [vals for mode, vals in rows if mode == wanted] or mode_less
+            label = f"{wanted} row"
+        elif mode_less:
+            picked, label = mode_less, "sampling defaults"
+        else:
+            modes = sorted(m for m in {mode for mode, _ in rows} if m)
+            if len(modes) > 1:
+                return (None, None,
+                        "QEngine printed one sampling row per reasoning mode ("
+                        + ", ".join(modes)
+                        + "); the leg's thinking gate was not given, so none is claimed")
+            picked, label = [vals for _, vals in rows], f"{modes[0]} row"
+        return (picked[-1],
+                f"QEngine start-up line ({label}, sampling defaults for requests that send none)",
+                None)
+    hits = _STRATA_SAMPLING.findall(text)
+    vals = _boot_vals(hits[-1], SERVER_SETTABLE) if hits else {}
     if not vals:
-        return None, None
-    return vals, f"{name} start-up line (sampling defaults for requests that send none)"
+        return None, None, None
+    return vals, "Strata / Project Maya start-up line (sampling defaults from the config)", None
 
 
 def visible_gpu_selectors(inspect: dict) -> list[str] | None:
@@ -251,16 +290,19 @@ def gpu_meta(smi_csv: str, selectors: list[str] | None, nvlink_txt: str) -> dict
     return meta
 
 
-def build(engine: str, text: str, inspect: dict, smi_csv: str, nvlink_txt: str) -> dict:
+def build(engine: str, text: str, inspect: dict, smi_csv: str, nvlink_txt: str,
+          thinking: str = "unknown") -> dict:
     notes: list[str] = []
     if engine == "vllm":
         defaults, source, meta, notes = vllm_context(text)
     elif engine == "sglang":
         defaults, source, meta, notes = sglang_context(text)
     elif engine in ("qengine", "strata"):
-        defaults, source = boot_line_sampling(engine, text)
+        defaults, source, note = boot_line_sampling(engine, text, thinking)
         meta = {}
-        if not defaults:
+        if note:
+            notes.append(note)
+        elif not defaults:
             notes.append(f"{engine}: no sampling-defaults line in the boot log — the server's defaults are not recorded")
     else:
         defaults, source, meta = None, None, {}
@@ -328,6 +370,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Resolve the sampling in effect and the rig for a quality report (#1396).")
     ap.add_argument("--engine", required=True, choices=ENGINES,
                     help="engine family, from scripts/lib/engine-kind.sh")
+    ap.add_argument("--thinking", choices=("on", "off", "unknown"), default="unknown",
+                    help="the run's thinking gate, so a per-mode boot sampling row records the row THIS "
+                         "leg applied (QEngine 1.3.5.3+; ignored where the engine prints one mode-less line)")
     ap.add_argument("--container", help="serving container (live mode)")
     ap.add_argument("--boot-log", help="engine boot log file (instead of docker logs)")
     ap.add_argument("--inspect-json", help="`docker inspect <c>` output file")
@@ -355,7 +400,7 @@ def main() -> int:
     nvlink = _read(a.nvlink_txt) if a.nvlink_txt else (
         _cmd(["nvidia-smi", "nvlink", "--status"]) if live else "")
 
-    ctx = build(a.engine, text, inspect, smi, nvlink)
+    ctx = build(a.engine, text, inspect, smi, nvlink, a.thinking)
     for note in ctx["notes"]:
         print(f"[run-context] note: {note}", file=sys.stderr)
     if a.emit_args:

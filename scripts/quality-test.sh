@@ -1532,7 +1532,18 @@ if [[ -z "$RESUME" && -n "${CONTAINER:-}" && "${CONTAINER}" != "none" ]] \
     if [[ "$_rc_kind" == "unknown" ]]; then
       _rc_kind="$(engine_kind_from_image "$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)")"
     fi
-    _rc_flags=(--engine "$_rc_kind" --container "$CONTAINER" --emit-args)
+    # #2030: QEngine (1.3.5.3+) prints ONE sampling row per reasoning mode, so the
+    # row recorded has to be the one THIS leg ran under. --both-modes re-execs the
+    # wrapper per leg with --no-thinking / --enable-thinking, so each leg resolves
+    # its own gate here; with neither flag the run mixes packs and the gate is
+    # unknown (run_context.py then claims no row rather than the wrong one).
+    _rc_thinking="unknown"
+    if [[ "$ENABLE_THINKING" == "1" ]]; then
+      _rc_thinking="on"
+    elif [[ "$NO_THINKING" == "1" ]]; then
+      _rc_thinking="off"
+    fi
+    _rc_flags=(--engine "$_rc_kind" --container "$CONTAINER" --emit-args --thinking "$_rc_thinking")
     [[ "$SAMPLING_FROM_SERVER" == "1" ]] || _rc_flags+=(--no-server-defaults)
     _rc_err="$(mktemp)"
     _rc_args=()
