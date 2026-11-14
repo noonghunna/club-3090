@@ -264,10 +264,20 @@ bash scripts/preflight-add-model.sh  my-llamacpp/<your-model>   # diagnose-profi
 
 `register` reads your compose and fills in what it can — engine, context, KV format,
 tensor split, port, model id, weights path — then **prints every value it resolved,
-marked `(given)` or `(derived)`, before writing anything**. `--dry-run` shows the whole
-plan and writes nothing. A compose is read mechanically: it cannot know whether your
-`-ts 1,1` means a layer split or tensor parallelism in the catalog's sense, so check the
-list rather than trusting it.
+marked `(given)` or `(derived)`, before writing anything**. A value your compose does not
+state is marked `(defaulted)`: it is a placeholder, and the line after the list names the
+`catalog.sh update --set …` that records what the model actually serves with once it is
+up (an engine that sets its context or KV format at boot states neither in the compose).
+`--dry-run` shows the whole plan and writes nothing. A compose is read mechanically: it
+cannot know whether your `-ts 1,1` means a layer split or tensor parallelism in the
+catalog's sense, so check the list rather than trusting it.
+
+The copy in your layer keeps the compose's own place when it is filed the way the repo
+files them, `…/compose/<topology>/<quant>/<serving>.yml`: registering
+`multi4/qengine-int4/mtp.yml` files it as `multi4/<variant>/mtp.yml`, and when the compose
+states no tensor-parallel size the directory supplies it (`multi4` is 4, marked
+`(from its directory)`). A compose anywhere else is filed by its tensor-parallel size, as
+`base.yml`.
 
 Three things it will **refuse** rather than guess, because guessing wrong is silent:
 
