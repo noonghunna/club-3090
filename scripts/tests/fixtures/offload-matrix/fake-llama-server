@@ -56,6 +56,9 @@ FAKE_SCENARIO:
                   no draft counts) and one maya-ds4 draft line per request in the
                   log, the way a host-run Maya writes them: bench.sh reads the drafts
                   only from SERVER_LOG, with no container (D#1572)
+  no_ignore_eos   healthy, but a request carrying ignore_eos gets HTTP 400 with
+                  maya-mm3's reason ("ignore_eos: this engine does not apply token
+                  biases"); min_tokens alone is served. FAKE_400_MSG rewords the 400
   probefail       the n_layer line NEVER appears, so the layer probe times out --
                   and the process IGNORES SIGTERM, the way a real server does
                   while still inside model load. Only a probe that escalates past
@@ -272,6 +275,17 @@ class H(BaseHTTPRequestHandler):
 
         if SC == "req_errors":
             self.send_response(500); self.send_header("Content-Length", "0"); self.end_headers()
+            return
+
+        # Every request's forcing fields, so a test can see what bench.sh sent.
+        log(f"[fake] forcing ignore_eos={'ignore_eos' in req} min_tokens={req.get('min_tokens')}")
+        if SC == "no_ignore_eos" and "ignore_eos" in req:
+            # maya-mm3's validation 400, in its own error shape. FAKE_400_MSG swaps
+            # the wording for a 400 that does NOT name ignore_eos (no retry then).
+            log("[fake] refused: ignore_eos")
+            self._json({"error": {"message": os.environ.get("FAKE_400_MSG",
+                        "ignore_eos: this engine does not apply token biases - update Maya "
+                        "(./maya.sh --setup)"), "type": "invalid_request_error"}}, code=400)
             return
 
         _req_n[0] += 1
