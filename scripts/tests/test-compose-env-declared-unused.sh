@@ -82,6 +82,9 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 # 1.3.5: the VRAM-pressure handling, the start-up context fit, kernel preload, repeatable text
                 "FLASH_VRAM_ADAPT", "FLASH_VRAM_LOW_MB", "FLASH_VRAM_TARGET_MB", "FLASH_CTX_FIT",
                 "FLASH_PRELOAD", "FLASH_ATTN_CHUNK",
+                # 1.3.5.8: an idle conversation above every generating one leaves VRAM after this many seconds
+                # (src/flash/flash_capi.cpp, env_double)
+                "FLASH_EC_RECLAIM_ABOVE_S",
                 # Project Maya's serve/server.py reads it (model load/unload endpoints, on by default from v1.1.47)
                 "MAYA_MODEL_MANAGEMENT",
                 # Project Maya's GLM engine (src/core/glm_window.cu) reads it: the layer split's token states GPU to GPU, from v1.1.56

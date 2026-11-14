@@ -14,9 +14,10 @@
 # What it does (per supported model):
 #   - downloads model weights into $MODEL_DIR with SHA256 verification against
 #     the hub's published x-linked-etag (no-redirect resolve HEAD via
-#     scripts/lib/profiles/hf_fetch.py). A file the hub publishes no hash for is
-#     reported UNVERIFIED and EXCLUDED from the verified count — "verified"
-#     never attaches to a size-only check (#857)
+#     scripts/lib/profiles/hf_fetch.py). A plain (non-LFS) git file, for which the
+#     hub publishes a git blob SHA-1 instead of a sha256, is checked against that.
+#     A file the hub publishes no hash for is reported UNVERIFIED and EXCLUDED
+#     from the verified count — "verified" never attaches to a size-only check (#857)
 #   - downloads the always-required drafter (Gemma 4: MTP "assistant"; Qwen3.6:
 #     no always-required drafter — DFlash is optional via WITH_DFLASH_DRAFT=1;
 #     Qwen3.8: DFlash2 optional via WITH_DFLASH_DRAFT=1 — REQUIRED by the 12
@@ -1046,7 +1047,7 @@ _hf_download_repo() {
   exit 1
 }
 
-# _hf_remote_meta <repo> <revision> <file> -> "<sha256> <size>" on stdout
+# _hf_remote_meta <repo> <revision> <file> -> "<sha256|-> <size|-> <git-sha1|->" on stdout
 #
 # Delegates to scripts/lib/profiles/hf_fetch.py::resolve_head (#855) rather than
 # re-implementing the lookup here. Two reasons that are not style preferences:
@@ -1060,10 +1061,12 @@ _hf_download_repo() {
 #      about what "verified" means. They already did, and the weaker surface
 #      was the one printing the reassuring line.
 #
-# Prints "<sha256|-> <size|->" and returns 0 when the hub answered at all;
-# returns non-zero only when the lookup itself failed. A literal "-" in the hash
-# field means the hub published NO sha256 for this file — the caller MUST treat
-# that as UNVERIFIED, never as a pass, however good the size looks.
+# Prints "<sha256|-> <size|-> <git-sha1|->" and returns 0 when the hub answered at
+# all; returns non-zero only when the lookup itself failed. A literal "-" in the
+# hash field means the hub published NO sha256 for this file. A plain (non-LFS) file
+# then carries its git blob SHA-1 in the third field, which the caller checks
+# instead; with both "-" the caller MUST treat the file as UNVERIFIED, never as a
+# pass, however good the size looks.
 _hf_remote_meta() {
   local repo="$1" revision="$2" file="$3"
   command -v python3 >/dev/null 2>&1 || return 1
@@ -1074,9 +1077,9 @@ sys.path.insert(0, "${ROOT_DIR}/scripts/lib/profiles")
 import hf_fetch
 m = hf_fetch.resolve_head(sys.argv[1], sys.argv[3], revision=sys.argv[2],
                           token=hf_fetch._token())
-if m.sha256 is None and m.size is None:
+if m.sha256 is None and m.size is None and m.git_sha1 is None:
     raise SystemExit(1)          # the hub told us nothing at all
-print(f"{m.sha256 or '-'} {m.size if m.size is not None else '-'}")
+print(f"{m.sha256 or '-'} {m.size if m.size is not None else '-'} {m.git_sha1 or '-'}")
 PY
 }
 
@@ -1100,7 +1103,7 @@ _verify_downloaded_files() {
   local revision="${4:-main}"
   local fail=0 verified=0 unverified=0 total=0 skipped=0
   local _mk _sz _mt _prev
-  local f meta expected exp_size actual local_size
+  local f meta expected exp_size exp_git actual local_size
 
   echo "[verify]  Checking SHA256 of every ${verify_glob} against the hub's published"
   echo "          x-linked-etag (no-redirect resolve HEAD, rev: ${revision}) ..."
@@ -1108,11 +1111,37 @@ _verify_downloaded_files() {
   for f in ${verify_glob}; do
     [[ -f "$f" ]] || continue
     total=$((total + 1))
-    expected=""; exp_size=""
+    expected=""; exp_size=""; exp_git=""
     if meta="$(_hf_remote_meta "$repo" "$revision" "$f")"; then
-      read -r expected exp_size <<<"$meta"
+      read -r expected exp_size exp_git <<<"$meta"
       [[ "$expected" == "-" ]] && expected=""
       [[ "$exp_size" == "-" ]] && exp_size=""
+      [[ "$exp_git" == "-" ]] && exp_git=""
+    fi
+    if [[ -z "$expected" && -n "$exp_git" ]]; then
+      # A plain (non-LFS) git file: the hub publishes its git blob SHA-1, not a
+      # sha256 — sha1(b"blob <size>\0" + content), what `git hash-object` prints.
+      # Such files are small (the hub keeps anything big in LFS), so this is cheap.
+      local_size="$(stat -c '%s' "$f" 2>/dev/null || echo "?")"
+      if [[ -n "$exp_size" && "$exp_size" != "$local_size" ]]; then
+        printf "  %-50s FAIL  size mismatch  exp=%s  act=%s\n" "$f" "$exp_size" "$local_size"
+        fail=$((fail + 1))
+        continue
+      fi
+      actual="$(python3 -c 'import hashlib, os, sys
+p = sys.argv[1]
+h = hashlib.sha1(b"blob %d\0" % os.path.getsize(p))
+with open(p, "rb") as fh:
+    h.update(fh.read())
+print(h.hexdigest())' "$f" 2>/dev/null || true)"
+      if [[ -n "$actual" && "$actual" == "$exp_git" ]]; then
+        printf "  %-50s OK  (git blob SHA-1: a plain git file, the hub publishes no sha256 for it)\n" "$f"
+        verified=$((verified + 1))
+      else
+        printf "  %-50s FAIL  git blob SHA-1 exp=%.12s  act=%.12s\n" "$f" "$exp_git" "${actual:-?}"
+        fail=$((fail + 1))
+      fi
+      continue
     fi
     if [[ -z "$expected" ]]; then
       # No published hash -> this file CANNOT be verified. Size is the only

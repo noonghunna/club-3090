@@ -197,7 +197,7 @@ A driver grant does **not** mean your engine uses it. Each engine has its own sw
 | ↳ vLLM **custom all-reduce kernel** (rides on the transport) | ON with the transport at ≤2 GPUs; vLLM vetoes it itself above 2 PCIe-only GPUs (#786) | — | **`DISABLE_CUSTOM_ALL_REDUCE=1`** — drops the kernel, **keeps** the transport |
 | **llama.cpp** | ⚠️ **OFF** — opt-in regardless of the grant | `GGML_CUDA_P2P=1` **and** `--split-mode row`/`tensor` | unset `GGML_CUDA_P2P` |
 | **SGLang** | **used automatically on a grant** — no interconnect detection; NCCL picks the peer path itself (measured on the reference rig, 2026-09-28) | nothing to do | `NCCL_P2P_DISABLE=1` (a saved setting or on the command line) — every multi-GPU SGLang compose forwards it; `test-compose-sglang-nccl-p2p-knob` keeps it that way |
-| ↳ SGLang **custom all-reduce kernel** | **OFF** — every SGLang compose passes `--disable-custom-all-reduce`. Over PCIe SGLang can only run its V1 kernel (V2 needs full NVLink) | not offered: on the reference rig it ran cleanly but gained nothing measurable (§6) | — |
+| ↳ SGLang **custom all-reduce kernel** | **ON only over NVLink** (from 2026-11-13, [#2008](https://github.com/noonghunna/club-3090/issues/2008)): the multi-GPU SGLang composes drop `--disable-custom-all-reduce` when `detect_nvlink.sh` finds NVLink, a full mesh above two cards; on PCIe, P2P granted or not, they keep it. Over PCIe SGLang can only run its V1 kernel (V2 needs full NVLink), which ran cleanly here but gained nothing measurable (§6) | automatic on NVLink | **`DISABLE_CUSTOM_ALL_REDUCE=1`** (or `NVLINK_MODE=force_off`) |
 
 > ⭐ **Transport and kernel are two switches.** `NVLINK_MODE=force_off` turns off *both* — it discards the NCCL prefill win along with the kernel that is usually the actual problem ([#922](https://github.com/noonghunna/club-3090/issues/922), [#1332](https://github.com/noonghunna/club-3090/issues/1332)). `DISABLE_CUSTOM_ALL_REDUCE=1` is the narrow one:
 >
@@ -930,8 +930,14 @@ mechanisms**, and they are not equally available:
   misleading for anyone running our stack.
 - **SGLang's custom all-reduce kernel** — not the same story. Over PCIe SGLang runs its V1 kernel (V2 needs
   full NVLink). On the reference rig it was safe (bench, verify-full, `soak-test.sh --continuous`, no AER/Xid)
-  but added nothing measurable, so the SGLang composes keep it off and there is no switch for it. A local
-  compose that turns it on can check it really started: V1's only success sign is `Registering N cuda graph
+  but added nothing measurable, so over PCIe the SGLang composes keep it off. Over NVLink it pays: on a bridged
+  pair of 3090 Tis, two fresh-boot pairs measured +7.5% / +7.8% narrative decode against NCCL, prefill
+  unchanged, with token-identical output ([#2008](https://github.com/noonghunna/club-3090/issues/2008)). So
+  from 2026-11-13 each multi-GPU SGLang compose's entrypoint runs `detect_nvlink.sh` and drops
+  `--disable-custom-all-reduce` only when it finds NVLink (a full mesh above two cards: pairwise 3090 bridges
+  aren't one); `DISABLE_CUSTOM_ALL_REDUCE=1` keeps it off, and its `[custom-ar]` boot line says which.
+  The detection runs in a subshell, so its NCCL settings don't reach SGLang, whose NCCL picks the transport
+  itself. To check the kernel really started: V1's only success sign is `Registering N cuda graph
   addresses`, which `report.sh` and the bench card now read ([#1470](https://github.com/noonghunna/club-3090/pull/1470));
   UUID-pinned GPUs no longer break its setup ([#1462](https://github.com/noonghunna/club-3090/issues/1462)).
 

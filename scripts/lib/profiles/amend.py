@@ -32,8 +32,10 @@ from typing import Any, Optional
 
 try:  # package context
     from scripts.lib.profiles import compose_header
+    from scripts.lib.profiles.compose_facts import proposed_workload
 except ImportError:  # direct-script context: this directory is on sys.path
     import compose_header
+    from compose_facts import proposed_workload
 
 _DEFAULT_ROOT = Path(__file__).resolve().parents[3]
 _LOCAL_REGISTRY_REL = "scripts/lib/profiles-local/registry.local.json"
@@ -288,6 +290,21 @@ def do_update(root: Path, slug: str, edits: dict[str, Any], *,
             f"('origin' is stamped by the loader; 'model' names the files on disk, so "
             f"changing it is a move, not an edit.)"
         )
+    edits = dict(edits)
+    # Registration proposes `workload` from max_ctx (compose_facts.proposed_workload),
+    # so a max_ctx correction re-applies that rule — when the stored workload is the
+    # one the rule gave for the OLD max_ctx. One the user chose (any other value),
+    # or one set in the same call, is left alone (#2028).
+    if "max_ctx" in edits and "workload" not in edits:
+        old_ctx, new_ctx = entry.get("max_ctx"), edits["max_ctx"]
+        if (isinstance(old_ctx, int) and isinstance(new_ctx, int)
+                and not isinstance(old_ctx, bool) and not isinstance(new_ctx, bool)):
+            was, now = proposed_workload(old_ctx), proposed_workload(new_ctx)
+            if entry.get("workload") == was and now != was:
+                edits["workload"] = now
+                print(f"[amend] note: workload follows max_ctx, as registration proposes "
+                      f"it ({was} -> {now}); to keep another, pass --set workload=<name> "
+                      f"with max_ctx")
     before = {k: entry.get(k) for k in edits}
     entry.update(edits)
     for k in [k for k, v in edits.items() if v is None and k in ("status_note", "chat_template")]:

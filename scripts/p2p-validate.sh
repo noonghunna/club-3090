@@ -53,10 +53,13 @@ command -v docker >/dev/null 2>&1 || {
 }
 
 if [[ -z "$IMAGE" ]]; then
-  # Any vLLM/SGLang image ships torch + NCCL. Prefer whatever is already local so
-  # the check never triggers a multi-GB pull.
+  # Any vLLM/SGLang ENGINE image ships torch + NCCL. Prefer whatever is already
+  # local so the check never triggers a multi-GB pull. Exclude the fa2-fp8kv-sm86
+  # sidecars: their name matches 'vllm' via the tag, but the final stage is
+  # busybox (no python3) — picking one fails container init (2026-11-13).
   IMAGE="$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-           | command grep -E 'vllm|sglang' | command grep -v '<none>' | head -1)"
+           | command grep -E 'vllm|sglang' | command grep -v '<none>' \
+           | command grep -v 'fa2-fp8kv-sm86' | head -1)"
 fi
 if [[ -z "$IMAGE" ]]; then
   echo "ERROR: no local vLLM/SGLang image found and no --image given." >&2

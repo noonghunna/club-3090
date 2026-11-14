@@ -59,12 +59,19 @@ services:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8049}}:30000"
     volumes:
       - ../../../../../../scripts/lib/cuda-ordinals.sh:/etc/club3090/cuda-ordinals.sh:ro
+      # NVLink detection for the custom all-reduce gate in the entrypoint (#2008)
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     ipc: host
     shm_size: "16gb"
     environment:
       # PCIe P2P off-switch — bare, so docker forwards it only when the host sets it (docs/PCIE_P2P.md §0c).
       - NCCL_P2P_DISABLE
+      # the custom all-reduce gate (#2008): NVLINK_MODE auto | force_on | force_off | pcie_p2p (the same as
+      # the vLLM composes; SGLang turns the kernel on only for NVLink); DISABLE_CUSTOM_ALL_REDUCE=1 keeps
+      # it off. Both with a default: a bare passthrough would send an empty value (detect_nvlink.sh wants 0 / 1)
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - DISABLE_CUSTOM_ALL_REDUCE=${DISABLE_CUSTOM_ALL_REDUCE:-0}
       - CONTEXT_LENGTH
       - MEM_FRACTION
       - KV_CACHE_DTYPE
@@ -107,10 +114,27 @@ services:
         # --chunked-prefill-size 2048 (the Qwen3.8 SGLang value): 8192 OOM'd on both cards while
         # capturing the prefill CUDA graphs (2026-10-26, MEM_FRACTION 0.88: 2.65 GB left after a
         # 206,433-token fp8 pool, then a 172 MiB SiLU buffer for an 8K chunk with 164 MiB free).
+        # Custom all-reduce (#2008): SGLang runs its own all-reduce kernel (V2) only where every card pair
+        # is NVLink; over PCIe it falls back to V1, which measured no gain on the reference rig's P2P pair
+        # (2026-09-28), and vLLM's PCIe kernel harmed patched peer paths (#922, #1332). So
+        # --disable-custom-all-reduce is dropped only when detect_nvlink.sh finds NVLink (a full mesh above
+        # two cards) and DISABLE_CUSTOM_ALL_REDUCE isn't 1. On a bridged pair of 3090 Tis it measured
+        # +7.5% / +7.8% narrative decode with token-identical output (#2008). The detection runs in a
+        # subshell, so its NCCL exports don't reach SGLang, whose NCCL picks the transport itself.
+        _AR="--disable-custom-all-reduce"
+        if [ -f /etc/club3090/detect_nvlink.sh ] && ( set +euo pipefail
+             . /etc/club3090/detect_nvlink.sh --tensor-parallel-size 2 >/dev/null
+             [ "$${_CUSTOM_AR_ENABLED:-0}" = 1 ] && [ "$${_NVLINK_FOUND:-0}" = 1 ] \
+               && { [ "$${_WORLD:-1}" -le 2 ] || [ "$${_NVLINK_PARTIAL:-0}" = 0 ]; } ); then
+          _AR=""
+          echo "[custom-ar] NVLink between the cards: SGLang's custom all-reduce allowed (DISABLE_CUSTOM_ALL_REDUCE=1 keeps it off)" >&2
+        else
+          echo "[custom-ar] no full NVLink mesh: --disable-custom-all-reduce (#2008)" >&2
+        fi
         exec python3 -m sglang.launch_server \
           --model-path "$$M" \
           --tp-size 2 \
-          --disable-custom-all-reduce \
+          $$_AR \
           --quantization auto-round \
           --kv-cache-dtype "${KV_CACHE_DTYPE:-fp8_e4m3}" \
           --chunked-prefill-size "${CHUNKED_PREFILL_SIZE:-2048}" \

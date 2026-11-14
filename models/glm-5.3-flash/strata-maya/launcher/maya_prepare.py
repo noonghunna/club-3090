@@ -28,7 +28,7 @@ import maya_settings                                  # beside this file: club-3
 
 MAYA = Path("/opt/maya")
 # our quant tags -> maya.py's MODELS names
-MODELS = {"maya-s": "Maya-S-v2-IQ2_XXS", "maya-m": "Maya-M", "maya-l": "Maya-L"}
+MODELS = {"maya-s": "Maya-S-v2-IQ2_XXS", "maya-s24": "Maya-S24", "maya-m": "Maya-M", "maya-l": "Maya-L"}
 SHARD = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$")
 
 

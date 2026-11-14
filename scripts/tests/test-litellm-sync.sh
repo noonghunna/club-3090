@@ -846,10 +846,16 @@ else
 fi
 rm -f "$errf"
 out="$(C3_LITELLM_FAKE_LIVE="8182=gamma-model" bash "$SYNC" --no-restart 2>/dev/null)"
-if [[ "$out" == *"-> $RUNTIME"* ]]; then
+# The log line is for a person, so the sync prints the file through
+# litellm_local.display_path: relative inside the checkout, ~/… under $HOME. A literal
+# "-> $RUNTIME" match failed whenever TMPDIR sat under $HOME. Expect the written file
+# in the form the sync shows it; the basename check keeps an empty answer from passing.
+shown="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import litellm_local
+print(litellm_local.display_path(sys.argv[2], sys.argv[3]))' "$ROOT/scripts/lib" "$RUNTIME" "$ROOT")" || shown=""
+if [[ -n "$shown" && "$shown" == *"$(basename "$RUNTIME")" && "$out" == *"-> $shown"* ]]; then
   ok "#1945: the render log names the file it wrote"
 else
-  bad "#1945: render log doesn't name the written file: $out"
+  bad "#1945: render log doesn't name the written file (want '-> $shown'): $out"
 fi
 
 [[ $fail -eq 0 ]] && echo "test-litellm-sync: ok" || echo "test-litellm-sync: FAIL"

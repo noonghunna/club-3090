@@ -887,14 +887,15 @@ def profile_templates(
 
 # Card counts the default path walks, smallest first.  Scanned from the registry
 # 2026-09-08: single 34 · dual 52 · multi4 17 · multi8 9, and no multi3.  Since
-# 2026-11-10 the only multi3 composes are QEngine's two (`qengine/qwen38-*-multi3`,
-# 🧪 / 🐣, PolyForm Noncommercial), and multi3 stays OUT of this ladder on purpose.
-# Today the picker's status floor would still choose a functional dual slug, but once
-# a multi3 slug is promoted, a multi3 rung here would make that non-commercial-licence
-# slug every 3-card rig's default ("any slug whose topology matches").  The multi3
-# slugs are listed and launchable like any other; only the default skips them.
+# 2026-11-10 the only multi3 composes are QEngine's two (`qengine/qwen38-*-multi3`).
+# Until 2026-11-13 multi3 was left out of this ladder because QEngine was PolyForm
+# Noncommercial: once a multi3 slug was promoted, the rung would have made a
+# non-commercial-licence slug every 3-card rig's default.  QEngine is MIT from 1.3.5.8
+# (pinned 1.3.5.9 in #2014), so 3 cards now try multi3 first.  Both multi3 slugs are
+# 🧪 / 🐣 today, so the status floor still lands a 3-card rig on a functional dual slug;
+# a promoted multi3 slug becomes its default.
 _TOPO_BY_CARDS: tuple[tuple[int, str], ...] = (
-    (1, "single"), (2, "dual"), (4, "multi4"), (8, "multi8"),
+    (1, "single"), (2, "dual"), (3, "multi3"), (4, "multi4"), (8, "multi8"),
 )
 
 
@@ -903,10 +904,12 @@ def _topology_ladder(num_gpus: int) -> list[str]:
 
     The rule is *the largest topology that fits, then degrade*.  A topology needing
     MORE cards than the rig has cannot run at all; one needing fewer always can.  So
-    4 cards → multi4, dual, single; 8 → multi8, multi4, dual, single; 1 → single.
+    3 cards → multi3, dual, single; 4 → multi4, multi3, dual, single; 8 → multi8,
+    multi4, multi3, dual, single; 1 → single.
 
     Counts with no exact topology take the largest that fits rather than inventing a
-    slug: **3 → dual** (multi3 is left out on purpose: see `_TOPO_BY_CARDS`) and **5-7 → multi4**.
+    slug: **5-7 → multi4**.  (multi3 joined the ladder 2026-11-13, when QEngine, the
+    only engine with multi3 slugs, became MIT: see `_TOPO_BY_CARDS`.)
 
     The DEGRADING half matters as much as the exact fit.  Before this, a ≥2-card rig
     asked only for "dual" and, when no dual option existed, fell through to "the first
@@ -17472,7 +17475,8 @@ class CockpitApp(App):
                 mmproj = str(p)
                 break
             # Brought-repo MTP draft (e.g. migtissera Tess: main + mtp-*.gguf).
-            main_name = Path(weights_file).name.lower()
+            from pathlib import Path as _Path
+            main_name = _Path(weights_file).name.lower()
             for p in pull.glob("**/*mtp*.gguf"):
                 n = p.name.lower()
                 if "mmproj" in n:

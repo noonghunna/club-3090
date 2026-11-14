@@ -4,8 +4,8 @@
 #              QEngine 1.3.4.1 and later (routed experts INT4 bit-exact; DeltaNet projections INT8; shared
 #              expert INT4 GPTQ; attention and lm_head INT8 at load), the INT8 n-gram table, its INT4 MTP
 #              head (129 GB)
-#   Engine:    QEngine 1.3.5.7 (bpx03; upstream's stable release): its second
-#              engine, libqflash.so, in the author's own image ghcr.io/bpx03/qengine (source 5028c500, the
+#   Engine:    QEngine 1.3.5.9 (bpx03; upstream's stable release): its second
+#              engine, libqflash.so, in the author's own image ghcr.io/bpx03/qengine (source ee98bd10, the
 #              :vision image: PyTorch for the encoder)
 #   Topology:  Three 3090s PCIe (experts split over the cards in 128-wide groups, 176/160/176; tensor
 #              parallel, which FLASH_PAR=auto picks on equal cards with P2P; GPU-to-GPU P2P when the
@@ -14,11 +14,13 @@
 #              drafts from the conversation history
 #   KV:        fp8_e4m3 (QEngine's attention KV, split by position over the cards)
 #   Vision:    yes (VISION=0 turns it off). The encoder runs on the last card; on two cards it cost
-#              ~2.4% of the resident expert groups (2026-10-31, the dual slug). Not measured on three
+#              ~2.4% of the resident expert groups (2026-10-31, the dual slug). On three 3090s
+#              verify-full's image check passed 4/4 (#2011); what it costs there isn't measured
 #   Max ctx:   262144
 #   Genesis:   none
 #   Status:    🐣 Incubating
-#   Caveats:   ⚠️ QEngine is PolyForm Noncommercial 1.0.0: free for non-commercial use only.
+#   Caveats:   QEngine is MIT-licensed from 1.3.5.8; the rollback images (1.3.5.7 and older) are
+#              PolyForm Noncommercial 1.0.0. The weights keep their own licences.
 #              Not booted here: the reference rig has two cards, so this slug is community-validated
 #              by design. It is the three-card copy of qengine/qwen38-flash-next-dual and 🐣 like it:
 #              upstream calls this engine a preview (tested on one machine, no quality benchmark yet).
@@ -32,6 +34,12 @@
 #              soak PASS. On a community box with three 3090s on an EPYC host (#1926, 1.3.4.3), decode
 #              was 41-46% faster with peer access off and prefill 11-16% slower; from 1.3.5,
 #              QE_DECODE_COMM=auto times both decode paths at start and keeps the faster.
+#              The first run of this compose on 3090s (#2011, dgaglioni: three 3090s under ESXi with
+#              no peer access, 320 W caps, a kernel patch that doubles the tensor-core rate; 1.3.5.7,
+#              shipped defaults, 16 slots, vision on): 259.20 / 334.86 decode, 4,330 / 4,494 prefill
+#              @10K / @90K, verify-full 10/10, verify-stress 8/8 with the ladder to 240,662, soak PASS
+#              (0 MiB growth), concurrency clean at 1 / 2 / 4; no 8-pack. Not a stock baseline: the
+#              patch and the cap pull opposite ways.
 #              On 16 GB cards (#1999: four RTX 5080 16 GB, 1.3.5.7, VISION=0, this slug's shape run as
 #              a service of its own; speed and concurrency only) 16 slots boot at 262K with
 #              FLASH_PAR=auto picking tp: 186.19 / 183.76 tok/s decode, a KV pool of one window
@@ -58,7 +66,9 @@
 #   ⤷ ESTIMATE, not measured: the two-card slug's measured 94 GB at ready (1.3.4.2, vision on) less
 #     the host-resident expert groups that more cards hold in VRAM instead, about 31 GB on two cards
 #     against about 12 GB on three (upstream's host-memory table). On three 16 GB cards about 88 GB
-#     is pinned at start (#1999: 36.6 GB of expert groups plus the n-gram table).
+#     is pinned at start (#1999: 36.6 GB of expert groups plus the n-gram table). On three 3090s
+#     (#2011) the server held 84.1 GiB at the bench, after verify-full with the archive filling: not
+#     a figure at ready.
 #   ⤷ The 51.8 GB INT8 n-gram table stays pinned either way. The archive (FLASH_KV_ARCHIVE_GB, 48 GB) and
 #     the pinned system prompts (FLASH_PREFIX_GB, 8 GB) come on top as conversations arrive and give memory
 #     back when the host is short; QEngine plans all of it from MemTotal / MemAvailable at start.
@@ -147,6 +157,10 @@
 #   FLASH_YARN           YaRN RoPE factor by hand (0 = off); --max-ctx above 262144 sets it
 #   FLASH_EC_RECLAIM_S   a conversation idle this many seconds moves to the host-RAM archive (30;
 #                        0 keeps it in VRAM); its next turn is restored from there
+#   FLASH_EC_RECLAIM_ABOVE_S  from 1.3.5.8, while the expert cache is short of VRAM: an idle
+#                        conversation above every generating one moves to the archive after this many
+#                        seconds (0.5; negative = off), so finished sub-agents don't hold the cache's
+#                        room. Idle ones now also move out of a growing conversation's way
 #   FLASH_MAX_PREFILLS   prompts prefilled at the same time, sharing batches (8)
 #   FLASH_GUARD_MAX      distinct non-finite faults within 5 minutes before the server stops (4)
 #   FLASH_LEND_CHECK     1: a debug check that no buffer overlaps memory lent to the expert cache
@@ -181,7 +195,8 @@
 #                        host; the `[comm] decode collectives` log line says which. Prefill keeps FLASH_COMM's.
 #                        The setting bpx03/QEngine#19 asked for (docs/UPSTREAM.md)
 #   QE_COMM_CACHE        the start-up cache of the link probe and that timing (1; 0 = off, refresh = measure
-#                        again)
+#                        again). From 1.3.5.8 its key holds each card's NVLink links too, so a bridge
+#                        fitted later is measured again (#2000)
 #   FLASH_VRAM_ADAPT     1.3.5: when another process takes GPU memory while serving, resident expert groups
 #                        move to host memory and come back once it's free (1; 0 = off)
 #   FLASH_VRAM_LOW_MB, FLASH_VRAM_TARGET_MB  free memory per card below which groups move out / up to
@@ -226,7 +241,7 @@
 #   bash scripts/settings.sh set FLASH_MAX_SEQS=4      # one user at a time: faster still (above)
 services:
   qengine-qwen38-flash-next-multi3:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:2d790174baee2eb89d8afa5b6eb0ab68eb3a05bebf73e627e92e7686a889e124}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:e670c0d98633d4e2b2c1dbeb75b7a1c19b776703d1dac2488f9f5cc621d6ac4c}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-flash-next-multi3}"
     user: "0:${DOCKER_GID:-1000}"
@@ -273,6 +288,7 @@ services:
       - FLASH_KV_RAM_TOKENS
       - FLASH_PFB_BIG
       - FLASH_EC_RECLAIM_S
+      - FLASH_EC_RECLAIM_ABOVE_S
       - FLASH_MAX_PREFILLS
       - FLASH_GUARD_MAX
       - FLASH_PFB_ALIAS

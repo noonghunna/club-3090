@@ -198,7 +198,8 @@ import json, os, re, sys, zlib
 from pathlib import Path
 
 sys.path.insert(0, ".")
-from scripts.lib.profiles.compose_facts import derive_compose_facts
+from scripts.lib.profiles.compose_facts import (derive_compose_facts, compose_layout,
+                                                topology_cards, proposed_workload)
 
 (src, out, engine_in, model_in, workload_in, port_in, weights_in, wroot,
  etype_in, minsm_in, hf_repo_in, variant_in, slug_in) = sys.argv[1:14]
@@ -253,8 +254,9 @@ if variant_in and not attach:
     raise SystemExit(2)
 
 max_ctx = int(f.max_ctx or 0) or 4096
-# workload is pure taxonomy — nothing in a compose states it. Propose from ctx.
-workload = workload_in or ("long-ctx-single" if max_ctx >= 65536 else "fast-chat")
+# workload is pure taxonomy — nothing in a compose states it. Propose from ctx
+# (the same rule `catalog.sh update --set max_ctx=…` re-applies).
+workload = workload_in or proposed_workload(max_ctx)
 
 # LOCAL models live in the 202xx band so a `git pull` of new curated slugs cannot
 # collide with them. promote.py suggests exactly this value on refusal; compute it
@@ -436,8 +438,24 @@ fmt = "gguf" if (f.model_path or "").endswith(".gguf") else "safetensors"
 # The emitter splits compose_path on "/compose/" and reads <topology>/<quant>/<file>
 # from the tail — so the segment after /compose/ IS the topology in every listing.
 # Writing ".../compose/local/base.yml" made "local" render as the topology.
+# A compose filed in that layout already says its topology and its serving name,
+# so the copy keeps both (#2028): `multi4/…/mtp.yml` stays `multi4/…/mtp.yml`.
+# Only a compose outside the layout gets the topology from its TP and `base.yml`.
+_layout = compose_layout(os.path.abspath(src))
 _tp = int(f.tp or 1)
-_topo = "single" if _tp <= 1 else ("dual" if _tp == 2 else f"multi{_tp}")
+_tp_src = "derived" if f.tp else "defaulted"
+if _layout:
+    _topo = _layout[0]
+    if not f.tp:
+        # QEngine, Strata and Maya set TP at boot, so the compose states none; the
+        # directory it is filed in names the card count.
+        _tp, _tp_src = topology_cards(_topo), "from its directory"
+    elif topology_cards(_topo) != _tp:
+        print(f"[catalog] note: the compose states TP {_tp} but is filed under {_topo}/; "
+              f"the entry keeps both. Check which one it serves with.", file=sys.stderr)
+else:
+    _topo = "single" if _tp <= 1 else ("dual" if _tp == 2 else f"multi{_tp}")
+_cfile = _layout[2] if _layout else "base.yml"
 # Where core keeps this engine's composes, and the slug prefix it uses there
 # (core_layout.py, shared with export_pr.py), so a slug registered here exports
 # under the name it already has. `vllm-stable` slugs are `vllm/…`, filed under
@@ -456,7 +474,7 @@ if _pairs and _pair is None:
 _edir, _eprefix = _pair if _pair else (engine, engine)
 
 cpath = (f"scripts/lib/profiles-local/composes/{mid}/{_edir}"
-         f"/compose/{_topo}/{fmt}/base.yml")
+         f"/compose/{_topo}/{fmt}/{_cfile}")
 slug = slug_in or f"{_eprefix}/{mid}"
 
 
@@ -467,13 +485,13 @@ _wdir = None
 if weights_in:
     _wp = Path(weights_in)
     _wdir = _wp if _wp.is_dir() else _wp.parent
-_size_gb = 1.0
+_size_gb, _size_src = 1.0, "defaulted"
 if _wdir and _wdir.is_dir():
     try:
         _b = sum(x.stat().st_size for x in _wdir.rglob("*")
                  if x.is_file() and ".cache" not in x.parts)
         if _b:
-            _size_gb = round(_b / 2**30, 1)
+            _size_gb, _size_src = round(_b / 2**30, 1), "derived"
     except OSError:
         pass
 # ⚠️ RELATIVE TO MODEL_DIR, never absolute. The launcher's preflight joins
@@ -577,7 +595,7 @@ spec = {
         "engine": engine, "drafter": None,
         "spec_method": f.spec_method or None,
         "offload": _offload,
-        "kv_format": kv or "f16", "tp": int(f.tp or 1),
+        "kv_format": kv or "f16", "tp": _tp,
         "max_ctx": max_ctx, "max_num_seqs": 1, "mem_util": _mem_util,
         "compose_path": cpath, "default_port": port, "kvcalc_key": "SKIP"}},
 }
@@ -633,9 +651,9 @@ if attach:
         _m["engine"] = _edir
     slug = slug_in or f"{_eprefix}/{mid}-{_topo}-{variant}"
     cpath = (f"scripts/lib/profiles-local/composes/{mid}/{_edir}"
-             f"/compose/{_topo}/{variant}/base.yml")
+             f"/compose/{_topo}/{variant}/{_cfile}")
     if Path(wroot, cpath).exists():
-        cpath = cpath[:-len("base.yml")] + f"{slug.split('/', 1)[-1]}.yml"
+        cpath = cpath.rsplit("/", 1)[0] + f"/{slug.split('/', 1)[-1]}.yml"
     _tp_add = [_tp] if _tp not in (_core.get("valid_tp") or []) else []
     _etype = (getattr(_engines.get(engine), "type", "") if engine in _engines
               else (normalize_type(etype_in or f.engine or "") or ""))
@@ -660,17 +678,24 @@ if engine_yaml:
 Path(out).write_text(json.dumps(spec, indent=1), encoding="utf-8")
 
 def mark(v, given):  # show the user which values THEY chose vs which we guessed
+    if isinstance(given, str):
+        return given
     return "given" if given else "derived"
 
+# "(defaulted)" is a placeholder the compose does not state — said as such, because a
+# default that reads "(derived)" turns into a false record once written (#2028).
+_defaulted = [k for k, d in (("max_ctx", not f.max_ctx), ("kv_format", not kv),
+                             ("tp", _tp_src == "defaulted")) if d]
 print("[catalog] resolved from the compose — check these before it writes:")
 _rows = [
     ("slug",      slug,              bool(slug_in or (engine_in and model_in))),
     ("model",     mid + (" (curated: the slug attaches to it)" if attach else ""), bool(model_in)),
     ("engine",    engine,            bool(engine_in)),
-    ("workload",  workload,          bool(workload_in)),
-    ("max_ctx",   max_ctx,           False),
-    ("kv_format", kv or "f16", False),
-    ("tp",        f.tp or 1,         False),
+    ("workload",  workload,          "given" if workload_in
+                                     else ("derived" if f.max_ctx else "defaulted")),
+    ("max_ctx",   max_ctx,           "derived" if f.max_ctx else "defaulted"),
+    ("kv_format", kv or "f16",       "derived" if kv else "defaulted"),
+    ("tp",        _tp,               _tp_src),
     ("port",      port,              bool(port_in)),
     ("weights",   f.model_path,      False),
     # These four decide c3 catalog COLUMNS (Spec Dec · Offload · provider ·
@@ -681,11 +706,11 @@ _rows = [
     ("offload",   _offload or (f"on, backend unnamed (cpu-offload-gb={f.cpu_offload_gb})"
                                if f.cpu_offload_gb else "(none found)"), False),
     ("provider",  _hf_repo or "(none — pass --hf-repo)", bool(hf_repo_in)),
-    ("size_gb",   _size_gb,          False),
+    ("size_gb",   _size_gb,          _size_src),
 ]
+_rows += [("compose", cpath.split("/composes/", 1)[-1], "given" if _layout else "derived")]
 if attach:
-    _rows += [("variant", f"{variant} ({reuse})", True),
-              ("compose", cpath.split("/composes/", 1)[-1], False)]
+    _rows += [("variant", f"{variant} ({reuse})", True)]
 else:
     _rows += [
         ("family",    spec_family,       False),
@@ -695,6 +720,12 @@ else:
     ]
 for label, val, given in _rows:
     print(f"[catalog]   {label:10s} {str(val):46s} ({mark(val, given)})")
+if _defaulted:
+    _sets = " ".join(f"--set {k}=<served value>" for k in _defaulted)
+    print(f"[catalog]   defaulted: {', '.join(_defaulted)} — the compose states "
+          f"{'none of these' if len(_defaulted) > 1 else 'no value'}, so the entry holds "
+          f"a placeholder. Once it serves, record what it runs with: "
+          f"catalog.sh update --slug {slug} {_sets}")
 for _n in export_notes:
     print(f"[catalog]   before export_pr.py: {_n}")
 if f.port and str(port) != str(f.port):

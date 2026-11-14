@@ -587,22 +587,33 @@ run_check "streaming_tools" check_streaming_tools
 # --------------------------------------------------------------------
 check_thinking() {
   echo "[7/10] Thinking / reasoning mode ..."
-  local resp
   # enable_thinking: true (Qwen3 default). A problem that takes a couple of steps:
   # this used to ask "What is 2+2?", which adaptive and concise thinkers
   # (MiMo, ThinkingCap) rightly answer with little or no reasoning, so the check
   # failed healthy boots. max_tokens still bounds the verbose models.
-  resp="$(curl -sf -m 120 "${URL}/v1/chat/completions" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"model\": \"${MODEL}\",
-      \"messages\": [{\"role\": \"user\", \"content\": \"A train leaves at 14:35 and the trip takes 3 hours and 13 minutes. What time does it arrive? Answer with the time only.\"}],
-      \"max_tokens\": 4000,
-      \"temperature\": 0.3,
-      ${THINK_ON_STD}\"chat_template_kwargs\": ${THINK_ON_KW}
-    }")" || { fail "thinking request failed" "Check docker logs"; return 1; }
-  local analyzed
-  analyzed="$(echo "$resp" | python3 -c "
+  #
+  # An ADAPTIVE thinker decides per request whether to reason at all, and its
+  # template leaves that choice to the model (no `<think>` opener). On the train
+  # question MiMo-V2.6 reasoned on 4 of 20 asks at temperature 0.3 (2026-11-13), so
+  # the check failed most healthy boots. When the easy question comes back with no
+  # reasoning, one harder question decides; MiMo reasoned on it 10 of 10. A model
+  # that reasons on the easy question never sends the second request.
+  local easy="A train leaves at 14:35 and the trip takes 3 hours and 13 minutes. What time does it arrive? Answer with the time only."
+  local hard="A tank is filled by pipe A in 6 hours and by pipe B in 9 hours, while pipe C empties it in 12 hours. Starting empty, A and B run together for 2 hours, then C is also opened. How many more hours until the tank is full? Give the answer as a fraction."
+  local resp analyzed r_len c_len fin r_head c_head via=""
+  _thinking_ask() {
+    curl -sf -m 120 "${URL}/v1/chat/completions" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"model\": \"${MODEL}\",
+        \"messages\": [{\"role\": \"user\", \"content\": \"$1\"}],
+        \"max_tokens\": 4000,
+        \"temperature\": 0.3,
+        ${THINK_ON_STD}\"chat_template_kwargs\": ${THINK_ON_KW}
+      }"
+  }
+  _thinking_parse() {
+    python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 msg = d['choices'][0]['message']
@@ -610,29 +621,38 @@ reasoning = msg.get('reasoning') or msg.get('reasoning_content') or ''
 content = msg.get('content') or ''
 finish = d['choices'][0].get('finish_reason')
 print(f'{len(reasoning)}|{len(content)}|{finish}|{(reasoning[:60] or \"(empty)\").replace(chr(10), \" \")}|{(content[:60] or \"(empty)\").replace(chr(10), \" \")}')
-" 2>/dev/null)"
+" 2>/dev/null
+  }
+  resp="$(_thinking_ask "$easy")" || { fail "thinking request failed" "Check docker logs"; return 1; }
+  analyzed="$(echo "$resp" | _thinking_parse)"
   IFS='|' read -r r_len c_len fin r_head c_head <<< "$analyzed"
+  if [[ "$r_len" == "0" ]]; then
+    resp="$(_thinking_ask "$hard")" || { fail "thinking request failed (the harder second question)" "Check docker logs"; return 1; }
+    analyzed="$(echo "$resp" | _thinking_parse)"
+    IFS='|' read -r r_len c_len fin r_head c_head <<< "$analyzed"
+    via=" — on the harder second question; the easy one got no reasoning (an adaptive thinker)"
+  fi
   if [[ -z "$r_len" ]]; then
     fail "couldn't parse thinking response" "$(echo "$resp" | head -c 300)"
   elif [[ "$r_len" == "0" ]]; then
-    fail "reasoning field empty (thinking mode didn't engage)" \
+    fail "reasoning field empty on both questions (thinking mode didn't engage)" \
          "May indicate Genesis Patch 12 didn't land or chat_template_kwargs not honored. content='$c_head'"
   elif [[ "$c_len" == "0" ]] && [[ "$fin" == "length" ]]; then
     # Reasoning populated but model didn't finish before max_tokens — thinking
     # mode is working (reasoning field extracted cleanly), just verbose.
-    pass "reasoning $r_len chars (model kept thinking, hit max_tokens before finishing — Qwen3.6 is verbose; thinking IS extracting correctly)"
+    pass "reasoning $r_len chars (model kept thinking, hit max_tokens before finishing — Qwen3.6 is verbose; thinking IS extracting correctly)${via}"
     printf "    \033[2mreasoning head:\033[0m %s...\n" "$r_head"
   elif [[ "$c_len" == "0" ]]; then
-    fail "reasoning present but content empty, finish=$fin (not length)" \
+    fail "reasoning present but content empty, finish=$fin (not length)${via}" \
          "Likely genuine stall — finish_reason should be length if it's just verbosity. reasoning: $r_head"
   elif [[ "$r_len" -lt 50 ]]; then
     # Short but present, with an answer in content: thinking engaged and was parsed
     # into its own field, which is what this check tests. How much a model thinks
     # is a trait (ThinkingCap is concise), not a fault. It used to FAIL here.
-    pass "reasoning $r_len chars (short — a concise thinker; thinking engaged and parsed), content $c_len chars (finish=$fin)"
+    pass "reasoning $r_len chars (short — a concise thinker; thinking engaged and parsed), content $c_len chars (finish=$fin)${via}"
     printf "    \033[2mreasoning:\033[0m %s\n" "$r_head"
   else
-    pass "reasoning $r_len chars, content $c_len chars (finish=$fin)"
+    pass "reasoning $r_len chars, content $c_len chars (finish=$fin)${via}"
     printf "    \033[2mreasoning:\033[0m %s...\n" "$r_head"
     printf "    \033[2mcontent:  \033[0m %s...\n" "$c_head"
   fi

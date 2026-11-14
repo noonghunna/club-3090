@@ -13804,18 +13804,25 @@ class TestRigTopologyLadder:
         assert default_profile_template(opts, 8) == "vllm/multi8"
 
     def test_counts_without_a_topology_take_the_largest_that_fits(self):
-        """3 -> dual, 5-7 -> multi4, >8 -> multi8.  The alternative — inventing
-        multi5 — names slugs the registry does not have.  multi3 exists only for
-        QEngine (PolyForm Noncommercial) and stays out of the default on purpose,
-        so a 3-card rig still defaults to dual with a multi3 slug in the list, even
-        a functional one (the status floor alone would pick a promoted multi3)."""
+        """5-7 -> multi4, >8 -> multi8.  The alternative — inventing multi5 — names
+        slugs the registry does not have.  3 cards try multi3 first (QEngine's
+        three-card slugs, in the ladder since QEngine became MIT, 2026-11-13): a
+        functional multi3 slug is the 3-card default; with none, or only a
+        non-functional one, the rig degrades to dual."""
         opts = profile_templates(self._full_ladder_rows())
         assert default_profile_template(opts, 3) == "vllm/dual"
         with_multi3 = self._full_ladder_rows() + [
             self._mk("qengine/qwen38-27b-multi3", "qengine",
                      "models/q/qengine/compose/multi3/redhat-int4/mtp.yml", status="caveats"),
         ]
-        assert default_profile_template(profile_templates(with_multi3), 3) == "vllm/dual"
+        assert (default_profile_template(profile_templates(with_multi3), 3)
+                == "qengine/qwen38-27b-multi3")
+        with_experimental_multi3 = self._full_ladder_rows() + [
+            self._mk("qengine/qwen38-27b-multi3", "qengine",
+                     "models/q/qengine/compose/multi3/redhat-int4/mtp.yml", status="experimental"),
+        ]
+        assert (default_profile_template(profile_templates(with_experimental_multi3), 3)
+                == "vllm/dual")
         for n in (5, 6, 7):
             assert default_profile_template(opts, n) == "vllm/multi4", f"{n} cards"
         assert default_profile_template(opts, 16) == "vllm/multi8"
@@ -13861,8 +13868,9 @@ class TestRigTopologyLadder:
 
         assert _topology_ladder(1) == ["single"]
         assert _topology_ladder(2) == ["dual", "single"]
-        assert _topology_ladder(4) == ["multi4", "dual", "single"]
-        assert _topology_ladder(8) == ["multi8", "multi4", "dual", "single"]
+        assert _topology_ladder(3) == ["multi3", "dual", "single"]
+        assert _topology_ladder(4) == ["multi4", "multi3", "dual", "single"]
+        assert _topology_ladder(8) == ["multi8", "multi4", "multi3", "dual", "single"]
         # Degenerate inputs must not produce an empty ladder.
         assert _topology_ladder(0) == ["single"]
 

@@ -410,6 +410,11 @@ fi
 # shellcheck source=lib/engine-auth.sh
 source "${REPO_ROOT}/scripts/lib/engine-auth.sh"
 club_engine_auth_enable "${CONTAINER:-}"
+# A checkout whose results/ this account can't write (another user's, or read-only) used to stop
+# here with "mkdir: cannot create directory" and no soak at all (#2006): fall back to the data dir.
+# shellcheck source=lib/results-dir.sh
+source "${REPO_ROOT}/scripts/lib/results-dir.sh"
+SOAK_OUTPUT="$(club_results_dir "$SOAK_OUTPUT" "$REPO_ROOT")" || true
 mkdir -p "$SOAK_OUTPUT"
 
 MODELS_JSON="${SOAK_OUTPUT}/models.json"
@@ -459,6 +464,19 @@ python3 "$HELPER" baseline "$SOAK_OUTPUT" "$CONTAINER" "$ENDPOINT" "$MODEL" \
 # probe asks the endpoint/container what it can answer — it does NOT classify
 # the engine (the canonical resolver is club-3090#1282; a private classifier
 # here would be its own defect).
+# Which engine wrote the log lines, from the one resolver (#1282): QEngine logs its per-request rate
+# in llama.cpp's "eval time" format, so the line alone named it llama.cpp (#2006, #2011). The
+# container name first, then its image (a container started by hand can be named anything).
+# shellcheck source=lib/engine-kind.sh
+source "${REPO_ROOT}/scripts/lib/engine-kind.sh"
+SOAK_ENGINE_KIND="unknown"
+if [[ -n "${CONTAINER:-}" && "$CONTAINER" != "none" ]]; then
+  SOAK_ENGINE_KIND="$(engine_kind_from_container "$CONTAINER")"
+  if [[ "$SOAK_ENGINE_KIND" == "unknown" ]] && command -v docker >/dev/null 2>&1; then
+    SOAK_ENGINE_KIND="$(engine_kind_from_image "$(docker inspect -f '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)")"
+  fi
+fi
+export SOAK_ENGINE_KIND
 ENGINE_COUNTER_PROBE="$(python3 "$HELPER" engine-counter-probe "$ENDPOINT" "$CONTAINER" || true)"
 [[ -n "$ENGINE_COUNTER_PROBE" ]] || ENGINE_COUNTER_PROBE="none probe failed"
 SOAK_ENGINE_COUNTER_KIND="${ENGINE_COUNTER_PROBE%% *}"

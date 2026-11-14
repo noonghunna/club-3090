@@ -197,6 +197,24 @@ assert_contains "$out_llamacpp" "decode_tps=85.24"
 assert_contains "$out_llamacpp" "(engine-reported: llama.cpp 'eval time' log line)"
 assert_not_contains "$out_llamacpp" "567.34"
 
+# ── 4b. #2006 / #2011: QEngine writes the same "eval time" line ─────────────
+# The regex can't tell QEngine's per-request line from llama.cpp's, so soak-test.sh asks the
+# engine-kind resolver and the label follows it. The container in #2006 was started by hand and
+# named plain `qengine` (no qengine- prefix), so only its image names the engine.
+soak_stub_docker "${LOG_DIR}/llamacpp.log"
+soak_stub_start "${PLAN_DIR}/narrow"
+soak_run "$ROOT_DIR" "${SOAK_ENV_DIR}/run-qengine" CONTAINER=qengine \
+  SOAK_STUB_IMAGE=ghcr.io/bpx03/qengine@sha256:0123abcd
+soak_stub_stop
+out_qengine="$SOAK_OUT"
+assert_contains "$out_qengine" "decode_tps=85.24"
+assert_contains "$out_qengine" "(engine-reported: QEngine's per-request 'eval time' log line)"
+assert_not_contains "$out_qengine" "llama.cpp 'eval time'"
+csv_qengine="$(cat "${SOAK_ENV_DIR}/run-qengine/turn-log.csv")"
+assert_contains "$csv_qengine" ",engine,qengine-log"
+# A llama.cpp container keeps its own label (the leg above), and an unknown engine with the
+# same line still reads as llama.cpp's: the relabel needs the resolver to say qengine.
+
 # ── 5. the reversal switch: SOAK_ENGINE_COUNTER=off ─────────────────────────
 # The engine counter is reachable (the stub serves /metrics) and must be
 # ignored: client-side timing and the floor, exactly as before #1268 — still
