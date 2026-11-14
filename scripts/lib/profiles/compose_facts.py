@@ -285,3 +285,50 @@ def derive_compose_facts(text: str, path: str = "") -> ComposeFacts:
         return f
     f.ok = True
     return f
+
+
+# ── where a compose sits, and what registration proposes from it ──────────────
+# The compose layout is `…/compose/<topology>/<quant>/<serving>.yml` (AGENTS.md →
+# "Compose layout"), and the topology directory names the card count. A path that
+# follows it states its topology and its serving name; `catalog.sh register` used
+# to throw both away and file every copy as `<tp-topology>/<quant>/base.yml`, so a
+# four-card QEngine compose, whose TP is set at boot and so read as 1, was recorded
+# as `single/…/base.yml` (#2028).
+_TOPOLOGY_DIR = re.compile(r"^(?:single|dual|multi([2-9]|[1-9][0-9]+))$")
+
+
+def compose_layout(path: str) -> tuple[str, str, str] | None:
+    """(topology, quant, file) when `path` ends in the compose layout
+    `compose/<topology>/<quant>/<file>.yml`, else None. Only the last four
+    components are read, so a relative and an absolute path agree."""
+    parts = re.split(r"[\\/]+", str(path or "").strip())
+    if len(parts) < 4:
+        return None
+    root, topo, quant, name = parts[-4:]
+    if root != "compose" or not _TOPOLOGY_DIR.match(topo) or not quant:
+        return None
+    if not re.match(r"^[^.].*\.ya?ml$", name):
+        return None
+    return topo, quant, name
+
+
+def topology_cards(topology: str) -> int | None:
+    """The card count a topology directory names: single 1, dual 2, multi<N> N."""
+    m = _TOPOLOGY_DIR.match(str(topology or ""))
+    if not m:
+        return None
+    if topology == "single":
+        return 1
+    if topology == "dual":
+        return 2
+    return int(m.group(1))
+
+
+# Nothing in a compose states a workload; registration proposes one from max_ctx,
+# and `catalog.sh update --set max_ctx=…` re-applies the same rule (amend.py), so
+# the two cannot disagree about where the line is.
+LONG_CTX_WORKLOAD_MIN = 65536
+
+
+def proposed_workload(max_ctx: int) -> str:
+    return "long-ctx-single" if int(max_ctx) >= LONG_CTX_WORKLOAD_MIN else "fast-chat"
