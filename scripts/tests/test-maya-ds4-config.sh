@@ -153,7 +153,7 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 import ds4_prepare as p
 w = Path(sys.argv[2])
-for tag in ("ista-iq2-xxs", "ud-iq3-s", "maya-xs"):
+for tag in ("ista-iq2-xxs", "ud-iq3-s", "maya-xs", "maya-s"):
     d = w / ("c-" + tag); d.mkdir()
     p.config(tag, d, d / "pack", types.SimpleNamespace(gpus="0,1", tp=1, context=65536))
     c = json.loads((d / "maya-ds4.json").read_text())
@@ -199,6 +199,22 @@ print("pack maya-xs --engram is the table folder:",
       seen[2][seen[2].index("--engram") + 1] == str(eg) if "--engram" in seen[2] else False)
 print("pack maya-xs --shards names only the model's own:",
       seen[2][seen[2].index("--shards") + 1:] == [f.name for f in xm])
+# maya-s: the same shape as maya-xs - shards 1-4 are the model's, shards 5-6 of the split are the Engram set at /engram
+ms = w / "Maya-S"; ms.mkdir(); meg = w / "engram-s"; meg.mkdir(); msd = w / "dspark-s"; msd.mkdir()
+for n in p.WEIGHTS["maya-s"]["gguf"]:
+    (ms / n).write_bytes(b"x")
+for n in p.WEIGHTS["maya-s"]["engram"]:
+    (meg / n).write_bytes(b"x")
+for n in p.WEIGHTS["maya-s"]["dspark"]:
+    (msd / n).write_bytes(b"x")
+sm, st_, sd = p.files_of("maya-s", ms, msd, meg)
+(w / "p-s").mkdir()
+p.pack(sm, st_, sd, w / "p-s", False)
+print(f"files_of maya-s: {len(sm)} model files, {len(st_)} table files, {len(sd)} drafter files")
+print("pack maya-s --engram is the table folder:",
+      seen[3][seen[3].index("--engram") + 1] == str(meg) if "--engram" in seen[3] else False)
+print("pack maya-s --shards names only the four backbone shards:",
+      seen[3][seen[3].index("--shards") + 1:] == [f.name for f in sm] and len(sm) == 4)
 # the SHA-256 table: 64 hex digits each, and the names the model profile's files: list downloads
 bad = [n for n, h in p.WEIGHTS["ud-iq3-s"]["gguf"].items() if not re.fullmatch(r"[0-9a-f]{64}", h)]
 prof = Path("scripts/lib/profiles/models/deepseek-v4.1-flash-1017.yml").read_text(encoding="utf-8")
@@ -209,6 +225,11 @@ xs_bad = [n for k in ("gguf", "engram", "dspark") for n, h in p.WEIGHTS["maya-xs
 xs_listed = sorted(m.group(1) for m in re.finditer(r"^\s+- Maya-XS/(\S+\.gguf)$", prof, re.M))
 print("maya-xs sha table ok:", not xs_bad, "| profile files == launcher gguf+engram:",
       xs_listed == sorted(list(p.WEIGHTS["maya-xs"]["gguf"]) + list(p.WEIGHTS["maya-xs"]["engram"])))
+ms_bad = [n for k in ("gguf", "engram", "dspark") for n, h in p.WEIGHTS["maya-s"][k].items()
+          if not re.fullmatch(r"[0-9a-f]{64}", h)]
+ms_listed = sorted(m.group(1) for m in re.finditer(r"^\s+- Maya-S/(\S+\.gguf)$", prof, re.M))
+print("maya-s sha table ok:", not ms_bad, "| profile files == launcher gguf+engram:",
+      ms_listed == sorted(list(p.WEIGHTS["maya-s"]["gguf"]) + list(p.WEIGHTS["maya-s"]["engram"])))
 PY
 )"
 command grep -q "^ista-iq2-xxs dspark=on ds4_quant=ISTA IQ2_XXS$" <<<"$out" && command grep -q "^ud-iq3-s dspark=off ds4_quant=gguf-iq3_s$" <<<"$out" \
@@ -230,6 +251,15 @@ command grep -q "sha table ok: True | profile files == launcher table: True" <<<
   && ok "ud-iq3-s: 8 SHA-256s, the same files the model profile downloads" || bad "sha table: $out"
 command grep -q "maya-xs sha table ok: True | profile files == launcher gguf+engram: True" <<<"$out" \
   && ok "maya-xs: 7 SHA-256s (Maya's own), the same files the model profile downloads" || bad "maya-xs sha table: $out"
+command grep -q "^maya-s dspark=on ds4_quant=maya-s$" <<<"$out" \
+  && ok "maya-s: --dspark on, ds4_quant maya-s (one of Maya's own quants)" || bad "maya-s config: $out"
+command grep -q "files_of maya-s: 4 model files, 2 table files, 2 drafter files" <<<"$out" \
+  && ok "files_of(): maya-s reads 4 backbone shards + the 2-file Engram set + the drafter pair" || bad "files_of maya-s: $out"
+command grep -q "pack maya-s --engram is the table folder: True" <<<"$out" \
+  && command grep -q "pack maya-s --shards names only the four backbone shards: True" <<<"$out" \
+  && ok "pack(): maya-s passes --engram <table folder> and --shards with the four backbone shards only" || bad "pack maya-s argv: $out"
+command grep -q "maya-s sha table ok: True | profile files == launcher gguf+engram: True" <<<"$out" \
+  && ok "maya-s: 8 SHA-256s, the same files the model profile downloads" || bad "maya-s sha table: $out"
 
 if [[ "$rc" -eq 0 ]]; then echo "test-maya-ds4-config: ok"; else echo "test-maya-ds4-config: FAILED" >&2; fi
 exit "$rc"

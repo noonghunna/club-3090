@@ -7172,6 +7172,39 @@ entries:
     gateway: false
     serve_aliases: []
     category: frontier
+  strata-maya/deepseek41-flash-dual-maya-s:
+    origin: core
+    model: deepseek-v4.1-flash-1017
+    weights_variant: maya-s
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-dspark-s
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 190
+    kv_offload: null
+    chat_template: native
+    tp: 2
+    max_ctx: 65536
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/deepseek-v4.1-flash-1017/strata-maya/compose/dual/maya-s/dspark.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8206
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Two 3090s, Maya's maya-ds4 layer split (--tp 1: each card its own layers, with whole experts) with DSpark drafting (peasantsmith's own 8.0 GB dspark, the drafter this quant ships with). Project Maya's own Maya-S (routed experts IQ2_XXS gate/up + IQ3_XXS down, dense weights Q8_0; 178.2 GB of backbone in 4 shards + the 161.3 GB Q6_K Engram table pair, shards 5-6 of the same split, read from the disk) on the strata-maya engine (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/). The big DeepSeek quant: Maya's quality card gives it 92.6% the same top token as the original, +3.2% next-token loss. host_ram_gb is an ESTIMATE from one measured boot (a 236 GB rig: the engine held ~165 GB, 140.4 GB of CPU-lane experts pinned, ~45 GB left), not derived on a smaller host, and a host below it makes the engine read part of the CPU experts in place. Measured once, on an NVLink-bridged pair of 3090 Tis at a 325 W cap (BENCHMARKS.md): the layer split ~58-61 tok/s narrative, 72-80 code, 1,380-1,390 prefill at 10K; on a bridged pair MAYA_TP=2 + MAYA_DS4_TP_GGUF_UNEVEN=1 + MAYA_DS4_AR2_DECODE=1 measured 62-68 / 82-90 and ~2,070 prefill. Without a bridge keep MAYA_TP=1 (project-maya #888: tensor parallel 2-5x slower at prefill on PCIe). Quality pack, verify-full and soak not run yet."
+    weights_companions:
+      - maya-dspark-s
+    gateway: false
+    serve_aliases: []
+    category: frontier
   strata-maya/minimax31-flash-dual-maya-s:
     origin: core
     model: minimax-m3.1-flash
