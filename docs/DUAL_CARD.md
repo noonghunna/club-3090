@@ -104,7 +104,7 @@ detected at boot, so you don't choose a compose for it.
 |  | `vllm/thinkingcap38-27b-dual-ultrafast` | 🧪 experimental | 262144 | [dual/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/dual/autoround-int4/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 |  | `vllm/thinkingcap38-27b-dual-ultramax` | 🧪 experimental | 262144 | [dual/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/dual/fp8/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 
-70 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+71 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table dual -->
 
 ## Launch
