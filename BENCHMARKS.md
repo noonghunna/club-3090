@@ -910,6 +910,25 @@ Every dual and single `strata-maya/` slug (Maya-S, -M, -L) passed `verify-full` 
 cards; 7 + 3 n/a on one, which loads no draft block). The maintainer chose verify-full only for this round, so Maya-M and the
 other slugs on this image are not benched on the reference rig (@paulp83's 5090 rows above are the only Maya-M bench); their host RAM was read on the verify boots (Maya-M 86 / 105 GB on 2 / 1 cards).
 multi4 is never booted here (two cards): community-validated by design.
+
+---
+
+## MiniMax-M3.1-Flash (428B MoE via CPU expert offload on Project Maya's maya-mm3 — 🐣 incubating)
+
+MiniMaxAI's 428B MoE (23B active a token) in Project Maya's own Maya-S GGUF (IQ2_XXS experts, ~2.1 bits, 122.5 GB), served
+by Project Maya's `maya-mm3` engine: a per-layer VRAM expert pool, the other experts computed on the CPU from pinned RAM, INT8
+K / V streamed from RAM, MiniMax's DSpark drafter on. See [STRATA_MAYA.md](docs/engines/STRATA_MAYA.md). ⚠️ The binding
+requirement is **host RAM**: 124 GB on one card, 102 GB on two (MemAvailable fall, decimal). Canonical bench (3 warm + 5
+measured), each row on its own boot through `switch.sh`, 204,800 context, one request at a time, thinking off. ⚠️ Code decode
+varies within a boot on this model (runs slow by up to ~25% partway through, with GPU clocks flat: host-side, unexplained), so
+compare rows on narrative.
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `strata-maya/minimax31-flash-single-maya-s`, Project Maya **v1.1.61** (the pinned image, `sha256:76962320…`) | @noonghunna (1× 3090, 230 W cap) | INT8 K / V | 204800 | **17.18 / 20.63** (CV 1.9% / 3.4%; code 19.94–21.76) | **not re-measured** (see Notes) | 23,413 MiB | 2026-11-14 | Re-measure on the v1.1.61 pin. DSpark kept 80.5% of drafts (7,414 / 9,215); 146 of 7,296 experts in VRAM. Against the v1.1.31 row below: narrative −5.2%, code −0.2%, one boot each, so no measured change. v1.1.61's prompt lookup (on by default on one card) leaves no counter in the engine log, and the short code prompt gives it little to copy, so this row neither shows nor rules out its gain. ⚠️ **Prefill:** `bench.sh` then forced decode on every depth run with `ignore_eos`, which `maya-mm3` refuses (HTTP 400), so no measured prefill run completed; fixed in [#2036](https://github.com/noonghunna/club-3090/pull/2036). The boot's only long-prompt figures are one request each, not comparable with the row below: 179 tok/s at 10,153 tokens, 161 at 99,097. verify-full on a first boot: every applicable check (vision n/a, text-only). Soak: — |
+| `strata-maya/minimax31-flash-single-maya-s`, Project Maya v1.1.31 (`sha256:c94aa0e1…`) | @noonghunna (same rig) | INT8 K / V | 204800 | **18.12 / 20.67** (CV 0.9% / 13.7%; code 15.70–22.41) | **181** @10K · **170** @60K | 23,410 MiB | 2026-10-27 | DSpark kept 80.3% of drafts (7,176 / 8,931); 146 of 7,296 experts in VRAM. Host RAM 124 GB. Maya's speed calibration kept DSpark: 18.8 against 17.4 tok/s sustained (+8.2%). verify-full every applicable check. (Recorded in the slug's header and registry note; added to this table 2026-11-14.) Soak: — |
+| `strata-maya/minimax31-flash-dual-maya-s`, Project Maya v1.1.31 (`sha256:c94aa0e1…`) | @noonghunna (2× 3090, 230 W cap, PCIe x16 + x8, no NVLink; Maya uses no NCCL or P2P) | INT8 K / V | 204800 | **20.13 / 20.30** (CV 2.6% / 12.6%; code 18.31–24.56) | **167** @10K · **147** @60K | 23,376 / 23,360 MiB | 2026-10-27 | Layer split (layers 0–33 / 34–59), 1,625 of 7,296 experts in VRAM; DSpark kept 80.6% of drafts (7,256 / 9,005). Host RAM 102 GB. Maya's speed calibration kept DSpark: 22.5 against 18.7 tok/s sustained (+20.5%). verify-full every applicable check. (Recorded in the slug's header and registry note; added to this table 2026-11-14.) Soak: — |
+
 ---
 
 ## Ornith-1.0 (DeepReinforce agentic-coding fine-tunes — 🧪 experimental)

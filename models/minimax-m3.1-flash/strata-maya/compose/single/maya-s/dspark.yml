@@ -34,6 +34,13 @@
 #              narrative (CV 0.9%); code 20.67 mean, 15.70-22.41 across its 5 runs; 181 / 170 tok/s prefill
 #              @10K / @60K; DSpark kept 80.3% of drafts (the model card's sampler, 1.0 / 0.95, may keep fewer);
 #              verify-full all ✓ (vision n/a).
+#              RE-MEASURED 2026-11-14 on v1.1.61 (same rig and cap, bench.sh on its own boot): 17.18 tok/s
+#              decode narrative (CV 1.9%), code 20.63 (CV 3.4%), DSpark kept 80.5% of drafts, VRAM 23,413 MiB;
+#              -5.2% / -0.2% against v1.1.31, one boot each, so no measured change. v1.1.61's prompt lookup (on
+#              by default on one GPU) leaves no counter in the engine log, and bench.sh's short code prompt
+#              gives it little to copy, so this neither shows nor rules out its gain. Prefill not re-measured:
+#              maya-mm3 refuses ignore_eos, which bench.sh sent on every depth run until #2036. verify-full all
+#              ✓ (vision n/a) on a first boot.
 # CPU-Offload-Host-RAM-GB: 124
 #   ⤷ MEASURED 2026-10-27 on this compose (v1.1.31, DSpark on, through switch.sh, the bench boot):
 #     MemAvailable fell 124 GB (decimal) at its peak, on a 224 GB host: the experts the card's pool doesn't
