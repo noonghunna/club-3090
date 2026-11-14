@@ -1,0 +1,34 @@
+name: Label bench contributions
+
+# The "Numbers from your rig" template titles an issue "[bench] …" and gives it
+# the bench-contribution label. An issue filed with `gh issue create` or the API
+# skips the template, and the label with it: 30 of the 204 [bench] issues had
+# none on 2026-11-14, and the next one (#2033) arrived the same way an hour
+# later. This adds the label when an issue is opened or reopened with a [bench]
+# title, or edited to one. It never removes a label.
+#
+# Only the issue number reaches the shell; the title is read in `if:`, where it
+# is an expression value, not a command line.
+
+on:
+  issues:
+    types: [opened, reopened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    # startsWith is case-insensitive. On `edited`, act only when the title changed.
+    if: >-
+      startsWith(github.event.issue.title, '[bench]')
+      && !contains(github.event.issue.labels.*.name, 'bench-contribution')
+      && (github.event.action != 'edited' || github.event.changes.title)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add bench-contribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: gh api "repos/$REPO/issues/$ISSUE/labels" -X POST -f 'labels[]=bench-contribution' --silent
