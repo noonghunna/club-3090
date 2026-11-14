@@ -47,7 +47,9 @@
 #
 # Output:
 #   Per-turn table (turn, prompt_tokens, ttft_ms, decode_tps)
-#   TTFT growth analysis: flat = low incremental prefill; linear = O(n)
+#   TTFT growth analysis: flat = low incremental prefill; linear = O(n).
+#   A turn whose reply arrived whole (one output chunk, e.g. QEngine's tool
+#   calls) has the reply's decode inside its TTFT, so it is not graded (#2033).
 #
 # Usage:
 #   bash scripts/bench-agentic.sh
@@ -648,6 +650,15 @@ baseline_ttft = (s.mean([m["ttft_ms"] for m in per_turn_metrics[baseline_idx]])
                  if baseline_idx is not None else None)
 cold_idx = contiguous[0] if (contiguous and anchor_pos > 0) else None
 
+
+def _arrived_whole(turn_idx):
+    """Runs of this turn whose reply came in ONE output chunk (#1862). Their TTFT is
+    the time to the whole reply, decode included, not the prompt read alone."""
+    return sum(1 for m in per_turn_metrics[turn_idx] if m.get("single_output"))
+
+
+base_whole = _arrived_whole(baseline_idx) if baseline_idx is not None else 0
+
 # #809: how many turns had NO measurable decode window, across the whole ramp.
 # A degenerate turn contributes no decode value at all — averaging in a
 # divide-by-epsilon is how eleven turns read 409,726 -> 1,808,323 TPS.
@@ -681,7 +692,16 @@ for turn_idx in contiguous:
         note = "warm baseline"
     elif baseline_idx is not None and turn_idx > baseline_idx and baseline_ttft and mean_ttft > 0:
         ratio = mean_ttft / baseline_ttft
-        if ratio > 4.0:
+        whole = _arrived_whole(turn_idx)
+        if whole or base_whole:
+            # #2033: 12 of 12 QEngine replies arrived whole and turns 10-12 read
+            # "O(n)-like growth". The ratio mixes the prompt read with each reply's
+            # length, so it is stated, not graded.
+            if ratio > 1.4:
+                which = "this turn" if whole else "the warm baseline"
+                note = (f"TTFT {ratio:.1f}× warm-baseline (not graded: {which} arrived "
+                        f"whole, so its TTFT includes the reply)")
+        elif ratio > 4.0:
             note = f"⚠  TTFT {ratio:.1f}× warm-baseline (O(n)-like growth for this arch_class)"
         elif ratio > 2.0:
             note = f"↑  TTFT {ratio:.1f}× warm-baseline"
@@ -747,7 +767,13 @@ if baseline_idx is not None and contiguous[-1] != baseline_idx:
     print(f"    Turn {baseline_idx+1} (warm base): {first_ttft:>8.0f} ms TTFT @ {first_ptok:,.0f} prompt tokens")
     print(f"    Turn {last_idx+1}:             {last_ttft:>8.0f} ms TTFT @ {last_ptok:,.0f} prompt tokens")
     print(f"    Context grew {token_growth:.1f}×,  TTFT grew {ttft_growth:.1f}× (warm baseline → last turn)")
-    if ttft_growth <= 1.5:
+    # The verdict compares two turns' TTFTs. If either reply arrived whole, that
+    # TTFT includes the reply's decode and the verdict would grade reply lengths.
+    ends_whole = [t for t in dict.fromkeys((baseline_idx, last_idx)) if _arrived_whole(t)]
+    if ends_whole:
+        _which = " and ".join(f"turn {t+1}" for t in ends_whole)
+        print(f"    ·  No growth verdict: {_which} arrived whole, so the TTFT compared includes the reply.")
+    elif ttft_growth <= 1.5:
         print("    ✓  TTFT stable across the measured range for this engine/arch/config cell.")
     elif ttft_growth <= token_growth * 0.5:
         print(f"    ~  TTFT sub-linear for this cell ({ttft_growth:.1f}× vs {token_growth:.1f}× context).")
@@ -758,7 +784,10 @@ if baseline_idx is not None and contiguous[-1] != baseline_idx:
     print(f"    (Full-context O(n) growth would approach {token_growth:.1f}× with context)")
     if single_total:
         print(f"    ⚠  {single_total}/{turns_total} turn(s) arrived whole: their TTFT includes the reply's decode")
-        print(f"       (see 'whole replies' above), so this growth is not prompt-read cost alone.")
+        if ends_whole:
+            print(f"       (see 'whole replies' above), so this growth is not prompt-read cost alone.")
+        else:
+            print(f"       (see 'whole replies' above); the growth above compares two turns that streamed.")
     print(f"")
     print(f"  Note — on vLLM, Qwen3-Next-family (DeltaNet/SSM hybrid) prefix hits are block-")
     print(f"  granular: with prefix caching on, vLLM runs these models in mamba-cache 'align'")
@@ -787,6 +816,8 @@ if _curve_path:
             "prompt_tokens": round(s.mean(_ptoks)) if _ptoks else None,
             "ttft_ms": round(s.mean(_ttfts), 1) if _ttfts else None,
             "decode_tps": round(s.mean(_tpss), 1) if _tpss else None,
+            # runs whose TTFT includes the reply (it arrived in one chunk, #2033)
+            "arrived_whole": _arrived_whole(_ti),
         })
     _out = {
         "sessions": SESSIONS,
