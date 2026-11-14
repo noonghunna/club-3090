@@ -49,6 +49,10 @@ The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<releas
   - thinking: 1.0 / 0.95 / 20 / 0, presence 0;
   - non-thinking: 0.7 / 0.80 / 20 / 0, presence 1.5.
 
+  The start-up log carries them as two lines, `sampling defaults, thinking (when the request has none): …`
+  and `sampling defaults, non-thinking (when the request has none): …`; `scripts/lib/run_context.py`
+  records the row matching the run's thinking gate, and before 1.3.5.3 there was one mode-less line.
+
   Before, both models used top_p 0.95 and no penalty, with temperature 1.0 on Flash-Next and 0.6 on the 27B. A set `QE_PRESENCE_PENALTY` is one value for both modes. Upstream hasn't measured these defaults: not the speed cost of presence 1.5, not tool calls under it, not quality. Results from runs that send no sampler aren't comparable with 1.3.5's. The server fills each missing field on its own, so a request that sends some values still gets the card's for the rest: `bench.sh` sends temperature, top_p, top_k and min_p but no presence penalty, so its thinking-off requests run at presence 1.5 from 1.3.5.3 and at none before. That puts a QEngine bench from 1.3.5.3 on beside an older one under a different sampler ([#1966](https://github.com/noonghunna/club-3090/issues/1966): 1.3.5 → 1.3.5.7 decode −8.0% / −4.5% on four RTX 5080s, prefill flat).
 - **Log wording:** the 27B's start-up line reads `P2P: peer access between all N GPUs` instead of naming a decode path before it's chosen (from our note on bpx03/QEngine#19). `bench.sh` / `report.sh` read the `[comm] decode collectives` line either way.
 - **From 1.3.5.1 and 1.3.5.2:**
