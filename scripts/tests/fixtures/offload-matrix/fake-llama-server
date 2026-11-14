@@ -52,6 +52,10 @@ FAKE_SCENARIO:
                   even requests span two (a genuine, measurable window). Four runs
                   read plausibly, one printed 690000000.00, and the shape mean came
                   out at 2728143.37 with CV=223.6%
+  maya            healthy, plus Project Maya's /metrics document (engine.maya_version,
+                  no draft counts) and one maya-ds4 draft line per request in the
+                  log, the way a host-run Maya writes them: bench.sh reads the drafts
+                  only from SERVER_LOG, with no container (D#1572)
   probefail       the n_layer line NEVER appears, so the layer probe times out --
                   and the process IGNORES SIGTERM, the way a real server does
                   while still inside model load. Only a probe that escalates past
@@ -234,6 +238,9 @@ class H(BaseHTTPRequestHandler):
             self.end_headers(); self.wfile.write(b"ok")
         elif self.path.startswith("/v1/models"):
             self._json({"object": "list", "data": [{"id": "fake-model", "object": "model"}]})
+        elif self.path.startswith("/metrics") and SC == "maya":
+            # Project Maya's /metrics: its version, and totals with no draft counts (they go to its log)
+            self._json({"engine": {"maya_version": "1.1.61"}, "totals": {"requests": _req_n[0]}})
         elif self.path.startswith("/props"):
             # Shaped like llama-server's real /props: the fields bench.sh's config
             # fingerprint reads (served ctx, slots, ftype, drafter) and nothing else.
@@ -268,6 +275,8 @@ class H(BaseHTTPRequestHandler):
             return
 
         _req_n[0] += 1
+        if SC == "maya":
+            log("maya ds4 serve: drafts 100 of 107 kept; 7 rejected")
         # Which endpoint was actually driven — bench.sh's ENDPOINT knob is only
         # meaningful if it changes the request, so a test must be able to see it.
         log(f"[fake] request endpoint={self.path}")
