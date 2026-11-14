@@ -207,14 +207,22 @@ def boot_line_sampling(engine: str, text: str,
         if not rows:
             return None, None, None
         mode_less = [vals for mode, vals in rows if mode is None]
+        modes = sorted(m for m in {mode for mode, _ in rows} if m)
         wanted = {"on": "thinking", "off": "non-thinking"}.get(thinking)
+        # label None = the pre-1.3.5.3 single line, which has no mode to name
         if wanted:
-            picked = [vals for mode, vals in rows if mode == wanted] or mode_less
-            label = f"{wanted} row"
+            picked, label = [vals for mode, vals in rows if mode == wanted], f"{wanted} row"
+            if not picked and mode_less:
+                picked, label = mode_less, None
+            if not picked:
+                # Only the other mode's row is here (a trimmed log, a hand-made --boot-log):
+                # that row is not what this leg ran under, so claim nothing rather than crash
+                return (None, None,
+                        f"QEngine's boot log has no {wanted} sampling row (only: {', '.join(modes)}), "
+                        "so none is claimed for this leg")
         elif mode_less:
-            picked, label = mode_less, "sampling defaults"
+            picked, label = mode_less, None
         else:
-            modes = sorted(m for m in {mode for mode, _ in rows} if m)
             if len(modes) > 1:
                 return (None, None,
                         "QEngine printed one sampling row per reasoning mode ("
@@ -222,7 +230,8 @@ def boot_line_sampling(engine: str, text: str,
                         + "); the leg's thinking gate was not given, so none is claimed")
             picked, label = [vals for _, vals in rows], f"{modes[0]} row"
         return (picked[-1],
-                f"QEngine start-up line ({label}, sampling defaults for requests that send none)",
+                "QEngine start-up line (" + (f"{label}, " if label else "")
+                + "sampling defaults for requests that send none)",
                 None)
     hits = _STRATA_SAMPLING.findall(text)
     vals = _boot_vals(hits[-1], SERVER_SETTABLE) if hits else {}

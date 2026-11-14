@@ -292,6 +292,17 @@ assert_contains "$(cat "$tmp/err")" "one sampling row per reasoning mode"
 echo "--- 9b. the pre-1.3.5.3 mode-less line still resolves under either gate ---"
 got="$(rc --engine qengine --boot-log "$tmp/qe.log" --thinking on 2>/dev/null | jq_py 'd["server_defaults"]')"
 assert_contains "$got" '"temperature": 1.0'
+# the single line has no mode, so the source names none (not "thinking row") and doesn't repeat itself
+assert_contains "$got" '"source": "QEngine start-up line (sampling defaults for requests that send none)"'
+got="$(rc --engine qengine --boot-log "$tmp/qe.log" 2>/dev/null | jq_py 'd["server_defaults"]')"
+assert_contains "$got" '"source": "QEngine start-up line (sampling defaults for requests that send none)"'
+echo "--- 9b'. only the OTHER mode's row (a trimmed or hand-made log): nothing claimed, a note, no crash ---"
+printf '%s\n' "sampling defaults, non-thinking (when the request has none): temperature 0.70, top_p 0.80, top_k 20, min_p 0.00, presence_penalty 1.50" > "$tmp/qe-nt-only.log"
+out="$(rc --engine qengine --boot-log "$tmp/qe-nt-only.log" --thinking on 2>"$tmp/err")"; code=$?
+[[ $code -eq 0 ]] || fail "a missing thinking row must not crash run_context.py (rc=$code): $(tail -2 "$tmp/err")"
+assert_contains "$(jq_py 'd["server_defaults"]' <<<"$out")" "null"
+assert_contains "$(cat "$tmp/err")" "no thinking sampling row"
+assert_not_contains "$(cat "$tmp/err")" "Traceback"
 echo "--- 9c. presence_penalty is kept for QEngine only ---"
 printf '%s\n' "[maya] sampling defaults from the config: temperature=1.0, top_p=1.0, presence_penalty=1.5" > "$tmp/maya-pp.log"
 got="$(rc --engine strata --boot-log "$tmp/maya-pp.log" 2>/dev/null | jq_py 'd["server_defaults"]')"
