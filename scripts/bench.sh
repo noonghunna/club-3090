@@ -811,10 +811,15 @@ if [[ "$CAPTURE" == "1" && -f "${ROOT_DIR}/scripts/lib/capture.sh" ]]; then
   # Strata keeps its per-request numbers in GET /metrics, not in docker logs, so the
   # window is two /metrics snapshots (scripts/lib/strata_metrics.py) instead of a log offset.
   if [[ "$ENGINE_KIND" == "strata" ]]; then
-    # Project Maya (strata-maya) counts its drafts only in its engine log: the reader needs the container
+    # Project Maya (strata-maya) counts its drafts only in its engine log: the reader needs the container,
+    # or on a host run (CONTAINER=none) the log itself, given as SERVER_LOG — as the host-RAM read above
+    # and verify-full's draft check take it (#1915). Without either, a host run read 0 drafts and warned
+    # that a drafter keeping 100 of 107 was off.
     STRATA_SM_C=()
     if [[ -n "${CONTAINER:-}" && "$CONTAINER" != none ]] && docker inspect --type container "$CONTAINER" >/dev/null 2>&1; then
       STRATA_SM_C=(--container "$CONTAINER")
+    elif [[ -n "${SERVER_LOG:-}" && -r "$SERVER_LOG" ]]; then
+      STRATA_SM_C=(--log-file "$SERVER_LOG")
     fi
     python3 "${ROOT_DIR}/scripts/lib/strata_metrics.py" snapshot "$URL" "${STRATA_SM_C[@]}" > "$CAP_WORK/strata0.json" 2> "$CAP_WORK/strata0.err" \
       || rm -f "$CAP_WORK/strata0.json"
@@ -1756,10 +1761,15 @@ if (( CAP_ENABLED )); then
        && _sm="$(python3 "${ROOT_DIR}/scripts/lib/strata_metrics.py" delta "$CAP_WORK/strata0.json" "$CAP_WORK/strata1.json" 2> "$CAP_WORK/strata1.err")"; then
       _sv() { sed -n "s/^$1=//p" <<<"$_sm"; }
       echo "  Strata /metrics, every request in the capture window (warm-ups included): $(_sv requests) requests"
-      if [[ "$(_sv drafts_offered)" == 0 ]]; then
-        echo "  ⚠ WARN: no MTP drafts offered in the window: the draft layer is off or not working"
+      if [[ "$(_sv drafts_offered)" == 0 && ${#STRATA_SM_C[@]} -eq 0 ]] \
+         && [[ -n "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["engine"].get("maya_version") or "")' "$CAP_WORK/strata0.json" 2>/dev/null)" ]]; then
+        # Project Maya's /metrics carries no draft counts; with no container and no log there is nothing
+        # to count, which is not the same as no drafts
+        echo "  drafts: not read. Project Maya counts them only in its engine log: on a host run, set SERVER_LOG=<that log, e.g. maya-ds4.log>"
+      elif [[ "$(_sv drafts_offered)" == 0 ]]; then
+        echo "  ⚠ WARN: no drafts offered in the window: the draft layer (MTP or DSpark) is off or not working"
       else
-        echo "  MTP drafts accepted $(_sv drafts_accepted) of $(_sv drafts_offered) ($(awk -v a="$(_sv accept_rate)" 'BEGIN{printf "%.1f", a*100}')%)"
+        echo "  drafts accepted $(_sv drafts_accepted) of $(_sv drafts_offered) ($(awk -v a="$(_sv accept_rate)" 'BEGIN{printf "%.1f", a*100}')%)"
       fi
       echo "  engine decode $(_sv decode_tok_s) tok/s · engine prefill $(_sv prefill_tok_s) tok/s (output tokens / decode time, prompt tokens read / prompt time)"
     else

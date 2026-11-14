@@ -1359,4 +1359,26 @@ command grep -q 'pool census (per device' "$TMP/llamaoff.out" \
   || fail "control: a llama.cpp offload on the same log must parse the census (else the fixture proves nothing)"
 echo "  ✓ a vLLM offload is reported but kept out of the moe-cache parser; the llama.cpp control still parses"
 
+# --- 23. a host-run Project Maya's drafts are read from SERVER_LOG (D#1572) -------
+# Maya's /metrics carries no draft counts; they are one line per request in its engine
+# log. On a host run (CONTAINER=none) the draft snapshot read only a container, so a
+# drafter keeping 100 of 107 printed "no MTP drafts offered ... off or not working".
+# Ports +23 / +24 again: each run_bench above has killed and reaped its server.
+run_bench maya "$((PORT_BASE+23))" "$TMP/maya-log.out" ENGINE_KIND=strata
+M="$TMP/maya-log.out"
+command grep -q 'Strata /metrics, every request in the capture window' "$M" \
+  || fail "maya: the Strata /metrics capture did not run: $(tail -3 "$M")"
+command grep -qE '^  drafts accepted [0-9]+ of [0-9]+ \(93\.5%\)' "$M" \
+  || fail "maya with SERVER_LOG: the log's drafts must be read, got: $(command grep -m1 -iE 'drafts' "$M")"
+command grep -q 'no drafts offered\|no MTP drafts offered' "$M" \
+  && fail "maya with SERVER_LOG: a drafter keeping 100 of 107 must not be reported off"
+# No container and no log: there is nothing to count, which is not "no drafts"
+run_bench maya "$((PORT_BASE+24))" "$TMP/maya-nolog.out" ENGINE_KIND=strata SERVER_LOG= SERVER_PID=none
+M="$TMP/maya-nolog.out"
+command grep -q '^  drafts: not read. Project Maya counts them only in its engine log' "$M" \
+  || fail "maya without SERVER_LOG: must say the drafts were not read, got: $(command grep -m1 -iE 'drafts' "$M")"
+command grep -q 'no drafts offered\|no MTP drafts offered' "$M" \
+  && fail "maya without SERVER_LOG: an unread drafter must not be reported off"
+echo "  ✓ a host-run Project Maya's drafts come from SERVER_LOG; without it they are 'not read', not 'off'"
+
 echo "test-bench-capture: ok"
