@@ -835,7 +835,7 @@ CLUB_SCRIPTS_LIB="${ROOT_DIR}/scripts/lib" python3 - "$URL" "$MODEL" "$WARMUPS" 
             "$ENABLE_THINKING" "$FORCE_TOKENS" \
             "$PROMPT_NARR" "$MAX_TOKENS_NARR" \
             "$PROMPT_CODE" "$MAX_TOKENS_CODE" << 'PYEOF'
-import json, os, random, re, shutil, string, subprocess, sys, time, urllib.request, statistics as s
+import json, os, random, re, shutil, string, subprocess, sys, time, urllib.error, urllib.request, statistics as s
 # every request to the engine goes through scripts/lib/engine_http.py — it resolves the
 # engine's API key (Strata 0.2+) from the URL through the repo's own helpers, lazily.
 sys.path.insert(0, os.environ["CLUB_SCRIPTS_LIB"])
@@ -1042,6 +1042,59 @@ def token_ratio():
     return ratio
 
 
+# Set once the server refuses ignore_eos. Project Maya's MiniMax engine (maya-mm3)
+# answers it with HTTP 400 "ignore_eos: this engine does not apply token biases" and
+# accepts min_tokens alone. Every forced request carries ignore_eos (the depth runs
+# force DEPTH_DECODE_TOKENS=128 by default), so on 2026-11-14 every measured
+# prefill-depth run there failed with nothing but "HTTP Error 400: Bad Request".
+_IGNORE_EOS_REFUSED = []
+
+
+def _http_reason(e):
+    """The server's own reason for an HTTP error. str(HTTPError) is only the status
+    line ("HTTP Error 400: Bad Request"); the reason is in the body."""
+    try:
+        raw = e.read().decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+    try:
+        doc = json.loads(raw)
+        err = doc.get("error", doc) if isinstance(doc, dict) else doc
+        msg = err.get("message") or err.get("detail") if isinstance(err, dict) else err
+        if msg:
+            return " ".join(str(msg).split())[:300]
+    except Exception:
+        pass
+    return " ".join(raw.split())[:300]
+
+
+def _open_stream(path, req_body):
+    """POST req_body and return (response, send time). A 400 whose reason names
+    ignore_eos drops it for the rest of the run (said once) and sends again with
+    min_tokens alone. Any other HTTP error is raised with the server's reason."""
+    def _post(b):
+        req = urllib.request.Request(f"{URL}{path}", data=json.dumps(b).encode(),
+                                     headers=engine_http.headers(URL))
+        t0 = time.time()
+        return engine_http.urlopen(req, timeout=600), t0
+    try:
+        return _post(req_body)
+    except urllib.error.HTTPError as e:
+        why = _http_reason(e)
+        if not (e.code == 400 and req_body.get("ignore_eos") and "ignore_eos" in why):
+            raise RuntimeError(f"HTTP {e.code}: {why or e.reason}") from None
+    if not _IGNORE_EOS_REFUSED:
+        _IGNORE_EOS_REFUSED.append(why)
+        print(f"  [bench] the server refused ignore_eos (HTTP 400: {why}).\n"
+              f"          Forced runs send min_tokens alone from here on; an engine that"
+              f" does not honour it lets the model stop early.", flush=True)
+        progress(f"[bench] server refused ignore_eos; forced runs now send min_tokens alone")
+    try:
+        return _post({k: v for k, v in req_body.items() if k != "ignore_eos"})
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"HTTP {e.code}: {_http_reason(e) or e.reason}") from None
+
+
 def run_once(prompt, max_tokens, force=0):
     # FORCE>0: force EXACTLY FORCE output tokens (overrides the per-prompt cap) so the
     # model can't self-terminate early — required to measure sustained throughput at a
@@ -1087,16 +1140,15 @@ def run_once(prompt, max_tokens, force=0):
         # ignore_eos alone is what makes this work on llama.cpp (no min_tokens
         # support there); vLLM honours both. Output past the natural stop is
         # throwaway text — this is a throughput measurement, not a quality one.
+        # A server that refuses ignore_eos gets min_tokens alone (_open_stream).
         req_body["min_tokens"] = _force
-        req_body["ignore_eos"] = True
-    body = json.dumps(req_body).encode()
-    req = urllib.request.Request(f"{URL}{path}", data=body,
-                                 headers=engine_http.headers(URL))
-    t_send = time.time()
+        if not _IGNORE_EOS_REFUSED:
+            req_body["ignore_eos"] = True
+    r, t_send = _open_stream(path, req_body)
     ttft = None
     completion_tokens = 0
     prompt_tokens = 0
-    with engine_http.urlopen(req, timeout=600) as r:
+    with r:
         for line in r:
             line = line.decode("utf-8", errors="ignore").rstrip()
             if not line.startswith("data: "):
@@ -1577,6 +1629,12 @@ def run_prefill_probe():
                 # MATCHED depth. NOT comparable to the narrative/code decode_TPS
                 # above, which is measured at shallow context.
                 print(stats(f"decode tok/s @ {label.replace('prefill-','')} depth", dtps))
+            elif _depth_toks > 0:
+                # Say so: a leg that vanishes reads as one that was never asked for.
+                print(f"  decode tok/s @ {label.replace('prefill-','')} depth  n/a (no measured run "
+                      f"decoded 2+ tokens over 0.25 s or more"
+                      + ("; the server refused ignore_eos, and min_tokens alone did not hold "
+                         "the runs open)" if _IGNORE_EOS_REFUSED else ")"))
             print(
                 f"  TTFT          mean={s.mean(ttfts)*1000:6.0f}ms  "
                 f"std={(s.stdev(ttfts)*1000 if len(ttfts) > 1 else 0):5.0f}ms  "

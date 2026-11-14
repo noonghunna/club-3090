@@ -1381,4 +1381,47 @@ command grep -q 'no drafts offered\|no MTP drafts offered' "$M" \
   && fail "maya without SERVER_LOG: an unread drafter must not be reported off"
 echo "  ✓ a host-run Project Maya's drafts come from SERVER_LOG; without it they are 'not read', not 'off'"
 
+# --- 24. a server that refuses ignore_eos: forced runs drop it, said once (2026-11-14) ---
+# Project Maya's MiniMax engine answers any request carrying ignore_eos with HTTP 400
+# and serves min_tokens alone. bench.sh forces every measured prefill-depth run
+# (DEPTH_DECODE_TOKENS=128), so each one failed with a bare "HTTP Error 400: Bad
+# Request" and the depth table came back empty. Ports +23 / +24 again (see case 23).
+run_bench no_ignore_eos "$((PORT_BASE+23))" "$TMP/noeos.out" \
+  ONLY=narr RUNS=1 WARMUPS=0 PREFILL_PROBE=1 PREFILL_DEPTHS=2000 PREFILL_RUNS=2
+E="$TMP/noeos.out"
+command grep -qE 'run-[0-9]+ +FAIL' "$E" \
+  && fail "no_ignore_eos: a forced run still failed: $(command grep -m1 -E 'run-[0-9]+ +FAIL' "$E")"
+command grep -q '^=== summary \[prefill-2k\] (n=2) ===' "$E" \
+  || fail "no_ignore_eos: both measured depth runs must be measured: $(command grep -A3 'PREFILL-2K' "$E")"
+command grep -q 'the server refused ignore_eos (HTTP 400: ignore_eos: this engine does not apply token biases' "$E" \
+  || fail "no_ignore_eos: the refusal must be reported in the server's own words"
+[[ "$(command grep -c 'the server refused ignore_eos (HTTP 400' "$E")" == 1 ]] \
+  || fail "no_ignore_eos: the refusal must be said once, not per run"
+[[ "$(command grep -c '\[fake\] refused: ignore_eos' "$SRV_LOG")" == 1 ]] \
+  || fail "no_ignore_eos: after one refusal ignore_eos must not be sent again ($(command grep -c 'refused: ignore_eos' "$SRV_LOG") refusals)"
+command grep -q 'forcing ignore_eos=False min_tokens=128' "$SRV_LOG" \
+  || fail "no_ignore_eos: the forced runs must keep min_tokens when ignore_eos goes"
+command grep -q 'depth  n/a (no measured run decoded 2+ tokens over 0.25 s or more; the server refused ignore_eos' "$E" \
+  || fail "no_ignore_eos: an empty decode-at-depth leg must say so: $(command grep -m1 'decode tok/s @' "$E")"
+# Positive control, case 10's healthy server: it takes ignore_eos, so the forcing is
+# unchanged there and nothing is reported refused.
+command grep -q 'forcing ignore_eos=True min_tokens=128' "$TMP/server-healthy-$((PORT_BASE+8)).log" \
+  || fail "control: a server that accepts ignore_eos must still be sent it"
+command grep -q 'refused ignore_eos' "$TMP/ratio.out" && fail "control: nothing was refused on the healthy server"
+command grep -q 'depth  n/a (no measured run decoded 2+ tokens over 0.25 s or more)' "$TMP/ratio.out" \
+  || fail "control: the empty decode-at-depth line must not blame ignore_eos when it was accepted"
+# A 400 that does not name ignore_eos is not retried, and the run's failure carries
+# the server's reason instead of the bare status line.
+export FAKE_400_MSG="unsupported request field"
+run_bench no_ignore_eos "$((PORT_BASE+24))" "$TMP/noeos-other.out" \
+  ONLY=narr RUNS=1 WARMUPS=0 PREFILL_PROBE=1 PREFILL_DEPTHS=2000 PREFILL_RUNS=2
+unset FAKE_400_MSG
+O="$TMP/noeos-other.out"
+command grep -qE 'run-1 +FAIL: HTTP 400: unsupported request field' "$O" \
+  || fail "another 400: the run's failure must carry the server's reason: $(command grep -m1 -E 'run-1 ' "$O")"
+command grep -q 'refused ignore_eos' "$O" && fail "another 400: must not be read as an ignore_eos refusal"
+[[ "$(command grep -c '\[fake\] refused: ignore_eos' "$SRV_LOG")" == 2 ]] \
+  || fail "another 400: each forced run is sent once, not retried ($(command grep -c 'refused: ignore_eos' "$SRV_LOG") requests)"
+echo "  ✓ a server that refuses ignore_eos: forced runs keep min_tokens, said once; other 400s show their reason"
+
 echo "test-bench-capture: ok"
