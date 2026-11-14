@@ -11,7 +11,7 @@ lineage:
   base: null
   base_version: null
   source: "https://github.com/theroyallab/tabbyAPI"
-  source_ref: "b1c225394d0fb45e8d26bddec344318dfd85096e"
+  source_ref: "ea66a3fec8591b6e2943f6d2cc6123cbcedace4a"
   chain: []
   delta: "TabbyAPI server over ExLlamaV3. TabbyAPI's own CI image (:cu13, from docker/Dockerfile.cu13)"
 install:
