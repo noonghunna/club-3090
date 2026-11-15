@@ -503,10 +503,11 @@ A greedy depth sweep on the MTP slug (`/completion`, temp 0, top_k 1; 2026-09-19
 
 ### Quad-card (4× RTX 3090, TP=4) — vLLM
 
-Community submissions, all from one rig: @alexanderjacuna's four 3090s at 350 W, each on its own PCIe root
-complex, so peer-to-peer is unavailable and the stack ran with P2P off and custom all-reduce off. The reference
-rig has two cards, so these are the only measurements of these composes, and his 2-card
-`dual-ultrafast` row in the dual table above is a same-rig, same-day comparison.
+Community submissions from two rigs: @alexanderjacuna's four 3090s at 350 W, each on its own PCIe root
+complex, so peer-to-peer is unavailable and the stack ran with P2P off and custom all-reduce off; and @white1golf's
+(the `multi4-max` row), on PCIe 3.0 with P2P refused. The reference rig has two cards, so these are the only
+measurements of these composes, and @alexanderjacuna's 2-card `dual-ultrafast` row in the dual table above is a
+same-rig, same-day comparison.
 
 | Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
@@ -515,6 +516,7 @@ rig has two cards, so these are the only measurements of these composes, and his
 | `multi4/fp8/dflash2.yml` (`vllm/qwen38-27b-multi4-ultramax`, FP8 weights, DFlash2) **with `KV_CACHE_DTYPE=fp8`** | @alexanderjacuna (4× 3090 PCIe Gen4 x16, separate root complexes, no NVLink, P2P off, custom AR off, 350 W) | **fp8 e4m3** (FA2 fp8-KV plugin verified, `FLASH_ATTN` on all 4 ranks) | 262144 | **114.7 / 205.1** decode (CV 2.4% / 4.0%) | 1528 @10K / 1333 @90K | 86,696 MiB total | 2026-10-02 | Soak: ✓ PASS (25/25 turns, 0 MiB growth). All five `report.sh --full` stages PASS; bench integrity OK (it fails the run on a container restart). **Confirms the #1389 fix at TP=4**: this is the fp8-KV-at-TP=4 path the compose header warns about. vs the bf16 row above, same rig: decode −11% / −15%, prefill +3% / 0%, KV pool **1,130,395 tok (4.31× at 262K)** vs 584,717 (2.23×). vLLM v0.30.0, club-3090 `6cc6c9ef`. [#1525](https://github.com/noonghunna/club-3090/issues/1525) |
 | `multi4/autoround-int4/mtp.yml` (`vllm/qwen38-27b-multi4-fast`, MTP, W4A8) | @alexanderjacuna (4× 3090 PCIe Gen4 x16, separate root complexes, no NVLink, P2P off, custom AR off, 350 W) | fp8 e4m3 | 262144 | **100.2 / 141.0** decode (CV 4.7% / 2.2%) | 1768 @10K / 1562 @90K | 92,688 MiB total | 2026-09-27 | Soak: ✓ PASS (25/25 turns, 0 MiB growth). verify-stress **ADVISORY**, not a failure: all six ceiling rungs recalled correctly to 240K tokens, with ~1 GB free on the tightest card at the ceiling. Other stages PASS. vLLM v0.30.0, club-3090 `a942bb5a`. KV pool 1,731,109 tok (6.60× at 262K). [#1452](https://github.com/noonghunna/club-3090/issues/1452) |
 | `multi4/autoround-int4/dflash2-fp8.yml` (`vllm/qwen38-27b-multi4-superfast`, DFlash2, W4A8) | @alexanderjacuna (4× 3090 PCIe Gen4 x16, separate root complexes, no NVLink, P2P off, custom AR off, 350 W) | fp8 e4m3 (FlashInfer) | 262144 | **93.4 / 168.4** decode (CV 3.9% / 5.7%) | 1664 @10K / 1468 @90K | 94,296 MiB total | 2026-10-02 | Soak: ✓ PASS (25/25 turns, 0 MiB growth). verify-stress **ADVISORY**, not a failure: all ceiling rungs recalled correctly to 240,661 tokens (91% of n_ctx), with 604 MB free at the ceiling (below the 1,024 MB agent-headroom threshold). Other stages PASS. First report of this slug. Decode at 90K depth 203.9. vLLM v0.30.0, club-3090 `6cc6c9ef`. KV pool 1,167,717 tok (4.45× at 262K). [#1529](https://github.com/noonghunna/club-3090/issues/1529) |
+| `multi4/fp8/mtp.yml` (`vllm/qwen38-27b-multi4-max`, FP8 weights, MTP n=3) | @white1golf (4× 3090 on PCIe 3.0 at x4 / x16 / x8 / x16, no NVLink, P2P refused, custom AR off, no power cap; Threadripper 2990WX, 128 GB RAM) | bf16 | 262144 | **100.31 / 125.46** decode; 99.18 / 121.74 wall (CV 2.5% / 4.7%) | ~958 @10K (client-side) | 22.1–22.7 GiB a card | 2026-11-12 | Community ([#2060](https://github.com/noonghunna/club-3090/issues/2060)): the slug's first boot anywhere, `report.sh --full` with all five stages PASS. vLLM v0.33.0 (the pin), official Qwen/Qwen3.8-27B-FP8 weights (66/66 SHA-verified), mem-util 0.92. verify-full 9/9 (Genesis skipped), vision 4/4; verify-stress PASS, including the Cliff 2 needles; MTP n=3 acceptance length 2.94–3.06. TTFT 113 / 103 ms. Soak-continuous PASS (~25 min). Boot 300 s cold, 136 s warm. Driver 595.99.02. |
 
 Same rig, `ultrafast` at TP=4 vs TP=2: decode **+18% narrative / +15% code**, prefill **−30% @10K** (2721 → 1902).
 With no peer-to-peer, every all-reduce crosses host memory, which would cost prefill most; that cause is a hypothesis,
