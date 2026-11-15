@@ -54,7 +54,7 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 "DEBIAN_FRONTEND", "PYTHONUNBUFFERED", "PYTHONUTF8",
                 # QEngine's Flash-Next engine (libqflash.so) reads these; named one by one,
                 # because a FLASH_ prefix would also excuse FLASH_ATTN on the vLLM composes
-                "FLASH_MAX_SEQS", "FLASH_KV_ARCHIVE_GB", "FLASH_NGRAM_PIN",
+                "FLASH_MAX_SEQS", "FLASH_KV_ARCHIVE_GB", "FLASH_KV_BITS", "FLASH_NGRAM_PIN",
                 "FLASH_EC_MARGIN_MB", "FLASH_LOOKUP", "FLASH_COMM",
                 # from 1.3.1
                 "FLASH_KV", "FLASH_KV_RAM_TOKENS", "FLASH_PFB_BIG", "FLASH_EC_RECLAIM_S",

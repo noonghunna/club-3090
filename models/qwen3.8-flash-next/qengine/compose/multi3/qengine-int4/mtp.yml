@@ -151,6 +151,9 @@
 #                        less on short agent requests
 #   FLASH_KV_RAM_TOKENS  with FLASH_KV=ram, the host-RAM pool of all conversations (1M; K / M / G):
 #                        13.5 GB per 1M tokens, pinned at start, on top of the header's 75 GB
+#   FLASH_KV_BITS        4 stores the KV in 4 bits (QEngine 1.3.6 on): 7,488 instead of 13,520 bytes a token,
+#                        about 1.8x the tokens in the same host RAM with FLASH_KV=ram; not lossless (next-token
+#                        KL 4.95e-2 against FP8's 2.52e-2, upstream). Unset: FP8
 #   FLASH_PFB_BIG        rows of a large prefill batch (8192 on two cards from 1.3.2; 4096 on three or
 #                        with FLASH_KV=ram). Upstream on two 3090s against 4096: server prefill +5% at 10K
 #                        and +4% at 90K, decode and 8-agent throughput unchanged
@@ -286,6 +289,7 @@ services:
       - QE_MODEL=/app/models/Qwen3.8-Flash-Next-QE-INT4
       - FLASH_MAX_SEQS=${FLASH_MAX_SEQS:-16}
       - FLASH_KV_ARCHIVE_GB
+      - FLASH_KV_BITS
       - FLASH_NGRAM_PIN
       - FLASH_EC_MARGIN_MB
       - FLASH_LOOKUP
