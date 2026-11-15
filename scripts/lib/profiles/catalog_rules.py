@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import functools
 import json
 import os
 import re
@@ -438,6 +439,13 @@ def _same_model_defaults(slug: str, entry: dict, registry: dict) -> list[Finding
                     f"chat_template {mine!r} matches the model's other engines", DOC_CASES)]
 
 
+@functools.lru_cache(maxsize=None)
+def _load_profiles_cached(root_str: str):
+    """Parse the profile tree once per root (callers prime sys.path first)."""
+    from scripts.lib.profiles.compat import load_profiles
+    return load_profiles(Path(root_str) / "scripts/lib/profiles")
+
+
 def _effort_rule(root: Path, entry: dict, text: str) -> list[Finding]:
     """#1951: a thinking slug's model must declare its `effort:` block, so the
     gateway render and the omp overrides have one source for the ladder. The
@@ -447,7 +455,7 @@ def _effort_rule(root: Path, entry: dict, text: str) -> list[Finding]:
     Same gate scripts/tests/test-effort-profiles.sh holds the curated catalog
     to; this covers the PR-bundle and cockpit paths that never run that test."""
     sp = entry.get("sampler_profiles")
-    thinking = isinstance(sp, dict) and any("think" in str(k).lower() for k in sp)
+    thinking = isinstance(sp, dict) and any("thinking" in str(k).lower() for k in sp)
     body = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
     knob = "REASONING_EFFORT" in body or "reasoning_effort" in body
     if not (thinking or knob):
@@ -457,7 +465,10 @@ def _effort_rule(root: Path, entry: dict, text: str) -> list[Finding]:
     sys.path.insert(0, str(root))
     try:
         from scripts.lib.profiles.compat import load_profiles
-        profiles = load_profiles(root / "scripts/lib/profiles")
+        # Cached per root: the catalog sweep calls this once per slug (~200
+        # loads of the same tree otherwise), and load_profiles parses every
+        # model + engine YAML each time.
+        profiles = _load_profiles_cached(str(root))
     finally:
         sys.path.pop(0)
     model = profiles.models.get(str(entry.get("model")))

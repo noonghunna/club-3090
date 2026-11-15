@@ -95,8 +95,9 @@ effort:
     models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template and the
     llamacpp-club3090 moecache compose the GGUF twin
     (models/qwen3.8-flash-next/llamacpp-club3090/compose/dual/unsloth-ud-q4kxl/moecache.yml:110)
-    — both raise_exception outside low|medium|xhigh and fold minimal->low,
-    max->xhigh. Wire-probed 2026-10-20 (qwen3.8-27b/llama-cpp/patches/
+    — both fold high->xhigh, minimal->low and max->xhigh, then raise_exception
+    on anything still outside low|medium|xhigh (`none`, unrecognized strings).
+    Wire-probed 2026-10-20 (qwen3.8-27b/llama-cpp/patches/
     qwen38-gguf-reasoning-effort-template/PROVENANCE.md, the byte-identical template).
 
 weights:
