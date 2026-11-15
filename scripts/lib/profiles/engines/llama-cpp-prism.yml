@@ -227,6 +227,18 @@ vendored_overlays: []
   # real entry with a source path or diagnose-profile [6/6] fails.
 required_genesis: false
 
+# #1951 — what this engine changes about effort. Only the fallback fact is
+# evidenced; the off switch and `none` behavior are UNPROBED on this engine,
+# so they stay absent (the render must emit nothing for them).
+effort:
+  unknown_name: xhigh
+  evidence: >-
+    The prism server takes --reasoning-effort-allow (our composes ship
+    xhigh,medium,low) and --reasoning-effort-fallback (default xhigh): an
+    effort name outside the allow-list runs at the fallback rather than
+    erroring
+    (models/qwen3.8-27b/llama-cpp-prism/compose/single/prism-ternary-mtp/mtp.yml:164-165).
+
 notes: >
   🧪 EXPERIMENTAL — catalogued 2026-09-18. VALIDATED BY BOOT on this rig: the
   model loads (`ftype: PQ2_0 - 2.13 bpw (group 128)`), thinking mode works, and

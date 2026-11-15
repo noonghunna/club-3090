@@ -135,6 +135,35 @@ else
 fi
 echo ""
 
+# Effort ladder source (#1951): the model profile's `effort:` block is the one
+# source the gateway render and the omp overrides will read; the compose keeps
+# only the REASONING_EFFORT default. Informational here — the enforcing gate is
+# the effort-block finding in catalog rules above (curated) and
+# scripts/tests/test-effort-profiles.sh (whole catalog).
+EFFORT_LINE="$(python3 - "${ROOT_DIR}" "${SLUG}" <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, sys.argv[1] + "/scripts/lib/profiles")
+from compat import load_profiles
+from compose_registry import get_registry
+entry = get_registry(sys.argv[1]).get(sys.argv[2]) or {}
+mid = entry.get("model") or "?"
+eff = (load_profiles(sys.argv[1] + "/scripts/lib/profiles").models.get(mid) or
+       type("x", (), {"effort": None})()).effort
+if not eff:
+    print(f"{mid}: NO `effort:` block — declare the probed ladder or an honest status")
+elif eff.get("levels"):
+    flags = " + budget-map" if eff.get("budget_map") else ""
+    flags += " + template-kwarg" if eff.get("template_kwarg") else ""
+    print(f"{mid}: levels {'/'.join(eff['levels'])}{flags}")
+else:
+    print(f"{mid}: status {eff.get('status')}")
+PY
+)"
+if [[ -n "${EFFORT_LINE}" ]]; then
+  echo "${C_DIM}[preflight] effort (#1951): ${EFFORT_LINE}${C_RESET}"
+  echo ""
+fi
+
 for gate in "${GATES[@]}"; do
   if [[ -f "${ROOT_DIR}/scripts/tests/${gate}.sh" ]]; then
     run_gate "${gate}" bash "${ROOT_DIR}/scripts/tests/${gate}.sh"

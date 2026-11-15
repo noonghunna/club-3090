@@ -28,6 +28,20 @@ supported_weight_formats:
 supported_kv_formats:
   - q8_0                  # nearest catalog token for Strata's int8 KV (--kv int8), MEASURED 2026-10-06
 supported_drafters: []    # MTP is Strata's built-in draft layer (--spec), not a club drafter
+# #1951 — what this engine changes about effort. The Flash-Next Strata
+# composes leave REASONING_EFFORT unset ON PURPOSE (#1951 decision 2026-11-06:
+# these routes stay at the template's xhigh), so default_when_unset is
+# load-bearing for the render. The wire off-switch is UNPROBED (ENABLE_THINKING
+# is the server-side knob), so it stays absent.
+effort:
+  default_when_unset: xhigh
+  maps: {high: xhigh, max: xhigh}
+  evidence: >-
+    docs/engines/STRATA.md "Reasoning and sampling defaults": with no
+    settings, a request that names no effort runs at the checkpoint
+    template's `reasoning_effort|default('xhigh')`, and `high` and `max` also
+    map to `xhigh`.
+
 notes: >
   Strata (github.com/Niko1221/Strata, MIT): its own C++/CUDA engine for Qwen3.8-Flash-Next plus a
   Python server and a Terminal (`strata launch`), not a llama.cpp fork; it uses ggml's CPU backend
