@@ -50,6 +50,21 @@ supported_drafters:
                           # From 1.3.5.8 the 27B also runs a DFlash2 block drafter (syvai/Qwen3.8-27B-DFlash2-W4A16) while
                           # one conversation decodes alone: the engine fetches and loads it itself (QE_DRAFTER), so it
                           # isn't a drafter profile of ours
+# #1951 — what this engine changes about effort (see the model profiles for
+# what the MODEL accepts; the compose keeps the DEFAULT).
+effort:
+  default_when_unset: xhigh
+  off_switch: none
+  supports_none: true
+  unknown_name: medium
+  maps: {minimal: low, high: xhigh, max: xhigh}
+  evidence: >-
+    Compose header, models/qwen3.8-27b/qengine/compose/dual/redhat-int4/mtp.yml:35-37:
+    QE_REASONING_EFFORT carries the default effort (the template's own default
+    is xhigh; our composes set low); the server folds high/max -> xhigh and
+    minimal -> low (1.3.4.3 on), runs `none` as thinking off (1.3.5.5 on), and
+    maps any other unknown effort to medium.
+
 notes: >
   QEngine (github.com/bpx03/QEngine, Krzysztof Jagus): MIT License from 1.3.5.8; 1.3.5.7 and older
   (the pin-earlier images) were released under the PolyForm Noncommercial License 1.0.0, free for

@@ -408,6 +408,7 @@ def _slug_findings(root: Path, slug: str, entry: dict, inp: dict, facts: dict, *
                        DOC_COMPOSES))
 
     out.extend(_same_model_defaults(slug, entry, registry))
+    out.extend(_effort_rule(root, entry, text))
     out.extend(_weights_rules(root, entry, network, hf))
     out.append(_image_rule(inp["image"], str(install.get("method") or ""), network, inspect))
     return out
@@ -435,6 +436,45 @@ def _same_model_defaults(slug: str, entry: dict, registry: dict) -> list[Finding
                         DOC_CASES)]
     return [Finding("same-model-defaults", ADVISORY, PASS,
                     f"chat_template {mine!r} matches the model's other engines", DOC_CASES)]
+
+
+def _effort_rule(root: Path, entry: dict, text: str) -> list[Finding]:
+    """#1951: a thinking slug's model must declare its `effort:` block, so the
+    gateway render and the omp overrides have one source for the ladder. The
+    block is the model profile's `effort:` key — levels once a wire probe has
+    pinned them, or an honest `status:` (unprobed / no-string-ladder /
+    no-thinking) until then; the compose keeps only the default (principle 1).
+    Same gate scripts/tests/test-effort-profiles.sh holds the curated catalog
+    to; this covers the PR-bundle and cockpit paths that never run that test."""
+    sp = entry.get("sampler_profiles")
+    thinking = isinstance(sp, dict) and any("think" in str(k).lower() for k in sp)
+    body = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+    knob = "REASONING_EFFORT" in body or "reasoning_effort" in body
+    if not (thinking or knob):
+        return [Finding("effort-block", REQUIRED, PASS,
+                        "not an effort-aware slug (no thinking sampler profile, "
+                        "no reasoning-effort knob in the compose)", DOC_CASES)]
+    sys.path.insert(0, str(root))
+    try:
+        from scripts.lib.profiles.compat import load_profiles
+        profiles = load_profiles(root / "scripts/lib/profiles")
+    finally:
+        sys.path.pop(0)
+    model = profiles.models.get(str(entry.get("model")))
+    if model is None:
+        return [Finding("effort-block", REQUIRED, UNCHECKED,
+                        f"model {entry.get('model')!r} has no profile to check "
+                        "the effort block against", DOC_CASES)]
+    eff = getattr(model, "effort", None)
+    if eff and (eff.get("levels") or eff.get("status")):
+        shown = "/".join(eff["levels"]) if eff.get("levels") else eff.get("status")
+        return [Finding("effort-block", REQUIRED, PASS,
+                        f"model {entry.get('model')} declares effort {shown}", DOC_CASES)]
+    why = "thinking sampler profile" if thinking else "reasoning-effort knob in the compose"
+    return [Finding("effort-block", REQUIRED, FAIL,
+                    f"{why}, but model {entry.get('model')} has no `effort:` block — "
+                    "add the probed ladder or an honest status (docs/ADDING_MODELS.md, "
+                    "#1951)", DOC_CASES)]
 
 
 def _weights_rules(root: Path, entry: dict, network: bool, hf: Callable) -> list[Finding]:

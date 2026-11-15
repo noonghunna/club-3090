@@ -111,6 +111,21 @@ vendored_overlays: []
   # evidence — #27752 was evaluated and REVERTED because it caps GLM at ~32K context.
 required_genesis: false
 
+# #1951 — what this engine changes about effort (see the model profiles for
+# what the MODEL accepts; the compose keeps the DEFAULT). Same llama-server
+# request plumbing as llama-cpp-local: a top-level `none` is not passed to the
+# template (renders as the template default), the off switch is the kwargs
+# form. On GLM specifically even that fails — the model profile records the
+# forced-thinking template (models/glm-5.3-flash.yml effort/evidence).
+effort:
+  off_switch: enable-thinking-kwarg
+  supports_none: false
+  evidence: >-
+    llama-server request handling shared with llama-cpp-local, measured
+    2026-10-20
+    (models/qwen3.8-27b/llama-cpp/patches/qwen38-gguf-reasoning-effort-template/PROVENANCE.md);
+    the v1.5 moecache/GLM composes mount the same GGUF effort template.
+
 notes: >
   🧪 rc0 — PUBLISHED IS NOT VALIDATED. test-moe-cache, soak-continuous and the
   quality 8-pack have NOT been run on this binary. What HAS been measured (2026-08-29,
