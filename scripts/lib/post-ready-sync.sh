@@ -16,11 +16,15 @@
 # and litellm-sync.sh --quiet. It does NOT run switch.sh's generation probe,
 # so "the gateway was synced" is not "generation was verified".
 #
-# When the boot fails instead — the container is gone/stopped, or nothing
+# When the boot fails instead — the container is stopped/dead, or nothing
 # answers before --timeout (default 3600, the ceiling for a boot that never
 # comes up) — it renders the gateway back to what actually answers (a prune):
-# a failed boot must not leave the model it was loading advertised.
-# Exit codes: 0 synced, 2 container gone, 3 timed out.
+# a failed boot must not leave the model it was loading advertised. A
+# container that is GONE is the exception: it was removed by a later
+# switch.sh or --down, which rendered the gateway itself, so pruning here
+# would drop that run's route and reopen the routeless window. Exit codes:
+# 0 synced, 2 container stopped/dead (pruned), 4 container gone (no render),
+# 3 timed out (pruned).
 set -uo pipefail
 
 URL="" CONTAINER="" PORT="" OWUI=0
@@ -50,7 +54,14 @@ until curl -sf -o /dev/null --max-time 3 "$URL"; do
   state="$(docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null || true)"
   case "$state" in
     running|restarting|created) ;;
-    *) say "container ${CONTAINER} is ${state:-gone}: rendering the gateway back to what serves"
+    "") # Gone, not merely down: removed by a later switch.sh or --down, which
+        # has already rendered the gateway (optimistically for its own model,
+        # or pruned for --down). Pruning here would drop that run's route for
+        # the rest of its boot — the same routeless 400 window the optimistic
+        # teardown render exists to close. Leave the render to that run.
+        say "container ${CONTAINER} is gone (removed by a later switch or --down, which rendered the gateway itself): leaving the render alone"
+        exit 4 ;;
+    *) say "container ${CONTAINER} is ${state}: rendering the gateway back to what serves"
        bash "${LIB_DIR}/litellm-sync.sh" --quiet || say "litellm-sync failed (exit $?)"
        exit 2 ;;
   esac

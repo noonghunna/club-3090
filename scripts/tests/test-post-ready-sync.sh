@@ -2,18 +2,21 @@
 # Test for #1522: the gateway (and Open WebUI) get synced when a server becomes
 # ready even though switch.sh did not wait for it.
 #
-# On a switch, switch.sh defers the gateway render to the new server's ready
-# (the old routes stay advertised through the boot). When it does not wait —
-# `--no-wait`, or a boot slower than READY_TIMEOUT — this waiter owns the
-# render, and it prunes the gateway when the boot never comes up.
+# On a switch, switch.sh advertises the model being loaded at the teardown
+# (a retryable 500 while it boots) and renders the gateway accurately at
+# ready. When it does not wait — `--no-wait`, or a boot slower than
+# READY_TIMEOUT — this waiter owns the accurate render, prunes the gateway
+# when the boot fails, and leaves the render alone when the container was
+# removed by a later switch or --down (that run has already rendered).
 #
 # Validates:
 #   1. post-ready-sync.sh runs owui-register.sh <port> and litellm-sync.sh
 #      --quiet once the ready URL answers (with --owui), and only the gateway
 #      sync without --owui.
 #   2. It renders the gateway back to what serves (a prune, no OWUI) when the
-#      container is gone or stopped (exit 2) or nothing answers before
-#      --timeout (exit 3). Missing arguments: exit 64.
+#      container is stopped/dead (exit 2) or nothing answers before
+#      --timeout (exit 3), and exits 2 -> 4 WITHOUT rendering when the
+#      container is gone (a later switch/--down removed it and rendered).
 #   3. switch.sh's schedule_post_ready_sync() starts the waiter with the ready
 #      URL, container, port and --owui, and with no container prints the manual
 #      command instead of starting anything.
@@ -90,20 +93,21 @@ check "1d: waited for the 3rd poll" test "$(cat "$tmp/curl.count")" -eq 3
 CURL_OK_AFTER=1 run_waiter --url http://localhost:8122/v1/models --container c1 --port 8122 --interval 0
 check "1e: without --owui only the gateway is synced" test "$CALLS" = "litellm-sync --quiet"
 
-# --- 2. pruned when it never comes up -------------------------------------------
+# --- 2. failure paths: prune on stopped/timeout, leave-alone on gone -----------
 DOCKER_STATE=exited run_waiter --url http://localhost:8122/v1/models --container c1 --port 8122 --owui --interval 0
 check "2a: stopped container -> exit 2 (got $RC)" test "$RC" -eq 2
 check "2b: stopped container -> gateway pruned" test "$CALLS" = "litellm-sync --quiet"
 
 DOCKER_STATE="" run_waiter --url http://localhost:8122/v1/models --container gone --port 8122 --interval 0
-check "2c: missing container -> exit 2 (got $RC)" test "$RC" -eq 2
+check "2c: gone container -> exit 4 (got $RC)" test "$RC" -eq 4
+check "2d: gone container -> NO render (a later switch/--down owns the gateway)" test -z "$CALLS"
 
 run_waiter --url http://localhost:8122/v1/models --container c1 --port 8122 --timeout 0 --interval 0
-check "2d: never answers -> exit 3 at the ceiling (got $RC)" test "$RC" -eq 3
-check "2e: never answers -> gateway pruned" test "$CALLS" = "litellm-sync --quiet"
+check "2e: never answers -> exit 3 at the ceiling (got $RC)" test "$RC" -eq 3
+check "2f: never answers -> gateway pruned" test "$CALLS" = "litellm-sync --quiet"
 
 run_waiter --url http://localhost:8122/v1/models --port 8122
-check "2f: missing --container -> exit 64 (got $RC)" test "$RC" -eq 64
+check "2g: missing --container -> exit 64 (got $RC)" test "$RC" -eq 64
 
 # --- 3/4. switch.sh's own functions, against a stub waiter ----------------------
 fake_root="$tmp/root"
