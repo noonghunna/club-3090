@@ -173,8 +173,9 @@ for model_dir in sorted(os.listdir(mdir)):
                 continue
             path = os.path.join(dirpath, fn)
             text = io.open(path, encoding="utf-8", errors="replace").read()
-            # A commented-out default is not a default.
-            text = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+            # A commented-out default is not a default — full-line OR inline.
+            text = "\n".join(l.split("#", 1)[0] for l in text.splitlines()
+                             if not l.lstrip().startswith("#"))
             for dflt in sorted(set(default_re.findall(text))):
                 checked += 1
                 if dflt not in levels:
@@ -210,17 +211,27 @@ if off_vocab:
     bad(f"effort names outside litellm's REASONING_EFFORT Literal (they would be "
         f"silently dropped from /model_group/info): {sorted(off_vocab)}")
 pin_src = io.open("services/litellm/docker-compose.yml", encoding="utf-8").read()
-pin_m = re.search(r"litellm:(v[\d.]+)", pin_src)
-if not pin_m:
+# The ACTUAL image line — a comment or an alternate occurrence must not satisfy
+# the tripwire — and the WHOLE tag: v1.100.3-rc1 is a different build whose
+# Literal this test has not read.
+pin_tag = None
+for _line in pin_src.splitlines():
+    if _line.lstrip().startswith("#") or "image:" not in _line:
+        continue
+    _m = re.search(r"image:\s*[\"']?\S*litellm:(\S+?)[\"']?\s*$", _line)
+    if _m:
+        pin_tag = _m.group(1)
+        break
+if pin_tag is None:
     bad("could not parse the litellm image pin from services/litellm/"
         "docker-compose.yml — the tripwire needs the tag")
-elif pin_m.group(1) != "v1.100.3":
-    bad(f"gateway pin moved to {pin_m.group(1)} — re-read the REASONING_EFFORT "
+elif pin_tag != "v1.100.3":
+    bad(f"gateway pin moved to {pin_tag} — re-read the REASONING_EFFORT "
         "Literal from the new image (litellm/types/llms/openai.py) and update "
         "LITELLM_EFFORTS before trusting this set")
 if len(failures) == n0:
     print(f"  ✓ all {len(runks)} declared effort names are litellm Literal members "
-          f"(pin {pin_m.group(1) if pin_m else '?'})")
+          f"(pin {pin_tag or '?'})")
 
 # ---- 5. ENGINE FOLDS land on rungs the served model accepts -----------------
 budget_models = {mid for mid, m in profiles.models.items()
@@ -281,18 +292,58 @@ else:
     # id-list edits without a hand-kept map (the family->MODEL binding below
     # stays hand-kept until phase 2 generates the list from the profiles).
     omp_src = io.open("scripts/omp-setup.sh", encoding="utf-8").read()
-    ids_const = {m2.group(1): re.findall(r'"([^"]+)"', m2.group(2))
-                 for m2 in re.finditer(r"^(\w+_IDS) = \[(.*?)\]", omp_src, re.M | re.S)}
-    fam_re = re.compile(r'\{"name": "(\w+)", "ids": (\w+),\s*'
+    ids_bodies = {m2.group(1): m2.group(2)
+                  for m2 in re.finditer(r"^(\w+_IDS) = \[(.*?)\]", omp_src, re.M | re.S)}
+    ids_const = {k: re.findall(r'"([^"]+)"', b) for k, b in ids_bodies.items()}
+    # `[a-z0-9-]` not `w+`: the family name "flash-next" has a hyphen, and a
+    # word-only name group silently skips that whole entry (the completeness
+    # scan below is what makes that class of miss fail loudly).
+    fam_re = re.compile(r'\{"name": "([\w-]+)", "ids": (\w+),\s*'
                         r'"ladder": \{"efforts": \[([^\]]*)\], "defaultLevel": "(\w+)"\}')
     families = {m2.group(1): {"ids": ids_const.get(m2.group(2), []),
+                              "ids_const": m2.group(2),
                               "ladder": [x.strip().strip("\"'") for x in m2.group(3).split(",") if x.strip()],
                               "dflt": m2.group(4)}
                 for m2 in fam_re.finditer(omp_src)}
     if not families:
         bad("could not parse FAMILIES from omp-setup.sh — the literal changed "
             "shape; fix check 6's fam_re")
+    # Completeness (r3-1): an entry fam_re silently SKIPS would under-check —
+    # two families share the [low,medium,xhigh] ladder, so the set-membership
+    # test below cannot see a missing one. Scan the region tolerantly (name and
+    # ids-constant only, any key order/shape) and require the strict parse to
+    # have found exactly that set. Same for ids: count quoted items in each
+    # constant's source body, so a partially parsed id list fails loudly.
+    fam_region = re.search(r"^FAMILIES = \[(.*?)^\]", omp_src, re.M | re.S)
+    if not fam_region:
+        bad("could not locate the FAMILIES literal in omp-setup.sh — check 6's "
+            "region regex needs the new shape")
+    else:
+        tol_names = re.findall(r'"name":\s*"([^"]+)"', fam_region.group(1))
+        tol_consts = re.findall(r'"ids":\s*(\w+)', fam_region.group(1))
+        if len(tol_names) != len(tol_consts):
+            bad("FAMILIES: name/ids fields do not pair up in the literal — "
+                "the entry shape drifted")
+        if set(tol_names) != set(families):
+            bad(f"FAMILIES: the tolerant scan sees {sorted(tol_names)} but "
+                f"fam_re parsed {sorted(families)} — an entry's shape drifted "
+                "and check 6 silently skipped it; fix fam_re")
+    for fam, f in sorted(families.items()):
+        body = ids_bodies.get(f["ids_const"])
+        if body is None:
+            bad(f"FAMILIES {fam}: ids constant {f['ids_const']} not found in "
+                "omp-setup.sh")
+        else:
+            # Count ITEMS (comma-separated, these lists are flat), not quoted
+            # items: a single-quoted id is an item the "..." regex would miss,
+            # and counting only quoted ones would then agree with itself.
+            n_items = len([x for x in body.split(",") if x.strip()])
+            if n_items != len(f["ids"]):
+                bad(f"{f['ids_const']} ({fam}): {n_items} ids in the source but "
+                    f"{len(f['ids'])} parsed — ids_const's regex missed one "
+                    "(a non-double-quoted id?)")
     ladders = {tuple(f["ladder"]) for f in families.values()}
+    id_family = {mid: fam for fam, f in families.items() for mid in f["ids"]}
     for fam, f in sorted(families.items()):
         mdl = FAMILY_MODEL.get(fam)
         if not mdl:
@@ -318,9 +369,17 @@ else:
         ladder, dflt = list(t.get("efforts") or []), t.get("defaultLevel")
         if not ladder:
             continue
-        if tuple(ladder) not in ladders:
-            bad(f"models.yml {mid}: ladder {ladder} matches no FAMILIES entry — "
-                "drifted from omp-setup.sh (#1951)")
+        # Bind each override to ITS OWN family's ladder: two families share
+        # [low, medium, xhigh], so set membership cannot see one family's
+        # ladder drifting onto the other's ids.
+        fam = id_family.get(mid)
+        if fam is None:
+            bad(f"models.yml {mid}: rendered with a ladder but bound to no "
+                "FAMILIES ids list — the render and FAMILIES drifted (#1951)")
+            continue
+        if tuple(ladder) != tuple(families[fam]["ladder"]):
+            bad(f"models.yml {mid}: ladder {ladder} != its family {fam}'s "
+                f"ladder {families[fam]['ladder']} — drifted from omp-setup.sh")
             continue
         # ABSENT defaultLevel is legal (omp falls back to the ladder TOP);
         # a PRESENT one must be a rung.

@@ -140,7 +140,7 @@ echo ""
 # only the REASONING_EFFORT default. Informational here — the enforcing gate is
 # the effort-block finding in catalog rules above (curated) and
 # scripts/tests/test-effort-profiles.sh (whole catalog).
-EFFORT_ERR="$(mktemp)"
+EFFORT_ERR="$(mktemp 2>/dev/null)" || EFFORT_ERR="/dev/null"   # no capture file: the rc still surfaces
 EFFORT_LINE="$(python3 - "${ROOT_DIR}" "${SLUG}" <<'PY' 2>"${EFFORT_ERR}"
 import sys
 sys.path.insert(0, sys.argv[1] + "/scripts/lib/profiles")
@@ -167,8 +167,13 @@ PY
 EFFORT_RC=$?
 if [[ ${EFFORT_RC} -ne 0 ]]; then
   # Surface the failure instead of swallowing it: a broken probe must not
-  # read as "no effort line to show".
-  echo "${C_DIM}[preflight] effort (#1951): check failed — $(head -n 1 "${EFFORT_ERR}")${C_RESET}" >&2
+  # read as "no effort line to show". An empty stderr still names the rc.
+  EFFORT_WHY="$(head -n 1 "${EFFORT_ERR}" 2>/dev/null)"
+  if [[ -n "${EFFORT_WHY}" ]]; then
+    echo "${C_DIM}[preflight] effort (#1951): check failed (rc=${EFFORT_RC}) — ${EFFORT_WHY}${C_RESET}" >&2
+  else
+    echo "${C_DIM}[preflight] effort (#1951): check failed (rc=${EFFORT_RC}) — no stderr from the probe${C_RESET}" >&2
+  fi
 elif [[ -n "${EFFORT_LINE}" ]]; then
   echo "${C_DIM}[preflight] effort (#1951): ${EFFORT_LINE}${C_RESET}"
   echo ""
