@@ -27,6 +27,11 @@ boot. Maya's serve/server.py (the strata-maya-club3090 image) reads:
   THREADS                args: --cpu-threads   the CPU lane's threads (the experts VRAM doesn't hold are computed
                                                there, from RAM); whole number >= 1. Unset: half the CPUs this
                                                container may use, at least 1 (threads(), below)
+  MMAP_EXPERTS           args: --mmap-experts  auto | on | off: the CPU lane's experts (the ones VRAM doesn't hold)
+                                               read in place from the files (on), copied into RAM (off), or copied
+                                               when they all fit (auto, maya-ds4's default). Picks the mode directly,
+                                               not through DS4_RAM_MARGIN_GB's sizing (#2042). maya-ds4 reads any
+                                               other word as auto, so this file refuses one. Unset: Maya's own (auto)
   CONTEXT                args: --max-context   KV capacity, a whole number >= 4096 (the same floor the Strata
                                                recipe checks). Unset: the entrypoint's default (65536 here);
                                                ds4_prepare.py writes it, this file only checks it
@@ -147,6 +152,11 @@ def settings():
         if guard not in ("true", "false"):
             raise Bad(f"LOOP_GUARD={guard!r}: expected true or false")
         keys["loop_guard"] = guard == "true"
+    mode = _env("MMAP_EXPERTS")
+    if mode is not None:
+        if mode not in ("auto", "on", "off"):
+            raise Bad(f"MMAP_EXPERTS={mode!r}: expected auto, on or off")
+        args += ["--mmap-experts", mode]
     n = _env("THREADS")
     if n is not None:
         args += ["--cpu-threads", str(_int("THREADS", n, 1))]
