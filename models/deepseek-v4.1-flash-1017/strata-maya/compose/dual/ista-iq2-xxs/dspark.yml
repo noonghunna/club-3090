@@ -40,6 +40,12 @@
 #   ⤷ MEASURED 2026-10-25 on this compose (v1.1.28): MemAvailable fell 106 GB (decimal) at its peak on the
 #     first start, 105.6 GB on the bench boot; the CPU lane's 100.4 GB of experts copied into RAM
 #     (--mmap-experts auto), on a 224 GB host.
+#   ⤷ ABOVE ~90 GB OF LANE, SET THE MARGIN — "fits" is not "fits the machine" (4× 16 GB cards, 65 536 ctx,
+#     measured 2026-11-16 on a 125.2 GiB host): the CPU lane's 97.6 GB fit a 108.7 GB planning budget and that
+#     run still paged — 501 MB of the serving process in swap on entry, 1 087 MB at the end, 267 MB swapped in
+#     over the bench. The prompt rings (4 × ~390 MB), the KV, the CUDA host allocations and the host's own
+#     needs sit outside the budget the engine prints. DS4_RAM_MARGIN_GB 8 and 10 copy and page here; from 12
+#     the engine leaves the lane in place by itself and the swap gate passes (WARN, 49 MB swapped in).
 #   Best for:  DeepSeek-V4.1-Flash on two 24 GB cards with ~128 GB+ of host RAM; long prompts (agents): in a
 #              hand-run test at 8K context a layer split read a 6K prompt 55% faster than tensor parallel
 # ---------------------------------------------------------------------------
