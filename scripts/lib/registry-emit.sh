@@ -665,6 +665,52 @@ def _compose_served_name(compose_path: str):
     return unwrapped.group(1) if unwrapped else raw
 
 
+# The compose's REASONING_EFFORT default (#1951 phase 2): the serving choice the
+# engine applies when a request names no effort — the third of the three #1951
+# layers (MODEL ladder, ENGINE handling, COMPOSE default). Same shape the guard
+# test pins (test-effort-profiles.sh check 3): `${REASONING_EFFORT:-low}`, quoted
+# or bare, comment lines and inline comments ignored. None when the compose sets
+# no default — unknown, which the render must render as nothing.
+_EFFORT_DEFAULT_RX = _re.compile(r'REASONING_EFFORT["\']?:-["\']?([a-z]+)')
+
+
+def _compose_effort_default(compose_path: str):
+    try:
+        txt = (root / compose_path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in txt.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        m = _EFFORT_DEFAULT_RX.search(line.split("#", 1)[0])
+        if m:
+            return m.group(1)
+    return None
+
+
+def _effort_facts(model_id: str, engine_id: str, compose_path: str):
+    """The #1951 effort facts one gateway render needs for a slug: the MODEL's
+    ladder (or its honest `status:`), the ENGINE's handling of a rung, and the
+    COMPOSE's default. A missing fact is None = UNKNOWN — the render emits
+    nothing for it, never an invented ladder and never `supports_reasoning:
+    false` on a thinking model (principle 3)."""
+    m = profiles.models.get(model_id)
+    me = (getattr(m, "effort", None) or {}) if m else {}
+    e = profiles.engines.get(engine_id)
+    ee = (getattr(e, "effort", None) or {}) if e else {}
+    if not me and not ee:
+        return None
+    return {
+        "levels": list(me["levels"]) if me.get("levels") else None,
+        "status": me.get("status"),
+        "supports_none": ee.get("supports_none"),
+        "off_switch": ee.get("off_switch"),
+        "default_when_unset": ee.get("default_when_unset"),
+        "maps": dict(ee["maps"]) if ee.get("maps") else None,
+        "compose_default": _compose_effort_default(compose_path),
+    }
+
+
 def _current_pin(slug: str, compose_path: str):
     """The pin a launcher-started serve actually runs TODAY: the engine
     profile's docker-image spec when the compose's `image:` reads the variable
@@ -820,6 +866,10 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # them (qwen3.8-27b today); null otherwise, so the c3 serve-confirm
             # can gate its tri-state thinking toggle on REAL registry data.
             "sampler_profiles": (REG.get(d["slug"], {}) or {}).get("sampler_profiles"),
+            # #1951 phase 2: the effort facts the gateway render reads — the
+            # model's ladder (or honest status), the engine's handling of a
+            # rung, and the compose's default. None = no effort metadata at all.
+            "effort": _effort_facts(d["model"], d["engine"], d["compose_path"]),
             # Weight-offload backend (catalog "offload" column) — None = resident
             # (default) / "uva" / "residency" / "tensor-override" / "prefetch".
             "offload": (REG.get(d["slug"], {}) or {}).get("offload"),

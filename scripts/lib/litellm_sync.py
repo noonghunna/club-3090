@@ -390,6 +390,35 @@ def add_booting_route(live: list[Live], variants: list[dict]) -> list[Live]:
                  responses=True, key="", out_cap=None)] + live
 
 
+def _port_effort(rows: list[dict]) -> "dict | None":
+    """Per port, the #1951 effort facts every slug on it agrees on. A port
+    hosting slugs whose ladders differ advertises NOTHING: an advertisement is
+    a promise routing must honor, and litellm intersects a group's levels
+    across its deployments anyway — so a partial fact here would advertise a
+    rung the served model raises on. Unknown stays unknown (principle 3)."""
+    blocks = [r["effort"] for r in rows if isinstance(r.get("effort"), dict)]
+    if not blocks:
+        return None
+    # The ladder is the ANCHOR: every other effort fact names a rung, so a port
+    # that cannot agree on the rungs advertises no effort facts at all — never a
+    # `default_reasoning_effort` or `supports_none` about a ladder it did not
+    # declare. Same for `status:` (a model has one or the other, never both).
+    # Returning None hands the caller back to the plain capability heuristic.
+    for key in ("levels", "status"):
+        vals = {json.dumps(b.get(key), sort_keys=True) for b in blocks}
+        v = blocks[0].get(key)
+        if len(vals) == 1 and v not in (None, "", [], {}):
+            out: dict = {key: v}
+            if key == "levels":
+                for k in ("supports_none", "compose_default"):
+                    other = {json.dumps(b.get(k)) for b in blocks}
+                    if len(other) == 1 and blocks[0].get(k) is not None:
+                        out[k] = blocks[0][k]
+            return out
+    return None
+
+
+
 def port_facts(variants: list[dict]) -> dict[int, dict]:
     """Per port, the registry facts every variant on that port agrees on. A port
     can host several slugs (:8020 is multi-slug); a fact they disagree on is
@@ -405,14 +434,22 @@ def port_facts(variants: list[dict]) -> dict[int, dict]:
             vals = {json.dumps(r.get(key), sort_keys=True) for r in rows}
             if len(vals) == 1 and rows[0].get(key) not in (None, "", []):
                 f[key] = rows[0].get(key)
-        # Reasoning: only from slugs that DECLARE sampler profiles (a "thinking"
-        # profile means a thinking model). No profiles is "unknown", not "no" —
-        # most slugs declare none, and a false `supports_reasoning` would make a
-        # client turn thinking off on a thinking model.
-        declared = [r["sampler_profiles"] for r in rows if isinstance(r.get("sampler_profiles"), dict) and r["sampler_profiles"]]
-        thinking = {any("think" in str(k).lower() for k in p) for p in declared}
-        if len(thinking) == 1:
-            f["thinking"] = thinking.pop()
+        # Reasoning: the #1951 effort block is the source when a slug has one;
+        # the sampler-profile heuristic is the fallback for models that predate
+        # it. Only from slugs that DECLARE something — no profiles is "unknown",
+        # not "no": a false `supports_reasoning: false` makes a client turn
+        # thinking off on a thinking model (measured on this rig 2026-11-15:
+        # /model_group/info reported false for a thinking model that declares
+        # no sampler profiles, because litellm's off-map default is false).
+        eff = _port_effort(rows)
+        if eff:
+            f["effort"] = eff
+        else:
+            declared = [r["sampler_profiles"] for r in rows
+                        if isinstance(r.get("sampler_profiles"), dict) and r["sampler_profiles"]]
+            thinking = {any("think" in str(k).lower() for k in p) for p in declared}
+            if len(thinking) == 1:
+                f["thinking"] = thinking.pop()
         facts[port] = f
     return facts
 
@@ -481,7 +518,34 @@ def model_info(ctx: "int | None", facts: dict, native_messages: bool = False,
     lines = ["    model_info:", "      mode: chat", "      supports_function_calling: true"]
     if ctx:
         lines += [f"      max_input_tokens: {ctx}", f"      max_output_tokens: {output_ceiling(ctx, out_cap)}"]
-    if "thinking" in facts:
+    eff = facts.get("effort") or {}
+    levels = eff.get("levels")
+    if levels:
+        # litellm reads `reasoning_effort_levels` first and it wins whole
+        # (router_utils/reasoning_effort_capability.py), so the ladder is the
+        # advertisement and the per-level flags are not needed alongside it.
+        lines.append("      supports_reasoning: true")
+        lines.append("      reasoning_effort_levels: [" + ", ".join(levels) + "]")
+        if eff.get("supports_none") is not None:
+            lines.append("      supports_none_reasoning_effort: "
+                         + ("true" if eff["supports_none"] else "false"))
+        # litellm's `default_reasoning_effort` Literal EXCLUDES max (v1.100.3),
+        # so a max default is OMITTED — never downgraded to a rung the server
+        # does not actually apply. Which models may default to max is ratcheted
+        # by scripts/tests/test-effort-profiles.sh (MAX_DEFAULT_MODELS).
+        dflt = eff.get("compose_default")
+        if dflt and dflt != "max":
+            lines.append(f"      default_reasoning_effort: {dflt}")
+    elif eff.get("status"):
+        # An honest `status:` instead of a ladder. Only `no-thinking` says the
+        # model cannot think: `unprobed` / `no-string-ladder` mean it DOES think
+        # and the string rungs are unknown, so the capability is advertised and
+        # the ladder is not — litellm leaves a group with no declared levels
+        # un-narrowed, and rendering nothing here would fall back to its off-map
+        # `supports_reasoning: false`, turning thinking off on a thinking model.
+        lines.append("      supports_reasoning: "
+                     + ("false" if eff["status"] == "no-thinking" else "true"))
+    elif "thinking" in facts:
         lines.append(f"      supports_reasoning: {'true' if facts['thinking'] else 'false'}")
     if facts.get("vision") not in (None, "", "no", False):
         lines.append("      supports_vision: true")

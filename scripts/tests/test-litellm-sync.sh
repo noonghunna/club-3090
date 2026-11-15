@@ -293,9 +293,65 @@ render "8113=qwen3.8-27b@262144+outcap=none,8142=sgl-live@163840+outcap=65536,80
 [[ "$(route_field gguf-live model_info.max_output_tokens)" == "32768" ]] \
   && ok "a larger window alone does not raise the ceiling (32768 unless declared)" \
   || bad "no declared outcap: $(route_field gguf-live model_info.max_output_tokens)"
-[[ "$(route_field qwen3.8-27b model_info.supports_reasoning)" == "True" && -z "$(route_field sgl-live model_info.supports_reasoning)" ]] \
-  && ok "supports_reasoning only where a slug declares a thinking profile (unknown is omitted, never false)" \
-  || bad "supports_reasoning: qwen=$(route_field qwen3.8-27b model_info.supports_reasoning) sgl='$(route_field sgl-live model_info.supports_reasoning)'"
+[[ "$(route_field qwen3.8-27b model_info.supports_reasoning)" == "True" \
+   && "$(route_field sgl-live model_info.supports_reasoning)" == "True" \
+   && -z "$(route_field gguf-live model_info.supports_reasoning)" ]] \
+  && ok "supports_reasoning comes from the model's effort block on every engine; a slug that declares nothing is still omitted, never false" \
+  || bad "supports_reasoning: qwen=$(route_field qwen3.8-27b model_info.supports_reasoning) sgl='$(route_field sgl-live model_info.supports_reasoning)' gguf='$(route_field gguf-live model_info.supports_reasoning)'"
+
+# --- 11c: the effort ladder the gateway advertises (#1951 phase 2) ----------
+# This is what /model_group/info answers as `supported_reasoning_efforts` — the
+# rungs a client may name. Three shapes, three rules, one from each #1951 layer:
+# the MODEL's ladder, the ENGINE's handling of `none`, the COMPOSE's default.
+render "8198=flash-live@262144,8119=glm-live@262144,8094=mimo-live@8192,8084=inkling-live@262144"
+[[ "$(route_field flash-live model_info.reasoning_effort_levels)" == "['low', 'medium', 'xhigh']" ]] \
+  && ok "a probed ladder is advertised as the rungs a client may name" \
+  || bad "levels: $(route_field flash-live model_info.reasoning_effort_levels)"
+[[ "$(route_field flash-live model_info.supports_none_reasoning_effort)" == "True" ]] \
+  && ok "an engine that folds the none rung onto the ladder says so" \
+  || bad "supports_none: $(route_field flash-live model_info.supports_none_reasoning_effort)"
+[[ "$(route_field flash-live model_info.default_reasoning_effort)" == "low" ]] \
+  && ok "the compose default is advertised as the server's own default" \
+  || bad "default: $(route_field flash-live model_info.default_reasoning_effort)"
+# litellm's `default_reasoning_effort` Literal (v1.100.3) EXCLUDES max while the
+# engine's REASONING_EFFORT includes it: the rung is advertised, the default is
+# OMITTED. Downgrading it to `high` would tell a client the server applies a
+# choice it does not apply.
+[[ "$(route_field glm-live model_info.reasoning_effort_levels)" == "['low', 'high', 'max']" \
+   && -z "$(route_field glm-live model_info.default_reasoning_effort)" ]] \
+  && ok "a max ladder is advertised whole and its max default is OMITTED, never downgraded" \
+  || bad "max rung: levels=$(route_field glm-live model_info.reasoning_effort_levels) default='$(route_field glm-live model_info.default_reasoning_effort)'"
+# An honest `status:` instead of a ladder: the model DOES think (`unprobed` /
+# `no-string-ladder` say the rungs are unknown, not absent), so the capability
+# goes out and the ladder does not. Rendering nothing here would fall back to
+# litellm's off-map `supports_reasoning: false` — the bug measured on this rig
+# 2026-11-15, where a client turned thinking off on a thinking model.
+for f in mimo-live inkling-live; do
+  [[ "$(route_field "$f" model_info.supports_reasoning)" == "True" \
+     && -z "$(route_field "$f" model_info.reasoning_effort_levels)" ]] \
+    && ok "$f: an unprobed/non-string thinking model advertises the capability, not a ladder" \
+    || bad "$f: reasoning=$(route_field "$f" model_info.supports_reasoning) levels='$(route_field "$f" model_info.reasoning_effort_levels)'"
+done
+# Agree-or-drop, the rule port_facts already uses for ctx and vision: a port
+# hosting two ladders advertises NEITHER. litellm intersects a group's levels
+# across its deployments anyway, so a partial fact here would advertise a rung
+# the served model raises on. No real port disagrees today, so this is the one
+# shape only a synthetic pair can pin.
+python3 - scripts/lib/litellm_sync.py <<'PY' || fail=1
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ls", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+low = {"port": 1, "effort": {"levels": ["low", "high"], "compose_default": "low"}}
+tall = {"port": 1, "effort": {"levels": ["low", "medium", "xhigh"], "compose_default": "low"}}
+same = {"port": 1, "effort": {"levels": ["low", "high"], "compose_default": "low"}}
+if m.port_facts([low, tall]).get(1, {}).get("effort"):
+    print("  FAIL — a port hosting two different ladders still advertised one", file=sys.stderr); sys.exit(1)
+if not m.port_facts([low, same]).get(1, {}).get("effort"):
+    print("  FAIL — two slugs agreeing on a ladder dropped the fact", file=sys.stderr); sys.exit(1)
+if m.port_facts([{"port": 1}]).get(1, {}).get("effort"):
+    print("  FAIL — a slug with no effort block invented a fact", file=sys.stderr); sys.exit(1)
+print("  ok   — disagreeing ladders on one port advertise nothing; agreeing ones still do")
+PY
 
 # --- 15: Claude Code's /v1/messages goes to the engine's own endpoint, where it holds up
 # LiteLLM's translation of /v1/messages builds no thinking blocks from vLLM/SGLang
@@ -310,10 +366,17 @@ else
   bad "supported_endpoints: sgl-live='$(eps sgl-live)' qwen3.8-27b='$(eps qwen3.8-27b)' gguf-live='$(eps gguf-live)'"
 fi
 # …and it must never touch supports_reasoning: /model_group/info publishes it, and
-# pi-setup.sh turns thinking off on a false one.
-[[ -z "$(route_field sgl-live model_info.supports_reasoning)" ]] \
+# pi-setup.sh turns thinking off on a false one. "Absent" was the old shape of
+# that property (this route declared no thinking profile); with the #1951 effort
+# block the route DOES carry one, so the property is now "the passthrough does
+# not change it" — same port, rendered with and without +messages.
+render "8142=sgl-live@163840"
+plain="$(route_field sgl-live model_info.supports_reasoning)"
+render "8142=sgl-live@163840+messages"
+passthru="$(route_field sgl-live model_info.supports_reasoning)"
+[[ -n "$plain" && "$plain" == "$passthru" ]] \
   && ok "the passthrough leaves supports_reasoning alone" \
-  || bad "passthrough route carries supports_reasoning=$(route_field sgl-live model_info.supports_reasoning)"
+  || bad "passthrough changed supports_reasoning: $plain -> $passthru"
 
 # --- 16: the REAL probe decides it, against stub servers (not the seam) ------------
 # The property that matters is whether the endpoint keeps Claude Code's per-turn
