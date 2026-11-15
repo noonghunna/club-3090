@@ -102,6 +102,7 @@ ROOT = Path(sys.argv[2])
 QWEN_DUAL = str(ROOT / "models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml")
 QWEN_SINGLE = str(ROOT / "models/qwen3.6-27b/vllm/compose/single/autoround-int4/minimal.yml")
 GEMMA_DUAL = str(ROOT / "models/gemma-4-31b/vllm/compose/dual/qat-w4a16/int8.yml")
+QWEN38_DUAL = str(ROOT / "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml")
 
 
 def cmd(served, tp, kv, ctx, spec=None):
@@ -268,6 +269,43 @@ FIXTURES = {
         "**Date:** 2026-01-06\n\nVerify-stress: **12/12**\n",
         rig(2),
     ),
+    # A hand-run container of another engine: no compose label, none of vLLM's
+    # flags, a name that matches nothing. The formatter used to guess a Qwen3.6
+    # vLLM compose for it and file it under "Single-card (1× RTX 3090) — vLLM"
+    # (#2039's QEngine shadow on four RTX 5080s); it must now say it can't place it.
+    "_selftest-qengine-shadow-2026-01-07": (
+        [{
+            "Name": "/qengine-flash-tp3",
+            "Config": {
+                "Image": "ghcr.io/bpx03/qengine@sha256:56f10502",
+                "Labels": {},
+                "Cmd": ["--max-ctx", "262144", "--port", "8124"],
+                "Env": ["FLASH_PAR=tp"],
+            },
+        }],
+        internal(vram=("15800 MiB",) * 3, quality=None, aider=None,
+                 soak={"verdict": "PASS", "silent_empty": "0 / 25"}),
+        "**Date:** 2026-01-07\n\nVerify-stress: **8/8**\n",
+        rig(3),
+    ),
+    # A curated compose of ANOTHER model. Its own dual table is under
+    # "## Qwen3.8-27B"; the name the formatter derives ("Dual-card (2× RTX 3090,
+    # TP=2)") heads Qwen3.6-27B's, where insert_row would have put it.
+    "_selftest-qwen38-dual-2026-01-08": (
+        [{
+            "Name": "/vllm-qwen38-dual",
+            "Config": {
+                "Image": "vllm/vllm-openai:v0.33.0",
+                "Labels": {"com.docker.compose.project.config_files": QWEN38_DUAL},
+                "Cmd": cmd("qwen3.8-27b", 2, "fp8_e5m2", 262144,
+                           {"method": "mtp", "num_speculative_tokens": 3}),
+                "Env": [],
+            },
+        }],
+        internal(soak={"verdict": "PASS", "silent_empty": "0 / 40"}),
+        "**Date:** 2026-01-08\n\nVerify-stress: **12/12**\n",
+        rig(2),
+    ),
 }
 
 for tag, (config_blob, internal_blob, report, rig_txt) in FIXTURES.items():
@@ -294,6 +332,10 @@ declare -A EXPECT_SECTION=(
   [_selftest-qwen-llamacpp-2026-01-04]="Single-card (1× RTX 3090) — llama.cpp"
   [_selftest-qwen-multi4-2026-01-05]="Quad-card (4× RTX 3090, TP=4)"
   [_selftest-gemma-dual-2026-01-06]="Gemma 4 31B (community-experimental)"
+  # Empty = "can't place this row": the formatter says why on stderr and
+  # submit-bench asks for --section (k).
+  [_selftest-qengine-shadow-2026-01-07]=""
+  [_selftest-qwen38-dual-2026-01-08]=""
 )
 
 # (a) discovery finds every synthetic fixture and skips the partial one.
@@ -603,6 +645,109 @@ fi
 assert_contains "$out" "refusing to insert into the repo's own BENCHMARKS.md"
 if [[ "$(sha256sum < "$repo_bench")" != "$repo_bench_before" ]]; then
   echo "ASSERTION FAILED: BENCHMARKS.md was modified by the test" >&2
+  exit 1
+fi
+
+# (k) Placement: no guessed section, and --section matched literally.
+#
+# The formatter names only Qwen3.6-27B's and Gemma 4 31B's tables. Every other
+# model's `##` block reuses those `###` names, and insert_row takes the first
+# heading that matches, so a guessed name filed the row under Qwen3.6-27B. A
+# hand-run container of another engine was guessed to be a Qwen3.6 vLLM compose
+# outright (#2039).
+shadow="_selftest-qengine-shadow-2026-01-07"
+q38="_selftest-qwen38-dual-2026-01-08"
+for t in "$shadow" "$q38"; do
+  err="$(bench_row_section "${REBENCH_DIR}/${t}" 2>&1 >/dev/null)"
+  assert_contains "$err" "can't place this row"
+done
+row="$(bench_row_format "${REBENCH_DIR}/${shadow}")"
+assert_contains "$row" "container \`qengine-flash-tp3\` (no compose recorded)"
+if [[ "$row" == *"qwen3.6-27b"* ]]; then
+  echo "ASSERTION FAILED: an unplaced container's row still names a guessed Qwen3.6 compose" >&2
+  echo "$row" >&2
+  exit 1
+fi
+
+# Manual route: the row is still written, and the output says where it can't go.
+out="$(bash scripts/submit-bench.sh --tag "$shadow" 2>&1)"
+assert_contains "$out" "can't place this row"
+assert_contains "$out" "--section"
+test -s "results/rebench/${shadow}/BENCHMARKS-row.md"
+if [[ "$out" == *"for section: Single-card"* ]]; then
+  echo "ASSERTION FAILED: submit-bench still names a guessed section for $shadow" >&2
+  echo "$out" >&2
+  exit 1
+fi
+
+# The headings below come from a stub, not the live BENCHMARKS.md, so renaming a
+# real section can't break this test. One heading is duplicated across models.
+place_stub="${TMP_BIN}/BENCHMARKS-place.md"
+printf '%s\n' \
+  '# Bench' '' \
+  '## Model A' '' '### Single-card (1× RTX 3090) — llama.cpp' '' '| a | b |' '|---|---|' '| 1 | 2 |' '' \
+  '## Model B' '' '### Single-card (1× RTX 3090) — llama.cpp' '' '| a | b |' '|---|---|' '| 1 | 2 |' '' \
+  '### 4× RTX 5080 (sm_120, TP=2 / 3 / 4) — QEngine, community' '' '| a | b |' '|---|---|' '| 1 | 2 |' \
+  > "$place_stub"
+qengine_heading="4× RTX 5080 (sm_120, TP=2 / 3 / 4) — QEngine, community"
+
+# A direct PR with no section to put the row under is refused, and says how.
+if out="$(GH_MOCK=1 GH_MOCK_USER=octocat BENCHMARKS_FILE="$place_stub" \
+          bash scripts/submit-bench.sh --tag "$shadow" --auto-submit --as-pr 2>&1)"; then
+  echo "ASSERTION FAILED: --as-pr went ahead with no section for an unplaced row" >&2
+  echo "$out" >&2
+  exit 1
+fi
+assert_contains "$out" "--section"
+
+# The issue route goes ahead and leaves the placement to the maintainer.
+out="$(GH_MOCK=1 GH_MOCK_USER=octocat bash scripts/submit-bench.sh --tag "$shadow" --auto-submit 2>&1)"
+assert_contains "$(cat "results/rebench/${shadow}/ISSUE-body.md")" "not placed"
+
+# A heading with parentheses, copied from the file, is accepted and the row lands
+# under it. The old check passed it to rg as a regex, so "(" became a group and
+# every heading like this one was refused as not found.
+out="$(GH_MOCK=1 GH_MOCK_USER=octocat BENCHMARKS_FILE="$place_stub" \
+       bash scripts/submit-bench.sh --tag "$shadow" --auto-submit --as-pr --section "$qengine_heading" 2>&1)" || {
+  echo "ASSERTION FAILED: --section with a real parenthesised heading was refused" >&2
+  echo "$out" >&2
+  exit 1
+}
+assert_contains "$out" "inserted row under '${qengine_heading}'"
+landed="$(awk -v h="### ${qengine_heading}" '$0==h{f=1;next} f&&/^#/{exit} f&&/qengine-flash-tp3/{print;exit}' "$place_stub")"
+[[ -n "$landed" ]] || {
+  echo "ASSERTION FAILED: the row did not land under '${qengine_heading}'" >&2
+  cat "$place_stub" >&2
+  exit 1
+}
+
+# A heading that heads two tables can't be used for a direct PR (it would land
+# under the first); the refusal names both models. The issue route only warns.
+if out="$(GH_MOCK=1 GH_MOCK_USER=octocat BENCHMARKS_FILE="$place_stub" \
+          bash scripts/submit-bench.sh --tag "$shadow" --auto-submit --as-pr \
+          --section "Single-card (1× RTX 3090) — llama.cpp" 2>&1)"; then
+  echo "ASSERTION FAILED: --as-pr accepted a heading that appears twice" >&2
+  echo "$out" >&2
+  exit 1
+fi
+assert_contains "$out" "## Model A"
+assert_contains "$out" "## Model B"
+out="$(GH_MOCK=1 GH_MOCK_USER=octocat BENCHMARKS_FILE="$place_stub" \
+       bash scripts/submit-bench.sh --tag "$shadow" --auto-submit \
+       --section "Single-card (1× RTX 3090) — llama.cpp" 2>&1)"
+assert_contains "$out" "WARN"
+
+# A heading that isn't in the file is refused on every route, the manual one too.
+if out="$(BENCHMARKS_FILE="$place_stub" bash scripts/submit-bench.sh --tag "$shadow" --section "No such heading" 2>&1)"; then
+  echo "ASSERTION FAILED: an unknown --section was accepted" >&2
+  exit 1
+fi
+assert_contains "$out" "section override not found: No such heading"
+
+# ripgrep is not a dependency: community rigs don't have it, and without it the
+# old check refused every heading.
+if command grep -vE '^[[:space:]]*#' scripts/submit-bench.sh | command grep -nE '(^|[^[:alnum:]_-])rg '; then
+  echo "ASSERTION FAILED: submit-bench.sh calls rg" >&2
   exit 1
 fi
 

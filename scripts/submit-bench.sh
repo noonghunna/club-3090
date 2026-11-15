@@ -6,6 +6,11 @@
 #   bash scripts/submit-bench.sh --tag <tag>
 #   bash scripts/submit-bench.sh --tag <tag> --auto-submit
 #   bash scripts/submit-bench.sh --tag <tag> --auto-submit --as-pr
+#   bash scripts/submit-bench.sh --tag <tag> --section "<heading, as written in BENCHMARKS.md>"
+#
+# The row's section is derived only for Qwen3.6-27B and Gemma 4 31B rows; for any
+# other model or engine, name the heading with --section (copied from the file,
+# without the leading #s). A direct PR (--as-pr) needs one; an issue does not.
 
 set -euo pipefail
 
@@ -81,6 +86,52 @@ TAG_DIR="results/rebench/${TAG}"
 # shellcheck source=lib/bench-row-formatter.sh
 source "$ROOT_DIR/scripts/lib/bench-row-formatter.sh"
 
+valid_sections() {
+  command grep -nE '^(##|###) ' "${BENCHMARKS_FILE:-BENCHMARKS.md}" | sed 's/^/[submit-bench]   /' >&2 || true
+}
+
+# Print, one line each, the `##` heading every table titled <section> sits under,
+# in the file insert_row edits. Literal match, the same test insert_row applies:
+# --section used to be checked as an rg regex with only "/" escaped, so the
+# parentheses nearly every heading carries ("Dual-card (2× RTX 3090, TP=2) —
+# QEngine") became a regex group and a heading copied from the file was refused
+# as not found; without rg installed, every heading was.
+section_owners() {
+  python3 - "$1" "${BENCHMARKS_FILE:-BENCHMARKS.md}" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+# Same argv recovery as write_pr_body / insert_row (#777).
+section = os.fsencode(sys.argv[1]).decode("utf-8", "replace")
+lines = Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+owner = "(above the first ## heading)"
+for line in lines:
+    text = line.strip()
+    if text.startswith("## "):
+        owner = text
+    if text in {f"## {section}", f"### {section}"}:
+        print(owner)
+PY
+}
+
+if [[ -n "$SECTION_OVERRIDE" ]]; then
+  mapfile -t SECTION_OWNERS < <(section_owners "$SECTION_OVERRIDE")
+  if (( ${#SECTION_OWNERS[@]} == 0 )); then
+    echo "[submit-bench] Known sections:" >&2
+    valid_sections
+    die "section override not found: ${SECTION_OVERRIDE}"
+  fi
+  if (( ${#SECTION_OWNERS[@]} > 1 )); then
+    owners="$(printf '%s; ' "${SECTION_OWNERS[@]}")"
+    msg="'${SECTION_OVERRIDE}' heads ${#SECTION_OWNERS[@]} tables in BENCHMARKS.md (under ${owners%; })"
+    if [[ "$AUTO_SUBMIT" -eq 1 && "$AS_PR" -eq 1 ]]; then
+      die "${msg}; a direct PR would put the row under the first. Paste the row by hand under the one you mean, or open an issue instead."
+    fi
+    log "WARN: ${msg}; say which one when you file it."
+  fi
+fi
+
 github_user_for_row() {
   if [[ -n "${BENCH_ROW_GITHUB_USER:-}" ]]; then
     printf '%s' "${BENCH_ROW_GITHUB_USER#@}"
@@ -106,13 +157,16 @@ SECTION="${SECTION_OVERRIDE:-$(bench_row_section "$TAG_DIR")}"
 OUTPUT="$TAG_DIR/BENCHMARKS-row.md"
 printf '%s\n' "$ROW" > "$OUTPUT"
 
-log "Generated BENCHMARKS row for section: ${SECTION}"
+if [[ -n "$SECTION" ]]; then
+  log "Generated BENCHMARKS row for section: ${SECTION}"
+else
+  # The formatter has said why on stderr. Not a guess: a wrong section files the
+  # row under another model's table.
+  log "Generated a BENCHMARKS row, but can't place this row in BENCHMARKS.md (the reason is above)."
+  log "Name its heading: --section \"<heading, as written in BENCHMARKS.md>\""
+fi
 log "Wrote: ${OUTPUT}"
 echo
-
-valid_sections() {
-  rg -n '^(##|###) ' BENCHMARKS.md | sed 's/^/[submit-bench]   /' >&2 || true
-}
 
 write_pr_body() {
   local body_file="$1"
@@ -178,7 +232,11 @@ write_issue_body() {
   # that interactive form shape, which is not useful once submit-bench has
   # already generated the structured report. Use a direct markdown body instead.
   {
-    echo "**Compose / section**: \`${section}\`"
+    if [[ -n "$section" ]]; then
+      echo "**Compose / section**: \`${section}\`"
+    else
+      echo "**Compose / section**: not placed (submit-bench couldn't tell which BENCHMARKS.md table this row belongs in)"
+    fi
     echo
     echo "**Rig**:"
     echo
@@ -293,12 +351,8 @@ EOF
   exit 0
 fi
 
-if [[ -n "$SECTION_OVERRIDE" ]]; then
-  if ! rg -q "^(##|###) ${SECTION_OVERRIDE//\//\\/}$" BENCHMARKS.md; then
-    echo "[submit-bench] Known sections:" >&2
-    valid_sections
-    die "section override not found: ${SECTION_OVERRIDE}"
-  fi
+if [[ "$AS_PR" -eq 1 && -z "$SECTION" ]]; then
+  die "a direct PR needs the row's section: rerun with --section \"<heading, as written in BENCHMARKS.md>\", or drop --as-pr to open an issue."
 fi
 
 PR_TITLE="bench(matrix): @${BENCH_ROW_GITHUB_USER} $(bench_row_rig_shortname "$TAG_DIR")"
