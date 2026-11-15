@@ -439,26 +439,35 @@ def _same_model_defaults(slug: str, entry: dict, registry: dict) -> list[Finding
                     f"chat_template {mine!r} matches the model's other engines", DOC_CASES)]
 
 
-def _profiles_stamp(root: Path) -> float:
-    """Newest mtime over the profile YAMLs — the cache KEY. A plain per-root
-    cache would serve a pre-edit tree for the whole life of a long-lived
-    process (the cockpit imports this module); a tree we cannot stat gets a
-    sentinel and is never cached."""
-    newest = 0.0
-    for dirpath, _dirs, files in os.walk(root / "scripts/lib/profiles"):
+def _profiles_stamp(root: Path):
+    """(newest mtime, file count, total bytes) over the profile YAMLs — the
+    cache KEY. A plain per-root cache would serve a pre-edit tree for the whole
+    life of a long-lived process (the cockpit imports this module). The newest
+    mtime alone misses a DELETION and a swap that leaves the maximum untouched,
+    so count and size ride along. None = the tree cannot be read (or holds no
+    profiles at all): the caller must not cache that."""
+    base = root / "scripts/lib/profiles"
+    if not base.is_dir():
+        return None
+    newest, count, size = 0.0, 0, 0
+    for dirpath, _dirs, files in os.walk(base):
         for fn in files:
             if fn.endswith((".yml", ".yaml")):
                 try:
-                    newest = max(newest, os.stat(os.path.join(dirpath, fn)).st_mtime)
+                    st = os.stat(os.path.join(dirpath, fn))
                 except OSError:
-                    return -1.0
-    return newest
+                    return None
+                newest = max(newest, st.st_mtime)
+                count += 1
+                size += st.st_size
+    return (newest, count, size) if count else None
 
 
 @functools.lru_cache(maxsize=4)
-def _load_profiles_cached(root_str: str, stamp: float):
+def _load_profiles_cached(root_str: str, stamp: tuple):
     """Parse the profile tree once per (root, content) — callers prime sys.path
-    first. The stamp is what makes an edited profile visible on the next call."""
+    first. The stamp is what makes an edited profile visible on the next call;
+    an unreadable tree never reaches here (the caller bypasses the cache)."""
     from scripts.lib.profiles.compat import load_profiles
     return load_profiles(Path(root_str) / "scripts/lib/profiles")
 
@@ -485,7 +494,9 @@ def _effort_rule(root: Path, entry: dict, text: str) -> list[Finding]:
         # Cached per root: the catalog sweep calls this once per slug (~200
         # loads of the same tree otherwise), and load_profiles parses every
         # model + engine YAML each time.
-        profiles = _load_profiles_cached(str(root), _profiles_stamp(root))
+        stamp = _profiles_stamp(root)
+        profiles = (load_profiles(Path(root) / "scripts/lib/profiles")
+                    if stamp is None else _load_profiles_cached(str(root), stamp))
     finally:
         sys.path.pop(0)
     model = profiles.models.get(str(entry.get("model")))
