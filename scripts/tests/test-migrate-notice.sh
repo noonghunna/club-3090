@@ -23,6 +23,7 @@ ok()  { echo "  ✓ $*"; }
 bad() { echo "  ✗ $*" >&2; fail=1; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+export C3_LITELLM_FAKE_LIVE= C3_LITELLM_RUNTIME="$T/config.runtime.yaml"   # the gateway render stays in $T and never restarts the real gateway
 SECRET="not-a-real-token-migrate-notice-0001"
 VALUE="/value/that/must/not/print"
 nosecret() {   # <label> <text>

@@ -552,6 +552,38 @@ C3_LITELLM_LOCAL_CONFIG="$LOCAL_CFG.absent" render "8182=alpha-model" \
   && ! command grep -q "THIS RIG'S OWN ROUTES" "$RUNTIME" \
   && ok "without config.local.yaml: no local block, clean render" || bad "a missing config.local.yaml must be a no-op"
 
+# --- 13b: a render under the test seam never restarts the gateway ------------
+# A test's docker shim is not enough on its own: switch.sh --no-wait starts a
+# detached post-ready-sync.sh that outlives the test, and once the shim's dir is
+# gone its `docker restart` reaches the real daemon. The seam is inherited, so
+# the sync itself must refuse. A docker stub records the calls here; the
+# positive control (no seam, same stub) shows the stub does see a restart.
+stub13b="$(mktemp -d)"; calls13b="$stub13b/calls"
+cat > "$stub13b/docker" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$(dirname "$0")/calls"
+case "$1" in
+  ps) echo litellm ;;
+  *)  exit 1 ;;   # inspect: no mount to follow, so the render stays on C3_LITELLM_RUNTIME
+esac
+STUB
+chmod +x "$stub13b/docker"
+echo "stale: not a render" > "$RUNTIME"
+out13b="$(PATH="$stub13b:$PATH" C3_LITELLM_FAKE_LIVE="8182=alpha-model" bash "$SYNC" 2>&1)"
+if ! command grep -q '^restart' "$calls13b" 2>/dev/null && [[ "$out13b" == *"not restarting litellm"* ]]; then
+  ok "a changed render under C3_LITELLM_FAKE_LIVE does not restart litellm"
+else
+  bad "the test seam restarted the gateway (calls: $(tr '\n' ';' < "$calls13b" 2>/dev/null); out: $out13b)"
+fi
+: > "$calls13b"; echo "stale: not a render" > "$RUNTIME"
+env -u C3_LITELLM_FAKE_LIVE PATH="$stub13b:$PATH" bash "$SYNC" --quiet >/dev/null 2>&1
+if command grep -qx 'restart litellm' "$calls13b"; then
+  ok "positive control: the same changed render without the seam restarts litellm"
+else
+  bad "positive control: no restart without the seam, so the check above proves nothing (calls: $(tr '\n' ';' < "$calls13b"))"
+fi
+rm -rf "$stub13b"
+
 # --- 14: the TRACKED catalog carries no route that leaves the machine -----------
 # A cloud endpoint (and its workspace URL) is one rig's business: it belongs in the
 # gitignored config.local.yaml. In the catalog it ships to every user, and omp's

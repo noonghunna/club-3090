@@ -113,7 +113,32 @@ def commands(path):
 ASSERT_HELPERS = ("assert_contains", "assert_not_contains", "assert", "echo",
                   "printf", "grep", "command grep", ":")
 
+# --- The GATEWAY is a second thing a neutralized launch still reaches. ---------
+# FOUND 2026-11-15. A switch.sh run that cannot boot (COMPOSE_BIN=:, a docker shim)
+# still runs its teardown, and the teardown renders the LiteLLM gateway: with the
+# real docker that render follows the gateway's mount, drops the rig's own routes
+# (a test's CLUB3090_CONFIG_DIR has none) and restarts the live gateway; behind a
+# shim, run from the main checkout, it rewrites the mounted file all the same.
+# `--no-wait` also leaves a post-ready-sync.sh waiter running DETACHED, which
+# outlives the test and its shim. A shim therefore never covers this: the seams do,
+# because a detached waiter inherits them. C3_LITELLM_FAKE_LIVE keeps the render off
+# the mount and never restarts; C3_LITELLM_RUNTIME puts the file in the test's tmp.
+GATEWAY_SEAMS = ("C3_LITELLM_FAKE_LIVE=", "C3_LITELLM_RUNTIME=")
+# switch.sh, and launch.sh when it reaches the real switch.sh (no mock SWITCH=).
+GATEWAY_EXEC = re.compile(r"\b(?:bash|sh)\s+\S*(?:switch|launch)\.sh\b")
+# `--down` is a teardown, so it renders the gateway: not read-only here.
+GATEWAY_READONLY = tuple(r for r in READONLY if r != "--down")
+
+def file_seals_gateway(path, _cache={}):
+    """Both seams exported at the file's top level, so every command inherits them."""
+    if path not in _cache:
+        exports = [l for l in io.open(path, encoding="utf-8")
+                   if re.match(r"\s*export\s", l)]
+        _cache[path] = all(any(s in l for l in exports) for s in GATEWAY_SEAMS)
+    return _cache[path]
+
 bad = []
+gateway_bad = []
 scanned = 0
 for path in sorted(glob.glob("scripts/tests/*.sh")):
     if path.endswith("test-tests-never-launch.sh"):
@@ -126,6 +151,13 @@ for path in sorted(glob.glob("scripts/tests/*.sh")):
         if lead in ASSERT_HELPERS:
             continue
         scanned += 1
+        # SWITCH= and ESTATE_HELPER= replace what would reach switch.sh; launch.sh
+        # itself makes no gateway call (VERIFIED: no litellm-sync in launch.sh).
+        if (GATEWAY_EXEC.search(cmd) and "SWITCH=" not in cmd and "ESTATE_HELPER=" not in cmd
+                and not any(r in cmd for r in GATEWAY_READONLY)
+                and not all(s in cmd for s in GATEWAY_SEAMS)
+                and not file_seals_gateway(path)):
+            gateway_bad.append((path, lineno, cmd.strip()[:150]))
         if any(n in cmd for n in NEUTRALIZERS) or any(r in cmd for r in READONLY):
             continue
         # spec-sweep gets a pointed message: its dry knob is the whole fix.
@@ -147,8 +179,22 @@ if bad:
     print("  test passes while the rig keeps serving.")
     sys.exit(1)
 
+if gateway_bad:
+    print("FAIL: test(s) run switch.sh with nothing to keep it off the live gateway:")
+    for p, n, c in gateway_bad:
+        print(f"  ⛔ {p}:{n}")
+        print(f"       {c}")
+    print()
+    print('  → export C3_LITELLM_FAKE_LIVE= C3_LITELLM_RUNTIME="$T/config.runtime.yaml"')
+    print("    at the top of the test (a detached post-ready-sync.sh waiter inherits")
+    print("    both), or use a read-only sub-command. A docker shim is not enough: the")
+    print("    waiter outlives it and its restart reaches the real gateway.")
+    sys.exit(1)
+
 print(f"  ✓ no test can boot a model ({scanned} launcher invocation(s) checked, "
       f"all neutralized or read-only)")
+print("  ✓ no test can re-render the live gateway (every launching switch.sh run "
+      "carries the gateway seams)")
 PY
 
 echo "test-tests-never-launch: ok"

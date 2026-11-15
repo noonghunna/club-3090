@@ -26,6 +26,7 @@ T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 # a launch writes the slug-label override (data dir) and cache dirs: never into your real ones
 export CLUB3090_DATA_DIR="$T/data" CLUB3090_CACHE_DIR="$T/cache"
+export C3_LITELLM_FAKE_LIVE= C3_LITELLM_RUNTIME="$T/config.runtime.yaml"   # the gateway render stays in $T and never restarts the real gateway, nor does the waiter switch.sh leaves behind
 mkdir -p "$T/bin" "$T/empty-models" "$T/running"
 
 cat > "$T/bin/docker" <<'EOF'
