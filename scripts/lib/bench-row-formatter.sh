@@ -137,10 +137,31 @@ def rel(path: str) -> str:
         return str(p)
 
 
+def served_model_of(served: str, container: str) -> str:
+    """The model a container serves, when it is one of the two this formatter
+    knows (Qwen3.6-27B, Gemma 4 31B); "" otherwise."""
+    s = (served or "").lower()
+    if s.startswith("qwen3.6-27b"):
+        return "qwen3.6-27b"
+    if "gemma-4-31b" in s or "gemma-4-31b" in (container or "").lower():
+        return "gemma-4-31b"
+    return ""
+
+
 def infer_compose_path(container_name: str, served: str, tp: str) -> str:
+    """Guess the compose of a container that carries no compose label.
+
+    Only for the two models whose compose trees the mapping below describes,
+    told by the served model; anything else gets "" rather than a guess. This
+    used to fall through to a Qwen3.6 vLLM compose for ANY unlabelled
+    container, so a hand-run QEngine service on four RTX 5080s came out as a
+    single-card Qwen3.6 vLLM row (#2039).
+    """
     name = container_name.lstrip("/")
-    is_gemma = "gemma" in name or "gemma" in served
-    model_root = "models/gemma-4-31b/vllm/compose" if is_gemma else "models/qwen3.6-27b/vllm/compose"
+    model = served_model_of(served, name)
+    if not model:
+        return ""
+    model_root = f"models/{model}/vllm/compose"
 
     mapping = {
         "dual-int8-tq3": "dual/autoround-int4/int8-tq3.yml",
@@ -359,34 +380,80 @@ def soak_note(soak: dict[str, Any]) -> str:
     return f"Soak: ✗ {verdict}"
 
 
-def section_name(compose_path: str, served: str, tp: str, container: str) -> str:
-    if "gemma" in served or "gemma" in container or "gemma-4-31b" in compose_path:
-        return "Gemma 4 31B (community-experimental)"
+# The tables this formatter names, and the `##` heading each sits under in
+# BENCHMARKS.md. Every other model's block reuses the same `###` names
+# ("Dual-card (2× RTX 3090, TP=2) — vLLM", "Single-card (1× RTX 3090) —
+# llama.cpp", …) and insert_row takes the FIRST heading that matches, so naming
+# one of these for any other model filed its row under Qwen3.6-27B. placement()
+# names a section only when the row belongs there, and otherwise says why; the
+# contributor then names the heading with --section.
+QWEN36_HEADING = "Qwen3.6-27B"
+GEMMA_SECTION = "Gemma 4 31B (community-experimental)"
+
+
+def compose_model(path: str) -> str:
+    m = re.search(r"(?:^|/)models/([^/]+)/", path)
+    return m.group(1) if m else ""
+
+
+def heading_problem(section: str, under: str | None) -> str:
+    """Empty when insert_row would put the row under `section` inside the
+    `## under` block (or anywhere, when under is None); otherwise why not."""
+    try:
+        lines = (ROOT / "BENCHMARKS.md").read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return ""  # can't check here; insert_row still refuses a missing heading
+    first = next(
+        (i for i, line in enumerate(lines) if line.strip() in {f"## {section}", f"### {section}"}),
+        None,
+    )
+    if first is None:
+        return f"BENCHMARKS.md has no '{section}' heading"
+    if under is None:
+        return ""
+    owner = next((line.strip() for line in reversed(lines[: first + 1]) if line.startswith("## ")), "")
+    if owner != f"## {under}":
+        return f"the first '{section}' heading in BENCHMARKS.md is under '{owner or 'no ## heading'}', not '## {under}'"
+    return ""
+
+
+def placement(compose_path: str, served: str, tp: str, container: str) -> tuple[str, str]:
+    """(section, "") when the row's place in BENCHMARKS.md is known, else ("", why)."""
     path = compose_path.replace("\\", "/")
-    # ⚠️ exl3 BEFORE the topology arms. It autosplits LAYERS across cards and is
-    # NOT tensor-parallel, so falling through to the "/dual/" arm would label its
-    # rows "TP=2" — a factual error in the published table, which states
-    # "layer-split (autosplit, not TP)" for exactly these rows. Keyed on the
-    # engine dir / container, since the compose path still says /dual/.
-    # Strata splits LAYERS across cards too (--gpus), never tensor-parallel.
-    if "/strata/" in path or container.startswith("strata-"):
-        return ("Dual-card (2× RTX 3090, layer-split) — Strata" if "/dual/" in path
-                else "Single-card (1× RTX 3090) — Strata")
-    if "exllamav3" in path or "/exl3-" in path or "tabbyapi" in container:
-        return ("Dual-card (2× RTX 3090, layer-split) — exl3" if "/dual/" in path
-                else "Single-card (1× RTX 3090) — exl3")
+    if not path:
+        return "", (
+            f"container '{container}' carries no compose label, and its served model "
+            f"('{served}') isn't one whose compose this formatter can infer"
+        )
+    model = compose_model(path) or served_model_of(served, container)
+    if model == "gemma-4-31b":
+        why = heading_problem(GEMMA_SECTION, None)
+        return ("", why) if why else (GEMMA_SECTION, "")
+    if model != "qwen3.6-27b":
+        return "", (
+            f"rows for {model or 'this compose'} go under that model's own heading in "
+            "BENCHMARKS.md, and this formatter only names Qwen3.6-27B's and Gemma 4 31B's tables"
+        )
+    m = re.search(r"(?:^|/)models/qwen3\.6-27b/([^/]+)/", path)
+    engine = m.group(1) if m else ""
     # NB llama-cpp-prism matches here and that is correct — it is a llama.cpp fork
     # (its engine profile declares `type: llama.cpp`).
-    if "llama-cpp" in path or "llama-cpp" in container:
-        return "Single-card (1× RTX 3090) — llama.cpp"
-    m = re.search(r"/multi([1-9][0-9]*)/", path)
-    if m or (tp or "").isdigit() and int(tp) > 2:
-        n = m.group(1) if m else tp
-        label = {"4": "Quad"}.get(n, f"{n}x")
-        return f"{label}-card ({n}× RTX 3090, TP={n})"
-    if "/dual/" in path or tp == "2":
-        return "Dual-card (2× RTX 3090, TP=2)"
-    return "Single-card (1× RTX 3090) — vLLM"
+    if engine == "llama-cpp" or "llama-cpp" in path or "llama-cpp" in container:
+        section = "Single-card (1× RTX 3090) — llama.cpp"
+    else:
+        multi = re.search(r"/multi([1-9][0-9]*)/", path)
+        if multi or (tp or "").isdigit() and int(tp) > 2:
+            n = multi.group(1) if multi else tp
+            label = {"4": "Quad"}.get(n, f"{n}x")
+            section = f"{label}-card ({n}× RTX 3090, TP={n})"
+        elif "/dual/" in path or tp == "2":
+            section = "Dual-card (2× RTX 3090, TP=2)"
+        elif engine == "vllm":
+            section = "Single-card (1× RTX 3090) — vLLM"
+        else:
+            return "", f"Qwen3.6-27B has no single-card table for the {engine or 'unknown'} engine"
+    why = heading_problem(section, QWEN36_HEADING)
+    return ("", why) if why else (section, "")
 
 
 def load() -> dict[str, Any]:
@@ -447,9 +514,9 @@ def format_row(data: dict[str, Any]) -> str:
     soak = internal.get("soak") or {}
     rig = data["rig"]
     gpu_count = max(len(rig.get("gpus") or []), 1)
-    section = section_name(c["compose"], c["served"], c["tp"], c["name"])
+    section, _why = placement(c["compose"], c["served"], c["tp"], c["name"])
     verify = verify_summary(data["report"])
-    compose = compose_display(c["compose"], c["served"])
+    compose = compose_display(c["compose"], c["served"]) if c["compose"] else ""
     kv = kv_display(c["kv"], c["served"])
     max_ctx = fmt_ctx(c["max_ctx"])
     tps = f"**{fmt_tps(narrative.get('wall_tps_mean'))} / {fmt_tps(code.get('wall_tps_mean'))}**"
@@ -471,17 +538,19 @@ def format_row(data: dict[str, Any]) -> str:
         notes.append("Genesis on")
 
     note_cell = "; ".join(notes) + f". Report: `results/rebench/{data['tag']}/REPORT.md`."
+    # No compose recorded and none inferred: name the container rather than a guess.
+    first_cell = f"`{compose}`" if compose else f"container `{c['name']}` (no compose recorded)"
 
     if section == "Gemma 4 31B (community-experimental)":
         al = f"{float(mtp['mean_accept_length']):.2f}" if mtp.get("mean_accept_length") is not None else "—"
         per_pos = str(mtp.get("per_position") or "—")
         return (
-            f"| `{compose}` | {rig_cell(rig)} | {kv} | {max_ctx} | {tps} | "
+            f"| {first_cell} | {rig_cell(rig)} | {kv} | {max_ctx} | {tps} | "
             f"{pp} | {al} | {per_pos} | {peak} | {data['date']} | {note_cell} |"
         )
 
     return (
-        f"| `{compose}` | {rig_cell(rig)} | {kv} | {max_ctx} | {tps} | "
+        f"| {first_cell} | {rig_cell(rig)} | {kv} | {max_ctx} | {tps} | "
         f"{pp} | {peak} | {data['date']} | {note_cell} |"
     )
 
@@ -489,7 +558,10 @@ def format_row(data: dict[str, Any]) -> str:
 data = load()
 if MODE == "section":
     c = data["container"]
-    print(section_name(c["compose"], c["served"], c["tp"], c["name"]))
+    section, why = placement(c["compose"], c["served"], c["tp"], c["name"])
+    if not section:
+        print(f"[bench-row] can't place this row: {why}.", file=sys.stderr)
+    print(section)
 elif MODE == "row":
     print(format_row(data))
 elif MODE == "rig-short":
