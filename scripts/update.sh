@@ -6,9 +6,12 @@
 #   1. Refuses to run on a dirty tree — commit or stash your local edits first.
 #   2. Bails on a non-master branch (forks / contributors should pull manually).
 #   3. git pull --ff-only origin master  (no merge commits, no rebase ambiguity)
-#   4. bash scripts/setup.sh <model>     (re-fetches missing weights — idempotent,
-#                                          fast on second run)
-#   5. Tells you to restart whatever variant you had running.
+#   4. bash scripts/setup.sh <slug>      (re-fetches missing weights — idempotent,
+#                                          fast on second run) for the weights in
+#                                          use: the slug each running club-3090
+#                                          container was launched as. Nothing
+#                                          running → this step is skipped.
+#   5. Tells you the switch.sh command that restarts what you had running.
 #
 # What this does NOT do:
 #   - Pull the vLLM image (the SHA is pinned in compose; setup.sh's
@@ -17,8 +20,9 @@
 #     want to A/B old vs new before bringing the new variant up.
 #
 # Usage:
-#   bash scripts/update.sh                    # uses default model (qwen3.6-27b)
-#   bash scripts/update.sh qwen3.6-27b        # explicit
+#   bash scripts/update.sh                    # checks the running slug's weights (none running: skipped)
+#   bash scripts/update.sh <slug>             # that slug's weights + companions, e.g. qengine/qwen38-27b-dual
+#   bash scripts/update.sh qwen3.6-27b        # a model's setup.sh default (MODEL=<model> works too)
 #   bash scripts/update.sh --dry-run          # show what would happen, change nothing
 #   bash scripts/update.sh --force            # skip the "behind origin" check (re-runs setup anyway)
 #
@@ -31,7 +35,10 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/club-containers.
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-MODEL="${MODEL:-qwen3.6-27b}"
+# What setup.sh checks: an argument, else MODEL, else the running slugs (step 6).
+# There is no model default any more (#2050): `qwen3.6-27b` checked — and on a rig
+# without it would have downloaded — the weights of a model the rig may never run.
+MODEL="${MODEL:-}"
 DRY_RUN=0
 FORCE=0
 
@@ -125,27 +132,63 @@ if [[ "$behind" != "0" ]]; then
   run git pull --ff-only origin master
 fi
 
-# --- 6. re-run setup.sh ---
-echo ""
-echo "[update] re-running setup.sh ${MODEL} (re-fetches missing weights)..."
-echo ""
-run bash "${ROOT_DIR}/scripts/setup.sh" "$MODEL"
-
-# --- 7. next-step hint ---
-echo ""
-echo "[update] ✓ done."
-echo ""
-# "Is a club container running?" — registry-derived. This asked the question
+# --- 6. re-run setup.sh for the weights in use ---
+# "Which club containers are running?" — registry-derived. This asked the question
 # with a TWO-NAME list (vllm-qwen36-27b|llama-cpp-qwen36-27b), so it stayed
 # silent for every other model and engine on the stack, not just the new ones.
 # ⚠️ Not caught by test-engine-kind-resolver arm 5: that arm polices the ENGINE
 # prefix alternation, and a model-specific name is legitimate elsewhere (report.sh
 # deliberately prefers `name=vllm-qwen36` before falling back to the full set).
-running=$(docker ps --format '{{.Names}}' 2>/dev/null | command grep -E "$(club_container_re)" | head -1 || true)
-if [[ -n "$running" ]]; then
-  echo "[update] A club-3090 container is currently running: ${running}"
-  echo "[update] To pick up the latest config, restart it:"
-  echo "[update]   bash scripts/switch.sh <variant>"
+# Each row is `name<TAB>slug`: the launchers stamp the slug a container runs as its
+# club3090.slug label (scripts/lib/slug_label.py), empty for one started without it.
+_ps_fmt=$'{{.Names}}\t{{.Label "club3090.slug"}}'
+_club_re="$(club_container_re)"
+running_rows=$(docker ps --format "$_ps_fmt" 2>/dev/null | while IFS=$'\t' read -r _n _s; do
+  printf '%s\n' "$_n" | command grep -qE "$_club_re" && printf '%s\t%s\n' "$_n" "$_s"
+done || true)
+running_slugs=$(printf '%s\n' "$running_rows" | awk -F'\t' 'NF>1 && $2!="" {print $2}' | sort -u)
+unlabelled=$(printf '%s\n' "$running_rows" | awk -F'\t' '$1!="" && $2=="" {print $1}')
+
+echo ""
+if [[ -n "$MODEL" ]]; then
+  echo "[update] re-running setup.sh ${MODEL} (re-fetches missing weights)..."
+  echo ""
+  run bash "${ROOT_DIR}/scripts/setup.sh" "$MODEL"
+elif [[ -n "$running_slugs" ]]; then
+  # setup.sh takes the slug form: that slug's weights variant and its
+  # weights_companions, and nothing else (#2050). An array, not a here-string, so
+  # setup.sh keeps the terminal's stdin for its prompts.
+  mapfile -t _slugs <<<"$running_slugs"
+  for slug in "${_slugs[@]}"; do
+    echo "[update] re-running setup.sh ${slug} (the running slug's weights; re-fetches missing ones)..."
+    echo ""
+    run bash "${ROOT_DIR}/scripts/setup.sh" "$slug"
+  done
+fi
+if [[ -z "$MODEL" && -n "$unlabelled" ]]; then
+  echo "[update] not checked: $(tr '\n' ' ' <<<"$unlabelled")— running without a club3090.slug label"
+  echo "[update]   (started by hand, or before the launchers stamped one), so its weights are unknown."
+fi
+if [[ -z "$MODEL" && -z "$running_slugs" ]]; then
+  [[ -n "$unlabelled" ]] || echo "[update] nothing is serving, so no weights are in use to check."
+  echo "[update] skipping setup.sh. To check a slug's weights:  bash scripts/update.sh <slug>"
+  echo "[update]   (bash scripts/switch.sh --list shows the slugs)"
+fi
+
+# --- 7. next-step hint ---
+echo ""
+echo "[update] ✓ done."
+echo ""
+if [[ -n "$running_rows" ]]; then
+  echo "[update] To pick up the latest config, restart what is running:"
+  while IFS=$'\t' read -r name slug; do
+    [[ -n "$name" ]] || continue
+    if [[ -n "$slug" ]]; then
+      echo "[update]   bash scripts/switch.sh ${slug}      # ${name}"
+    else
+      echo "[update]   bash scripts/switch.sh <variant>    # ${name} (no slug label)"
+    fi
+  done <<<"$running_rows"
   echo "[update] (Use 'bash scripts/switch.sh --list' to see available variants.)"
 else
   echo "[update] Next:  bash scripts/launch.sh   (or bash scripts/switch.sh <variant>)"
