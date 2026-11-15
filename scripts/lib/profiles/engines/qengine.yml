@@ -54,7 +54,7 @@ supported_drafters:
 # what the MODEL accepts; the compose keeps the DEFAULT).
 effort:
   default_when_unset: xhigh
-  off_switch: none
+  off_switch: "none"
   supports_none: true
   unknown_name: medium
   maps: {minimal: low, high: xhigh, max: xhigh}
