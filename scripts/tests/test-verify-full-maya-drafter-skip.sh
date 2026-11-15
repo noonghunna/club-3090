@@ -16,6 +16,12 @@
 # A host-run Maya (CONTAINER=none, #1915): its drafts are only in its engine log, so with neither the container nor
 # SERVER_LOG the check would read zero drafts and fail a working drafter. It skips then, naming SERVER_LOG, and runs
 # with SERVER_LOG set.
+#
+# The trigger request's own response (#2053): Maya returns that request's draft counts in it under llama.cpp's names
+# (timings.draft_n / draft_n_accepted), and the check reads them first. A host run with no log and a /metrics that
+# names no maya_version used to read zero drafts and FAIL a working drafter (174 drafted, 143 kept); it passes from
+# the timings now, a low rate or zero drafts there still fail, and a response without timings falls back to the log
+# path above (so the SERVER_LOG skip still applies). Against the pre-fix verify-full the timings cases must FAIL.
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
@@ -38,12 +44,20 @@ import os, sys
 if sys.argv[1] == "snapshot":
     print(open(os.environ["SNAP"]).read())
     sys.exit(0)
+if sys.argv[1] == "delta" and os.environ.get("DELTA"):      # the /metrics delta, when a case gives one
+    print(os.environ["DELTA"].replace("\\n", "\n"))
+    sys.exit(0)
 sys.exit(1)
 PY
 printf '{"engine": {"maya_version": "1.1.48", "dspark": false}}' > "${TMP}/ds4-nodrafter.json"
 printf '{"engine": {"maya_version": "1.1.30", "dspark": 0}}' > "${TMP}/mm3-off.json"
 printf '{"engine": {"maya_version": "1.1.48", "dspark": true}}' > "${TMP}/ds4-drafter.json"
 printf '{"engine": {"version": "0.1.55"}}' > "${TMP}/strata.json"
+printf '{"engine": {"dspark": true}}' > "${TMP}/ds4-noversion.json"      # #2053: /metrics named no maya_version
+printf '{"choices": [], "timings": {"draft_n": 174, "draft_n_accepted": 143}}' > "${TMP}/resp-drafts.json"
+printf '{"choices": [], "timings": {"draft_n": 100, "draft_n_accepted": 10}}' > "${TMP}/resp-low.json"
+printf '{"choices": [], "timings": {"draft_n": 0, "draft_n_accepted": 0}}' > "${TMP}/resp-zero.json"
+printf '{"choices": [], "timings": {"predicted_n": 80}}' > "${TMP}/resp-notimings.json"
 
 # step 9 for one snapshot: prints which helper ended it. REAL=1: the container is real (a club-3090 slug);
 # LOG=<file>: SERVER_LOG for a host run
@@ -54,7 +68,9 @@ run() {
     fail() { echo "FAIL: $1"; }
     skip() { echo "SKIP: $1"; }
     container_is_real() { [[ "${REAL:-0}" == 1 ]]; }
-    curl() { return 7; }            # a drafter that is on gets its trigger request, which fails here: not a skip
+    # the trigger request: the response fixture named by $RESP, else a failure (a drafter that is on gets its
+    # trigger request, which fails here: not a skip)
+    curl() { [[ -n "${RESP:-}" ]] && { cat "$RESP"; return 0; }; return 7; }
     ENGINE_KIND=strata ROOT_DIR="${TMP}/root" URL=http://stub MODEL=m THINK_OFF_STD= THINK_OFF_KW='{}' CONTAINER=c \
       SERVER_LOG="${LOG:-}" SNAP="$1" check_mtp_acceptance 2>&1 | command grep -E '^(PASS|FAIL|SKIP):' | head -1
   )
@@ -69,9 +85,9 @@ got="$(run "${TMP}/mm3-off.json")"
 got="$(REAL=1 run "${TMP}/ds4-drafter.json")"
 [[ "$got" == FAIL:*"acceptance-trigger request failed"* ]] && ok "engine.dspark true, in its container: not skipped (the trigger request runs)" \
   || bad "maya-ds4 dspark true, container" "FAIL: acceptance-trigger request failed" "$got"
-got="$(run "${TMP}/ds4-drafter.json")"
-[[ "$got" == SKIP:*SERVER_LOG* ]] && ok "engine.dspark true, host run without SERVER_LOG: skipped, naming SERVER_LOG" \
-  || bad "maya-ds4 dspark true, host, no log" "SKIP: …SERVER_LOG…" "$got"
+got="$(RESP="${TMP}/resp-notimings.json" run "${TMP}/ds4-drafter.json")"
+[[ "$got" == SKIP:*SERVER_LOG* ]] && ok "engine.dspark true, host run without SERVER_LOG, no timings in the response: skipped, naming SERVER_LOG" \
+  || bad "maya-ds4 dspark true, host, no log, no timings" "SKIP: …SERVER_LOG…" "$got"
 : > "${TMP}/maya-ds4.log"
 got="$(LOG="${TMP}/maya-ds4.log" run "${TMP}/ds4-drafter.json")"
 [[ "$got" == FAIL:*"acceptance-trigger request failed"* ]] && ok "engine.dspark true, host run with SERVER_LOG: not skipped" \
@@ -79,5 +95,23 @@ got="$(LOG="${TMP}/maya-ds4.log" run "${TMP}/ds4-drafter.json")"
 got="$(run "${TMP}/strata.json")"
 [[ "$got" == FAIL:*"acceptance-trigger request failed"* ]] && ok "Strata, no engine.dspark field: not skipped" \
   || bad "strata, no dspark field" "FAIL: acceptance-trigger request failed" "$got"
+
+
+echo "the trigger response's timings (#2053)"
+got="$(RESP="${TMP}/resp-drafts.json" run "${TMP}/ds4-noversion.json")"
+[[ "$got" == PASS:*"0.8218"*"174 drafted"*"timings"* ]] && ok "host run, no log, /metrics without maya_version: passes from the response's timings (143 of 174)" \
+  || bad "#2053 shape" "PASS: draft acceptance 0.8218 … 174 drafted, from the response's timings" "$got"
+got="$(RESP="${TMP}/resp-drafts.json" run "${TMP}/ds4-drafter.json")"
+[[ "$got" == PASS:*"timings"* ]] && ok "host run, no log, with maya_version: checked from the timings, not skipped" \
+  || bad "host maya with timings" "PASS: … from the response's timings" "$got"
+got="$(REAL=1 RESP="${TMP}/resp-low.json" run "${TMP}/ds4-drafter.json")"
+[[ "$got" == FAIL:*"0.1000"*"< 0.30"* ]] && ok "a low rate in the timings still fails (10 of 100)" \
+  || bad "low acceptance" "FAIL: draft acceptance 0.1000 < 0.30 …" "$got"
+got="$(REAL=1 RESP="${TMP}/resp-zero.json" run "${TMP}/ds4-drafter.json")"
+[[ "$got" == FAIL:*"draft_n=0"* ]] && ok "zero drafts in the timings fails" \
+  || bad "zero drafts" "FAIL: no MTP drafts offered … draft_n=0" "$got"
+got="$(REAL=1 RESP="${TMP}/resp-notimings.json" DELTA='drafts_offered=50\naccept_rate=0.8000' run "${TMP}/strata.json")"
+[[ "$got" == PASS:*"0.8000"*"from /metrics"* ]] && ok "no timings in the response: falls back to the /metrics delta" \
+  || bad "fallback to /metrics" "PASS: draft acceptance 0.8000 … from /metrics" "$got"
 
 if [[ "$FAIL" == 0 ]]; then echo "PASS: test-verify-full-maya-drafter-skip"; else echo "FAIL: test-verify-full-maya-drafter-skip"; exit 1; fi

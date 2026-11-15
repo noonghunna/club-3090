@@ -820,7 +820,7 @@ check_mtp_acceptance() {
       # GET /metrics counts drafts offered and accepted; take it before and after one
       # request (scripts/lib/strata_metrics.py). Every Strata slug runs its MTP layer, so
       # no drafts at all is a failure, and so is a /metrics we cannot read.
-      local sm_dir sm_out sm_off sm_rate sm_c=()
+      local sm_dir sm_out sm_off sm_rate sm_resp sm_tm sm_acc sm_src sm_c=()
       sm_dir="$(mktemp -d)"
       # Project Maya (strata-maya) counts its drafts only in its engine log: the reader needs the container,
       # or on a host run (CONTAINER=none) the log itself, given as SERVER_LOG (as bench.sh takes it)
@@ -842,13 +842,12 @@ check_mtp_acceptance() {
         skip "the engine runs no drafter (engine.dspark off: DSPARK=off on MiniMax, no drafter in the pack on DeepSeek)"
         rm -rf "${sm_dir}"; return 0
       fi
-      # A Maya document read with neither the container nor its log carries no draft counts at all
-      # (strata_metrics.py), so the check below would fail a drafter that may be fine (#1915)
-      if [[ ${#sm_c[@]} -eq 0 && -n "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["engine"].get("maya_version") or "")' "${sm_dir}/before.json" 2>/dev/null)" ]]; then
-        skip "Project Maya counts its drafts only in its engine log: on a host run, set SERVER_LOG=<that log, e.g. maya-ds4.log> to check them"
-        rm -rf "${sm_dir}"; return 0
-      fi
-      curl -sf -m 120 "${URL}/v1/chat/completions" \
+      # The trigger request. Its response is kept: Project Maya returns that request's own draft counts in it,
+      # under llama.cpp's names (timings.draft_n / draft_n_accepted, Maya's serve/server.py). They are the
+      # engine's figures for this one request, so they are read first. That checks a host run with neither the
+      # container nor SERVER_LOG too, and one whose /metrics names no maya_version, which the log-only path below
+      # read as zero drafts and failed (#2053).
+      sm_resp="$(curl -sf -m 120 "${URL}/v1/chat/completions" \
         -H "Content-Type: application/json" \
         -d "{
           \"model\": \"${MODEL}\",
@@ -856,24 +855,53 @@ check_mtp_acceptance() {
           \"max_tokens\": 500,
           \"temperature\": 0.0,
           ${THINK_OFF_STD}\"chat_template_kwargs\": ${THINK_OFF_KW}
-        }" >/dev/null 2>&1 || { fail "acceptance-trigger request failed" "Check docker logs"; rm -rf "${sm_dir}"; return 1; }
-      if ! python3 "${ROOT_DIR}/scripts/lib/strata_metrics.py" snapshot "${URL}" "${sm_c[@]}" > "${sm_dir}/after.json" 2> "${sm_dir}/err" \
-         || ! sm_out="$(python3 "${ROOT_DIR}/scripts/lib/strata_metrics.py" delta "${sm_dir}/before.json" "${sm_dir}/after.json" 2> "${sm_dir}/err")"; then
-        fail "could not read ${URL}/metrics after the request" "$(cat "${sm_dir}/err")"; rm -rf "${sm_dir}"; return 1
-      fi
-      rm -rf "${sm_dir}"
-      sm_off="$(sed -n 's/^drafts_offered=//p' <<<"$sm_out")"
-      sm_rate="$(sed -n 's/^accept_rate=//p' <<<"$sm_out")"
-      if [[ "${sm_off:-0}" == 0 || -z "$sm_rate" ]]; then
-        fail "no MTP drafts offered during the request (/metrics drafts_offered=0)" \
-             "Strata's MTP layer is off or not loading: check the engine log for the 'strata mtp:' line and that the config passes --spec and --mtp (the data volume's mtp/rt)."
-        return 1
+        }" 2>/dev/null)" || { fail "acceptance-trigger request failed" "Check docker logs"; rm -rf "${sm_dir}"; return 1; }
+      sm_tm="$(python3 -c '
+import json, sys
+try:
+    t = (json.loads(sys.stdin.read()) or {}).get("timings") or {}
+except Exception:
+    t = {}
+o, a = t.get("draft_n"), t.get("draft_n_accepted")
+ok = lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0
+if ok(o) and ok(a):
+    print(o, a)' <<<"$sm_resp" 2>/dev/null)"
+      if [[ -n "$sm_tm" ]]; then
+        rm -rf "${sm_dir}"
+        read -r sm_off sm_acc <<<"$sm_tm"
+        if [[ "$sm_off" == 0 ]]; then
+          fail "no MTP drafts offered during the request (the response's timings: draft_n=0)" \
+               "The engine drafted nothing for this request: its drafter is off or not loading. Check the engine log's drafter lines."
+          return 1
+        fi
+        sm_rate="$(awk -v a="$sm_acc" -v o="$sm_off" 'BEGIN{printf "%.4f", a/o}')"
+        sm_src="the response's timings"
+      else
+        # A Maya document read with neither the container nor its log carries no draft counts at all
+        # (strata_metrics.py), so the /metrics check would fail a drafter that may be fine (#1915)
+        if [[ ${#sm_c[@]} -eq 0 && -n "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["engine"].get("maya_version") or "")' "${sm_dir}/before.json" 2>/dev/null)" ]]; then
+          skip "Project Maya counts its drafts only in its engine log, and this response carried no timings: on a host run, set SERVER_LOG=<that log, e.g. maya-ds4.log> to check them"
+          rm -rf "${sm_dir}"; return 0
+        fi
+        if ! python3 "${ROOT_DIR}/scripts/lib/strata_metrics.py" snapshot "${URL}" "${sm_c[@]}" > "${sm_dir}/after.json" 2> "${sm_dir}/err" \
+           || ! sm_out="$(python3 "${ROOT_DIR}/scripts/lib/strata_metrics.py" delta "${sm_dir}/before.json" "${sm_dir}/after.json" 2> "${sm_dir}/err")"; then
+          fail "could not read ${URL}/metrics after the request" "$(cat "${sm_dir}/err")"; rm -rf "${sm_dir}"; return 1
+        fi
+        rm -rf "${sm_dir}"
+        sm_off="$(sed -n 's/^drafts_offered=//p' <<<"$sm_out")"
+        sm_rate="$(sed -n 's/^accept_rate=//p' <<<"$sm_out")"
+        if [[ "${sm_off:-0}" == 0 || -z "$sm_rate" ]]; then
+          fail "no MTP drafts offered during the request (/metrics drafts_offered=0)" \
+               "Strata's MTP layer is off or not loading: check the engine log for the 'strata mtp:' line and that the config passes --spec and --mtp (the data volume's mtp/rt)."
+          return 1
+        fi
+        sm_src="/metrics"
       fi
       if awk -v a="$sm_rate" -v m="${STRATA_ACCEPT_MIN:-0.30}" 'BEGIN{exit !(a+0 >= m+0)}'; then
-        pass "draft acceptance ${sm_rate} >= ${STRATA_ACCEPT_MIN:-0.30} (Strata, ${sm_off} drafted)"
+        pass "draft acceptance ${sm_rate} >= ${STRATA_ACCEPT_MIN:-0.30} (Strata, ${sm_off} drafted, from ${sm_src})"
         return 0
       fi
-      fail "draft acceptance ${sm_rate} < ${STRATA_ACCEPT_MIN:-0.30} (Strata, ${sm_off} drafted)" \
+      fail "draft acceptance ${sm_rate} < ${STRATA_ACCEPT_MIN:-0.30} (Strata, ${sm_off} drafted, from ${sm_src})" \
            "The MTP layer drafts tokens that get rejected: output stays correct, decode collapses. Check the MTP tensors on the data volume match the model (Strata fetches them from Qwen/Qwen3.8-Flash-Next at setup)."
       return 1 ;;
     exllamav3)
