@@ -324,10 +324,14 @@ else:
         if len(tol_names) != len(tol_consts):
             bad("FAMILIES: name/ids fields do not pair up in the literal — "
                 "the entry shape drifted")
-        if set(tol_names) != set(families):
+        if sorted(tol_names) != sorted(families):
             bad(f"FAMILIES: the tolerant scan sees {sorted(tol_names)} but "
                 f"fam_re parsed {sorted(families)} — an entry's shape drifted "
-                "and check 6 silently skipped it; fix fam_re")
+                "or a name is duplicated, and check 6 would silently skip it; fix fam_re")
+        # A duplicate family name collapses into the dict below, so the two scans
+        # above would still agree while one entry goes unchecked.
+        if len(tol_names) != len(set(tol_names)):
+            bad(f"FAMILIES has a duplicate family name: {tol_names}")
     for fam, f in sorted(families.items()):
         body = ids_bodies.get(f["ids_const"])
         if body is None:
@@ -344,6 +348,18 @@ else:
                     "(a non-double-quoted id?)")
     ladders = {tuple(f["ladder"]) for f in families.values()}
     id_family = {mid: fam for fam, f in families.items() for mid in f["ids"]}
+    # An id in two families would silently bind to whichever came last, checking
+    # it against an arbitrary ladder — fail on the ambiguity instead.
+    owner: dict = {}
+    shared = []
+    for fam, f in sorted(families.items()):
+        for mid in f["ids"]:
+            if mid in owner:
+                shared.append(f"{mid} ({owner[mid]} and {fam})")
+            owner[mid] = fam
+    if shared:
+        bad("a model id in more than one FAMILIES entry, so its override is "
+            f"bound to an arbitrary ladder: {', '.join(shared)}")
     for fam, f in sorted(families.items()):
         mdl = FAMILY_MODEL.get(fam)
         if not mdl:
