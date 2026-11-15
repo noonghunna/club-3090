@@ -78,8 +78,9 @@ effort:
   evidence: >-
     The vendored templates enforce it: the vLLM/SGLang slugs mount
     models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template and the
-    llama.cpp slugs the GGUF twin under llama-cpp/patches — both
-    raise_exception outside low|medium|xhigh and fold minimal->low, max->xhigh.
+    llama.cpp slugs the GGUF twin under llama-cpp/patches — both fold
+    high->xhigh, minimal->low and max->xhigh, then raise_exception on
+    anything still outside low|medium|xhigh (`none`, unrecognized strings).
     Wire-probed 2026-10-20 (llama-cpp/patches/qwen38-gguf-reasoning-effort-template/PROVENANCE.md).
 
 weights:

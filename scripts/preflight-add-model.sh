@@ -140,12 +140,17 @@ echo ""
 # only the REASONING_EFFORT default. Informational here — the enforcing gate is
 # the effort-block finding in catalog rules above (curated) and
 # scripts/tests/test-effort-profiles.sh (whole catalog).
-EFFORT_LINE="$(python3 - "${ROOT_DIR}" "${SLUG}" <<'PY' 2>/dev/null || true
+EFFORT_ERR="$(mktemp)"
+EFFORT_LINE="$(python3 - "${ROOT_DIR}" "${SLUG}" <<'PY' 2>"${EFFORT_ERR}"
 import sys
 sys.path.insert(0, sys.argv[1] + "/scripts/lib/profiles")
 from compat import load_profiles
 from compose_registry import get_registry
-entry = get_registry(sys.argv[1]).get(sys.argv[2]) or {}
+entry = get_registry(sys.argv[1]).get(sys.argv[2])
+if not entry:
+    print(f"?: slug {sys.argv[2]!r} is not in the registry — run this after "
+          "the slug is catalogued")
+    sys.exit(0)
 mid = entry.get("model") or "?"
 eff = (load_profiles(sys.argv[1] + "/scripts/lib/profiles").models.get(mid) or
        type("x", (), {"effort": None})()).effort
@@ -159,10 +164,16 @@ else:
     print(f"{mid}: status {eff.get('status')}")
 PY
 )"
-if [[ -n "${EFFORT_LINE}" ]]; then
+EFFORT_RC=$?
+if [[ ${EFFORT_RC} -ne 0 ]]; then
+  # Surface the failure instead of swallowing it: a broken probe must not
+  # read as "no effort line to show".
+  echo "${C_DIM}[preflight] effort (#1951): check failed — $(head -n 1 "${EFFORT_ERR}")${C_RESET}" >&2
+elif [[ -n "${EFFORT_LINE}" ]]; then
   echo "${C_DIM}[preflight] effort (#1951): ${EFFORT_LINE}${C_RESET}"
   echo ""
 fi
+rm -f "${EFFORT_ERR}"
 
 for gate in "${GATES[@]}"; do
   if [[ -f "${ROOT_DIR}/scripts/tests/${gate}.sh" ]]; then

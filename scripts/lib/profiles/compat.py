@@ -642,8 +642,9 @@ def _model(data: dict[str, Any], path: Path) -> ModelProfile:
     }
     if data.get("setup") is not None:
         nested["setup"] = (data["setup"], SETUP_KEYS)
-    if isinstance(data.get("effort"), dict):
-        nested["effort"] = (data["effort"], MODEL_EFFORT_KEYS)
+    # Same shape as the engine side: pass unconditionally — _check_profile_keys
+    # skips non-dict values itself, so both nested wirings stay symmetric.
+    nested["effort"] = (data.get("effort"), MODEL_EFFORT_KEYS)
     _check_profile_keys(path, data, MODEL_PROFILE_KEYS, nested)
     return ModelProfile(
         schema_version=data["schema_version"],
@@ -783,6 +784,15 @@ def _effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
             f"(a bare scalar is never valid — YAML parses bare `none` as null, "
             f"indistinguishable from absent), got {value!r}")
     levels, status = value.get("levels"), value.get("status")
+    # A key that is PRESENT but null is a typo trap: YAML eats an unquoted
+    # `none` (and an empty `key:`) into null, silently turning a measured fact
+    # into "absent" — the render then treats it as unknown (#1951 review r1-1).
+    for key in MODEL_EFFORT_KEYS - {"evidence"}:
+        if key in value and value[key] is None:
+            raise ProfileError(
+                f"{path}: effort.{key} is explicitly null — YAML parsed an unquoted "
+                f"`none` or an empty value into null. Quote the string ('none') or "
+                f"drop the key; null means UNKNOWN and must never be stored.")
     if (levels is None) == (status is None):
         raise ProfileError(
             f"{path}: effort needs EXACTLY ONE of `levels:` (the probed ladder) "
@@ -802,6 +812,12 @@ def _effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
     for flag in ("template_kwarg", "budget_map"):
         if value.get(flag) is not None and not isinstance(value[flag], bool):
             raise ProfileError(f"{path}: effort.{flag} must be a bool, got {value[flag]!r}")
+    if status is not None and (value.get("template_kwarg") is not None
+                               or value.get("budget_map") is not None):
+        raise ProfileError(
+            f"{path}: effort.template_kwarg/budget_map are meaningless on a "
+            f"`status:` block (there is no ladder to wire) — move them to the "
+            f"levels block once a probe pins one")
     evidence = value.get("evidence")
     if not isinstance(evidence, str) or not evidence.strip():
         raise ProfileError(
@@ -820,6 +836,13 @@ def _engine_effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
     if not isinstance(value, dict):
         raise ProfileError(f"{path}: engine `effort:` must be a mapping, got {value!r}")
     default = value.get("default_when_unset")
+    # Same present-but-null trap as the model side (#1951 review r1-1).
+    for key in ENGINE_EFFORT_KEYS - {"evidence"}:
+        if key in value and value[key] is None:
+            raise ProfileError(
+                f"{path}: effort.{key} is explicitly null — YAML parsed an unquoted "
+                f"`none` (e.g. off_switch: none) into null. Quote the string "
+                f"('none') or drop the key; null means UNKNOWN and must never be stored.")
     if default is not None and (not isinstance(default, str) or not default):
         raise ProfileError(f"{path}: effort.default_when_unset must be a non-empty string, got {default!r}")
     off = value.get("off_switch")
