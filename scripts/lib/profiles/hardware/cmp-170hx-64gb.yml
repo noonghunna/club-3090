@@ -19,9 +19,11 @@
 #   boards are reported to have did not stop either recipe.
 #
 # What follows from the measurements:
-#   - Use it as a single card. On a Gen 2 x4 link, splitting a model across cards
-#     (TP) or offloading experts to the CPU is link-bound, and a TP group with 24 GB
-#     cards caps every card at 24 GB, wasting the 64.
+#   - The PCIe width is the slot's, not the board's: x4 (xtj7, below), x8 (#1735/#1736)
+#     and x16 (#2052/#2053) have all been seen, always at Gen 2.
+#   - On an x4 link, use it as a single card: splitting a model across cards (TP) or
+#     offloading experts to the CPU is link-bound there. A TP group with 24 GB cards
+#     caps every card at 24 GB whatever the link, wasting the 64.
 #   - Model loads are slow over that link; decode then runs from VRAM (vLLM decode drew
 #     36 MB/s over it). Open: SGLang decode drew ~1.1 GB/s host->GPU, near the link's
 #     limit, with no host cache tier configured; the cause is unknown.
@@ -29,11 +31,25 @@
 #     and a smaller one gets no profile rather than an inflated one.
 #   - No NVLink. The board reports a 250 W default and max power limit (#1537); no
 #     optimal cap has been measured, so the power_cap fields are left unset.
+#   - PCIe P2P: refused on the drivers seen so far (#1736; the upstream cmpunlocker
+#     driver in #2053); the only grant seen so far is from a fork of cmpunlocker with ForceP2P=0x11
+#     (#2052: `topo -p2p` OK on all 12 pairs, 108/108 byte-exact peer copies).
 # Measured on a second rig (club-3090#1735/#1736, 2026-10-18, 2x CMP 170HX at PCIe Gen2 x8
 #   each, no P2P, 175 W, driver 615.71.09): two cards CAN serve one model when they split it by
 #   PIPELINE stages instead of TP. Flash-Next at PP=2 decodes 117/163 narr/code vs 45/63 at
 #   TP=2 on the same link (vllm/qwen38-flash-next-dual). fp8_e4m3 KV is not listed
 #   below: stock Triton cannot compile it on sm_80; that slug gets it from an overlay.
+# Measured on a third rig (paulp83, club-3090#2052/#2053, 2026-11-14, CMP 170HX at PCIe
+#   Gen2 x16 each, the cmpunlocker driver at 610.57.04): tensor parallel works on an x16
+#   link.
+#   - Project Maya DeepSeek-V4.1 at TP3 on three cards, our pinned image v1.1.61, no P2P,
+#     140 W (#2053): 64.92 / 91.00 narr/code, 1,124 tok/s prefill at 10K, needles to
+#     240,976 tokens, soak PASS. The first Maya run on sm_80.
+#   - A third-party GLM-5.3-Flash recipe on a vLLM fork (not a club slug) at TP4 on four
+#     cards with P2P from the cmpunlocker fork, 175 W (#2052): 191.6 / 281.0 wall. Without
+#     P2P at 140 W the same recipe did 162.1 / 227.9; power changed too, so the two effects
+#     are not separated. One card later fell off the bus (Xid 79), which the reporter reads
+#     as a fault on that card or slot.
 # Promote the rest from "assumed" to "measured" from a report: `bash scripts/report.sh`.
 schema_version: 1
 id: cmp-170hx-64gb
@@ -63,4 +79,4 @@ driver_pin_recommended:
 nvlink_capable: false
 power_cap_w_optimal: null
 power_cap_w_max: null
-notes: "COMMUNITY-VALIDATED: GA100 (sm_8.0) mining board, 64 GB, PCIe Gen 2 x4 (nvidia-smi from xtj7, 2026-10-02); not booted on the reference rig. Use it as a single card. club-3090's single-fast recipes run their full tier on it (vLLM v0.30.0 and SGLang v0.5.21, full report.sh chain PASS, club-3090#1537, 2026-10-05); vLLM was the faster engine there."
+notes: "COMMUNITY-VALIDATED: GA100 (sm_8.0) mining board, 64 GB, PCIe Gen 2 at the slot's width (x4, x8 and x16 seen); not booted on the reference rig. On an x4 link use it as a single card; on x16, tensor parallel across cards works (Project Maya DeepSeek TP3, club-3090#2053). club-3090's single-fast recipes run their full tier on one card (vLLM v0.30.0 and SGLang v0.5.21, full report.sh chain PASS, club-3090#1537, 2026-10-05); vLLM was the faster engine there. PCIe P2P has only been seen with the cmpunlocker driver fork's ForceP2P (club-3090#2052)."
