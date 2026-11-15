@@ -176,6 +176,31 @@ after_mode="$(python3 "$EMIT" "$tmp/b.json" --full run --server-budget 9)"
 pass "options only before the results path"
 
 # ---------------------------------------------------------------------------
+echo "--- 1c. the thinking-validity stamp ---"
+# benchlocal-cli's `agent-reasoning` (a thinking-off arm whose agent, calling the
+# model from inside its sandbox, reported reasoning tokens; club-3090#2011) is a
+# warning there, never a --strict-thinking failure. It must not turn the stamp
+# CONTAMINATED, and it must not vanish into a bare `valid` either.
+vstamp() {   # vstamp THINKING_VALIDITY_JSON → the validity=… stamp, or "<none>"
+  printf '{"thinking_mode":"force-off","sampling_source":"server","thinking_validity":%s,%s}\n' "$1" "$PACKS" > "$tmp/v.json"
+  local line
+  line="$(python3 "$EMIT" "$tmp/v.json" --full)" || fail "emitter exited non-zero on validity $1"
+  local s
+  s="$(sed -nE 's/.*, (validity=.*), packs .*/\1/p' <<<"$line")"
+  printf '%s\n' "${s:-<none>}"
+}
+OK_TC='"toolcall-15":{"expected":"off","responses":15,"with_reasoning":0,"status":"ok"}'
+AGENT_HM='"hermesagent-20":{"expected":"off","responses":20,"with_reasoning":5,"status":"agent-reasoning","source":"agent-usage","reasoning_tokens":603}'
+BAD_CLI='"cli-40":{"expected":"off","responses":40,"with_reasoning":3,"status":"contaminated"}'
+expect "all ok" "validity=valid" "$(vstamp "{$OK_TC}")"
+expect "a contaminated pack" "validity=CONTAMINATED" "$(vstamp "{$OK_TC,$BAD_CLI}")"
+expect "agent reasoning, the rest ok" \
+  "validity=valid except hermesagent-20 (its agent reasoned: 603 tokens in 5/20 scenarios)" \
+  "$(vstamp "{$OK_TC,$AGENT_HM}")"
+expect "agent reasoning beside a contaminated pack" "validity=CONTAMINATED" \
+  "$(vstamp "{$OK_TC,$AGENT_HM,$BAD_CLI}")"
+
+# ---------------------------------------------------------------------------
 echo "--- 2. quality-test.sh never reads a container that does not serve URL ---"
 wbin="$tmp/wbin"; mkdir -p "$wbin"
 cat > "$wbin/docker" <<'EOF'
