@@ -59,17 +59,15 @@
 #    context (29K: no-spec 57.0 -> n=1 40.6 / n=2 36.0 / n=3 32.7 tok/s), profiled to the
 #    cudagraph downgrade FULL_AND_PIECEWISE -> PIECEWISE. A steady tax, not a cliff.
 #   Caveats:   TWO independent reasons, and neither is a TODO that this rig can close.
-#              (1) NOTHING HAS BOOTED, on any card count. Authored 2026-08-14; the
-#                  weights have since landed and verified (30.87 GB / 28.75 GiB,
-#                  all 66 safetensors CRC32-clean against the repo manifest), but
-#                  no engine has ever loaded them. No verify-full (0/8), no
-#                  verify-stress, no NIAH, no soak, no bench — NO TPS number is
-#                  claimed anywhere — and no 8-pack, so there is deliberately no
-#                  `Quality:` field. Max ctx 262144 is arithmetic plus a sibling
-#                  analogy, never filled; allocating a context is not filling it.
-#                  Engine compatibility is NO LONGER an inference: the v0.27.1 pin
-#                  predates this model, though it does serve the same
-#                  Qwen3_5ForConditionalGeneration arch (qwen3.6-27b FP8, Tess-4-27B).
+#              (1) CLOSED by the first community boot, 2026-11-12 (#2060, white1golf:
+#                  4× RTX 3090 on PCIe 3.0 at mixed widths, no NVLink, P2P refused,
+#                  vLLM v0.33.0, the official FP8 weights 66/66 SHA-verified):
+#                  `report.sh --full` with all five stages PASS. verify-full 9/9
+#                  with vision 4/4, verify-stress including the Cliff 2 needles,
+#                  soak-continuous PASS, bench 100.31 / 125.46 decode narrative /
+#                  code, MTP n=3 acceptance length 2.94-3.06 (BENCHMARKS.md,
+#                  Qwen3.8-27B four-card vLLM table). Still unmeasured: the 8-pack,
+#                  so there is deliberately no `Quality:` field yet.
 #              (2) ⛔ 4-CARD IS COMMUNITY-VALIDATED BY DESIGN — a PERMANENT property
 #                  of this slug on the reference rig, NOT pending work. The
 #                  maintainer rig has exactly TWO 3090s, so TP=4 can never boot here
@@ -86,8 +84,8 @@
 #                hybrid-GDN family as qwen3.6-27b and Tess-4-27B, and the unpatched
 #                fault is an UNBOUNDED index in the shared GDN spec-decode path —
 #                quant-, topology- and depth-independent. See "Upstream-risk" below.
-#              Promote to 🧪 only after a clean boot + verify-full on a real 4-card
-#              host; to ⚠️/✅ only after the full gate there.
+#              #2060 is the clean boot + verify-full on a real 4-card host that 🧪
+#              called for; ⚠️/✅ still needs the full gate there, the 8-pack included.
 #   Upstream-risk:  • ⚠️ MTP × hybrid-GDN wild write — TWO faults share this signature:
 #                one is PATCHED here, one (vllm#50021) is STILL LIVE IN THIS PIN.
 #                Symptom: `CUDA error: unspecified launch failure` + Xid 13/31 and a dead
