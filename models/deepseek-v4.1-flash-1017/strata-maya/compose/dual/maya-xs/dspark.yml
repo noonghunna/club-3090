@@ -27,7 +27,8 @@
 #              free against the 74.1 GB it prices that choice with — its own line is "the most-routed 74.1 GB read
 #              ahead", a read-ahead set, not the whole lane: the 10,427 experts on it together are the 74.5 GB the
 #              measured note below and the registry quote. It left every one of them in place in the files,
-#              nothing pinned. DS4_RAM_MARGIN_GB is the knob that decides which mode a host gets.
+#              nothing pinned. DS4_RAM_MARGIN_GB is the knob that decides which mode a host gets;
+#              MMAP_EXPERTS=on / off picks it directly (#2042).
 #              What the mode costs on this rig (#1989, one boot each, v1.1.56 / v1.1.57): in place, 45.6 /
 #              40.8 tok/s narrative decode, 54.7 code, 1,034 / 1,105 prefill at 10K; DS4_RAM_MARGIN_GB=0 pinned the
 #              whole CPU lane (10,416 experts, 74.7 GB, ~34 s at boot) and gave 52.0 / 60.4 decode but 907 prefill,
@@ -122,6 +123,10 @@ services:
       SERVED_NAME:
       LOOP_GUARD:
       THREADS:
+      # how maya-ds4 holds the CPU lane's experts (#2042): on = read in place from the files, off = copied into
+      # RAM, auto (Maya's default) = copied when they all fit. Picks the mode directly instead of through
+      # DS4_RAM_MARGIN_GB's sizing; ds4_settings.py writes it as --mmap-experts and refuses any other word
+      MMAP_EXPERTS:
       # Maya's model load/unload endpoints (/models/load, /models/unload, /models/sse; on by default from
       # v1.1.47) and, from v1.1.50, its model API (/api/tags, /api/ps, /api/chat, ...). These composes set
       # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
@@ -129,12 +134,20 @@ services:
       MAYA_MODEL_MANAGEMENT:
       # maya-ds4's RAM headroom (from v1.1.51): the GiB its memory planning leaves to everything else when it
       # sizes the expert copies, the warm-up and the prompt caches (0 to 4096). Unset = Maya's 8. On a 92 GB host
-      # this is the knob that decides whether the CPU experts get pinned or read in place
+      # this is the knob that decides whether the CPU experts get pinned or read in place (unless MMAP_EXPERTS
+      # picks the mode, below)
       DS4_RAM_MARGIN_GB:
       # maya-ds4's prompt reading on a layer split (MAYA_TP=1, from v1.1.53): DS4_FLOW_COPY_DMA=1 DMAs a
       # streamed expert straight from its pinned RAM copy instead of copying it into staging first (the
       # same bytes). Only with the experts copied into RAM; nothing under MAYA_TP=2. Unset = off
       DS4_FLOW_COPY_DMA:
+      # maya-ds4 tensor parallel on a GGUF pack (MAYA_TP >= 2; #2042), both read by the engine itself
+      # (src/ds4/ds4_model.cu): MAYA_DS4_TP_GGUF_UNEVEN=1 splits each expert's FFN in whole blocks, as even as they
+      # go, so a group whose members can't take equal parts still forms (Maya-XS on four cards); DS4_TP_SHARES=w0,w1,..
+      # sets each member's share by hand, `off` the split as before. Unset = Maya's own (off; shares from each
+      # member's free VRAM). More cards also need MAYA_GPUS and the launcher's --gpus
+      MAYA_DS4_TP_GGUF_UNEVEN:
+      DS4_TP_SHARES:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       # the quant's own folder (Maya's repo layout: one folder a quant) and, beside it, the shared dspark/ folder the

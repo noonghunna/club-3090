@@ -213,12 +213,37 @@ def quality_line(d: dict, mode: str, cli_args: list[str], date: str,
         suffix_parts.append(f"tp={tp}")
     validity = d.get("thinking_validity") or {}
     if validity:
-        statuses = {o.get("status") for o in validity.values()}
-        suffix_parts.append("validity=valid" if statuses <= {"ok"} else "validity=CONTAMINATED")
+        suffix_parts.append(validity_stamp(validity))
     if versions:
         suffix_parts.append("packs " + "·".join(versions))
     suffix_parts.append(date)
     return "Quality:   " + " · ".join(parts) + f" ({', '.join(suffix_parts)})"
+
+
+def validity_stamp(validity: dict) -> str:
+    """#126's thinking-validity check as one stamp.
+
+    benchlocal-cli's `agent-reasoning` is a thinking-off arm whose agent, calling
+    the model from inside its sandbox (hermesagent-20), reported reasoning tokens
+    in the sandbox's usage tally (club-3090#2011). There it is a warning, never a
+    --strict-thinking failure, because the tally can't say which of the agent's
+    calls reasoned. So it doesn't turn the stamp CONTAMINATED, and it isn't
+    dropped into a bare `valid` either: the stamp names the pack and the count.
+    """
+    statuses = {o.get("status") for o in validity.values()}
+    if not (statuses - {"agent-reasoning"}) <= {"ok"}:
+        return "validity=CONTAMINATED"
+    agent = sorted(pid for pid, o in validity.items() if o.get("status") == "agent-reasoning")
+    if not agent:
+        return "validity=valid"
+    notes = []
+    for pid in agent:
+        o = validity[pid]
+        notes.append(
+            f"{pid} (its agent reasoned: {o.get('reasoning_tokens')} tokens in "
+            f"{o.get('with_reasoning')}/{o.get('responses')} scenarios)"
+        )
+    return "validity=valid except " + " and ".join(notes)
 
 
 def main(argv: list[str]) -> int:

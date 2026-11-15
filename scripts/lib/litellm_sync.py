@@ -881,7 +881,14 @@ def main() -> int:
     # LiteLLM has NO config-reload endpoint on the pinned image (POST
     # /config/reload -> 404), so a changed file needs a restart. Only on a real
     # change, or every launch would bounce the gateway for nothing.
-    if not a.no_restart:
+    # Never under the test seam: a fake live set is not this rig's state, so
+    # nothing rendered from it may reach the running gateway. A test's docker
+    # shim does not cover this, because a waiter that switch.sh starts detached
+    # (post-ready-sync.sh) can outlive the test and its shim, and then its
+    # `docker restart` reaches the real daemon.
+    if os.environ.get("C3_LITELLM_FAKE_LIVE") is not None:
+        log("test seam (C3_LITELLM_FAKE_LIVE): not restarting litellm")
+    elif not a.no_restart:
         try:
             names = subprocess.run(["docker", "ps", "--format", "{{.Names}}"],
                                    capture_output=True, text=True, timeout=15).stdout.split()

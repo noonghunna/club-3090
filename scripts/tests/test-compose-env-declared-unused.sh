@@ -89,7 +89,10 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 # Project Maya's DeepSeek engine (build/maya-ds4) reads it: its RAM headroom, from v1.1.51
                 "DS4_RAM_MARGIN_GB",
                 # ... and this: the flow's expert DMA from the pinned RAM copies, from v1.1.53
-                "DS4_FLOW_COPY_DMA"}
+                "DS4_FLOW_COPY_DMA",
+                # ... and these: a GGUF tensor-parallel group's uneven split and its shares by hand
+                # (src/ds4/ds4_model.cu, v1.1.61; #2042)
+                "MAYA_DS4_TP_GGUF_UNEVEN", "DS4_TP_SHARES"}
 
 # DEBT REGISTER — each entry must name WHY the dead knob is deliberate.
 # Shrink it; never grow it silently. An entry here means a documented knob is

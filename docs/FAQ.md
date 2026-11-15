@@ -575,14 +575,14 @@ Run `bash scripts/update.sh`. It does the safe sequence:
 
 1. Refuses if your tree has uncommitted edits — `git status` shows you what to commit/stash first. (We don't clobber the rare user who's tweaked a compose locally.)
 2. `git pull --ff-only origin master` — no merge commits, no rebase ambiguity. If your branch has diverged, you'll get a clear pointer to resolve manually.
-3. Re-runs `bash scripts/setup.sh qwen3.6-27b` so any Genesis-pin bump or vendored-patch update on master gets applied to your tree.
-4. Tells you to restart your container via `bash scripts/switch.sh <variant>` — doesn't auto-restart, so you can A/B old-vs-new before bringing the new variant up.
+3. Re-runs `bash scripts/setup.sh <slug>` for the slug each running club-3090 container was launched as (its `club3090.slug` label), which re-fetches any missing weights for that slug and its companions. With nothing running, or only a container started without the label, it skips this step and says so.
+4. Tells you the exact `bash scripts/switch.sh <slug>` that restarts what's running — doesn't auto-restart, so you can A/B old-vs-new before bringing the new variant up.
 5. Reports any **running support service** (Open WebUI, LiteLLM, Qdrant, SearXNG, spark-dashboard) whose image is behind the version the pull just pinned. Those never move on their own — `switch.sh`, reboots and `docker restart` all keep the old image — so run **`gpu-mode upgrade`**: it recreates only the running services that are behind, and backs up Qdrant's volume to `backups/` first (its storage migrates forward and can't be rolled back; `--no-backup` skips that). `gpu-mode status` shows the same drift any time.
 
 Flags:
 - `--dry-run` — shows what would happen without changing anything.
 - `--force` — re-runs `setup.sh` even when up-to-date (e.g. after you hand-edited the Genesis tree and want it re-pinned).
-- `MODEL=<other-model> bash scripts/update.sh` — defaults to `qwen3.6-27b`.
+- `bash scripts/update.sh <slug>` (or a model name, or `MODEL=<model>`) — checks that slug's or model's weights instead of what's running.
 
 You'll usually find out you're behind before you ask: `launch.sh` and `switch.sh` both run `preflight_repo_drift` at boot, which soft-warns when your local HEAD is behind `origin/master`, with the commit count + last-fetch age + the one-line fix. Opt out via `PREFLIGHT_NO_FETCH=1` for offline rigs.
 

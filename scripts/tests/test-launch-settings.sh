@@ -89,7 +89,7 @@ exec bash "$FIX/scripts/switch.sh" --no-wait --no-owui --force "\$@"
 EOF
 chmod +x "$T/bin/docker" "$T/bin/compose-capture" "$T/bin/switch-real"
 export MOCK_LOG="$T/calls.log" MOCK_WORKDIR="$T/running" MOCK_ENV_OUT="$T/env.out" MOCK_RENDER="$T/render.json"
-export PREFLIGHT_NO_FETCH=1 PREFLIGHT_NO_COMPOSE_DEPS=1 CLUB3090_SHM_CLEANUP=0 C3_LITELLM_FAKE_LIVE=
+export PREFLIGHT_NO_FETCH=1 PREFLIGHT_NO_COMPOSE_DEPS=1 CLUB3090_SHM_CLEANUP=0 C3_LITELLM_FAKE_LIVE= C3_LITELLM_RUNTIME="$T/config.runtime.yaml"
 
 cfg() {  # <name> → a fresh settings dir; FILE=CONTENT pairs follow
   local d="$T/cfg-$1"; shift

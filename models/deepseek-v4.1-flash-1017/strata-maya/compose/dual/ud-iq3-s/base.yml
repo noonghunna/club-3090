@@ -96,6 +96,10 @@ services:
       SERVED_NAME:
       LOOP_GUARD:
       THREADS:
+      # how maya-ds4 holds the CPU lane's experts (#2042): on = read in place from the files, off = copied into
+      # RAM, auto (Maya's default) = copied when they all fit. Picks the mode directly instead of through
+      # DS4_RAM_MARGIN_GB's sizing; ds4_settings.py writes it as --mmap-experts and refuses any other word
+      MMAP_EXPERTS:
       # Maya's model load/unload endpoints (/models/load, /models/unload, /models/sse; on by default from
       # v1.1.47) and, from v1.1.50, its model API (/api/tags, /api/ps, /api/chat, ...). These composes set
       # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
@@ -108,6 +112,13 @@ services:
       # streamed expert straight from its pinned RAM copy instead of copying it into staging first (the
       # same bytes). Only with the experts copied into RAM; nothing under MAYA_TP=2. Unset = off
       DS4_FLOW_COPY_DMA:
+      # maya-ds4 tensor parallel on a GGUF pack (MAYA_TP >= 2; #2042), both read by the engine itself
+      # (src/ds4/ds4_model.cu): MAYA_DS4_TP_GGUF_UNEVEN=1 splits each expert's FFN in whole blocks, as even as they
+      # go, so a group whose members can't take equal parts still forms (Maya-XS on four cards); DS4_TP_SHARES=w0,w1,..
+      # sets each member's share by hand, `off` the split as before. Unset = Maya's own (off; shares from each
+      # member's free VRAM). More cards also need MAYA_GPUS and the launcher's --gpus
+      MAYA_DS4_TP_GGUF_UNEVEN:
+      DS4_TP_SHARES:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       # the quant's own folder (unsloth's repo layout: one folder a quant); no drafter is mounted, so the pack
