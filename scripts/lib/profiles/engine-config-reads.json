@@ -177,7 +177,8 @@
     "CONTEXT": "32768",
     "SERVED_NAME": "llm",
     "THREADS": "7",
-    "LOOP_GUARD": "false"
+    "LOOP_GUARD": "false",
+    "MMAP_EXPERTS": "on"
    },
    "setup_only": {},
    "server": "/opt/maya/serve/server.py",
@@ -205,6 +206,7 @@
     "sampling.repetition_penalty": "sampling_defaults_from_config()",
     "args:--max-context": "maya-ds4's own flag: KV capacity",
     "args:--cpu-threads": "maya-ds4's own flag: the CPU lane's threads (the experts VRAM doesn't hold)",
+    "args:--mmap-experts": "maya-ds4's own flag (src/ds4/ds4_main.cpp, v1.1.61): on reads the CPU lane's experts in place, off copies them into RAM, anything else is auto",
     "model_name": "main(): the served name (/v1/models, /props, every answer's model field)",
     "loop_guard": "loop_guard_setting(), from main(): svc.loop_guard (serve/loop_guard.py; MAYA_LOOP_GUARD in the environment wins, and no compose forwards it)"
    }
