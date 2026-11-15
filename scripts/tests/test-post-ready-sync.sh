@@ -2,23 +2,31 @@
 # Test for #1522: the gateway (and Open WebUI) get synced when a server becomes
 # ready even though switch.sh did not wait for it.
 #
-# switch.sh syncs the gateway after teardown (which renders the old route away)
-# and again after a WAITED ready. `--no-wait`, or a boot slower than
-# READY_TIMEOUT, skipped the second sync and left the gateway with no local
-# routes for a model that then came up fine.
+# On a switch, switch.sh advertises the model being loaded at the teardown
+# (a retryable 500 while it boots) and renders the gateway accurately at
+# ready. When it does not wait — `--no-wait`, or a boot slower than
+# READY_TIMEOUT — this waiter owns the accurate render, prunes the gateway
+# when the boot fails, and leaves the render alone when the container was
+# removed by a later switch or --down (that run has already rendered).
 #
 # Validates:
 #   1. post-ready-sync.sh runs owui-register.sh <port> and litellm-sync.sh
 #      --quiet once the ready URL answers (with --owui), and only the gateway
 #      sync without --owui.
-#   2. It does not sync when the container is gone or stopped (exit 2), or when
-#      nothing answers before --timeout (exit 3). Missing arguments: exit 64.
+#   2. It renders the gateway back to what serves (a prune, no OWUI) when the
+#      container is stopped/dead (exit 2) or nothing answers before
+#      --timeout (exit 3), and exits 2 -> 4 WITHOUT rendering when the
+#      container is gone (a later switch/--down removed it and rendered).
 #   3. switch.sh's schedule_post_ready_sync() starts the waiter with the ready
 #      URL, container, port and --owui, and with no container prints the manual
 #      command instead of starting anything.
 #   4. switch.sh's REAL wait_ready() timeout branch, on a container that is still
 #      running, schedules the waiter and still exits 1.
 #   5. The --no-wait path calls schedule_post_ready_sync.
+#   6. switch.sh's EXIT trap renders the gateway back to what serves on ANY
+#      failed exit — a crash or a boot that outlasts READY_TIMEOUT — and not on
+#      success; the timeout case prunes at the timeout, not deferred to the
+#      waiter's ceiling.
 #
 # Harness: stub curl / docker on PATH, stub sync scripts beside a copy of the
 # waiter, and a stub waiter under a fake ROOT_DIR for the switch.sh functions.
@@ -85,20 +93,21 @@ check "1d: waited for the 3rd poll" test "$(cat "$tmp/curl.count")" -eq 3
 CURL_OK_AFTER=1 run_waiter --url http://localhost:8122/v1/models --container c1 --port 8122 --interval 0
 check "1e: without --owui only the gateway is synced" test "$CALLS" = "litellm-sync --quiet"
 
-# --- 2. no sync when it never comes up ------------------------------------------
+# --- 2. failure paths: prune on stopped/timeout, leave-alone on gone -----------
 DOCKER_STATE=exited run_waiter --url http://localhost:8122/v1/models --container c1 --port 8122 --owui --interval 0
 check "2a: stopped container -> exit 2 (got $RC)" test "$RC" -eq 2
-check "2b: stopped container -> no sync" test -z "$CALLS"
+check "2b: stopped container -> gateway pruned" test "$CALLS" = "litellm-sync --quiet"
 
 DOCKER_STATE="" run_waiter --url http://localhost:8122/v1/models --container gone --port 8122 --interval 0
-check "2c: missing container -> exit 2 (got $RC)" test "$RC" -eq 2
+check "2c: gone container -> exit 4 (got $RC)" test "$RC" -eq 4
+check "2d: gone container -> NO render (a later switch/--down owns the gateway)" test -z "$CALLS"
 
 run_waiter --url http://localhost:8122/v1/models --container c1 --port 8122 --timeout 0 --interval 0
-check "2d: never answers -> exit 3 at the ceiling (got $RC)" test "$RC" -eq 3
-check "2e: never answers -> no sync" test -z "$CALLS"
+check "2e: never answers -> exit 3 at the ceiling (got $RC)" test "$RC" -eq 3
+check "2f: never answers -> gateway pruned" test "$CALLS" = "litellm-sync --quiet"
 
 run_waiter --url http://localhost:8122/v1/models --port 8122
-check "2f: missing --container -> exit 64 (got $RC)" test "$RC" -eq 64
+check "2g: missing --container -> exit 64 (got $RC)" test "$RC" -eq 64
 
 # --- 3/4. switch.sh's own functions, against a stub waiter ----------------------
 fake_root="$tmp/root"
@@ -161,6 +170,52 @@ check "4d: waiter scheduled from the timeout branch (no --owui when off)" \
 # --- 5. the --no-wait path ---------------------------------------------------------
 check "5: --no-wait schedules the waiter after the launch" \
   command grep -qE '^\[\[ \$WAIT -eq 0 \]\] && schedule_post_ready_sync "\$\{VARIANT_CONTAINER\[\$VARIANT\]:-\}"' scripts/switch.sh
+
+# --- 6. the EXIT trap prunes on a failed exit — crash OR timeout -----------------
+# The trap is defined in the main switch path (not an exported function), so
+# extract it the same way as wait_ready and drive it against a stub litellm-sync.
+# The key pin: it prunes on ANY non-zero exit, including the timeout case where a
+# waiter is already scheduled — there is no "defer to the waiter" exception, so a
+# boot that outlasts READY_TIMEOUT ends pruned at the timeout, not 3600 s later.
+trap_fn="$tmp/trap-fn.sh"
+awk '/^switch_gateway_render_on_fail\(\) \{/,/^}/' scripts/switch.sh > "$trap_fn"
+check "6: trap function extracted from switch.sh" test -s "$trap_fn"
+
+fake_root2="$tmp/root2"
+mkdir -p "$fake_root2/scripts/lib"
+printf '#!/usr/bin/env bash\necho "litellm-sync $* hint=${LITELLM_BOOTING_PORT:-unset}" >> "$STUB_DIR/trap-calls"\n' > "$fake_root2/scripts/lib/litellm-sync.sh"
+chmod +x "$fake_root2/scripts/lib/litellm-sync.sh"
+
+trap_calls() {   # trap_calls <true|false> [VAR=value]; echoes the trap's litellm-sync calls
+  local setup="$1" extra="${2:-}"
+  rm -f "$STUB_DIR/trap-calls"
+  (
+    export ROOT_DIR="$fake_root2"
+    [[ -n "$extra" ]] && export "$extra"
+    source "$trap_fn"
+    "$setup"
+    switch_gateway_render_on_fail
+  ) >/dev/null 2>&1
+  cat "$STUB_DIR/trap-calls" 2>/dev/null || true
+}
+
+check "6a: failed exit (rc=1) -> gateway pruned, no hint leak" \
+  test "$(trap_calls false)" = "litellm-sync --quiet hint=unset"
+check "6b: successful exit (rc=0) -> no prune" \
+  test -z "$(trap_calls true)"
+check "6c: timeout case (waiter scheduled, rc=1) -> still pruned, not deferred, no hint leak" \
+  test "$(trap_calls false POST_READY_SYNC_SCHEDULED=1)" = "litellm-sync --quiet hint=unset"
+check "6d: the trap is set on EXIT in the main switch path" \
+  command grep -q '^trap switch_gateway_render_on_fail EXIT' scripts/switch.sh
+# 6a/6c prove the extracted trap function carries no hint, but they drive it in a
+# subshell that never sees main's environment: the real leak vector is switch.sh
+# EXPORTING the hint (or running under `set -a`), which the trap and the detached
+# waiter would both inherit — re-advertising the model that just failed, forever.
+# That is only preventable statically.
+check "6e: the booting hint is command-scoped, never exported" \
+  test -z "$(command grep -nE '(export|declare -x)[[:space:]].*LITELLM_BOOTING_PORT' scripts/switch.sh)"
+check "6f: switch.sh does not run under allexport (every assignment would leak)" \
+  test -z "$(command grep -nE '^[[:space:]]*set[[:space:]]+-[a-zA-Z]*a' scripts/switch.sh)"
 
 echo "test-post-ready-sync: PASS ${PASS}, FAIL ${FAIL}"
 [[ "$FAIL" -eq 0 ]]

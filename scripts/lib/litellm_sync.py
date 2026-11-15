@@ -357,6 +357,39 @@ def live_routes(ports: list[int]) -> list[Live]:
     return found
 
 
+def add_booting_route(live: list[Live], variants: list[dict]) -> list[Live]:
+    """Advertise the model that is mid-boot, before its port answers.
+
+    switch.sh sets LITELLM_BOOTING_PORT to the target's port on the teardown
+    render, so the gateway points at the model being loaded — a retryable 500
+    while it boots — instead of going routeless (a terminal 400 on `live`). The
+    name is a placeholder the accurate render at ready corrects from the
+    engine's own /v1/models: the registry's served_name for the port, else the
+    model id — but only when every slug on that port agrees on the model, else
+    `booting-<port>`. A port can host several slugs (:8030 serves both
+    gemma-4-31b and deepseek-v4-flash-0731), and naming it after either would
+    advertise a model that is not the one loading — the same rule port_facts
+    follows: a fact the rows disagree on is not guessed. The route is PREPENDED
+    so the `live` alias (which mirrors the first route) points at the model
+    being loaded even when another deployment answers; it is a no-op once the
+    port answers (it is already in `live`)."""
+    port_s = os.environ.get("LITELLM_BOOTING_PORT", "").strip()
+    if not (port_s.isascii() and port_s.isdigit()):
+        return live
+    port = int(port_s)
+    if any(r.port == port for r in live):
+        return live   # already answering — the probe found it
+    rows = [v for v in variants if str(v.get("port")) == port_s]
+    models = {v.get("model") for v in rows if v.get("model")}
+    if len(models) != 1:
+        name = f"booting-{port}"        # several models share this port: naming it would lie
+    else:
+        names = {v.get("served_name") for v in rows if v.get("served_name")}
+        name = names.pop() if len(names) == 1 else models.pop()
+    return [Live(port=port, model=name, ctx=None, native_messages=False,
+                 responses=True, key="", out_cap=None)] + live
+
+
 def port_facts(variants: list[dict]) -> dict[int, dict]:
     """Per port, the registry facts every variant on that port agrees on. A port
     can host several slugs (:8020 is multi-slug); a fact they disagree on is
@@ -505,9 +538,11 @@ def render_block(live: list[Live], facts: "dict[int, dict] | None" = None,
                  taken: "set[str] | None" = None) -> tuple[str, int]:
     lines = [
         BEGIN.rstrip() + " — " + RUNTIME_MARKER + " ===",
-        "  # Routes for endpoints that answered /v1/models at render time. Names come",
-        "  # from each server's own model list, so a slug with no registry served_name",
-        "  # still gets a route. Regenerated on every switch.sh launch and teardown.",
+        "  # Routes for endpoints that answered /v1/models at render time, plus the",
+        "  # model mid-boot (advertised before it answers, so `live` stays retryable).",
+        "  # Names come from each server's own model list — the booting one from the",
+        "  # registry — so a slug with no registry served_name still gets a route.",
+        "  # Regenerated on every switch.sh launch and teardown.",
         "  # DO NOT EDIT — edit services/litellm/config.yaml (the catalog view) instead.",
     ]
     seen: set[str] = set()
@@ -796,6 +831,7 @@ def main() -> int:
     variants = registry_variants(a.root)
     ports = registry_ports(variants)
     live = live_routes(ports)
+    live = add_booting_route(live, variants)
     for p in sorted(loopback_only_ports({r.port for r in live})):
         print(f"[litellm-sync] WARN: :{p} answers on 127.0.0.1 only, so the gateway container can't reach it "
               f"at host.docker.internal:{p}; it gets no route. Publish it on all interfaces "
