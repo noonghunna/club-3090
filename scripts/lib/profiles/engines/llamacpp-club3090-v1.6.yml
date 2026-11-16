@@ -134,10 +134,15 @@ effort:
   supports_none: false
   evidence: >-
     llama-server request handling shared with llama-cpp-local, measured
-    2026-10-20
+    2026-10-20 on the then-pinned upstream v0.7.0 (b11669)
     (models/qwen3.8-27b/llama-cpp/patches/qwen38-gguf-reasoning-effort-template/PROVENANCE.md);
     the v1.6 moecache compose mounts the same GGUF effort template
     (models/qwen3.8-flash-next/llamacpp-club3090/compose/dual/unsloth-ud-q4kxl/moecache.yml:110).
+    ⚠️ STALE vs PIN: three upstream bumps since (v0.8.0 b11960, v0.9.0 b12110,
+    v1.0.0 b12359 — docs/UPSTREAM.md) and none re-measured `none`'s rendering
+    or the off-switch kwargs (the v1.0.0 boot validation covered only the
+    ladder rungs) — re-measure on THIS binary before trusting either claim
+    for a new model.
 
 notes: >
   🧪 rc0. ⚠️ EVERY MEASUREMENT HERE IS FROM THIS BINARY (d9cc8af98, 2026-08-31) —

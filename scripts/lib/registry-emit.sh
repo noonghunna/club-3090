@@ -715,8 +715,10 @@ def _effort_facts(model_id: str, engine_id: str, compose_path: str):
     return {
         "levels": list(me["levels"]) if me.get("levels") else None,
         "status": me.get("status"),
-        "supports_none": ee.get("supports_none"),
-        "off_switch": ee.get("off_switch"),
+        "supports_none": (pair["supports_none"] if "supports_none" in pair
+                          else ee.get("supports_none")),
+        "off_switch": (pair["off_switch"] if "off_switch" in pair
+                       else ee.get("off_switch")),
         "default_when_unset": pair.get("default_when_unset"),
         "maps": dict(pair["maps"]) if pair.get("maps") else None,
         "compose_default": _compose_effort_default(compose_path),

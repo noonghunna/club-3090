@@ -68,11 +68,15 @@ from profiles.compat import load_profiles
 # tripwire in check 4 forces it).
 LITELLM_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
-# The family -> model mapping of omp-setup.sh's hand-written FAMILIES list —
+# The family -> models mapping of omp-setup.sh's hand-written FAMILIES list —
 # the drift surface check 6 pins; it disappears when phase 2 generates the
-# list from the profiles.
-FAMILY_MODEL = {"qwen38": "qwen3.8-27b", "flash-next": "qwen3.8-flash-next",
-                "glm53": "glm-5.3-flash"}
+# list from the profiles. EVERY catalog model a family's omp ids serve is
+# listed, and every listed model's ladder must equal the family's — so a
+# newly probed model with no family fails loudly instead of silently missing
+# from the omp surface (#1951 review r7).
+FAMILY_MODELS = {"qwen38": ["qwen3.8-27b", "thinkingcap-qwen3.8-27b"],
+                 "flash-next": ["qwen3.8-flash-next"],
+                 "glm53": ["glm-5.3-flash"]}
 
 failures = []
 def bad(msg):
@@ -344,6 +348,35 @@ for port, models in sorted(port_models.items()):
             f"the ports: the render advertises one model's effort facts for both")
 if len(failures) == n0:
     print("  ✓ every registry port serves exactly one model")
+# ---- 5d. supports_none: true is a per-pair claim -----------------------------
+# An engine-level `supports_none: true` says the engine maps `none` to
+# enable_thinking=false before the template runs; whether THIS model's template
+# then closes the thinking block is the model's contract. A ladder model on
+# such an engine advertises `supports_none: true` the moment it probes a
+# ladder, so its pair entry must exist to cite that contract before the
+# advertise is trusted — the engine's own evidence block names the rule, this
+# enforces it (#1951 review r7). `false` engines need no entry: the server
+# ignoring `none` is engine-level behaviour, and the advertise direction is
+# conservative.
+n0 = len(failures)
+for e in entries.values():
+    m, eng_id = e.get("model"), e.get("engine")
+    if not m or not eng_id:
+        continue
+    eng = profiles.engines.get(eng_id)
+    eff = (eng.effort or {}) if eng else {}
+    if eff.get("supports_none") is not True:
+        continue
+    levels, _status = model_levels(m)
+    if not levels:
+        continue
+    if not (eff.get("by_model") or {}).get(m):
+        bad(f"{m} on {eng_id}: probed ladder {levels} but no by_model entry — the "
+            f"route advertises the engine's supports_none: true without a pair "
+            f"fact citing THIS model's template (verify it honors `none`, or "
+            f"record the pair's own measurement in its by_model entry)")
+if len(failures) == n0:
+    print("  ✓ every supports_none:true engine's ladder pairs carry a by_model entry")
 # ---- 5b. the loader REFUSES an engine-wide fold fact (#1951 review r5) -------
 # An engine-level `default_when_unset`/`maps` is the silent-inheritance bug the
 # review named: a model never measured on it would be folded and defaulted by a
@@ -366,8 +399,12 @@ expect_refusal({"evidence": "x", "default_when_unset": "xhigh"},
 expect_refusal({"evidence": "x", "maps": {"high": "xhigh"}},
                "by_model", "engine-level effort.maps")
 expect_refusal({"evidence": "x", "by_model": {}}, "non-empty", "empty by_model")
-expect_refusal({"evidence": "x", "by_model": {"m": {"off_switch": "none"}}},
-               "allows only", "by_model entry holding an engine-wide key")
+expect_refusal({"evidence": "x", "by_model": {"m": {"levels": ["low"]}}},
+               "allows only", "by_model entry holding a model-level key")
+expect_refusal({"evidence": "x", "by_model": {"m": {"off_switch": "bogus"}}},
+               "off_switch must be one of", "bad off_switch inside by_model")
+expect_refusal({"evidence": "x", "by_model": {"m": {"supports_none": "false"}}},
+               "supports_none must be a bool", "string supports_none inside by_model")
 expect_refusal({"evidence": "x", "by_model": {"m": {}}}, "is empty", "empty by_model entry")
 expect_refusal({"evidence": "x", "by_model": {"m": {"maps": {}}}},
                "non-empty", "empty maps inside by_model")
@@ -390,8 +427,20 @@ try:
                     "evidence": "x"}, Path("negative-test.yml"))
 except ProfileError as exc:
     bad(f"valid pair-scoped block was refused: {exc}")
+try:
+    # The r7 escape hatch: a pair's OWN none measurement overrides the
+    # engine-level claim (the emit reads the pair value first).
+    _engine_effort({"off_switch": "none", "supports_none": True,
+                    "by_model": {"m": {"default_when_unset": "xhigh",
+                                       "supports_none": False,
+                                       "off_switch": "enable-thinking-kwarg",
+                                       "evidence": "the pair's own probe"}},
+                    "evidence": "x"}, Path("negative-test.yml"))
+except ProfileError as exc:
+    bad(f"a pair's own none measurement was refused: {exc}")
 if len(failures) == n0:
-    print("  ✓ engine-level fold facts refused (10 shapes), pair-scoped block loads")
+    print("  ✓ engine-level fold facts refused (12 shapes), pair-scoped block "
+          "and its none-override load")
 
 # ---- 6. omp-setup FAMILIES agree with the profiles ---------------------------
 env = dict(os.environ, HOME=os.environ["T_HOME"],
@@ -465,7 +514,6 @@ else:
                 bad(f"{f['ids_const']} ({fam}): {n_items} ids in the source but "
                     f"{len(f['ids'])} parsed — ids_const's regex missed one "
                     "(a non-double-quoted id?)")
-    ladders = {tuple(f["ladder"]) for f in families.values()}
     id_family = {mid: fam for fam, f in families.items() for mid in f["ids"]}
     # An id in two families would silently bind to whichever came last, checking
     # it against an arbitrary ladder — fail on the ambiguity instead.
@@ -480,14 +528,15 @@ else:
         bad("a model id in more than one FAMILIES entry, so its override is "
             f"bound to an arbitrary ladder: {', '.join(shared)}")
     for fam, f in sorted(families.items()):
-        mdl = FAMILY_MODEL.get(fam)
-        if not mdl:
-            bad(f"FAMILIES entry {fam!r} is not in FAMILY_MODEL — extend the map "
-                "(the family->model binding stays hand-kept until phase 2)")
+        mdls = FAMILY_MODELS.get(fam)
+        if not mdls:
+            bad(f"FAMILIES entry {fam!r} is not in FAMILY_MODELS — extend the map "
+                "(the family->models binding stays hand-kept until phase 2)")
             continue
-        if f["ladder"] != model_levels(mdl)[0]:
-            bad(f"FAMILIES {fam}: ladder {f['ladder']} != model {mdl}'s levels "
-                f"{model_levels(mdl)[0]} — drifted from the profiles (#1951)")
+        for mdl in mdls:
+            if f["ladder"] != model_levels(mdl)[0]:
+                bad(f"FAMILIES {fam}: ladder {f['ladder']} != model {mdl}'s levels "
+                    f"{model_levels(mdl)[0]} — drifted from the profiles (#1951)")
         if not f["ids"]:
             bad(f"FAMILIES {fam}: no ids parsed — check the {fam.upper()}_IDS "
                 "constant name in fam_re/ids_const")
@@ -499,6 +548,16 @@ else:
             elif list(t["efforts"]) != f["ladder"]:
                 bad(f"models.yml {mid} (family {fam}): ladder {t['efforts']} != "
                     f"family ladder {f['ladder']}")
+    # The inverse (r7): a probed ladder no family covers renders nowhere on the
+    # omp surface, and every check above still passes. Every catalog model with
+    # a ladder must be listed in some family's models.
+    covered = {m for ms in FAMILY_MODELS.values() for m in ms}
+    for model_dir in sorted(os.listdir("models")):
+        levels, _status = model_levels(model_dir)
+        if levels and model_dir not in covered:
+            bad(f"{model_dir}: probed ladder {levels} but no FAMILIES family covers "
+                f"it — the omp surface never renders its ladder; add it to a "
+                f"family's models list (the family serving its omp ids)")
     for mid, o in ovr.items():
         t = (o.get("thinking") or {})
         ladder, dflt = list(t.get("efforts") or []), t.get("defaultLevel")
