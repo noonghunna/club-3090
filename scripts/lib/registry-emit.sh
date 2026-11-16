@@ -695,6 +695,30 @@ def _compose_effort_default(compose_path: str):
         if m:
             return m.group(1)
     return None
+_THINKING_BUDGET_RX = _re.compile(
+    r'CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET:\s*(?:"?\$\{THINKING_TOKEN_BUDGET:-(\d+)\}"?|(\d+)\s*)')
+
+
+def _compose_thinking_budget(compose_path: str):
+    """The compose's declared server-side DEFAULT thinking budget — the
+    bucko-default-thinking-budget patch's knob, `CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET:
+    "${THINKING_TOKEN_BUDGET:-16384}"`: the budget a request without an explicit
+    thinking_token_budget gets. The /v1/messages probe's retry cannot cover a
+    budget bigger than its own 512, so the render hands this to the probe: a
+    thinking-only envelope on a route whose knob exceeds the retry is a budget
+    artifact and proof of native serving, never a translated route (#2055
+    review it5-3). None when the compose declares no knob."""
+    try:
+        txt = (root / compose_path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in txt.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        m = _THINKING_BUDGET_RX.search(line.split("#", 1)[0])
+        if m:
+            return int(m.group(1) or m.group(2))
+    return None
 
 
 def _effort_facts(model_id: str, engine_id: str, compose_path: str):
@@ -725,6 +749,7 @@ def _effort_facts(model_id: str, engine_id: str, compose_path: str):
         "maps": dict(pair["maps"]) if pair.get("maps") else None,
         "refuses": list(pair["refuses"]) if pair.get("refuses") else None,
         "compose_default": _compose_effort_default(compose_path),
+        "default_thinking_budget": _compose_thinking_budget(compose_path),
     }
 
 

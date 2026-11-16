@@ -860,6 +860,11 @@ def _effort_pair_facts(value: Any, path: Path, where: str) -> dict[str, Any]:
             f"{path}: {where} allows only {sorted(ENGINE_EFFORT_PAIR_ENTRY_KEYS)}, got {key!r}")
     if not value:
         raise ProfileError(f"{path}: {where} is empty — drop it or record a fact")
+    if value.keys() == {"evidence"}:
+        raise ProfileError(
+            f"{path}: {where} carries only `evidence:` — record at least one fact "
+            f"(default_when_unset, maps, refuses, supports_none, off_switch); a "
+            f"citation alone is a typo trap, not a fact (#2055 review it5-2)")
     for key in ENGINE_EFFORT_PAIR_ENTRY_KEYS:
         if key in value and value[key] is None:
             raise ProfileError(

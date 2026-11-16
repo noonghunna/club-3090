@@ -130,6 +130,10 @@ for model_dir in sorted(os.listdir(mdir)):
                 # model whose only mention is prose (#1951 review r6).
                 text = "\n".join(l.split("#", 1)[0] for l in text.splitlines()
                                  if not l.lstrip().startswith("#"))
+            elif fn.endswith(".jinja"):
+                # Same rule for Jinja comments: {# ... #} is prose, not code
+                # (#2055 review it5-6).
+                text = re.sub(r"\{#.*?#\}", " ", text, flags=re.S)
             if "REASONING_EFFORT" in text or "reasoning_effort" in text:
                 effort_aware.setdefault(model_dir, f"effort knob/template under {dirpath}")
 for model_id, reason in sorted(effort_aware.items()):
@@ -186,6 +190,14 @@ var_ref_re = re.compile(
 MAX_DEFAULT_MODELS = {"glm-5.3-flash"}
 n0 = len(failures)
 checked = 0
+# The composes the emit can read: the walk covers everything under a compose/
+# directory; the registry's own compose_paths cover the rest — a relocated
+# compose or an entry outside a compose/ dir escapes the walk but still
+# reaches _compose_effort_default (#2055 review it5-4). mdir is CWD-relative
+# ("models"), the same shape as a registry compose_path, so seen_scan dedups
+# the overlap by plain string equality.
+scan = []                     # (path, text, levels, model_id)
+seen_scan = set()
 for model_dir in sorted(os.listdir(mdir)):
     levels, status = model_levels(model_dir)
     if not levels:
@@ -201,28 +213,47 @@ for model_dir in sorted(os.listdir(mdir)):
             # A commented-out default is not a default — full-line OR inline.
             text = "\n".join(l.split("#", 1)[0] for l in text.splitlines()
                              if not l.lstrip().startswith("#"))
-            for dflt in sorted(set(default_re.findall(text))):
-                checked += 1
-                if dflt not in levels:
-                    bad(f"{path}: REASONING_EFFORT default {dflt!r} is not one "
-                        f"of {model_dir}'s levels {levels}")
-                if dflt == "max" and model_dir not in MAX_DEFAULT_MODELS:
-                    bad(f"{path}: REASONING_EFFORT:-max default for {model_dir} — "
-                        "litellm's default_reasoning_effort Literal excludes max, "
-                        "so the render must OMIT it, never downgrade; add the model "
-                        "to MAX_DEFAULT_MODELS only after re-verifying that rule")
-            for line in text.splitlines():
-                if not knob_name_re.search(line):
-                    continue
-                if (default_re.search(line) or bare_knob_re.match(line.strip())
-                        or var_ref_re.search(line)):
-                    continue
-                bad(f"{path}: unparseable REASONING_EFFORT line — a form the "
-                    f"emit's _compose_effort_default does not read, so the pair "
-                    f"default would fill it: {line.strip()[:120]}")
+            scan.append((path, text, levels, model_dir))
+            seen_scan.add(path)
+for tag, e in sorted(entries.items()):
+    cp, mid = e.get("compose_path"), e.get("model")
+    if not cp or not mid or "_archive" in cp or cp in seen_scan:
+        continue
+    levels, _status = model_levels(mid)
+    if not levels:
+        continue
+    try:
+        text = io.open(cp, encoding="utf-8", errors="replace").read()
+    except OSError:
+        continue
+    text = "\n".join(l.split("#", 1)[0] for l in text.splitlines()
+                     if not l.lstrip().startswith("#"))
+    scan.append((cp, text, levels, mid))
+    seen_scan.add(cp)
+for path, text, levels, mid in scan:
+    for dflt in sorted(set(default_re.findall(text))):
+        checked += 1
+        if dflt not in levels:
+            bad(f"{path}: REASONING_EFFORT default {dflt!r} is not one "
+                f"of {mid}'s levels {levels}")
+        if dflt == "max" and mid not in MAX_DEFAULT_MODELS:
+            bad(f"{path}: REASONING_EFFORT:-max default for {mid} — "
+                "litellm's default_reasoning_effort Literal excludes max, "
+                "so the render must OMIT it, never downgrade; add the model "
+                "to MAX_DEFAULT_MODELS only after re-verifying that rule")
+    for line in text.splitlines():
+        if not knob_name_re.search(line):
+            continue
+        if (default_re.search(line) or bare_knob_re.match(line.strip())
+                or var_ref_re.search(line)):
+            continue
+        bad(f"{path}: unparseable REASONING_EFFORT line — a form the "
+            f"emit's _compose_effort_default does not read, so the pair "
+            f"default would fill it: {line.strip()[:120]}")
 if len(failures) == n0:
     print(f"  ✓ {checked} compose REASONING_EFFORT defaults all inside their "
-          "model's ladder (max ratcheted to GLM-5.3-Flash)")
+          "model's ladder, registry compose_paths included (max ratcheted to "
+          "GLM-5.3-Flash)")
 
 # ---- 4. every declared rung is litellm vocabulary ---------------------------
 n0 = len(failures)
@@ -304,6 +335,7 @@ pairs = {(e.get("model"), e.get("engine")) for e in entries.values()
          if e.get("model") and e.get("engine")}
 n0 = len(failures)
 fold_checked = 0
+fold_facts = 0
 for engine_id, eng in sorted(profiles.engines.items()):
     for model_id, facts in sorted(((eng.effort or {}).get("by_model") or {}).items()):
         if model_id not in profiles.models:
@@ -347,6 +379,12 @@ for engine_id, eng in sorted(profiles.engines.items()):
             bad(f"{engine_id}: by_model.{model_id} maps {maps} fold outside "
                 f"effort_budget.py ALIASES {eb_aliases} for a budget_map model")
         fold_checked += 1
+        # The floor counts FACTS, not entries: ten evidence-only shells (or
+        # none-claims whose fold facts were stripped) must not hold it
+        # (#2055 review it5-2).
+        fold_facts += ((1 if facts.get("default_when_unset") else 0)
+                       + len(facts.get("maps") or {})
+                       + len(facts.get("refuses") or []))
 # off_switch round-trip: the LOADED value must be the STRING "none". YAML 1.1
 # nulls only an empty value, `null` and `~` — never the word `none` (measured
 # on this rig 2026-11-15: `off_switch: none` loads as 'none'), so what this pins
@@ -360,16 +398,19 @@ for eid in ("qengine", "sglang-stable", "vllm-stable", "strata", "strata-maya"):
             '(off_switch: "none") or drop the key')
 # A wholesale deletion of the pair facts would pass everything above: the loader
 # negatives need no data, and an empty by_model is legal on an engine that has no
-# pair facts yet. Pin the floor — 10 pair facts across 6 engines today; bump on
-# purpose when the catalogue legitimately changes (#1951 review r6).
-PAIR_FACT_FLOOR = 10
-if fold_checked < PAIR_FACT_FLOOR:
-    bad(f"only {fold_checked} pair fold facts loaded, floor is {PAIR_FACT_FLOOR} — "
-        f"bump the floor on purpose if the catalogue legitimately changed")
+# pair facts yet. The floor counts FACTS, not entries — an evidence-only shell
+# (now refused by the loader) or a stripped none-claim must not hold it (#2055
+# review it5-2). 35 fold facts across 10 pair entries today; bump on purpose
+# when the catalogue legitimately changes (#1951 review r6).
+PAIR_FACT_FLOOR = 35
+if fold_facts < PAIR_FACT_FLOOR:
+    bad(f"only {fold_facts} pair fold facts loaded across {fold_checked} entries, "
+        f"floor is {PAIR_FACT_FLOOR} — bump the floor on purpose if the catalogue "
+        f"legitimately changed")
 if len(failures) == n0:
-    print(f"  ✓ {fold_checked} pair fold facts land on accepted rungs (floor "
-          f"{PAIR_FACT_FLOOR} pinned); refusals stay on the ladder and off "
-          "fold sources; off_switch round-trips as 'none'")
+    print(f"  ✓ {fold_facts} pair fold facts across {fold_checked} entries land "
+          f"on accepted rungs (floor {PAIR_FACT_FLOOR} pinned); refusals stay on "
+          "the ladder and off fold sources; off_switch round-trips as 'none'")
 
 # ---- 5c. ONE PORT, ONE MODEL ------------------------------------------------
 # A port hosting two models advertises one model's facts for both: port_facts
@@ -377,18 +418,25 @@ if len(failures) == n0:
 # thinking model would advertise supports_reasoning false for a thinker, and
 # two ladders on one port advertise nothing at all. The render already refuses
 # to name such a port (booting-<port>); the catalogue must not create one
-# (#1951 review r6).
+# (#1951 review r6). The registry entry's field is default_port — reading
+# `port` made this check vacuous (it saw no ports at all while :8030/:8031
+# hosted two models each behind deprecated+experimental pairings; measured
+# 2026-11-16, #2055 review it5-5 follow-up). Deprecated slugs are excluded:
+# they are historical, need --force to boot, and the render's placeholder
+# rule already covers their co-existence with a live slug.
 n0 = len(failures)
 port_models: "dict[int, set]" = {}
 for e in entries.values():
-    if e.get("port") and e.get("model"):
-        port_models.setdefault(e["port"], set()).add(e["model"])
+    port = e.get("port") or e.get("default_port")
+    if port and e.get("model") and e.get("status") != "deprecated":
+        port_models.setdefault(int(port), set()).add(e["model"])
 for port, models in sorted(port_models.items()):
     if len(models) > 1:
-        bad(f"port {port} hosts {len(models)} models ({sorted(models)}) — split "
-            f"the ports: the render advertises one model's effort facts for both")
+        bad(f"port {port} hosts {len(models)} live models ({sorted(models)}) — "
+            f"split the ports: the render advertises one model's effort facts "
+            f"for both")
 if len(failures) == n0:
-    print("  ✓ every registry port serves exactly one model")
+    print("  ✓ every registry port serves exactly one live model")
 # ---- 5d. supports_none: true is a per-pair claim -----------------------------
 # An engine-level `supports_none: true` says the engine maps `none` to
 # enable_thinking=false before the template runs; whether THIS model's template
@@ -471,6 +519,8 @@ expect_refusal({"evidence": "x",
 expect_refusal({"evidence": "x",
                 "by_model": {"m": {"default_when_unset": "xhigh"}}},
                "evidence is REQUIRED", "pair entry with no own evidence")
+expect_refusal({"evidence": "x", "by_model": {"m": {"evidence": "citation only"}}},
+               "record at least one fact", "evidence-only pair entry inside by_model")
 try:
     _engine_effort({"off_switch": "none", "supports_none": True,
                     "by_model": {"m": {"default_when_unset": "xhigh",
@@ -492,7 +542,7 @@ try:
 except ProfileError as exc:
     bad(f"a pair's own none measurement was refused: {exc}")
 if len(failures) == n0:
-    print("  ✓ engine-level fold facts refused (13 shapes), pair-scoped block "
+    print("  ✓ engine-level fold facts refused (14 shapes), pair-scoped block "
           "and its none-override load")
 
 # ---- 6. omp-setup FAMILIES agree with the profiles ---------------------------

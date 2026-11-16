@@ -328,9 +328,9 @@ render "8198=flash-live@262144,8119=glm-live@262144,8094=mimo-live@8192,8084=ink
 # MiniMax and three DeepSeek slugs on the SAME engine (strata-maya) would have
 # been defaulted GLM's way once they got a ladder.
 render "8198=flash-live@262144,8119=glm-live@262144,8094=mimo-live@8192,8084=inkling-live@262144,8018=strata-live@262144"
-[[ "$(route_field strata-live model_info.default_reasoning_effort)" == "xhigh" ]] \
-  && ok "with no compose knob, the pair's own default is what gets advertised" \
-  || bad "pair default: '$(route_field strata-live model_info.default_reasoning_effort)'"
+[[ -z "$(route_field strata-live model_info.default_reasoning_effort)" ]] \
+  && ok "a refused default is omitted, never downgraded — the unset default stays xhigh but the advertise cannot name a rung the server 400s (#2055 review it5-1)" \
+  || bad "strata default: '$(route_field strata-live model_info.default_reasoning_effort)'"
 # The nameable set (#2055 review it4-1): the refused rung (xhigh — the server
 # 400s it as a request name) is dropped from the advertise and the fold source
 # (high) is listed instead; the raw ladder would advertise a rung the server
@@ -382,6 +382,16 @@ if "default_reasoning_effort: xhigh" not in "\n".join(m.model_info(262144, {"eff
 max_only = m.port_facts([pair_m]).get(2, {}).get("effort")
 if "default_reasoning_effort" in "\n".join(m.model_info(262144, {"effort": max_only})):
     print("  FAIL — a max pair default was advertised instead of omitted", file=sys.stderr); sys.exit(1)
+refd = {"levels": ["low", "medium", "xhigh"], "refuses": ["xhigh"],
+        "default_when_unset": "xhigh"}
+if "default_reasoning_effort" in "\n".join(m.model_info(262144, {"effort": refd})):
+    print("  FAIL — a refused pair default was advertised instead of omitted",
+          file=sys.stderr); sys.exit(1)
+folded = {"levels": ["low", "medium", "xhigh"], "refuses": ["xhigh"],
+          "maps": {"high": "xhigh"}, "default_when_unset": "high"}
+if "default_reasoning_effort: high" not in "\n".join(m.model_info(262144, {"effort": folded})):
+    print("  FAIL — a fold-source default was omitted instead of advertised",
+          file=sys.stderr); sys.exit(1)
 # One compose sets the knob, the sibling's does not: the pair default must NOT
 # fill the port — the route could boot either compose, and the slug whose
 # compose sets low would be lied to (#1951 review r6).
@@ -395,9 +405,30 @@ if got.get("default_when_unset") or got.get("compose_default"):
 if not m.port_facts([bare]).get(3, {}).get("effort", {}).get("default_when_unset"):
     print("  FAIL — a bare compose lost the pair default that should fill it",
           file=sys.stderr); sys.exit(1)
+# Refusal is a negative fact: on a port that can boot either engine, a rung
+# ANY row refuses is not safely nameable — union, never agree-or-drop
+# (#2055 review it5-5). The fold table intersects per source, minus the
+# refused names.
+strata_row = {"port": 9, "effort": {"levels": ["low", "medium", "xhigh"],
+                                    "refuses": ["xhigh"], "maps": {"high": "xhigh"}}}
+vllm_row = {"port": 9, "effort": {"levels": ["low", "medium", "xhigh"],
+                                  "maps": {"high": "xhigh", "minimal": "low"}}}
+got = (m.port_facts([strata_row, vllm_row]).get(9, {}).get("effort") or {})
+if got.get("refuses") != ["xhigh"] or got.get("maps") != {"high": "xhigh"}:
+    print(f"  FAIL — a strata+vllm port over-advertised: {got}",
+          file=sys.stderr); sys.exit(1)
+if "[low, medium, high]" not in "\n".join(m.model_info(262144, {"effort": got})):
+    print("  FAIL — the consolidated port did not advertise the intersection",
+          file=sys.stderr); sys.exit(1)
+no_map = {"port": 9, "effort": {"levels": ["low", "medium", "xhigh"]}}
+got2 = (m.port_facts([strata_row, no_map]).get(9, {}).get("effort") or {})
+if got2.get("maps") or got2.get("refuses") != ["xhigh"]:
+    print(f"  FAIL — a row with no fold table must drop every fold source: {got2}",
+          file=sys.stderr); sys.exit(1)
 print("  ok   — disagreeing ladders or pair defaults advertise nothing; agreeing ones "
-      "still do, and a pair default fills an advertise with no compose knob anywhere "
-      "on the port")
+      "still do, a pair default fills an advertise with no compose knob anywhere "
+      "on the port, a refused rung unions across rows, and the fold table "
+      "intersects per source")
 PY
 
 # --- 15: Claude Code's /v1/messages goes to the engine's own endpoint, where it holds up
@@ -443,7 +474,7 @@ passthru="$(route_field sgl-live model_info.supports_reasoning)"
 # cost QEngine its whole reply and Strata its thinking, and Strata reports no
 # owned_by at all. Positives and negatives on every leg, so a probe that always
 # says yes or always no both fail.
-python3 - "$ROOT/scripts/lib" <<'PY2' && ok "probe: serves-itself + in-place → passthrough, owned_by or not; moved, empty content, no endpoint, rewritten front → translated" || bad "probe decision wrong (see above)"
+python3 - "$ROOT/scripts/lib" <<'PY2' && ok "probe: serves-itself + in-place → passthrough, owned_by or not; moved, empty content, no endpoint, rewritten front → translated; a declared thinking budget past the retry → the thinking-only envelope is native" || bad "probe decision wrong (see above)"
 import http.server, json, sys, threading
 sys.path.insert(0, sys.argv[1])
 import litellm_sync
@@ -507,27 +538,28 @@ def stub(owned_by, inline_system, serves="real", cache=None):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
-cases = [  # (owned_by, count_tokens, serves, cache, want)
-    ("sglang", "in-place", "real", None, True),
-    ("vllm", "in-place", "real", None, True),
-    ("vllm", "moved", "real", None, False),
-    ("", "in-place", "real", None, True),          # Strata: no owned_by, still passthrough
-    ("", "absent", "real", (1562, 1561), True),    # Maya: no count_tokens, cache says in place
-    ("", "absent", "real", (1562, 3), False),      # Maya-shaped but the front was rewritten
-    ("", "in-place", "budget", None, True),        # thinking ate 8 tokens; retry finds text
-    ("", "in-place", "think", None, False),        # no text at any budget: translated
-    ("vllm", "in-place", "empty", None, False),    # answers, but with no content
-    ("llamacpp", "in-place", "absent", None, False),
+cases = [  # (owned_by, count_tokens, serves, cache, want, declared_budget)
+    ("sglang", "in-place", "real", None, True, 0),
+    ("vllm", "in-place", "real", None, True, 0),
+    ("vllm", "moved", "real", None, False, 0),
+    ("", "in-place", "real", None, True, 0),          # Strata: no owned_by, still passthrough
+    ("", "absent", "real", (1562, 1561), True, 0),    # Maya: no count_tokens, cache says in place
+    ("", "absent", "real", (1562, 3), False, 0),      # Maya-shaped but the front was rewritten
+    ("", "in-place", "budget", None, True, 0),        # thinking ate 8 tokens; retry finds text
+    ("", "in-place", "think", None, False, 0),        # no knob, no text at any budget: translated
+    ("", "in-place", "think", None, True, 16384),     # the knob declares 16,384 past the retry's 512: a budget artifact, native (#2055 review it5-3)
+    ("vllm", "in-place", "empty", None, False, 0),    # answers, but with no content
+    ("llamacpp", "in-place", "absent", None, False, 0),
 ]
 bad = 0
-for owned_by, behaviour, serves, cache, want in cases:
+for owned_by, behaviour, serves, cache, want, budget in cases:
     srv = stub(owned_by, behaviour, serves, cache)
-    got = litellm_sync.probe(srv.server_address[1])
+    got = litellm_sync.probe(srv.server_address[1], budget)
     srv.shutdown()
     flag = got[0][3] if got else None
     if flag is not want:
-        print(f"    owned_by={owned_by!r} count_tokens={behaviour} serves={serves} cache={cache}: "
-              f"passthrough={flag}, want {want}", file=sys.stderr)
+        print(f"    owned_by={owned_by!r} count_tokens={behaviour} serves={serves} cache={cache} "
+              f"declared_budget={budget}: passthrough={flag}, want {want}", file=sys.stderr)
         bad = 1
 sys.exit(bad)
 PY2

@@ -495,6 +495,10 @@ def _model_dir_knob(root_str: str, stamp: tuple, model_id: str) -> bool:
             if fn.endswith((".yml", ".py")):
                 text = "\n".join(l.split("#", 1)[0] for l in text.splitlines()
                                  if not l.lstrip().startswith("#"))
+            elif fn.endswith(".jinja"):
+                # Same rule as the guard's check 1: a Jinja comment is prose,
+                # not a knob (#2055 review it5-6).
+                text = re.sub(r"\{#.*?#\}", " ", text, flags=re.S)
             if "REASONING_EFFORT" in text or "reasoning_effort" in text:
                 return True
     return False
