@@ -92,7 +92,11 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 "DS4_FLOW_COPY_DMA",
                 # ... and these: a GGUF tensor-parallel group's uneven split and its shares by hand
                 # (src/ds4/ds4_model.cu, v1.1.61; #2042)
-                "MAYA_DS4_TP_GGUF_UNEVEN", "DS4_TP_SHARES"}
+                "MAYA_DS4_TP_GGUF_UNEVEN", "DS4_TP_SHARES",
+                # ... and these, each found in the v1.1.65 image (build/maya-ds4; the last two in
+                # serve/ too): the PCIe lane rule (#956), the TP prompt flow, TP groups of 3, kept conversations
+                "DS4_STREAM_TIE", "DS4_FLOW_TP", "DS4_TP_UNEVEN_HEADS", "MAYA_DS4_SLOT_KEEP",
+                "MAYA_DS4_KEEP_THINKING"}
 
 # DEBT REGISTER — each entry must name WHY the dead knob is deliberate.
 # Shrink it; never grow it silently. An entry here means a documented knob is
