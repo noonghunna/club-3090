@@ -667,11 +667,18 @@ def _compose_served_name(compose_path: str):
 
 # The compose's REASONING_EFFORT default (#1951 phase 2): the serving choice the
 # engine applies when a request names no effort — the third of the three #1951
-# layers (MODEL ladder, ENGINE handling, COMPOSE default). Same shape the guard
-# test pins (test-effort-profiles.sh check 3): `${REASONING_EFFORT:-low}`, quoted
-# or bare, comment lines and inline comments ignored. None when the compose sets
-# no default — unknown, which the render must render as nothing.
-_EFFORT_DEFAULT_RX = _re.compile(r'REASONING_EFFORT["\']?:-["\']?([a-z]+)')
+# layers (MODEL ladder, ENGINE handling, COMPOSE default). Three forms a compose
+# can set it in: the env-default (`:-`), the YAML mapping (`REASONING_EFFORT:
+# low`), and the equals list form (`= low`). The lookbehind/lookahead keep a
+# LONGER variable (QE_REASONING_EFFORT, LLAMA_ARG_REASONING_EFFORT_ALLOW) from
+# being mistaken for the knob; the bare form (no value — the strata-maya
+# composes hand the knob to the launcher) is not a default, because the
+# launcher's default is what the pair fact records. Same shape the guard pins
+# (test-effort-profiles.sh check 3); comment lines and inline comments ignored.
+# None when the compose sets no default — unknown, which the render must render
+# as nothing.
+_EFFORT_DEFAULT_RX = _re.compile(
+    r'(?<![A-Za-z_])REASONING_EFFORT(?:["\']?:-["\']?|["\']?:\s*["\']?|=)["\']?([a-z]+)')
 
 
 def _compose_effort_default(compose_path: str):

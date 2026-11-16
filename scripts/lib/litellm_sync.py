@@ -275,11 +275,25 @@ def serves_anthropic(port: int, model: str, key: str = "") -> bool:
     A tiny generation is the only honest test. The empty-body 400-vs-404 trick
     serves_responses uses cannot tell a working endpoint from one that answers
     with empty content, and empty content is exactly the failure this avoids.
-    8 tokens, once per live port per render."""
-    body = anthropic_call(port, model,
-                          [{"role": "user", "content": "Reply with the single word OK."}], key)
+    8 tokens, once per live port per render. A thinking engine can spend that
+    whole budget inside its thinking block and answer with no text at all — a
+    budget artifact, not a dead endpoint — so an envelope without a text block
+    gets ONE retry at a real budget before the route is called translated
+    (#1951 review r6); an endpoint that still returns no text is one Claude
+    Code cannot use."""
+    probe = anthropic_call(
+        port, model, [{"role": "user", "content": "Reply with the single word OK."}], key)
+    if not (isinstance(probe, dict) and probe.get("type") == "message"):
+        return False
+    if (isinstance(probe.get("content"), list)
+            and any(b.get("type") == "text" and b.get("text") for b in probe["content"])):
+        return True
+    body = anthropic_call(
+        port, model, [{"role": "user", "content": "Reply with the single word OK."}],
+        key, max_tokens=512, timeout=90)
     return (isinstance(body, dict) and body.get("type") == "message"
-            and isinstance(body.get("content"), list) and bool(body["content"]))
+            and isinstance(body.get("content"), list)
+            and any(b.get("type") == "text" and b.get("text") for b in body["content"]))
 
 
 def serves_messages(port: int, model: str, key: str = "") -> bool:
@@ -492,6 +506,14 @@ def _port_effort(rows: list[dict]) -> "dict | None":
                     other = {json.dumps(b.get(k)) for b in blocks}
                     if len(other) == 1 and blocks[0].get(k) is not None:
                         out[k] = blocks[0][k]
+                # The pair default fills ONLY a port where no compose sets the
+                # knob. One slug's compose setting low beside a sibling's that
+                # leaves it unset is a disagreement about the DEFAULT itself:
+                # the route could boot either compose, and advertising the pair
+                # default would lie to the slug whose compose sets low (#1951
+                # review r6). Drop it and advertise nothing.
+                if any(b.get("compose_default") for b in blocks):
+                    out.pop("default_when_unset", None)
             return out
     return None
 

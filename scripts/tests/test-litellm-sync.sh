@@ -375,8 +375,22 @@ if "default_reasoning_effort: xhigh" not in "\n".join(m.model_info(262144, {"eff
 max_only = m.port_facts([pair_m]).get(2, {}).get("effort")
 if "default_reasoning_effort" in "\n".join(m.model_info(262144, {"effort": max_only})):
     print("  FAIL — a max pair default was advertised instead of omitted", file=sys.stderr); sys.exit(1)
+# One compose sets the knob, the sibling's does not: the pair default must NOT
+# fill the port — the route could boot either compose, and the slug whose
+# compose sets low would be lied to (#1951 review r6).
+mixed = {"port": 3, "effort": {"levels": ["low", "xhigh"], "compose_default": "low",
+                               "default_when_unset": "xhigh"}}
+bare = {"port": 3, "effort": {"levels": ["low", "xhigh"], "default_when_unset": "xhigh"}}
+got = (m.port_facts([mixed, bare]).get(3, {}).get("effort") or {})
+if got.get("default_when_unset") or got.get("compose_default"):
+    print(f"  FAIL — a compose knob beside a bare sibling let the pair default "
+          f"fill the port: {got}", file=sys.stderr); sys.exit(1)
+if not m.port_facts([bare]).get(3, {}).get("effort", {}).get("default_when_unset"):
+    print("  FAIL — a bare compose lost the pair default that should fill it",
+          file=sys.stderr); sys.exit(1)
 print("  ok   — disagreeing ladders or pair defaults advertise nothing; agreeing ones "
-      "still do, and a pair default fills an advertise with no compose knob")
+      "still do, and a pair default fills an advertise with no compose knob anywhere "
+      "on the port")
 PY
 
 # --- 15: Claude Code's /v1/messages goes to the engine's own endpoint, where it holds up
@@ -454,6 +468,15 @@ def stub(owned_by, inline_system, serves="real", cache=None):
                     return self._send(404, {"error": "stub"})
                 if serves == "empty":
                     return self._send(200, {"type": "message", "role": "assistant", "content": []})
+                if serves == "think":
+                    # no text at ANY budget: an endpoint Claude Code cannot use
+                    return self._send(200, {"type": "message", "role": "assistant",
+                                            "content": [{"type": "thinking", "thinking": "hmm"}]})
+                if serves == "budget" and body.get("max_tokens", 8) <= 8:
+                    # the 8-token probe: thinking ate the whole budget; the
+                    # retry at a real budget must find the text
+                    return self._send(200, {"type": "message", "role": "assistant",
+                                            "content": [{"type": "thinking", "thinking": "hmm"}]})
                 if cache and len(body.get("messages", [])) > 2:
                     # the follow-up: the cache answers the placement question
                     front, cached = cache
@@ -484,6 +507,8 @@ cases = [  # (owned_by, count_tokens, serves, cache, want)
     ("", "in-place", "real", None, True),          # Strata: no owned_by, still passthrough
     ("", "absent", "real", (1562, 1561), True),    # Maya: no count_tokens, cache says in place
     ("", "absent", "real", (1562, 3), False),      # Maya-shaped but the front was rewritten
+    ("", "in-place", "budget", None, True),        # thinking ate 8 tokens; retry finds text
+    ("", "in-place", "think", None, False),        # no text at any budget: translated
     ("vllm", "in-place", "empty", None, False),    # answers, but with no content
     ("llamacpp", "in-place", "absent", None, False),
 ]
@@ -499,6 +524,24 @@ for owned_by, behaviour, serves, cache, want in cases:
         bad = 1
 sys.exit(bad)
 PY2
+
+# --- 16b: the emit's default regex and the guard's are ONE shape ---------------
+# Two copies of the REASONING_EFFORT default regex exist (registry-emit.sh reads
+# the compose for the advertise; test-effort-profiles.sh check 3 pins every
+# compose against the same shape). They must stay identical: a form one reads
+# and the other does not is a default the advertise and the guard disagree on.
+python3 - <<'PY' && ok "the emit's REASONING_EFFORT default regex is byte-identical to the guard's" || bad "the two default regexes drifted (see above)"
+import re
+RAW = r"r'((?:[^'\\]|\\.)*)'"          # a raw string literal, escapes included
+def pattern(path, marker):
+    src = open(path, encoding="utf-8").read()
+    m = re.search(marker + r"[^\n]*\n[ \t]+" + RAW, src)
+    return m.group(1) if m else None
+emit = pattern("scripts/lib/registry-emit.sh", r"_EFFORT_DEFAULT_RX = _re\.compile\(")
+guard = pattern("scripts/tests/test-effort-profiles.sh", r"default_re = re\.compile\(")
+assert emit and guard, f"could not extract a pattern: emit={emit!r} guard={guard!r}"
+assert emit == guard, f"drift:\n  emit  = {emit!r}\n  guard = {guard!r}"
+PY
 
 # --- 17: an engine without /v1/responses gets the chat-completions bridge (#1520)
 # omp talks Responses to every route and LiteLLM turns Claude Code's /v1/messages
