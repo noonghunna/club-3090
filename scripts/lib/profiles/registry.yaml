@@ -6882,6 +6882,38 @@ entries:
     gateway: false
     serve_aliases: []
     category: frontier
+  strata-maya/glm53-flash-multi4-maya-s24:
+    origin: core
+    model: glm-5.3-flash
+    weights_variant: maya-s24
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: null
+    spec_method: mtp
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 68
+    kv_offload: null
+    chat_template: native
+    tp: 4
+    max_ctx: 131072
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/strata-maya/compose/multi4/maya-s24/base.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8206
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "MEASURED 2026-11-16 on a community rig (4x RTX 5080 16 GB, PCIe Gen5 x8 through a PEX89048 switch, 125.2 GiB host, 252/250/250/250 W caps; bench.sh canonical on its own boot, CONTEXT 131072, four cards, Maya layer split): 90.58 / 93.24 decode, 1,987 PP, 2,210 prefill @10K / 2,528 @90K; verify-stress ceiling ladder 2/2 (fillable to 120,360 tok, 91% of 131072), boundary checks 5/5; soak-continuous PASS (0/50 silent-empty, 0 MiB growth, p50 82.85 tok/s); 8-pack thinking OFF 108/150 (72%) pass@1, 121/150 (81%) pass@3. It is the fastest GLM Maya edition measured on four cards: 6,407 expert slots on the CPU lane against maya-s v2's 6,653 at the same cell, because the Q4_K attention leaves more room in VRAM and fewer experts are read from RAM — that is the +15% decode over maya-s v2 (78.24 / 80.30), at level quality (maya-s v2 read 108/150 and 115/150 on two runs; the quality cells on the previous image digest read 112/150 here, inside this instrument's run-to-run band). host_ram_gb is the dual slug's measured 68 GB, an upper bound for four cards. Field values: kv_format fp16 is the engine's latent cache as its /metrics reports it (32K positions in VRAM, the rest streamed from pinned RAM); offload 'engine' = a per-layer VRAM expert pool + a pinned RAM tier sized from free memory + the model files, with a CPU lane computing part of each token's RAM-tier experts. One request at a time. Thinking turns off per request (enable_thinking false / effort none). NEVER BOOTED on the reference rig (2 GPUs): multi4 is community-validated by design."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+    category: frontier
   strata-maya/glm53-flash-dual-maya-m:
     origin: core
     model: glm-5.3-flash
