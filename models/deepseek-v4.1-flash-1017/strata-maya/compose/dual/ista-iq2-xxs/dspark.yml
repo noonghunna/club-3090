@@ -12,7 +12,12 @@
 #   Drafter:   DSpark: peasantsmith's dspark-xs2 (Maya-XS's 2-bit drafter, 4.25 GB; draft block 5)
 #   KV:        fp16 latent cache (maya-ds4 has no other)
 #   Vision:    no (the image never fetches DeepSeek's vision tower: --vision off)
-#   Max ctx:   65536
+#   Max ctx:   262144 (Maya's setup recommends 256K for DeepSeek wherever VRAM + RAM hold the model, as here;
+#              with the layer split each card keeps its own layers' caches, so 256K over 64K cost the two pools
+#              21 experts: caches +0.11 / +0.07 GB, the CPU lane +0.1 GB of RAM). MEASURED 2026-11-16 (v1.1.61
+#              image, 230 W caps, its own boot through switch.sh): ready in 60 s, verify-full all ✓,
+#              verify-stress all ✓ with the ceiling ladder fillable to 240,972 tok (91%), prefill 780 tok/s at
+#              that depth
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
 #   Caveats:   Not gate-passing yet: quality unmeasured here (8-pack pending), one request at a time. The FIRST
@@ -70,7 +75,7 @@ services:
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8047}}:8080"
     environment:
-      CONTEXT: "${CONTEXT:-65536}"
+      CONTEXT: "${CONTEXT:-262144}"
       SETUP_ONLY: "${SETUP_ONLY:-0}"
       REPACK: "${REPACK:-0}"
       VERIFY: "${VERIFY:-1}"

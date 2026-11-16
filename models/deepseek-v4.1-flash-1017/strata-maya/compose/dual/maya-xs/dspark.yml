@@ -12,7 +12,10 @@
 #   Drafter:   DSpark: peasantsmith's dspark-xs2 (this quant's own 2-bit drafter, 4.25 GB; draft block 5)
 #   KV:        fp16 latent cache (maya-ds4 has no other)
 #   Vision:    no (the image never fetches DeepSeek's vision tower: --vision off)
-#   Max ctx:   65536
+#   Max ctx:   262144 (Maya's setup recommends 256K for DeepSeek wherever VRAM + RAM hold the model, as here;
+#              on the ISTA sibling, the same engine and KV, 256K over 64K cost the two pools 21 experts and
+#              the host +0.1 GB, inside the 73-85 GB band below. Not booted at 256K here: these weights are
+#              not on the reference rig; the ISTA sibling filled to 240,972 tok, 2026-11-16)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
 #   Caveats:   Not promoted yet: measured on one community rig (#1989), and its v1.1.56 run lost the engine
@@ -102,7 +105,7 @@ services:
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8146}}:8080"
     environment:
-      CONTEXT: "${CONTEXT:-65536}"
+      CONTEXT: "${CONTEXT:-262144}"
       SETUP_ONLY: "${SETUP_ONLY:-0}"
       REPACK: "${REPACK:-0}"
       VERIFY: "${VERIFY:-1}"
