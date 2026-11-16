@@ -59,6 +59,7 @@ or not yet at all. If you have the hardware, your run is the validation:
 |  | `strata-maya/glm53-flash-multi4-maya-l` | 🐣 incubating | 131072 | [multi4/maya-l/base.yml](../models/glm-5.3-flash/strata-maya/compose/multi4/maya-l/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 129 GB |
 |  | `strata-maya/glm53-flash-multi4-maya-m` | 🐣 incubating | 131072 | [multi4/maya-m/base.yml](../models/glm-5.3-flash/strata-maya/compose/multi4/maya-m/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 86 GB |
 |  | `strata-maya/glm53-flash-multi4-maya-s` | 🐣 incubating | 131072 | [multi4/maya-s/base.yml](../models/glm-5.3-flash/strata-maya/compose/multi4/maya-s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 66 GB |
+|  | `strata-maya/glm53-flash-multi4-maya-s24` | 🐣 incubating | 131072 | [multi4/maya-s24/base.yml](../models/glm-5.3-flash/strata-maya/compose/multi4/maya-s24/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 68 GB |
 | **Inkling-Small (263B MoE, Thinking Machines)** | `llamacpp-club3090/inkling-small-multi4-iq4xs-moecache` | 🧪 experimental | 262144 | [multi4/unsloth-ud-iq4xs/moecache.yml](../models/inkling-small/llamacpp-club3090/compose/multi4/unsloth-ud-iq4xs/moecache.yml) | [#959](https://github.com/noonghunna/club-3090/discussions/959) | host RAM ≥ 121 GB |
 | **Nemotron-3 Puzzle 75B-A9B (hybrid Mamba2+attn MoE)** | `vllm/nemotron-75b-multi-mtp` | ⚠️ caveats | 200000 | [multi4/nvfp4/mtp.yml](../models/nemotron-3-puzzle-75b/vllm/compose/multi4/nvfp4/mtp.yml) | [#706](https://github.com/noonghunna/club-3090/discussions/706) | needs sm 9.0+ (not a 3090) |
 | **Qwen 3.6 27B** | `vllm/qwen-27b-multi-fast` | ⚠️ caveats | 262144 | [multi4/autoround-int4/mtp.yml](../models/qwen3.6-27b/vllm/compose/multi4/autoround-int4/mtp.yml) | [#733](https://github.com/noonghunna/club-3090/discussions/733) |  |
@@ -88,7 +89,7 @@ or not yet at all. If you have the hardware, your run is the validation:
 |  | `vllm/thinkingcap38-27b-multi4-ultrafast` | 🧪 experimental | 262144 | [multi4/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/autoround-int4/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 |  | `vllm/thinkingcap38-27b-multi4-ultramax` | 🧪 experimental | 262144 | [multi4/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/fp8/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 
-41 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+42 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table multi4 -->
 
 ### 8 cards

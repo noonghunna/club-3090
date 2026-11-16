@@ -48,12 +48,16 @@
 #     `host_ram_gb` is the NOMINAL figure and must stay <= this.
 #   Best for:  GLM-5.3-Flash on 24 GB cards with lots of host RAM, wanting Maya-S quality with more of the
 #              expert pool resident (S24 = Maya-S with Q4_K attention)
-#   Quality:   dual, 2026-11-11 (contributor rig): ToolCall-15 13/15 · InstructFollow-15 10/15 ·
-#              StructOutput-15 13/15 · DataExtract-15 11/15 · ReasonMath-15 13/15 · BugFind-15 13/15 ·
-#              HermesAgent-20 13/20 · CLI-40 26/40 — 112/150 (75%) pass@1, thinking ON 124/150 (83%).
-#              multi4, 2026-11-16 (4x RTX 5080): 13 / 9 / 13 / 11 / 12 / 13 / 11 / 26 — 108/150 (72%)
-#              pass@1, 121/150 (81%) pass@3 (--full, thinking OFF, sampling=server, validity=valid,
-#              packs tc1.0.1·if2.0.0·so2.1.0·de1.2.0·rm1.1.0·bf1.0.1·hermes1.0.0·cli1.0.2)
+#   Quality:   toolcall-15 13/15 (87%) · instructfollow-15 9/15 (60%) · structoutput-15 13/15 (87%) ·
+#              dataextract-15 11/15 (73%) · reasonmath-15 12/15 (80%) · bugfind-15 13/15 (87%) ·
+#              hermesagent-20 11/20 (55%) · cli-40 26/40 (65%) (--full, thinking OFF, sampling=server,
+#              validity=valid, packs tc1.0.1·if2.0.0·so2.1.0·de1.2.0·rm1.1.0·bf1.0.1·hm1.0.0·cli1.0.2, 2026-11-16)
+#   Quality:   toolcall-15 13/15 (87%) · instructfollow-15 13/15 (87%) · structoutput-15 13/15 (87%) ·
+#              dataextract-15 13/15 (87%) · reasonmath-15 14/15 (93%) · bugfind-15 15/15 (100%) ·
+#              hermesagent-20 13/20 (65%) · cli-40 33/40 (82%) (--full, thinking ON, sampling=server,
+#              validity=valid, packs tc1.0.1·if2.0.0·so2.1.0·de1.2.0·rm1.1.0·bf1.0.1·hm1.0.0·cli1.0.2, 2026-11-16)
+#              Both legs on image sha256:bfb38143…, four RTX 5080 16 GB, 131072, one boot each; 108/150
+#              (72%) pass@1 off and 127/150 (85%) on, 121 / 137 pass@3.
 # ---------------------------------------------------------------------------
 # Project Maya (github.com/mw00/project-maya) is its own engine for this model: see docs/engines/STRATA_MAYA.md.
 # Siblings: ../../single/maya-s/base.yml (single), ../../dual/maya-s24/base.yml (dual); the other quants sit
@@ -75,7 +79,7 @@ services:
     ulimits:
       memlock: -1            # Maya pins (locks) its RAM tier for the GPU
     ports:
-      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8206}}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8207}}:8080"
     environment:
       CONTEXT: "${CONTEXT:-131072}"
       SETUP_ONLY: "${SETUP_ONLY:-0}"
