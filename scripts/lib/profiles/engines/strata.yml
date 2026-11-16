@@ -42,6 +42,7 @@ effort:
       default_when_unset: xhigh
       supports_none: true
       maps: {high: xhigh}
+      refuses: [xhigh]
       evidence: >-
         docs/engines/STRATA.md "Reasoning and sampling defaults": with no
         settings, a request that names no effort runs at the checkpoint
@@ -53,7 +54,12 @@ effort:
         the engine evidence below), so `max` and `xhigh` 400 as request names
         and the fold table records only names the server accepts — the xhigh
         rung is reached via unset (the template default) and via `high` (the
-        fold). The pair's none claim is that same probe: reasoning_effort
+        fold). `refuses` records the one of those the ladder advertises as
+        nameable (xhigh), so the gateway render drops it from
+        reasoning_effort_levels and lists `high` — the fold source — instead;
+        `max`/`minimal` 400 too but are advertised nowhere. The unset default
+        stays xhigh: true unset behaviour, and a client echoing it gets the
+        same 400. The pair's none claim is that same probe: reasoning_effort
         none -> 0 chars of reasoning_content (low -> 214).
   evidence: >-
     Engine-wide (off_switch / supports_none): measured 2026-11-15 on

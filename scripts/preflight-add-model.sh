@@ -143,9 +143,9 @@ echo ""
 EFFORT_ERR="$(mktemp 2>/dev/null)" || EFFORT_ERR="/dev/null"   # no capture file: the rc still surfaces
 EFFORT_LINE="$(python3 - "${ROOT_DIR}" "${SLUG}" <<'PY' 2>"${EFFORT_ERR}"
 import sys
-sys.path.insert(0, sys.argv[1] + "/scripts/lib/profiles")
-from compat import load_profiles
-from compose_registry import get_registry
+sys.path.insert(0, sys.argv[1])
+from scripts.lib.profiles.compat import load_profiles
+from scripts.lib.profiles.compose_registry import get_registry
 entry = get_registry(sys.argv[1]).get(sys.argv[2])
 if not entry:
     print(f"?: slug {sys.argv[2]!r} is not in the registry — run this after "

@@ -160,22 +160,24 @@ if len(failures) == n0:
 
 # ---- 3. COMPOSE DEFAULTS inside the model's ladder --------------------------
 # Three forms a compose can set THE knob in: the env-default (`:-`), the YAML
-# mapping (`REASONING_EFFORT: low`), and the equals list form (`= low`). The
-# lookbehind/lookahead keep a LONGER variable (QE_REASONING_EFFORT,
-# LLAMA_ARG_REASONING_EFFORT_ALLOW) from being mistaken for it — those are
-# other knobs, not defaults for this one.
+# mapping (`REASONING_EFFORT: low`), and the equals list form (`= low`) — plus
+# a variable reference WITH a fallback (`REASONING_EFFORT: ${VAR:-low}`, the
+# normal compose `environment:` form), whose fallback names the compose's own
+# unset-case default. The lookbehind/lookahead keep a LONGER variable
+# (QE_REASONING_EFFORT, LLAMA_ARG_REASONING_EFFORT_ALLOW) from being mistaken
+# for it — those are other knobs, not defaults for this one.
 default_re = re.compile(
-    r'(?<![A-Za-z_])REASONING_EFFORT(?:["\']?:-["\']?|["\']?:\s*["\']?|=)["\']?([a-z]+)')
+    r'(?<![A-Za-z_])REASONING_EFFORT(?:["\']?:-["\']?|["\']?[:=][ \t]*["\']?\$\{[A-Za-z_]+:-|["\']?:\s*["\']?|=)["\']?([a-z]+)')
 # The knob handed to a launcher with no value of its own (the strata-maya
 # composes' bare `REASONING_EFFORT:`, the knob-list lines) is NOT a default —
 # the launcher's default is what the pair fact records. A value that is a
-# VARIABLE reference (REASONING_EFFORT=$from_env) is a hop the launch-time
-# override owns, not a catalogue default. A literal the emit cannot read is
-# what stays flagged.
+# VARIABLE reference is a hop the launch-time override owns, not a catalogue
+# default — UNLESS it carries a fallback, which default_re reads as the
+# compose's own default. A literal the emit cannot read is what stays flagged.
 bare_knob_re = re.compile(r'^[ \t\-]*["\']?REASONING_EFFORT["\']?:?[ \t]*$')
 knob_name_re = re.compile(r'(?<![A-Za-z_])REASONING_EFFORT(?![A-Za-z_])')
 var_ref_re = re.compile(
-    r'(?<![A-Za-z_])REASONING_EFFORT(?![A-Za-z_])["\']?[:=]["\']?\$')
+    r'(?<![A-Za-z_])REASONING_EFFORT(?![A-Za-z_])["\']?[:=][ \t]*["\']?\$')
 # `max` defaults are ratcheted: litellm's default_reasoning_effort Literal
 # (v1.100.3) EXCLUDES max, so phase 2's gateway render must OMIT a max
 # default, never downgrade it. Today only GLM-5.3-Flash legitimately defaults
@@ -227,13 +229,21 @@ n0 = len(failures)
 runks = set()
 for model_id, m in sorted(profiles.models.items()):
     runks |= set((m.effort or {}).get("levels") or [])
+# The PAIR facts are wire vocabulary too (#2055 review it4-2): a pair default
+# is what the route applies when the request names nothing, and a fold's
+# SOURCE is a name the client can actually send — both reach
+# /model_group/info through the render, so both must be litellm Literal
+# members. (The engine-level sweep this replaces was dead: the loader refuses
+# engine-level default_when_unset/maps, so those were always empty.)
 for eid, en in sorted(profiles.engines.items()):
     eff = en.effort or {}
-    if eff.get("default_when_unset"):
-        runks.add(eff["default_when_unset"])
-    runks |= set(eff.get("maps") or {}) | set((eff.get("maps") or {}).values())
-    # unknown_name is engine-internal (the request field an engine maps FROM),
-    # never a wire value — not part of litellm's vocabulary.
+    for model_id, facts in sorted((eff.get("by_model") or {}).items()):
+        if facts.get("default_when_unset"):
+            runks.add(facts["default_when_unset"])
+        runks |= set(facts.get("maps") or {}) | set((facts.get("maps") or {}).values())
+    # unknown_name is the rung an engine applies to names it does NOT
+    # recognise — a wire value in principle, but the emit carries no
+    # unknown_name and the render never advertises it, so it stays out here.
 off_vocab = runks - LITELLM_EFFORTS
 if off_vocab:
     bad(f"effort names outside litellm's REASONING_EFFORT Literal (they would be "
@@ -257,6 +267,27 @@ elif pin_tag != "v1.100.3":
     bad(f"gateway pin moved to {pin_tag} — re-read the REASONING_EFFORT "
         "Literal from the new image (litellm/types/llms/openai.py) and update "
         "LITELLM_EFFORTS before trusting this set")
+# The llama.cpp engines' none/off-switch claims are tied to a build the same
+# way (#2055 review it4-3): the disclosure was measured on v0.7.0 (b11669) and
+# its STALE note accounts for the CURRENT pin. A bump invalidates the note —
+# fail and force the re-measure, exactly like the litellm tag above.
+LLAMA_PIN_BUILDS = {
+    "llama-cpp-local": "b12359",           # lineage.base_version (upstream pin)
+    "llamacpp-club3090-v1.5": "7104d5f4eaf19870d50af015d326957347549ccd",   # fork commit
+    "llamacpp-club3090-v1.6": "d9cc8af98559dbd54c26c18aed59a2e6f834e95d",   # fork commit
+}
+for eid, want in sorted(LLAMA_PIN_BUILDS.items()):
+    eng = profiles.engines.get(eid)
+    lin = (getattr(eng, "lineage", None) or {}) if eng else {}
+    got = lin.get("base_version") or lin.get("source_ref")
+    if got != want:
+        bad(f"{eid}: llama.cpp pin moved (build/commit {got!r} != {want!r}) — "
+            f"the effort disclosure's STALE note no longer names the running "
+            f"binary; re-measure `none`'s rendering and the off-switch kwargs "
+            f"on the new binary and update the disclosure")
+if len(failures) == n0:
+    print(f"  ✓ llama.cpp effort disclosures tied to the current pins "
+          f"(llama-cpp-local b12359, both forks by commit)")
 if len(failures) == n0:
     print(f"  ✓ all {len(runks)} declared effort names are litellm Literal members "
           f"(pin {pin_tag or '?'})")
@@ -300,6 +331,15 @@ for engine_id, eng in sorted(profiles.engines.items()):
             if dst not in levels:
                 bad(f"{model_id} on {engine_id}: fold {src}->{dst} lands outside "
                     f"the model's ladder {levels}")
+        refuses = facts.get("refuses") or []
+        for r in refuses:
+            if r not in levels:
+                bad(f"{model_id} on {engine_id}: refused rung {r!r} is not a "
+                    f"rung of the model's ladder {levels}")
+            if r in maps:
+                bad(f"{model_id} on {engine_id}: refused rung {r!r} is also a "
+                    f"fold source — the pair cannot 400 a name and accept it "
+                    f"via a fold at the same time")
         # Identity folds (src->src) are legal — the engine accepts the name as-is.
         if maps and model_id in budget_models and not all(
                 dst == src or (src, dst) in eb_aliases.items()
@@ -328,7 +368,8 @@ if fold_checked < PAIR_FACT_FLOOR:
         f"bump the floor on purpose if the catalogue legitimately changed")
 if len(failures) == n0:
     print(f"  ✓ {fold_checked} pair fold facts land on accepted rungs (floor "
-          f"{PAIR_FACT_FLOOR} pinned); off_switch round-trips as 'none'")
+          f"{PAIR_FACT_FLOOR} pinned); refusals stay on the ladder and off "
+          "fold sources; off_switch round-trips as 'none'")
 
 # ---- 5c. ONE PORT, ONE MODEL ------------------------------------------------
 # A port hosting two models advertises one model's facts for both: port_facts
@@ -425,12 +466,16 @@ expect_refusal({"evidence": "x",
 expect_refusal({"evidence": "x", "by_model": {"m": {"maps": {"a": 5}}}},
                "non-empty", "non-string maps value inside by_model")
 expect_refusal({"evidence": "x",
+                "by_model": {"m": {"refuses": "xhigh"}}},
+               "non-empty list", "non-list pair refusal inside by_model")
+expect_refusal({"evidence": "x",
                 "by_model": {"m": {"default_when_unset": "xhigh"}}},
                "evidence is REQUIRED", "pair entry with no own evidence")
 try:
     _engine_effort({"off_switch": "none", "supports_none": True,
                     "by_model": {"m": {"default_when_unset": "xhigh",
                                        "maps": {"high": "xhigh"},
+                                       "refuses": ["xhigh"],
                                        "evidence": "x"}},
                     "evidence": "x"}, Path("negative-test.yml"))
 except ProfileError as exc:
@@ -447,7 +492,7 @@ try:
 except ProfileError as exc:
     bad(f"a pair's own none measurement was refused: {exc}")
 if len(failures) == n0:
-    print("  ✓ engine-level fold facts refused (12 shapes), pair-scoped block "
+    print("  ✓ engine-level fold facts refused (13 shapes), pair-scoped block "
           "and its none-override load")
 
 # ---- 6. omp-setup FAMILIES agree with the profiles ---------------------------

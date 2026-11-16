@@ -304,8 +304,8 @@ render "8113=qwen3.8-27b@262144+outcap=none,8142=sgl-live@163840+outcap=65536,80
 # rungs a client may name. Three shapes, three rules, one from each #1951 layer:
 # the MODEL's ladder, the ENGINE's handling of `none`, the COMPOSE's default.
 render "8198=flash-live@262144,8119=glm-live@262144,8094=mimo-live@8192,8084=inkling-live@262144"
-[[ "$(route_field flash-live model_info.reasoning_effort_levels)" == "['low', 'medium', 'xhigh']" ]] \
-  && ok "a probed ladder is advertised as the rungs a client may name" \
+[[ "$(route_field flash-live model_info.reasoning_effort_levels)" == "['low', 'medium', 'xhigh', 'high', 'max', 'minimal']" ]] \
+  && ok "the advertise is the nameable set: the ladder plus the pair's fold sources (#2055 review it4-1)" \
   || bad "levels: $(route_field flash-live model_info.reasoning_effort_levels)"
 [[ "$(route_field flash-live model_info.supports_none_reasoning_effort)" == "True" ]] \
   && ok "an engine that folds the none rung onto the ladder says so" \
@@ -331,6 +331,13 @@ render "8198=flash-live@262144,8119=glm-live@262144,8094=mimo-live@8192,8084=ink
 [[ "$(route_field strata-live model_info.default_reasoning_effort)" == "xhigh" ]] \
   && ok "with no compose knob, the pair's own default is what gets advertised" \
   || bad "pair default: '$(route_field strata-live model_info.default_reasoning_effort)'"
+# The nameable set (#2055 review it4-1): the refused rung (xhigh — the server
+# 400s it as a request name) is dropped from the advertise and the fold source
+# (high) is listed instead; the raw ladder would advertise a rung the server
+# rejects and omit one it accepts.
+[[ "$(route_field strata-live model_info.reasoning_effort_levels)" == "['low', 'medium', 'high']" ]] \
+  && ok "the refused rung is dropped and the fold source is advertised" \
+  || bad "strata levels: '$(route_field strata-live model_info.reasoning_effort_levels)'"
 
 # An honest `status:` instead of a ladder: the model DOES think (`unprobed` /
 # `no-string-ladder` say the rungs are unknown, not absent), so the capability

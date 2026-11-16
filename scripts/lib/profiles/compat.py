@@ -484,8 +484,8 @@ ENGINE_EFFORT_OFF_SWITCHES = ("none", "enable-thinking-kwarg")
 # whether THIS model's template then closes the thinking block is the model's
 # contract, and this is the only place that contract can be recorded (#1951
 # review r7). A pair value overrides the engine-level one in the emit.
-ENGINE_EFFORT_PAIR_KEYS = {"default_when_unset", "maps", "supports_none",
-                           "off_switch"}
+ENGINE_EFFORT_PAIR_KEYS = {"default_when_unset", "maps", "refuses",
+                           "supports_none", "off_switch"}
 # A pair entry carries its OWN provenance: the engine block's `evidence:` cites the
 # engine-wide facts (wire behaviour, server code), which say nothing about why THIS
 # model folds THIS way on it. Without it, adding a by_model entry is an uncited
@@ -850,7 +850,7 @@ def _effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
 
 
 def _effort_pair_facts(value: Any, path: Path, where: str) -> dict[str, Any]:
-    """Validate one `effort.by_model.<model_id>:` entry (#1951) — the two facts
+    """Validate one `effort.by_model.<model_id>:` entry (#1951) — the facts
     that are properties of a (model, engine) pair, not of either alone. Same
     shape rules they had at engine level; `where` names the entry in the message."""
     if not isinstance(value, dict):
@@ -885,6 +885,12 @@ def _effort_pair_facts(value: Any, path: Path, where: str) -> dict[str, Any]:
     sn = value.get("supports_none")
     if sn is not None and not isinstance(sn, bool):
         raise ProfileError(f"{path}: {where}.supports_none must be a bool, got {sn!r}")
+    refuses = value.get("refuses")
+    if refuses is not None:
+        if (not isinstance(refuses, list) or not refuses
+                or not all(isinstance(r, str) and r for r in refuses)):
+            raise ProfileError(
+                f"{path}: {where}.refuses must be a non-empty list of rung names, got {refuses!r}")
     # Last, so every shape error above keeps its specific message.
     ev = value.get("evidence")
     if not isinstance(ev, str) or not ev.strip():
@@ -903,11 +909,11 @@ def _engine_effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
         return None
     if not isinstance(value, dict):
         raise ProfileError(f"{path}: engine `effort:` must be a mapping, got {value!r}")
-    # ONLY the fold facts: an engine-level one would silently hand a sibling's
+    # ONLY the pair facts: an engine-level one would silently hand a sibling's
     # measurement to a model never measured on it (#1951 review r5).
     # `supports_none`/`off_switch` are exempt — engine-wide wire claims a pair
     # entry may override with its own measurement (#1951 review r7).
-    for key in ("default_when_unset", "maps"):
+    for key in ("default_when_unset", "maps", "refuses"):
         if key in value:
             raise ProfileError(
                 f"{path}: effort.{key} is a per-(model, engine) fact, not an engine-wide "

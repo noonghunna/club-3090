@@ -498,11 +498,14 @@ def _port_effort(rows: list[dict]) -> "dict | None":
         if len(vals) == 1 and v not in (None, "", [], {}):
             out: dict = {key: v}
             if key == "levels":
-                # `default_when_unset` is the PAIR fact (the engine's by_model
-                # entry for this model), so two slugs on one port can only agree
-                # on it by declaring the same pair default — agree-or-drop like
-                # every other fact here (#1951 review r5).
-                for k in ("supports_none", "compose_default", "default_when_unset"):
+                # The pair-scoped facts (the engine's by_model entry for this
+                # model: default, fold table, refusals, none claim) travel with
+                # the ladder — two slugs on one port can only agree on them by
+                # declaring the same values, agree-or-drop like every other
+                # fact here (#1951 review r5; #2055 review it4-1 added the
+                # fold table and the refusals).
+                for k in ("supports_none", "compose_default", "default_when_unset",
+                          "refuses", "maps"):
                     other = {json.dumps(b.get(k)) for b in blocks}
                     if len(other) == 1 and blocks[0].get(k) is not None:
                         out[k] = blocks[0][k]
@@ -626,8 +629,16 @@ def model_info(ctx: "int | None", facts: dict, native_messages: bool = False,
         # litellm reads `reasoning_effort_levels` first and it wins whole
         # (router_utils/reasoning_effort_capability.py), so the ladder is the
         # advertisement and the per-level flags are not needed alongside it.
+        # The advertisement is the route's NAMEABLE set (#2055 review it4-1):
+        # the ladder minus the pair's refused rungs (a name the server 400s as
+        # a request), plus the fold sources — names the server accepts by
+        # mapping. A client may send either form and the server honors both.
+        refuses = set(eff.get("refuses") or [])
+        maps = eff.get("maps") or {}
+        nameable = [r for r in levels if r not in refuses]
+        nameable += [s for s in maps if s not in levels]
         lines.append("      supports_reasoning: true")
-        lines.append("      reasoning_effort_levels: [" + ", ".join(levels) + "]")
+        lines.append("      reasoning_effort_levels: [" + ", ".join(nameable) + "]")
         if eff.get("supports_none") is not None:
             lines.append("      supports_none_reasoning_effort: "
                          + ("true" if eff["supports_none"] else "false"))

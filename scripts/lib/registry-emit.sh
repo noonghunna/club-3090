@@ -673,12 +673,14 @@ def _compose_served_name(compose_path: str):
 # LONGER variable (QE_REASONING_EFFORT, LLAMA_ARG_REASONING_EFFORT_ALLOW) from
 # being mistaken for the knob; the bare form (no value — the strata-maya
 # composes hand the knob to the launcher) is not a default, because the
-# launcher's default is what the pair fact records. Same shape the guard pins
+# launcher's default is what the pair fact records. A reference WITH a
+# fallback (`REASONING_EFFORT: ${REASONING_EFFORT:-low}`) names the compose's
+# own unset-case default — the fallback is read. Same shape the guard pins
 # (test-effort-profiles.sh check 3); comment lines and inline comments ignored.
 # None when the compose sets no default — unknown, which the render must render
 # as nothing.
 _EFFORT_DEFAULT_RX = _re.compile(
-    r'(?<![A-Za-z_])REASONING_EFFORT(?:["\']?:-["\']?|["\']?:\s*["\']?|=)["\']?([a-z]+)')
+    r'(?<![A-Za-z_])REASONING_EFFORT(?:["\']?:-["\']?|["\']?[:=][ \t]*["\']?\$\{[A-Za-z_]+:-|["\']?:\s*["\']?|=)["\']?([a-z]+)')
 
 
 def _compose_effort_default(compose_path: str):
@@ -721,6 +723,7 @@ def _effort_facts(model_id: str, engine_id: str, compose_path: str):
                        else ee.get("off_switch")),
         "default_when_unset": pair.get("default_when_unset"),
         "maps": dict(pair["maps"]) if pair.get("maps") else None,
+        "refuses": list(pair["refuses"]) if pair.get("refuses") else None,
         "compose_default": _compose_effort_default(compose_path),
     }
 
