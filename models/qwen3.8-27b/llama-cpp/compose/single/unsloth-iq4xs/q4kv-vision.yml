@@ -1,6 +1,6 @@
 # ===========================================================================
 # Profile (at-a-glance):
-#   Model:     Qwen3.8-27B (Unsloth Dynamic UD-IQ4_XS GGUF, 14.3 GB) + mmproj-F16
+#   Model:     Qwen3.8-27B (Unsloth Dynamic UD-IQ4_XS GGUF, UD 3.1 of 2026-11-11, 14.35 GB) + mmproj-F16
 #   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-local.yml install.spec)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   MTP n=2 built-in (--spec-type draft-mtp; the head is EMBEDDED in this GGUF)
@@ -79,7 +79,7 @@
 # WHY q4_0 REACHES 262K WHERE q8_0 CANNOT (KV BUDGET — 16 GROWING layers, not 64):
 #   per_token_bytes = 16 x 4 x 256 x 2 x bpe = 32,768 x bpe
 #     q8_0 -> 34,816 B/token -> 262,144 ctx = 8.50 GiB  (does NOT fit on 24 GB
-#              alongside 13.27 GiB weights + rs-cache + compute — the q8 sibling
+#              alongside 13.37 GiB weights + rs-cache + compute — the q8 sibling
 #              MEASURED 262144 FAILING on the rs-cache buffer)
 #     q4_0 -> 18,432 B/token -> 262,144 ctx = 4.50 GiB  (HALF the cache; the 4 GiB
 #              freed is exactly what lets the rs-cache + compute buffers fit)

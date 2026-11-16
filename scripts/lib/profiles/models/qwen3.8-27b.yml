@@ -71,10 +71,13 @@ weights:
   unsloth-iq4xs:
     path: qwen3.8-27b-gguf/unsloth-iq4xs
     local_subdir: qwen3.8-27b-gguf/unsloth-iq4xs
-    size_gb: 14.3
+    size_gb: 14.35
     format: gguf
     status: experimental
     hf_repo: unsloth/Qwen3.8-27B-GGUF
+    # unsloth's UD 3.1 re-quant of this file (commit acb953b1, 2026-11-11; 14,352,911,264 B, sha256
+    # 4b194b34...); the repo head that carries it. Unpinned, a fetch before 2026-11-11 got the older file.
+    revision: 4af51b3542f775b0a8e4b310bfb3f17e01c306c9
     # REQUIRED, not optional: unsloth/Qwen3.8-27B-GGUF is a MULTI-QUANT bucket.
     # Without `files:` the fetch is the WHOLE repo (ADDING_MODELS.md "Two silent
     # traps"). The artifact sits at the repo ROOT, so it lands flat in
@@ -87,7 +90,7 @@ weights:
     # nothing here and makes c3 report PARTIAL / setup.sh report "download may
     # have failed" on a complete, correct pull.
     verify_glob: "*.gguf"
-    manual_note: "Unsloth Dynamic UD-IQ4_XS (apache-2.0). Single-3090 tier — drives llamacpp/qwen38-27b-single-iq4xs. REPLACES unsloth-iq4nl 2026-08-19: unsloth removed Qwen3.8-27B-IQ4_NL.gguf from the repo, so the old artifact is no longer fetchable and the slug was renamed iq4nl -> iq4xs (old launch names are dead). HF API 2026-08-19: 14,252,845,984 bytes = 14.25 GB decimal = 13.27 GiB. size_gb above is the decimal figure (what the setup.sh disk gate wants); the VRAM budget in the compose uses the 13.27 GiB. ⚠️ Size is the HF API figure — the file has NOT landed on this rig and has never been loaded by any engine. Tensor table read from the file header 2026-08-19: qwen35 arch, block_count=65, nextn_predict_layers=1, blk.64.nextn.* present (embedded MTP head confirmed on THIS artifact), embedded chat template carries the resolved_reasoning_effort branch. Text-only: the sibling mmproj-{BF16,F16}.gguf projectors in the same repo were NOT fetched."
+    manual_note: "Unsloth Dynamic UD-IQ4_XS (apache-2.0). Single-3090 tier — drives llamacpp/qwen38-27b-single-iq4xs. REPLACES unsloth-iq4nl 2026-08-19: unsloth removed Qwen3.8-27B-IQ4_NL.gguf from the repo, so the old artifact is no longer fetchable and the slug was renamed iq4nl -> iq4xs (old launch names are dead). HF API 2026-08-19: 14,252,845,984 bytes = 14.25 GB decimal = 13.27 GiB. size_gb above is the decimal figure (what the setup.sh disk gate wants); the VRAM budget in the compose uses the 13.27 GiB. ⚠️ Size is the HF API figure — the file has NOT landed on this rig and has never been loaded by any engine. Tensor table read from the file header 2026-08-19: qwen35 arch, block_count=65, nextn_predict_layers=1, blk.64.nextn.* present (embedded MTP head confirmed on THIS artifact), embedded chat template carries the resolved_reasoning_effort branch. Text-only: the sibling mmproj-{BF16,F16}.gguf projectors in the same repo were NOT fetched. Refreshed 2026-11-16 to unsloth's UD 3.1 re-quant (14.35 GB, was 14.25): booted on the reference rig, verify-full all checks (vision 4/4, MTP acceptance 1.00), 262144 ctx on one card at 22,476 of 24,576 MiB."
   unsloth-q8kxl:
     path: qwen3.8-27b-gguf/unsloth-q8kxl
     local_subdir: qwen3.8-27b-gguf/unsloth-q8kxl
