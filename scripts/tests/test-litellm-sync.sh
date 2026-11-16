@@ -379,19 +379,32 @@ passthru="$(route_field sgl-live model_info.supports_reasoning)"
   || bad "passthrough changed supports_reasoning: $plain -> $passthru"
 
 # --- 16: the REAL probe decides it, against stub servers (not the seam) ------------
-# The property that matters is whether the endpoint keeps Claude Code's per-turn
-# `system` message where it is: an endpoint that moves it to the front re-prefills
-# the conversation every turn (vLLM v0.30.0 without --chat-template). The probe
-# measures it with count_tokens: moved, the message counts exactly like the same text
-# in the top-level system prompt; in place, it adds its own turn markers. Positive
-# controls (SGLang and vLLM keeping it in place) and negatives (vLLM moving it, no
-# endpoint, llama.cpp), so a probe that always says yes or always no both fail.
-python3 - "$ROOT/scripts/lib" <<'PY2' && ok "probe: in-place SGLang/vLLM → passthrough; vLLM that moves the message, no count_tokens, llama.cpp → translated" || bad "probe decision wrong (see above)"
+# Two properties, both measured on THIS boot, decide the /v1/messages passthrough:
+#   - the endpoint answers with a real message. A tiny generation is the only
+#     honest test: an empty-body 400-vs-404 probe cannot tell a working endpoint
+#     from one that answers with empty content, and empty content is exactly the
+#     failure this avoids;
+#   - it keeps Claude Code's per-turn `system` message where it is: an endpoint
+#     that moves it to the front re-prefills the conversation every turn (vLLM
+#     v0.30.0 without --chat-template). count_tokens measures that without
+#     generating: moved, the message counts exactly like the same text in the
+#     top-level system prompt; in place, it adds its own turn markers. An
+#     endpoint without count_tokens (Project Maya 404s it) gets the same
+#     question answered by its prompt cache: a follow-up that only APPENDS the
+#     message must hit the cache on the front it did not touch.
+# The engine's NAME decides nothing: the old allowlist (SGLang, vLLM) silently
+# cost QEngine its whole reply and Strata its thinking, and Strata reports no
+# owned_by at all. Positives and negatives on every leg, so a probe that always
+# says yes or always no both fail.
+python3 - "$ROOT/scripts/lib" <<'PY2' && ok "probe: serves-itself + in-place → passthrough, owned_by or not; moved, empty content, no endpoint, rewritten front → translated" || bad "probe decision wrong (see above)"
 import http.server, json, sys, threading
 sys.path.insert(0, sys.argv[1])
 import litellm_sync
 
-def stub(owned_by, inline_system):   # inline_system: "in-place" | "moved" | "absent"
+def stub(owned_by, inline_system, serves="real", cache=None):
+    """inline_system: "in-place" | "moved" | "absent" (count_tokens behaviour).
+    serves: "real" (a message with content) | "empty" (content: []) | "absent" (404).
+    cache: (front, cached) — no count_tokens; the cache probe decides."""
     class H(http.server.BaseHTTPRequestHandler):
         def log_message(self, *a): pass
         def _send(self, code, body):
@@ -400,15 +413,36 @@ def stub(owned_by, inline_system):   # inline_system: "in-place" | "moved" | "ab
             self.send_header("content-length", str(len(data))); self.end_headers(); self.wfile.write(data)
         def do_GET(self):
             if self.path == "/v1/models":
-                self._send(200, {"data": [{"id": "m", "owned_by": owned_by, "max_model_len": 4096}]})
+                data = [{"id": "m", "max_model_len": 4096}]
+                if owned_by:
+                    data[0]["owned_by"] = owned_by
+                self._send(200, {"data": data})
             else:
                 self._send(404, {})
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
-            if self.path != "/v1/messages/count_tokens" or inline_system == "absent":
-                return self._send(404, {"error": "stub"})
             if body.get("model") != "m":
                 return self._send(404, {"error": "unknown model"})
+            if self.path == "/v1/messages":
+                if serves == "absent":
+                    return self._send(404, {"error": "stub"})
+                if serves == "empty":
+                    return self._send(200, {"type": "message", "role": "assistant", "content": []})
+                if cache and len(body.get("messages", [])) > 2:
+                    # the follow-up: the cache answers the placement question
+                    front, cached = cache
+                    return self._send(200, {"type": "message", "role": "assistant",
+                                            "content": [{"type": "text", "text": "DONE"}],
+                                            "usage": {"input_tokens": 14, "cache_read_input_tokens": cached}})
+                if cache:
+                    front, cached = cache
+                    return self._send(200, {"type": "message", "role": "assistant",
+                                            "content": [{"type": "text", "text": "OK"}],
+                                            "usage": {"input_tokens": front}})
+                return self._send(200, {"type": "message", "role": "assistant",
+                                        "content": [{"type": "text", "text": "OK"}]})
+            if self.path != "/v1/messages/count_tokens" or inline_system == "absent":
+                return self._send(404, {"error": "stub"})
             # Both probe requests carry the same text; kept in place, the inline message
             # adds its own turn markers (4 tokens on Qwen), moved it adds none.
             inline = any(m["role"] == "system" for m in body.get("messages", []))
@@ -417,16 +451,25 @@ def stub(owned_by, inline_system):   # inline_system: "in-place" | "moved" | "ab
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
-cases = [("sglang", "in-place", True), ("vllm", "in-place", True), ("vllm", "moved", False),
-         ("sglang", "absent", False), ("llamacpp", "in-place", False)]
+cases = [  # (owned_by, count_tokens, serves, cache, want)
+    ("sglang", "in-place", "real", None, True),
+    ("vllm", "in-place", "real", None, True),
+    ("vllm", "moved", "real", None, False),
+    ("", "in-place", "real", None, True),          # Strata: no owned_by, still passthrough
+    ("", "absent", "real", (1562, 1561), True),    # Maya: no count_tokens, cache says in place
+    ("", "absent", "real", (1562, 3), False),      # Maya-shaped but the front was rewritten
+    ("vllm", "in-place", "empty", None, False),    # answers, but with no content
+    ("llamacpp", "in-place", "absent", None, False),
+]
 bad = 0
-for owned_by, behaviour, want in cases:
-    srv = stub(owned_by, behaviour)
+for owned_by, behaviour, serves, cache, want in cases:
+    srv = stub(owned_by, behaviour, serves, cache)
     got = litellm_sync.probe(srv.server_address[1])
     srv.shutdown()
     flag = got[0][3] if got else None
     if flag is not want:
-        print(f"    owned_by={owned_by} inline system {behaviour}: passthrough={flag}, want {want}", file=sys.stderr)
+        print(f"    owned_by={owned_by!r} count_tokens={behaviour} serves={serves} cache={cache}: "
+              f"passthrough={flag}, want {want}", file=sys.stderr)
         bad = 1
 sys.exit(bad)
 PY2
