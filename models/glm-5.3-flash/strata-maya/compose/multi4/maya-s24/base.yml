@@ -1,0 +1,127 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     GLM-5.3-Flash — Project Maya's Maya-S24 (`Maya-S24`, 94.7 GB in 3 shards): Maya-S v2's
+#              IQ2_XXS gate/up experts with Q4_K attention and shared experts, so ~1.5 GB less stays on
+#              the GPU and more of the expert pool fits in VRAM. Made by Project Maya from Z.ai's FP8
+#              release (peasantsmith/GLM-5.3-Flash-Maya-GGUF, folder Maya-S24).
+#   Engine:    Project Maya (a Strata fork for GLM-5.3-Flash) — ghcr.io/noonghunna/strata-maya-club3090,
+#              built by club-3090 at the release commit (models/glm-5.3-flash/strata-maya/image/)
+#   Topology:  4× 24 GB, Maya layer split over four cards (--layer-split auto)
+#   Drafter:   MTP: the model's own NextN block (Maya's default on 2+ GPUs; the split's head group drafts)
+#   KV:        INT8 latent cache (Maya's default from v1.1.55; KV=fp16 keeps 16 bits), 32K positions in
+#              VRAM, the rest streamed from pinned RAM (--kv-streaming on)
+#   Vision:    no (the image is text only)
+#   Max ctx:   131072
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   🐣 incubating like its maya-s/m/l siblings, one request at a time. The dual slug measured
+#              2026-11-11 on a contributor rig (RTX 3090 + 3090 Ti, 91.9 GiB host): bench 49.70 / 50.45
+#              decode, 1,146 prefill @10K; 8-pack thinking OFF 112/150 (75%) pass@1, thinking ON
+#              124/150 (83%); soak-continuous PASS. Upstream's own note says Maya-S24 measured faster
+#              than Maya-S v2 on both card counts (its maya.py MODELS entry: "about 1.5 GB less that
+#              stays on the GPU, so 24 GB cards hold more experts (decode about 14% faster there, 11% on
+#              32 GB)"); on that rig the two decoded within ~2%. GLM-5.3's template thinks by default;
+#              Maya's server closes the thinking block when a request sends enable_thinking false or
+#              reasoning_effort none. Server defaults for requests that name none: effort max (as the
+#              other GLM-5.3-Flash slugs), temperature 1.0 / top_p 0.95, Maya's own 32K reasoning budget;
+#              the launch settings change them (docs/engines/STRATA_MAYA.md). The FIRST start
+#              SHA-256-checks the shards against Maya's own table and builds Maya's pack on the data
+#              volume (minutes, once); later starts ~30 s from a warm page cache. Maya sizes its RAM tier
+#              from free memory: drop the page cache first on a box that just read big files. Host needs
+#              NVIDIA driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only.
+#              MEASURED on four cards 2026-11-16 (community rig, 4x RTX 5080 16 GB, PCIe Gen5 x8 through a
+#              PEX89048 switch, 125.2 GiB host, 252/250/250/250 W caps), bench.sh canonical on its own boot:
+#              90.58 / 93.24 decode, 1,987 PP, 2,210 prefill @10K / 2,528 @90K; verify-stress ceiling ladder
+#              2/2 (fillable to 120,360 tok, 91% of 131072), boundary 5/5; soak-continuous PASS (0/50
+#              silent-empty, 0 MiB growth); 8-pack thinking OFF 108/150 (72%) pass@1, 121/150 (81%) pass@3.
+#              6,407 expert slots on the CPU lane against maya-s v2's 6,653 on the same cards — the Q4_K
+#              attention leaves more room in VRAM, and that is where the +15% decode over maya-s v2 comes
+#              from (s-v2 read 78.24 / 80.30 at this cell), at level quality (s-v2 read 108/150 and
+#              115/150 on two runs). NEVER BOOTED on the reference rig (2 GPUs): multi4 is
+#              community-validated by design; its numbers come from community reports
+#              (numbers-from-your-rig).
+# CPU-Offload-Host-RAM-GB: 68
+#   ⤷ The dual slug's measured 68 GB is the upper bound, as four cards keep more experts in VRAM and
+#     size the RAM tier smaller. Maya sizes its RAM tier from FREE memory at start, so this is what it
+#     took on a 91.9 GiB host with every expert fitting; a smaller host keeps fewer experts in RAM and
+#     reads the rest from the model files while it answers (slower, not measured). Registry
+#     `host_ram_gb` is the NOMINAL figure and must stay <= this.
+#   Best for:  GLM-5.3-Flash on 24 GB cards with lots of host RAM, wanting Maya-S quality with more of the
+#              expert pool resident (S24 = Maya-S with Q4_K attention)
+#   Quality:   toolcall-15 13/15 (87%) · instructfollow-15 9/15 (60%) · structoutput-15 13/15 (87%) ·
+#              dataextract-15 11/15 (73%) · reasonmath-15 12/15 (80%) · bugfind-15 13/15 (87%) ·
+#              hermesagent-20 11/20 (55%) · cli-40 26/40 (65%) (--full, thinking OFF, sampling=server,
+#              validity=valid, packs tc1.0.1·if2.0.0·so2.1.0·de1.2.0·rm1.1.0·bf1.0.1·hm1.0.0·cli1.0.2, 2026-11-16)
+#   Quality:   toolcall-15 13/15 (87%) · instructfollow-15 13/15 (87%) · structoutput-15 13/15 (87%) ·
+#              dataextract-15 13/15 (87%) · reasonmath-15 14/15 (93%) · bugfind-15 15/15 (100%) ·
+#              hermesagent-20 13/20 (65%) · cli-40 33/40 (82%) (--full, thinking ON, sampling=server,
+#              validity=valid, packs tc1.0.1·if2.0.0·so2.1.0·de1.2.0·rm1.1.0·bf1.0.1·hm1.0.0·cli1.0.2, 2026-11-16)
+#              Both legs on image sha256:bfb38143…, four RTX 5080 16 GB, 131072, one boot each; 108/150
+#              (72%) pass@1 off and 127/150 (85%) on, 121 / 137 pass@3.
+# ---------------------------------------------------------------------------
+# Project Maya (github.com/mw00/project-maya) is its own engine for this model: see docs/engines/STRATA_MAYA.md.
+# Siblings: ../../single/maya-s/base.yml (single), ../../dual/maya-s24/base.yml (dual); the other quants sit
+# beside this folder, this one a quant folder of its own (maya-s24).
+#   bash scripts/switch.sh --force strata-maya/glm53-flash-multi4-maya-s24
+# The launcher (../../../launcher/) links the shards into the data volume, checks their SHA-256 once, builds
+# Maya's pack there and starts Maya's server. By hand: SETUP_ONLY=1 docker compose -f base.yml run --rm
+# strata-maya, then up -d. Tuning (optional): Maya's `maya.sh --calibrate` result for this PC goes in
+# MAYA_PCIE_SHARE / MAYA_CPU_LANE (the engine's STRATA_GLM_PCIE_SHARE / STRATA_GLM_CPU_LANE).
+services:
+  strata-maya:
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:bfb381430741a60323b1b328ae830ec3cb3f9c136a26d42e3f95b62d1e1520b6}
+    container_name: ${ESTATE_CONTAINER:-strata-maya-glm53-flash-multi4-maya-s24}
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
+    # (the entrypoint sets umask 0002)
+    user: "0:${DOCKER_GID:-1000}"
+    entrypoint: ["/bin/sh", "/opt/club3090/maya-entrypoint.sh", "maya-s24"]
+    ulimits:
+      memlock: -1            # Maya pins (locks) its RAM tier for the GPU
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8207}}:8080"
+    environment:
+      CONTEXT: "${CONTEXT:-131072}"
+      SETUP_ONLY: "${SETUP_ONLY:-0}"
+      REPACK: "${REPACK:-0}"
+      VERIFY: "${VERIFY:-1}"
+      MAYA_GPUS: "${MAYA_GPUS:-0,1,2,3}"
+      MAYA_PCIE_SHARE: "${MAYA_PCIE_SHARE:-}"
+      MAYA_CPU_LANE: "${MAYA_CPU_LANE:-}"
+      # Maya's server defaults, written into maya.json at every boot by maya_prepare.py
+      # (launcher/maya_settings.py maps each); unset = effort max, sampling 1.0 / 0.95, Maya's 32K budget,
+      # the name glm-5.3-flash, the loop guard on (Maya's own)
+      REASONING_EFFORT:
+      ENABLE_THINKING:
+      THINKING_BUDGET:
+      KV:
+      TEMP:
+      TOP_P:
+      TOP_K:
+      MIN_P:
+      PRESENCE_PENALTY:
+      REPEAT_PENALTY:
+      SERVED_NAME:
+      LOOP_GUARD:
+      # Maya's model load/unload endpoints (/models/load, /models/unload, /models/sse; on by default from
+      # v1.1.47) and, from v1.1.50, its model API (/api/tags, /api/ps, /api/chat, ...). These composes set
+      # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
+      # switch are refused from outside the container. MAYA_MODEL_MANAGEMENT=0 turns all of them off
+      MAYA_MODEL_MANAGEMENT:
+      # v1.1.56, opt-in: =1 sends the layer split's token states GPU to GPU over PCIe on a pair the driver
+      # grants peer access (else through host memory, as unset); the same answers upstream (mw00/project-maya#853)
+      MAYA_GLM_P2P:
+      # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}/glm-5.3-flash-maya-gguf/Maya-S24:/gguf:ro"
+      # one folder per quant (shard links, Maya's pack, the config); the launchers put it
+      # under ~/.local/share/club-3090
+      - "${STRATA_MAYA_DATA_DIR:-${CLUB3090_DATA_DIR:-../../..}/strata-maya-data}:/data"
+      - "../../../launcher:/opt/club3090:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0,1,2,3}}']
+              capabilities: [gpu]
