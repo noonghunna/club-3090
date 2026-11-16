@@ -40,13 +40,21 @@ effort:
   by_model:
     qwen3.8-flash-next:
       default_when_unset: xhigh
-      maps: {high: xhigh, max: xhigh}
+      supports_none: true
+      maps: {high: xhigh}
       evidence: >-
         docs/engines/STRATA.md "Reasoning and sampling defaults": with no
         settings, a request that names no effort runs at the checkpoint
-        template's `reasoning_effort|default('xhigh')`, and `high` and `max`
-        also map to `xhigh`. This fold table is NOT the one the same model gets
-        on vllm-stable, which also folds minimal->low.
+        template's `reasoning_effort|default('xhigh')`, and `high` also maps to
+        `xhigh`. This fold table is NOT the one the same model gets on
+        vllm-stable, which also folds minimal->low. The server bounds the
+        NAMEABLE names: its 400 names the accepted set "use none, low, medium
+        or high" (measured 2026-11-15 on qwen3.8-flash-next-iq3s-dual :8018,
+        the engine evidence below), so `max` and `xhigh` 400 as request names
+        and the fold table records only names the server accepts — the xhigh
+        rung is reached via unset (the template default) and via `high` (the
+        fold). The pair's none claim is that same probe: reasoning_effort
+        none -> 0 chars of reasoning_content (low -> 214).
   evidence: >-
     Engine-wide (off_switch / supports_none): measured 2026-11-15 on
     qwen3.8-flash-next-iq3s-dual (:8018) — reasoning_effort none -> 0 chars of

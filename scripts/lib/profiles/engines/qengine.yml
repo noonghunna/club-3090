@@ -59,20 +59,33 @@ effort:
   by_model:
     qwen3.8-27b:
       default_when_unset: xhigh
+      supports_none: true
       maps: {minimal: low, high: xhigh, max: xhigh}
       evidence: >-
         Compose header, models/qwen3.8-27b/qengine/compose/dual/redhat-int4/
         mtp.yml:35-37: QE_REASONING_EFFORT carries the default effort and the
         template's own default is xhigh (our compose passes low); the server
-        folds high/max -> xhigh and minimal -> low from 1.3.4.3.
+        folds high/max -> xhigh and minimal -> low from 1.3.4.3. The pair's
+        none claim: the server's own none -> thinking-off handling (the engine
+        evidence below) feeds this checkpoint's template, whose thinking-off
+        rendering is wire-probed 2026-10-20 through the byte-identical GGUF
+        twin (models/qwen3.8-27b/llama-cpp/patches/
+        qwen38-gguf-reasoning-effort-template/PROVENANCE.md:
+        chat_template_kwargs enable_thinking:false turns thinking off).
     qwen3.8-flash-next:
       default_when_unset: xhigh
+      supports_none: true
       maps: {minimal: low, high: xhigh, max: xhigh}
       evidence: >-
         Compose header, models/qwen3.8-flash-next/qengine/compose/dual/
         qengine-int4/mtp.yml:98 ("its template's own default is xhigh") and :134
         + :416 (the compose passes QE_REASONING_EFFORT, default low); the same
-        server-side fold from 1.3.4.3 — high/max -> xhigh, minimal -> low.
+        server-side fold from 1.3.4.3 — high/max -> xhigh, minimal -> low. The
+        pair's none claim: the server's own none -> thinking-off handling (the
+        engine evidence below) feeds this checkpoint's template, whose
+        thinking-off rendering is wire-probed 2026-11-15 on the strata pair
+        (qwen3.8-flash-next-iq3s-dual :8018: reasoning_effort none -> 0 chars
+        of reasoning_content) — the same checkpoint template.
   evidence: >-
     Engine-wide: the fold of an UNRECOGNISED name to medium and the `none` →
     thinking-off handling (1.3.5.5 on) are the server's own code, so they hold

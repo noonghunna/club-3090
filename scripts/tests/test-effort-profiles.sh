@@ -353,11 +353,12 @@ if len(failures) == n0:
 # enable_thinking=false before the template runs; whether THIS model's template
 # then closes the thinking block is the model's contract. A ladder model on
 # such an engine advertises `supports_none: true` the moment it probes a
-# ladder, so its pair entry must exist to cite that contract before the
-# advertise is trusted — the engine's own evidence block names the rule, this
-# enforces it (#1951 review r7). `false` engines need no entry: the server
-# ignoring `none` is engine-level behaviour, and the advertise direction is
-# conservative.
+# ladder, so its pair entry must exist AND carry the pair's own none claim —
+# `supports_none` or `off_switch` with its citation — before the advertise is
+# trusted: an entry holding only fold facts would leave the route advertising
+# a wire none claim resting on nothing pair-specific (#1951 review r7 + r8).
+# `false` engines need no entry: the server ignoring `none` is engine-level
+# behaviour, and the advertise direction is conservative.
 n0 = len(failures)
 for e in entries.values():
     m, eng_id = e.get("model"), e.get("engine")
@@ -370,13 +371,20 @@ for e in entries.values():
     levels, _status = model_levels(m)
     if not levels:
         continue
-    if not (eff.get("by_model") or {}).get(m):
+    pair = (eff.get("by_model") or {}).get(m)
+    if not pair:
         bad(f"{m} on {eng_id}: probed ladder {levels} but no by_model entry — the "
             f"route advertises the engine's supports_none: true without a pair "
             f"fact citing THIS model's template (verify it honors `none`, or "
             f"record the pair's own measurement in its by_model entry)")
+    elif "supports_none" not in pair and "off_switch" not in pair:
+        bad(f"{m} on {eng_id}: by_model entry holds fold facts but no none claim "
+            f"— the route advertises the engine's supports_none: true resting on "
+            f"nothing pair-specific; declare the pair's own supports_none (or "
+            f"off_switch) with its citation (#1951 review r8)")
 if len(failures) == n0:
-    print("  ✓ every supports_none:true engine's ladder pairs carry a by_model entry")
+    print("  ✓ every supports_none:true engine's ladder pairs carry a by_model "
+          "entry with the pair's own none claim")
 # ---- 5b. the loader REFUSES an engine-wide fold fact (#1951 review r5) -------
 # An engine-level `default_when_unset`/`maps` is the silent-inheritance bug the
 # review named: a model never measured on it would be folded and defaulted by a
