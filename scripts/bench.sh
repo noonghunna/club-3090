@@ -1068,6 +1068,22 @@ def _http_reason(e):
     return " ".join(raw.split())[:300]
 
 
+class StreamError(RuntimeError):
+    """The server ended a stream with an error chunk (data: {"error": ...}, no choices):
+    Project Maya v1.1.65 ends an answer the engine faulted on that way (#827), and vLLM
+    and llama.cpp report a mid-stream error the same way. Raised so the run counts as a
+    failed request: skipping the chunk scored a cut-off answer as a short normal run."""
+
+
+def _stream_error_text(err):
+    """An error chunk's reason: "<type>: <message>" when it is OpenAI's object, else the value."""
+    if isinstance(err, dict):
+        kind = err.get("type") or err.get("code") or "error"
+        msg = err.get("message") or err.get("detail") or ""
+        return f"{kind}: {' '.join(str(msg).split())[:300]}" if msg else str(kind)
+    return " ".join(str(err).split())[:300]
+
+
 def _open_stream(path, req_body):
     """POST req_body and return (response, send time). A 400 whose reason names
     ignore_eos drops it for the rest of the run (said once) and sends again with
@@ -1160,6 +1176,9 @@ def run_once(prompt, max_tokens, force=0):
                 chunk = json.loads(payload)
             except json.JSONDecodeError:
                 continue
+            if isinstance(chunk, dict) and chunk.get("error"):
+                raise StreamError(f"the server ended the stream with an error: "
+                                  f"{_stream_error_text(chunk['error'])}")
             choices = chunk.get("choices") or []
             if choices:
                 delta = choices[0].get("delta", {})
@@ -1585,7 +1604,10 @@ def run_prefill_probe():
                 print(f"  [calibrated: {ptoks} tok at request={target} → measured runs request {request_tokens}]")
         except Exception as e:
             msg = str(e)
-            if any(x in msg for x in ("400", "maximum context", "max_model_len", "context length", "context window")):
+            # The STATUS, not the digits: "400" anywhere in the reason read a 422 that named
+            # a position ("at position 14003") as a context overflow. _open_stream raises
+            # "HTTP <code>: <reason>"; llama.cpp's over-context 400 names no phrase below.
+            if msg.startswith("HTTP 400") or any(x in msg for x in ("maximum context", "max_model_len", "context length", "context window")):
                 print(f"  SKIP: {target} tokens exceeds the served context ({msg[:100]})")
                 continue
             print(f"  warm-1     FAIL: {e}")

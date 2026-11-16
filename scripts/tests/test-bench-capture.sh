@@ -29,9 +29,9 @@ BENCH="$ROOT_DIR/scripts/bench.sh"
 LIB="$ROOT_DIR/scripts/lib/capture.sh"
 FIX="$ROOT_DIR/scripts/tests/fixtures/offload-matrix"
 # ⚠️⚠️ FIXTURE PORTS LIVE ABOVE THE PRODUCT'S PORT SPACE, ON PURPOSE.
-# This test binds fake servers across PORT_BASE..PORT_BASE+24. The registry
+# This test binds fake servers across PORT_BASE..PORT_BASE+27. The registry
 # allocates real slug `default_port`s across 8010-8299, so a base inside that
-# span silently collides: any slug parked on one of these 25 ports makes this
+# span silently collides: any slug parked on one of these 28 ports makes this
 # guard fail WHENEVER THAT MODEL IS SERVING, and the failure reads as a broken
 # test rather than a port clash. Measured 2026-09-18: the old 8147 base overlapped
 # ELEVEN registry slugs (eight sgl/qwen38-27b-multi* on 8147-8154 plus three
@@ -1423,5 +1423,34 @@ command grep -q 'refused ignore_eos' "$O" && fail "another 400: must not be read
 [[ "$(command grep -c '\[fake\] refused: ignore_eos' "$SRV_LOG")" == 2 ]] \
   || fail "another 400: each forced run is sent once, not retried ($(command grep -c 'refused: ignore_eos' "$SRV_LOG") requests)"
 echo "  ✓ a server that refuses ignore_eos: forced runs keep min_tokens, said once; other 400s show their reason"
+
+# --- 24. an engine's error is a failed request, never a short or skipped run ------
+# Project Maya v1.1.65 (#827) ends an answer the engine faulted on with a choices-less
+# `data: {"error": ...}` chunk; vLLM and llama.cpp report mid-stream errors the same
+# way. bench.sh used to skip that chunk, so a cut-off answer scored as a short normal
+# run. And the prefill calibrator read any reason containing the digits 400 as
+# "exceeds the served context", so a 422 that named a position skipped silently.
+run_bench stream_error "$((PORT_BASE+25))" "$TMP/serr.out" ONLY=narr RUNS=2 WARMUPS=0
+X="$TMP/serr.out"
+command grep -qE 'run-1 +FAIL: the server ended the stream with an error: server_error: the engine stopped this answer' "$X" \
+  || fail "stream_error: the error chunk must fail the run with the server's reason: $(command grep -m1 -E 'run-1 ' "$X")"
+command grep -q 'status: REQ_ERRORS' "$X" \
+  || fail "stream_error: runs that ended on an error must classify REQ_ERRORS: $(command grep -m1 'status:' "$X")"
+run_bench engine_422 "$((PORT_BASE+26))" "$TMP/e422.out" \
+  ONLY=narr RUNS=1 WARMUPS=0 PREFILL_PROBE=1 PREFILL_DEPTHS=2000 PREFILL_RUNS=1
+Y="$TMP/e422.out"
+command grep -qE 'warm-1 +FAIL: HTTP 422: the engine stopped at position 14003' "$Y" \
+  || fail "engine_422: the prefill warm-up must FAIL with the reason: $(command grep -m1 -E 'warm-1 |SKIP:' "$Y")"
+command grep -q 'exceeds the served context' "$Y" \
+  && fail "engine_422: a 422 whose reason contains 400 is not a context overflow"
+# Positive control: llama.cpp's own over-context 400 names none of the context
+# phrases, so the status alone must still make it a SKIP.
+run_bench ctx_400 "$((PORT_BASE+27))" "$TMP/ctx400.out" \
+  ONLY=narr RUNS=1 WARMUPS=0 PREFILL_PROBE=1 PREFILL_DEPTHS=2000 PREFILL_RUNS=1
+command grep -q 'SKIP: 2000 tokens exceeds the served context (HTTP 400: the request exceeds the available context size' "$TMP/ctx400.out" \
+  || fail "control: an over-context 400 must still SKIP: $(command grep -m1 -E 'warm-1 |SKIP:' "$TMP/ctx400.out")"
+# and the healthy run (case 1) carries no failed request
+command grep -qE 'FAIL: ' "$H" && fail "control: the healthy run must have no failed request"
+echo "  ✓ an engine's error fails the run (stream chunk → REQ_ERRORS; a 422 is not 'exceeds context'); over-context 400 still skips"
 
 echo "test-bench-capture: ok"
