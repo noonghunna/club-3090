@@ -12,10 +12,11 @@
 #                       split), "0" (single), "0,1,2,3" (multi4); the compose sets it
 #   CONTEXT             --max-context (default 131072); maya_settings.py validates it (>= 4096), so a bad
 #                       value stops the boot like any other launch setting
-#   MAYA_PCIE_SHARE     the engine's STRATA_GLM_PCIE_SHARE (the share of each token's RAM-tier experts
+#   MAYA_PCIE_SHARE     the engine's MAYA_GLM_PCIE_SHARE (the share of each token's RAM-tier experts
 #                       sent over PCIe instead of computed on the CPU), set only when non-empty: what
 #                       Maya's own `maya.sh --calibrate` tunes. Unset: the engine's own choice
-#   MAYA_CPU_LANE       the engine's STRATA_GLM_CPU_LANE (CPU threads per card), the same way
+#   MAYA_CPU_LANE       the engine's MAYA_GLM_CPU_LANE (CPU threads per card), the same way. Both are exported
+#                       under their older STRATA_GLM_* names, which Maya maps to MAYA_GLM_* (tools/maya_names.py)
 #   REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, KV,
 #   TEMP, TOP_P, TOP_K, MIN_P, PRESENCE_PENALTY, REPEAT_PENALTY, SERVED_NAME
 #                       written into maya.json at every boot by maya_prepare.py through maya_settings.py

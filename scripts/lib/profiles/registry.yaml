@@ -4573,7 +4573,7 @@ entries:
     default_port: 8023
     kvcalc_key: SKIP
     status: incubating
-    status_note: "HyperQwen (syv-ai) setup B on one card: its vLLM 0.32.0 derivative image, DFlash2 W4A16 drafter at 7 tokens per verify, bf16 KV, 64K. The image prepares the model at the first start (int8 heads, draft vocabulary, the single-user fast variant). First port and validation: community PR #1634 (VykosX). Measured 2026-10-14 on one 3090 at the stock 370 W: 131.4 / 230.1 decode, 1,190 prefill @10K, DFlash2 acceptance length 4.2, 15.02 GiB weights + a pinned 5.2 GiB KV pool (68,605 tokens). First start 368 s (prepare + compile), later starts 88 s."
+    status_note: "HyperQwen (syv-ai) setup B on one card: its vLLM derivative image (a vLLM 0.33.0 base since the 2026-11-10 pin), DFlash2 W4A16 drafter at 7 tokens per verify, bf16 KV, 64K. The image prepares the model at the first start (int8 heads, draft vocabulary, the single-user fast variant). First port and validation: community PR #1634 (VykosX). Measured 2026-10-14 on one 3090 at the stock 370 W: 131.4 / 230.1 decode, 1,190 prefill @10K, DFlash2 acceptance length 4.2, 15.02 GiB weights + a pinned 5.2 GiB KV pool (68,605 tokens). First start 368 s (prepare + compile), later starts 88 s."
     weights_companions:
       - dflash2
     gateway: false
