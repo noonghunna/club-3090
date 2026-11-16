@@ -520,6 +520,45 @@ for e in entries.values():
 if len(failures) == n0:
     print("  ✓ every supports_none:true engine's ladder pairs carry a by_model "
           "entry with the pair's own supports_none claim")
+# ---- 5e. a refuses-recording engine's other ladder pairs declare theirs -----
+# `refuses` is pair-scoped by design (the intersection of the engine's 400
+# behaviour and THIS model's ladder — the loader refuses an engine-level one,
+# #2055 review it7-5), and the loader refuses an EMPTY list, so "nothing
+# refused" can only be expressed by omitting the key. But once one pair on an
+# engine records a non-empty `refuses`, the engine's server 400s request names
+# outside its accepted set — a fact that does not depend on the template — so
+# every OTHER ladder model on that engine must probe and record its own
+# refuses too: absent the key the render names the full ladder
+# (litellm_sync.py:681-683), advertising a rung the server 400s (#2055 review
+# it8-4). Engines with no refuses recorded anywhere stay untriggered: the
+# guard has no structured 400 fact to key on, and forcing a probe it cannot
+# cite would be a false positive.
+n0 = len(failures)
+refusing_engines = {}
+for eng_id, eng in profiles.engines.items():
+    eff = (eng.effort or {}) if eng else {}
+    for mid, pair in (eff.get("by_model") or {}).items():
+        if pair.get("refuses"):
+            refusing_engines.setdefault(eng_id, []).append(mid)
+for e in entries.values():
+    m, eng_id = e.get("model"), e.get("engine")
+    if not m or not eng_id or eng_id not in refusing_engines:
+        continue
+    if m in refusing_engines[eng_id]:
+        continue
+    levels, _status = model_levels(m)
+    if not levels:
+        continue
+    pair = ((profiles.engines.get(eng_id).effort or {}).get("by_model") or {}).get(m)
+    if not pair or not pair.get("refuses"):
+        bad(f"{m} on {eng_id}: probed ladder {levels} but no pair refuses while "
+            f"sibling {refusing_engines[eng_id]} records {[(profiles.engines[eng_id].effort or {}).get('by_model', {}).get(s, {}).get('refuses') for s in refusing_engines[eng_id]]} — "
+            f"the render names the full ladder when the key is absent, so a "
+            f"rung the server 400s would be advertised; probe this pair's "
+            f"request names and record its refuses (#2055 review it8-4)")
+if len(failures) == n0:
+    print("  ✓ every refuses-recording engine's other ladder pairs declare "
+          "their own refuses")
 # ---- 5b. the loader REFUSES an engine-wide fold fact (#1951 review r5) -------
 # An engine-level `default_when_unset`/`maps` is the silent-inheritance bug the
 # review named: a model never measured on it would be folded and defaulted by a
@@ -735,6 +774,26 @@ else:
             bad(f"{model_dir}: probed ladder {levels} but no FAMILIES family covers "
                 f"it — the omp surface never renders its ladder; add it to a "
                 f"family's models list (the family serving its omp ids)")
+    # A model listed under a family must also be REACHABLE from that family's
+    # ids constant (#2055 review it8-2): the overrides render only the ids in
+    # the *_IDS constants, so a FAMILY_MODELS entry whose omp names (the model
+    # id itself, or a non-deprecated slug's --served-model-name for it) appear
+    # in no constant is pinned, covered, and never offered. Quant-variant ids
+    # (qwen3.8-27b-fp8) are omp-side aliases, not catalog models — the check
+    # asks only that each listed model has SOME id in its family's constant.
+    served_names: "dict[str, set]" = {}
+    for path, text, _levels, mdl in scan:
+        for line in text.splitlines():
+            m2 = re.search(r"^\s*-?\s*--served-model-name[=:\s]+\"?([\w.-]+)", line)
+            if m2:
+                served_names.setdefault(mdl, set()).add(m2.group(1))
+    for fam, f in sorted(families.items()):
+        for mdl in FAMILY_MODELS.get(fam, []):
+            names = {mdl} | served_names.get(mdl, set())
+            if not (names & set(f["ids"])):
+                bad(f"FAMILY_MODELS {fam}: model {mdl} has no omp id in "
+                    f"{f['ids_const']} {f['ids']} (model id or a slug's "
+                    f"--served-model-name) — the omp surface never offers it")
     for mid, o in ovr.items():
         t = (o.get("thinking") or {})
         ladder, dflt = list(t.get("efforts") or []), t.get("defaultLevel")
