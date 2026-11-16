@@ -131,7 +131,7 @@ def probe(port: int) -> list[Live]:
         if engine_kind_from_owned_by(owned_by) == "exllamav3":
             data = loaded_model(port) or data
         first_id = next((str(m["id"]) for m in data if m.get("id")), "")
-        native = serves_messages(port, owned_by, first_id, key) if first_id else False
+        native = serves_messages(port, first_id, key) if first_id else False
         responses = serves_responses(port, key)
         out: list[Live] = []
         for m in data:
@@ -247,12 +247,50 @@ def count_tokens(port: int, model: str, body: dict, key: str = "") -> "int | Non
     return n if isinstance(n, int) else None
 
 
-def serves_messages(port: int, owned_by: str, model: str, key: str = "") -> bool:
+def anthropic_call(port: int, model: str, messages: list, key: str = "",
+                   max_tokens: int = 8, timeout: int = 30) -> "dict | None":
+    """POST /v1/messages, parsed. None on any failure."""
+    req = bearer(urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/messages",
+        data=json.dumps({"model": model, "max_tokens": max_tokens, "messages": messages}).encode(),
+        headers={"content-type": "application/json"},
+    ), key)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    except Exception:
+        return None
+
+
+def serves_anthropic(port: int, model: str, key: str = "") -> bool:
+    """Whether the engine answers Anthropic /v1/messages itself, with a real
+    message. Measured on THIS boot, because LiteLLM's own translation is not
+    equivalent: through the Responses bridge Strata answers with a text block
+    only, thinking dropped, streaming and non-streaming alike (measured 2026-11-15:
+    blocks=['text'], thinking_len=0 against 116/304 chars from its own endpoint at
+    effort low/xhigh); through the chat-completions bridge QEngine answered a
+    non-streaming request with `content: []` — the #1520 gap recorded under
+    RESPONSES_BRIDGE. Both engines answer /v1/messages themselves, with a thinking
+    block and a text block.
+    A tiny generation is the only honest test. The empty-body 400-vs-404 trick
+    serves_responses uses cannot tell a working endpoint from one that answers
+    with empty content, and empty content is exactly the failure this avoids.
+    8 tokens, once per live port per render."""
+    body = anthropic_call(port, model,
+                          [{"role": "user", "content": "Reply with the single word OK."}], key)
+    return (isinstance(body, dict) and body.get("type") == "message"
+            and isinstance(body.get("content"), list) and bool(body["content"]))
+
+
+def serves_messages(port: int, model: str, key: str = "") -> bool:
     """Whether the gateway should hand Claude Code's Anthropic /v1/messages to the
     engine's own endpoint instead of translating it. Both must hold:
-      - the engine is SGLang or vLLM, the two checked with the Claude Code CLI:
-        thinking blocks out, replayed thinking and a mid-array system message in,
-        tool calls, prefix reuse on follow-ups.
+      - the engine answers /v1/messages itself (serves_anthropic). NOT the engine's
+        name: the check was an allowlist of SGLang and vLLM — the two originally
+        checked with the Claude Code CLI — and it silently cost every other engine
+        its reasoning. QEngine and Strata both serve the endpoint and both were
+        excluded; Strata reports no `owned_by` at all, so no family rule could
+        have found it.
       - the endpoint keeps a mid-conversation `system` message where it is.
         Claude Code sends one every turn. An endpoint that moves it into the
         leading system block changes the front of the prompt each turn, and the
@@ -261,19 +299,55 @@ def serves_messages(port: int, owned_by: str, model: str, key: str = "") -> bool
         over three turns, against 2.9K). count_tokens tells the two apart without
         generating anything: moved, the message renders exactly like the same text
         appended to the top-level system prompt; kept in place, it adds its own
-        turn markers. A server without the endpoint (an older build) fails the
-        request and stays on LiteLLM's translation, which still works.
+        turn markers. An endpoint without count_tokens (Project Maya 404s it)
+        gets the same question answered by its prompt cache instead
+        (keeps_system_in_place). A server without the endpoint (an older build)
+        fails the request and stays on LiteLLM's translation, which still works.
     vLLM v0.30.0 keeps the message in place only when started with
     `--chat-template` — it tests the flag, not the template it loaded; our Qwen3.8
-    composes pass it. vllm#58754 fixes the check (docs/UPSTREAM.md)."""
-    if engine_kind_from_owned_by(owned_by) not in ("sglang", "vllm"):
+    composes pass it. vllm#58754 fixes the check (docs/UPSTREAM.md).
+    QEngine and Strata pass the count_tokens check as served here (measured
+    2026-11-15: inline 59 vs merged 55, and 71 vs 65), and hold up under the
+    Claude Code sequence on their own endpoint: thinking blocks out, a replayed
+    thinking block answered from, `tool_use` with `stop_reason: tool_use`, prefix
+    reuse reported (QEngine `cache_read_input_tokens: 1585` on the follow-up).
+    Project Maya passes the cache-based one (keeps_system_in_place)."""
+    if not serves_anthropic(port, model, key):
         return False
     turns = [{"role": "user", "content": "a"}, {"role": "user", "content": "b"}]
     inline = count_tokens(port, model, {"system": "Be brief.", "messages": [
         turns[0], {"role": "system", "content": "Env: linux"}, turns[1]]}, key)
     merged = count_tokens(port, model, {"system": [
         {"type": "text", "text": "Be brief."}, {"type": "text", "text": "Env: linux"}], "messages": turns}, key)
-    return inline is not None and merged is not None and inline > merged + 1
+    if inline is not None and merged is not None:
+        return inline > merged + 1
+    return keeps_system_in_place(port, model, key)
+
+
+def keeps_system_in_place(port: int, model: str, key: str = "") -> bool:
+    """The placement half of serves_messages for an endpoint without
+    count_tokens: Project Maya answers /v1/messages for real and 404s
+    /v1/messages/count_tokens, so the cheap probe cannot run. The prompt cache
+    answers the same question: a follow-up that only APPENDS a mid-array system
+    message must hit the cache on the front it did not touch, while an endpoint
+    that merges the message into the leading system block rewrites the front and
+    misses. Measured on maya-s24 2026-11-15: the follow-up reports
+    cache_read_input_tokens 1561 against a 1562-token front. Two 20-token
+    generations, only on engines that lack count_tokens; an engine that reports
+    no cache accounting at all fails this and keeps LiteLLM's translation."""
+    long = "Background: " + ("The atmosphere scatters short wavelengths. " * 220)
+    base = [{"role": "system", "content": "Be brief."},
+            {"role": "user", "content": long + "\n\nReply OK."}]
+    follow = base + [{"role": "assistant", "content": "OK."},
+                     {"role": "system", "content": "Env: linux"},
+                     {"role": "user", "content": "Say DONE."}]
+    first = anthropic_call(port, model, base, key, max_tokens=20, timeout=60)
+    second = anthropic_call(port, model, follow, key, max_tokens=20, timeout=60)
+    if not isinstance(first, dict) or not isinstance(second, dict):
+        return False
+    front = (first.get("usage") or {}).get("input_tokens") or 0
+    cached = (second.get("usage") or {}).get("cache_read_input_tokens") or 0
+    return bool(front) and cached > front // 2
 
 
 def serves_responses(port: int, key: str = "") -> bool:
@@ -476,10 +550,12 @@ def port_facts(variants: list[dict]) -> dict[int, dict]:
 # answer but none of the model's reasoning, so it had nothing to replay. Its
 # chat-completions bridge maps reasoning both ways, but it re-routes a thinking
 # request to Responses unless the route says `supports_reasoning: false`, which
-# /model_group/info publishes (pi-setup.sh would turn thinking off). So a route on
-# an engine whose own /v1/messages holds up (SGLang, and vLLM started with
-# --chat-template — see serves_messages) lists it in `supported_endpoints`, and
-# LiteLLM forwards the Anthropic request to the engine untranslated.
+# /model_group/info publishes (pi-setup.sh would turn thinking off). So a route
+# on an engine whose own /v1/messages holds up lists it in `supported_endpoints`,
+# and LiteLLM forwards the Anthropic request to the engine untranslated. Which
+# engines hold up is PROBED per boot (serves_messages), never inferred from the
+# engine's name: the bridge drops a real thinking block, so Strata and QEngine —
+# both of which serve the endpoint themselves — lost their reasoning to it.
 MESSAGES_ENDPOINTS = '      supported_endpoints: ["/v1/chat/completions", "/v1/responses", "/v1/messages"]'
 ROUTE_PARAMS = ["      allowed_openai_params: [reasoning_effort]"]
 # An engine without /v1/responses (tabbyAPI — see serves_responses) gets LiteLLM's
