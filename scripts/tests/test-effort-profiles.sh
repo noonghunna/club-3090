@@ -262,6 +262,11 @@ for engine_id, eng in sorted(profiles.engines.items()):
         if d and d not in levels:
             bad(f"{model_id} on {engine_id}: default_when_unset {d!r} is not a "
                 f"rung of the model's ladder {levels}")
+        if d == "max" and model_id not in MAX_DEFAULT_MODELS:
+            bad(f"{model_id} on {engine_id}: pair default_when_unset 'max' — the "
+                f"render must OMIT it (litellm's Literal excludes max), so treat it "
+                f"like a compose default: add the model to MAX_DEFAULT_MODELS only "
+                f"after re-verifying that rule")
         maps = facts.get("maps") or {}
         for src, dst in maps.items():
             if dst not in levels:
@@ -285,9 +290,17 @@ for eid in ("qengine", "sglang-stable", "vllm-stable", "strata", "strata-maya"):
         bad(f"{eid}: off_switch must load as the string 'none', got {off!r} — "
             'an empty value, `null` or `~` parses to null; give it a value '
             '(off_switch: "none") or drop the key')
+# A wholesale deletion of the pair facts would pass everything above: the loader
+# negatives need no data, and an empty by_model is legal on an engine that has no
+# pair facts yet. Pin the floor — 10 pair facts across 6 engines today; bump on
+# purpose when the catalogue legitimately changes (#1951 review r6).
+PAIR_FACT_FLOOR = 10
+if fold_checked < PAIR_FACT_FLOOR:
+    bad(f"only {fold_checked} pair fold facts loaded, floor is {PAIR_FACT_FLOOR} — "
+        f"bump the floor on purpose if the catalogue legitimately changed")
 if len(failures) == n0:
-    print(f"  ✓ {fold_checked} pair fold facts land on accepted rungs; off_switch "
-          "round-trips as 'none'")
+    print(f"  ✓ {fold_checked} pair fold facts land on accepted rungs (floor "
+          f"{PAIR_FACT_FLOOR} pinned); off_switch round-trips as 'none'")
 
 # ---- 5b. the loader REFUSES an engine-wide fold fact (#1951 review r5) -------
 # An engine-level `default_when_unset`/`maps` is the silent-inheritance bug the
@@ -316,6 +329,14 @@ expect_refusal({"evidence": "x", "by_model": {"m": {"off_switch": "none"}}},
 expect_refusal({"evidence": "x", "by_model": {"m": {}}}, "is empty", "empty by_model entry")
 expect_refusal({"evidence": "x", "by_model": {"m": {"maps": {}}}},
                "non-empty", "empty maps inside by_model")
+expect_refusal({"evidence": "x",
+                "by_model": {"m": {"default_when_unset": None}}},
+               "explicitly null", "null pair default inside by_model")
+expect_refusal({"evidence": "x",
+                "by_model": {"m": {"default_when_unset": 5}}},
+               "non-empty string", "non-string pair default inside by_model")
+expect_refusal({"evidence": "x", "by_model": {"m": {"maps": {"a": 5}}}},
+               "non-empty", "non-string maps value inside by_model")
 try:
     _engine_effort({"off_switch": "none", "supports_none": True,
                     "by_model": {"m": {"default_when_unset": "xhigh",
@@ -324,7 +345,7 @@ try:
 except ProfileError as exc:
     bad(f"valid pair-scoped block was refused: {exc}")
 if len(failures) == n0:
-    print("  ✓ engine-level fold facts refused (6 shapes), pair-scoped block loads")
+    print("  ✓ engine-level fold facts refused (9 shapes), pair-scoped block loads")
 
 # ---- 6. omp-setup FAMILIES agree with the profiles ---------------------------
 env = dict(os.environ, HOME=os.environ["T_HOME"],
