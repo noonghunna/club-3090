@@ -460,8 +460,9 @@ WEIGHTS_VARIANT_KEYS = {
 
 # Keys allowed inside a model profile's `effort:` block (#1951). Exactly one of
 # `levels:` (probed ladder) or `status:` must be present — checked by _effort().
-# `effort: none` is NOT expressible as a scalar (YAML parses bare `none` as
-# null, indistinguishable from absent), hence the `status: no-thinking` shape.
+# The block is a mapping, never a scalar: `effort:` with NO value parses to null,
+# which is exactly what an absent block parses to. A model that cannot think says
+# `status: no-thinking` instead of naming a rung.
 MODEL_EFFORT_KEYS = {"status", "levels", "template_kwarg", "budget_map", "evidence"}
 MODEL_EFFORT_STATUSES = ("no-thinking", "unprobed", "no-string-ladder")
 
@@ -781,18 +782,22 @@ def _effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
     if not isinstance(value, dict):
         raise ProfileError(
             f"{path}: `effort:` must be a mapping with `levels:` or `status:` "
-            f"(a bare scalar is never valid — YAML parses bare `none` as null, "
-            f"indistinguishable from absent), got {value!r}")
+            f"(a bare scalar is never valid, and `effort:` with no value parses to "
+            f"null — indistinguishable from an absent block), got {value!r}")
     levels, status = value.get("levels"), value.get("status")
-    # A key that is PRESENT but null is a typo trap: YAML eats an unquoted
-    # `none` (and an empty `key:`) into null, silently turning a measured fact
+    # A key that is PRESENT but null is a typo trap: an empty `key:` (or
+    # `key: null` / `key: ~`) parses to null, silently turning a measured fact
     # into "absent" — the render then treats it as unknown (#1951 review r1-1).
+    # YAML 1.1 does NOT null the word `none`: measured on this rig 2026-11-15,
+    # `off_switch: none` loads as the STRING 'none'. The trap is the empty value,
+    # not the spelling — quoting that word is style, not a guard.
     for key in MODEL_EFFORT_KEYS - {"evidence"}:
         if key in value and value[key] is None:
             raise ProfileError(
-                f"{path}: effort.{key} is explicitly null — YAML parsed an unquoted "
-                f"`none` or an empty value into null. Quote the string ('none') or "
-                f"drop the key; null means UNKNOWN and must never be stored.")
+                f"{path}: effort.{key} is explicitly null — an empty value, `null` "
+                f"or `~` parses to null (YAML does not null the word `none`: that is "
+                f"a string). Give the key a real value or drop it; null means "
+                f"UNKNOWN and must never be stored.")
     if (levels is None) == (status is None):
         raise ProfileError(
             f"{path}: effort needs EXACTLY ONE of `levels:` (the probed ladder) "
@@ -840,9 +845,10 @@ def _engine_effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
     for key in ENGINE_EFFORT_KEYS - {"evidence"}:
         if key in value and value[key] is None:
             raise ProfileError(
-                f"{path}: effort.{key} is explicitly null — YAML parsed an unquoted "
-                f"`none` (e.g. off_switch: none) into null. Quote the string "
-                f"('none') or drop the key; null means UNKNOWN and must never be stored.")
+                f"{path}: effort.{key} is explicitly null — an empty value, `null` "
+                f"or `~` parses to null (YAML does not null the word `none`: "
+                f"`off_switch: none` loads as the string 'none'). Give the key a real "
+                f"value or drop it; null means UNKNOWN and must never be stored.")
     if default is not None and (not isinstance(default, str) or not default):
         raise ProfileError(f"{path}: effort.default_when_unset must be a non-empty string, got {default!r}")
     off = value.get("off_switch")

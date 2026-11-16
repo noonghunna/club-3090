@@ -262,14 +262,17 @@ for model_id, engine_id in sorted(pairs):
         bad(f"{engine_id}: maps {maps} fold outside effort_budget.py ALIASES "
             f"{eb_aliases} while serving budget_map model {model_id}")
     fold_checked += 1
-# off_switch round-trip: the YAML must carry the STRING "none" — a bare
-# `none` parses to null (the loader now rejects it), and this pins the LOADED
-# value so the silent downgrade can't come back (#1951 review r1-1).
+# off_switch round-trip: the LOADED value must be the STRING "none". YAML 1.1
+# nulls only an empty value, `null` and `~` — never the word `none` (measured
+# on this rig 2026-11-15: `off_switch: none` loads as 'none'), so what this pins
+# is the present-but-null case the loader rejects: the silent downgrade to
+# UNKNOWN cannot come back (#1951 review r1-1).
 for eid in ("qengine", "sglang-stable", "vllm-stable", "strata", "strata-maya"):
     off = (profiles.engines[eid].effort or {}).get("off_switch")
     if off != "none":
         bad(f"{eid}: off_switch must load as the string 'none', got {off!r} — "
-            'quote it in the YAML (off_switch: "none")')
+            'an empty value, `null` or `~` parses to null; give it a value '
+            '(off_switch: "none") or drop the key')
 if len(failures) == n0:
     print(f"  ✓ {fold_checked} (model, engine) pairs: folds and defaults land on "
           "accepted rungs; off_switch round-trips as 'none'")
