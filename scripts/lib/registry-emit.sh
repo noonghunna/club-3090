@@ -690,23 +690,28 @@ def _compose_effort_default(compose_path: str):
 
 def _effort_facts(model_id: str, engine_id: str, compose_path: str):
     """The #1951 effort facts one gateway render needs for a slug: the MODEL's
-    ladder (or its honest `status:`), the ENGINE's handling of a rung, and the
-    COMPOSE's default. A missing fact is None = UNKNOWN — the render emits
-    nothing for it, never an invented ladder and never `supports_reasoning:
-    false` on a thinking model (principle 3)."""
+    ladder (or its honest `status:`), the ENGINE's handling of the wire `none`,
+    the PAIR's fold/default facts, and the COMPOSE's default. A missing fact is
+    None = UNKNOWN — the render emits nothing for it, never an invented ladder
+    and never `supports_reasoning: false` on a thinking model (principle 3)."""
     m = profiles.models.get(model_id)
     me = (getattr(m, "effort", None) or {}) if m else {}
     e = profiles.engines.get(engine_id)
     ee = (getattr(e, "effort", None) or {}) if e else {}
     if not me and not ee:
         return None
+    # What an unset request gets, and how an out-of-ladder name folds, are
+    # (model, engine) PAIR facts (#1951 review r5): the engine's `by_model` entry
+    # for THIS model, never the engine block. A model the engine does not list
+    # has none — it must not inherit a sibling launcher's default or fold table.
+    pair = (ee.get("by_model") or {}).get(model_id) or {}
     return {
         "levels": list(me["levels"]) if me.get("levels") else None,
         "status": me.get("status"),
         "supports_none": ee.get("supports_none"),
         "off_switch": ee.get("off_switch"),
-        "default_when_unset": ee.get("default_when_unset"),
-        "maps": dict(ee["maps"]) if ee.get("maps") else None,
+        "default_when_unset": pair.get("default_when_unset"),
+        "maps": dict(pair["maps"]) if pair.get("maps") else None,
         "compose_default": _compose_effort_default(compose_path),
     }
 

@@ -321,6 +321,17 @@ render "8198=flash-live@262144,8119=glm-live@262144,8094=mimo-live@8192,8084=ink
    && -z "$(route_field glm-live model_info.default_reasoning_effort)" ]] \
   && ok "a max ladder is advertised whole and its max default is OMITTED, never downgraded" \
   || bad "max rung: levels=$(route_field glm-live model_info.reasoning_effort_levels) default='$(route_field glm-live model_info.default_reasoning_effort)'"
+# Where the compose names no knob at all, the PAIR fact is what the server
+# applies: the strata route leaves REASONING_EFFORT unset and its launcher runs
+# at the template's xhigh, declared under the engine's `by_model` entry for THIS
+# model. Before #1951 review r5 that fact sat on the engine block, where the two
+# MiniMax and three DeepSeek slugs on the SAME engine (strata-maya) would have
+# been defaulted GLM's way once they got a ladder.
+render "8198=flash-live@262144,8119=glm-live@262144,8094=mimo-live@8192,8084=inkling-live@262144,8018=strata-live@262144"
+[[ "$(route_field strata-live model_info.default_reasoning_effort)" == "xhigh" ]] \
+  && ok "with no compose knob, the pair's own default is what gets advertised" \
+  || bad "pair default: '$(route_field strata-live model_info.default_reasoning_effort)'"
+
 # An honest `status:` instead of a ladder: the model DOES think (`unprobed` /
 # `no-string-ladder` say the rungs are unknown, not absent), so the capability
 # goes out and the ladder does not. Rendering nothing here would fall back to
@@ -350,7 +361,22 @@ if not m.port_facts([low, same]).get(1, {}).get("effort"):
     print("  FAIL — two slugs agreeing on a ladder dropped the fact", file=sys.stderr); sys.exit(1)
 if m.port_facts([{"port": 1}]).get(1, {}).get("effort"):
     print("  FAIL — a slug with no effort block invented a fact", file=sys.stderr); sys.exit(1)
-print("  ok   — disagreeing ladders on one port advertise nothing; agreeing ones still do")
+# The pair default is a fact like any other: agree-or-drop across the port, and
+# it fills the advertise only where the compose names no knob.
+pair_x = {"port": 2, "effort": {"levels": ["low", "xhigh"], "default_when_unset": "xhigh"}}
+pair_m = {"port": 2, "effort": {"levels": ["low", "xhigh"], "default_when_unset": "max"}}
+if (m.port_facts([pair_x, pair_m]).get(2, {}).get("effort") or {}).get("default_when_unset"):
+    print("  FAIL — a port with two different pair defaults still advertised one", file=sys.stderr); sys.exit(1)
+one = m.port_facts([pair_x]).get(2, {}).get("effort")
+if not one or one.get("default_when_unset") != "xhigh":
+    print(f"  FAIL — a single pair default did not survive port_facts: {one}", file=sys.stderr); sys.exit(1)
+if "default_reasoning_effort: xhigh" not in "\n".join(m.model_info(262144, {"effort": one})):
+    print("  FAIL — the pair default never reached the advertise", file=sys.stderr); sys.exit(1)
+max_only = m.port_facts([pair_m]).get(2, {}).get("effort")
+if "default_reasoning_effort" in "\n".join(m.model_info(262144, {"effort": max_only})):
+    print("  FAIL — a max pair default was advertised instead of omitted", file=sys.stderr); sys.exit(1)
+print("  ok   — disagreeing ladders or pair defaults advertise nothing; agreeing ones "
+      "still do, and a pair default fills an advertise with no compose knob")
 PY
 
 # --- 15: Claude Code's /v1/messages goes to the engine's own endpoint, where it holds up

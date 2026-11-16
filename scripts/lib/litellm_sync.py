@@ -484,7 +484,11 @@ def _port_effort(rows: list[dict]) -> "dict | None":
         if len(vals) == 1 and v not in (None, "", [], {}):
             out: dict = {key: v}
             if key == "levels":
-                for k in ("supports_none", "compose_default"):
+                # `default_when_unset` is the PAIR fact (the engine's by_model
+                # entry for this model), so two slugs on one port can only agree
+                # on it by declaring the same pair default — agree-or-drop like
+                # every other fact here (#1951 review r5).
+                for k in ("supports_none", "compose_default", "default_when_unset"):
                     other = {json.dumps(b.get(k)) for b in blocks}
                     if len(other) == 1 and blocks[0].get(k) is not None:
                         out[k] = blocks[0][k]
@@ -605,11 +609,14 @@ def model_info(ctx: "int | None", facts: dict, native_messages: bool = False,
         if eff.get("supports_none") is not None:
             lines.append("      supports_none_reasoning_effort: "
                          + ("true" if eff["supports_none"] else "false"))
-        # litellm's `default_reasoning_effort` Literal EXCLUDES max (v1.100.3),
-        # so a max default is OMITTED — never downgraded to a rung the server
-        # does not actually apply. Which models may default to max is ratcheted
-        # by scripts/tests/test-effort-profiles.sh (MAX_DEFAULT_MODELS).
-        dflt = eff.get("compose_default")
+        # The compose's own REASONING_EFFORT default wins — it is the deployment's
+        # explicit choice. Where the compose leaves the knob unset (the strata and
+        # bucko routes), the PAIR fact says what the engine applies instead: the
+        # template's own default. litellm's `default_reasoning_effort` Literal
+        # EXCLUDES max (v1.100.3), so a max default is OMITTED — never downgraded
+        # to a rung the server does not actually apply. Which models may default to
+        # max is ratcheted by scripts/tests/test-effort-profiles.sh (MAX_DEFAULT_MODELS).
+        dflt = eff.get("compose_default") or eff.get("default_when_unset")
         if dflt and dflt != "max":
             lines.append(f"      default_reasoning_effort: {dflt}")
     elif eff.get("status"):
