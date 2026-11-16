@@ -82,9 +82,10 @@ effort:
     claim measured on v0.7.0 is DROPPED from this block (#2055 review it6-5):
     unknown stays unknown until the running binary is re-measured — boot a
     llama.cpp slug, wire-probe `none`'s rendering, and re-declare it with the
-    new citation. off_switch stays because it has no wire consumer (the omp
-    overrides render their own off-switch and the emit payload no longer
-    carries the key), so the stale value is inert — re-measure it on the same
+    new citation. off_switch stays because it has no wire consumer (the emit
+    payload no longer carries the key, and the omp overrides carry no
+    off-switch field at all — their ladders are the guard-pinned FAMILIES
+    copy in omp-setup.sh), so the stale value is inert — re-measure it on the same
     boot. default_when_unset is per-template (model-level), so it is not
     recorded here.
 

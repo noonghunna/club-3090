@@ -745,8 +745,15 @@ def _effort_facts(model_id: str, engine_id: str, compose_path: str):
     return {
         "levels": list(me["levels"]) if me.get("levels") else None,
         "status": me.get("status"),
+        # A pair's own claim wins. The engine-level fact is inherited ONLY
+        # when it is False — "this server ignores `none`" is engine-wide
+        # behaviour check 5d endorses for unlisted pairs — but never True:
+        # honoring `none` is a per-template contract, and inheriting it for
+        # an unprobed pair is the r6/r8 failure check 5d exists to refuse
+        # (#2055 review it10-3).
         "supports_none": (pair["supports_none"] if "supports_none" in pair
-                          else ee.get("supports_none")),
+                          else (False if ee.get("supports_none") is False
+                                else None)),
         # off_switch stays OUT of the payload: neither _port_effort nor
         # model_info reads it, and neither do the omp overrides — their
         # ladders are the guard-pinned FAMILIES copy in omp-setup.sh, which

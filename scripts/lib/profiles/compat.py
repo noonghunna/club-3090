@@ -1095,6 +1095,53 @@ def _validate_cross_refs(profiles: Profiles) -> None:
             if compose not in COMPOSE_REGISTRY:
                 failures.append(f"calibration/{cal.model}.yml references unknown compose `{compose}`")
 
+    # #1951: an engine's `effort.by_model.<id>:` entry is a PAIR fact the
+    # gateway render reads by exactly this lookup — a typo'd id or a rung off
+    # the model's ladder silently drops the pair's fold facts from every
+    # render, the "unknown" the design forbids. The whole-catalog guard
+    # (test-effort-profiles check 5) checks the same shapes, but the cockpit
+    # and PR-bundle paths load profiles WITHOUT running the guard suite, so
+    # the cross-refs must live here too (#2055 review it10-2). The pair must
+    # also be routed by some slug, or the fact is unreachable.
+    routed_pairs = {(e.get("model"), e.get("engine"))
+                    for e in get_registry().values()
+                    if e.get("model") and e.get("engine")}
+    for engine_id, eng in profiles.engines.items():
+        by_model = (eng.effort or {}).get("by_model") or {}
+        for model_id, facts in by_model.items():
+            where = f"engines/{engine_id}.yml effort.by_model.{model_id}"
+            model = profiles.models.get(model_id)
+            if model is None:
+                failures.append(
+                    f"{where} is not a known model id. "
+                    f"Available models: {_known(profiles.models)}")
+                continue
+            if (model_id, engine_id) not in routed_pairs:
+                failures.append(
+                    f"{where} names a pair no slug routes — the fact is "
+                    f"unreachable, drop it or fix the id")
+            levels = (model.effort or {}).get("levels") or []
+            if not levels:
+                failures.append(
+                    f"{where} records pair facts for a model with no probed "
+                    f"ladder — a fold has nothing to land on")
+                continue
+            d = facts.get("default_when_unset")
+            if d and d not in levels:
+                failures.append(
+                    f"{where}: default_when_unset {d!r} is not a rung of "
+                    f"the model's ladder {levels}")
+            for src, dst in (facts.get("maps") or {}).items():
+                if dst not in levels:
+                    failures.append(
+                        f"{where}: fold {src}->{dst} lands outside the "
+                        f"model's ladder {levels}")
+            for r in facts.get("refuses") or []:
+                if r not in levels:
+                    failures.append(
+                        f"{where}: refused rung {r!r} is not a rung of the "
+                        f"model's ladder {levels}")
+
     for name, entry in get_registry().items():
         for field_name, table in (
             ("model", profiles.models),

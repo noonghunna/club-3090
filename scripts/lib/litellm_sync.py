@@ -277,7 +277,10 @@ def serves_anthropic(port: int, model: str, key: str = "",
     A tiny generation is the only honest test. The empty-body 400-vs-404 trick
     serves_responses uses cannot tell a working endpoint from one that answers
     with empty content, and empty content is exactly the failure this avoids.
-    8 tokens, once per live port per render. A thinking engine can spend that
+    The probe is 8 tokens; the full classification can spend up to four
+    generations per live port per render (the 8-token probe, one 512-token
+    retry, and two ~20-token count_tokens calls in keeps_system_in_place) —
+    still once per render, still cheap. A thinking engine can spend that
     whole budget inside its thinking block and answer with no text at all — a
     budget artifact, not a dead endpoint. Two rules decide what the envelope
     means (#2055 review it5-3):
@@ -297,8 +300,9 @@ def serves_anthropic(port: int, model: str, key: str = "",
         preserve, and Claude Code's own max_tokens is far larger, so text
         WOULD appear for it. The translation always answers with text, so
         Claude Code keeps working either way; the reasoning loss is the
-        accepted cost of a probe that must stay cheap (8 tokens, once per
-        live port per render) until a heavier probe is justified. test 16's
+        accepted cost of a probe that must stay cheap (an 8-token probe, up
+        to four generations per live port per render) until a heavier probe
+        is justified. test 16's
         "think" stub pins exactly this classification."""
     probe = anthropic_call(
         port, model, [{"role": "user", "content": "Reply with the single word OK."}], key)
