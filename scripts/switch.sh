@@ -453,6 +453,24 @@ apply_launch_settings() {
   rm -f "$rec"
 }
 
+# #2059 — TEMP/TEMPERATURE are the sampler-temperature knobs, and composes
+# interpolate them straight from this process's environment. A caller that
+# exports TEMP as a path (AI-agent runtimes export TEMP/TMP/TMPDIR to scratch
+# directories) used to reach vLLM as temperature=/path and crash-loop the
+# container before the first token. Drop non-numeric values before compose up,
+# with a one-line warning naming the variable and what it held; numeric values
+# keep working as knobs either way.
+guard_sampler_env() {
+  local var value
+  for var in TEMP TEMPERATURE; do
+    value="${!var:-}"
+    if [[ -n "$value" ]] && ! [[ "$value" =~ ^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$ ]]; then
+      echo "[switch] [sampler-env] ${var}='${value}' is not a number — dropping it for this launch. A numeric ${var} still sets sampler temperature; unset it to silence this. (#2059)" >&2
+      unset "$var"
+    fi
+  done
+}
+
 # --set <slug> KEY=VALUE… / --unset <slug> KEY… are terminal: every word after the
 # slug is a setting, so a flag there is a mistake, not an option.
 _slug_settings_args_ok() {  # <flag> <slug> <args…>
@@ -1748,6 +1766,7 @@ up_variant() {
   export_variant_engine_pin "$v"
   preflight_ik_llama_image "$v"   # #633 — cu12 fallback on <13.2 drivers (unless pinned)
   apply_launch_settings "$v"      # #1465 — per-slug / thinking-pin / global launch settings → the compose env
+  guard_sampler_env               # #2059 — drop a non-numeric TEMP/TEMPERATURE (e.g. a harness's scratch path) before compose interpolates it
   # #1466 4a/4b — compile caches in ~/.cache/club-3090/<engine image>/, the KV disk tier in
   # ~/.local/share/club-3090/kv-offload: created as you, keyed by the image this compose
   # is about to run (so AFTER the engine pin and launch settings above). No-op for a
