@@ -337,15 +337,19 @@ expect_refusal({"evidence": "x",
                "non-empty string", "non-string pair default inside by_model")
 expect_refusal({"evidence": "x", "by_model": {"m": {"maps": {"a": 5}}}},
                "non-empty", "non-string maps value inside by_model")
+expect_refusal({"evidence": "x",
+                "by_model": {"m": {"default_when_unset": "xhigh"}}},
+               "evidence is REQUIRED", "pair entry with no own evidence")
 try:
     _engine_effort({"off_switch": "none", "supports_none": True,
                     "by_model": {"m": {"default_when_unset": "xhigh",
-                                       "maps": {"high": "xhigh"}}},
+                                       "maps": {"high": "xhigh"},
+                                       "evidence": "x"}},
                     "evidence": "x"}, Path("negative-test.yml"))
 except ProfileError as exc:
     bad(f"valid pair-scoped block was refused: {exc}")
 if len(failures) == n0:
-    print("  ✓ engine-level fold facts refused (9 shapes), pair-scoped block loads")
+    print("  ✓ engine-level fold facts refused (10 shapes), pair-scoped block loads")
 
 # ---- 6. omp-setup FAMILIES agree with the profiles ---------------------------
 env = dict(os.environ, HOME=os.environ["T_HOME"],

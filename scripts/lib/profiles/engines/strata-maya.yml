@@ -51,6 +51,11 @@ effort:
     glm-5.3-flash:
       default_when_unset: max
       maps: {medium: high, xhigh: max}
+      evidence: >-
+        maya_settings.py — GLM-5.3-Flash's own launcher on this engine:
+        DEFAULT_EFFORT = "max" (:44) and EFFORTS running medium as high and
+        xhigh as max (:46) — the state ENABLE_THINKING=false produces, "the
+        server closes the thinking block" (:10, :95-101).
   evidence: >-
     Engine-wide (off_switch / supports_none): all three launchers on this engine
     map a request's `none` to thinking off — maya_settings.py EFFORTS (:46),
@@ -58,11 +63,8 @@ effort:
     the tuple includes `none`). Only GLM's is measured on the wire: 2026-11-15 on
     maya-s24 (:8194), reasoning_effort none -> 0 chars of reasoning_content
     (low -> 60, max -> 1391 on a 900-token cap).
-    Pair-scoped (by_model.glm-5.3-flash): maya_settings.py DEFAULT_EFFORT = "max"
-    (:44) and EFFORTS running medium as high and xhigh as max (:46) — the state
-    ENABLE_THINKING=false produces, "the server closes the thinking block" (:10,
-    :95-101). The engine's other two models are deliberately NOT listed: their
-    launchers disagree — ds4_settings.py defaults to "high" (:51) and
+    The engine's other two models are deliberately NOT listed under by_model:
+    their launchers disagree — ds4_settings.py defaults to "high" (:51) and
     mm3_settings.py to "auto" (:54) with seven pass-through levels (:57) — and
     both are `status: unprobed`, so there is no ladder to fold onto yet.
 

@@ -480,6 +480,11 @@ ENGINE_EFFORT_KEYS = {"off_switch", "supports_none", "unknown_name",
 ENGINE_EFFORT_OFF_SWITCHES = ("none", "enable-thinking-kwarg")
 # Keys allowed inside one `effort.by_model.<model_id>:` entry: the pair-scoped half.
 ENGINE_EFFORT_PAIR_KEYS = {"default_when_unset", "maps"}
+# A pair entry carries its OWN provenance: the engine block's `evidence:` cites the
+# engine-wide facts (wire behaviour, server code), which say nothing about why THIS
+# model folds THIS way on it. Without it, adding a by_model entry is an uncited
+# copy — the exact failure the effort block exists to prevent (#1951 review r6).
+ENGINE_EFFORT_PAIR_ENTRY_KEYS = ENGINE_EFFORT_PAIR_KEYS | {"evidence"}
 
 # Keys allowed inside a model's `setup:` dispatch-policy dict (consumed by
 # weights.py's catalog derivation for setup.sh).
@@ -844,12 +849,12 @@ def _effort_pair_facts(value: Any, path: Path, where: str) -> dict[str, Any]:
     shape rules they had at engine level; `where` names the entry in the message."""
     if not isinstance(value, dict):
         raise ProfileError(f"{path}: {where} must be a mapping, got {value!r}")
-    for key in value.keys() - ENGINE_EFFORT_PAIR_KEYS:
+    for key in value.keys() - ENGINE_EFFORT_PAIR_ENTRY_KEYS:
         raise ProfileError(
-            f"{path}: {where} allows only {sorted(ENGINE_EFFORT_PAIR_KEYS)}, got {key!r}")
+            f"{path}: {where} allows only {sorted(ENGINE_EFFORT_PAIR_ENTRY_KEYS)}, got {key!r}")
     if not value:
         raise ProfileError(f"{path}: {where} is empty — drop it or record a fact")
-    for key in ENGINE_EFFORT_PAIR_KEYS:
+    for key in ENGINE_EFFORT_PAIR_ENTRY_KEYS:
         if key in value and value[key] is None:
             raise ProfileError(
                 f"{path}: {where}.{key} is explicitly null — an empty value, `null` or `~` "
@@ -865,6 +870,13 @@ def _effort_pair_facts(value: Any, path: Path, where: str) -> dict[str, Any]:
                            for k, v in maps.items())):
             raise ProfileError(
                 f"{path}: {where}.maps must be a non-empty {{name: name}} mapping, got {maps!r}")
+    # Last, so every shape error above keeps its specific message.
+    ev = value.get("evidence")
+    if not isinstance(ev, str) or not ev.strip():
+        raise ProfileError(
+            f"{path}: {where}.evidence is REQUIRED — a pair fact cites what was read on "
+            f"THIS pair (a launcher/settings file and line, a template, a probe), never "
+            f"a sibling model's fact or the engine's own behaviour.")
     return dict(value)
 
 
@@ -887,9 +899,13 @@ def _engine_effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
         if key in value and value[key] is None:
             raise ProfileError(
                 f"{path}: effort.{key} is explicitly null — an empty value, `null` "
-                f"or `~` parses to null (YAML does not null the word `none`: "
-                f"`off_switch: none` loads as the string 'none'). Give the key a real "
-                f"value or drop it; null means UNKNOWN and must never be stored.")
+                f"or `~` parses to null. Give the key a real value or drop it; null "
+                f"means UNKNOWN and must never be stored."
+                # The YAML-1.1 `none` caveat is specific to off_switch, the only key
+                # whose VALUE could be mistaken for a null spelling; quoting it on a
+                # null `by_model:` sends the reader to the wrong key (#1951 review r6).
+                + (" (YAML does not null the word `none`: `off_switch: none` loads as "
+                   "the string 'none'.)" if key == "off_switch" else ""))
     off = value.get("off_switch")
     if off is not None and off not in ENGINE_EFFORT_OFF_SWITCHES:
         raise ProfileError(

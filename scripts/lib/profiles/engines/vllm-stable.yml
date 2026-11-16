@@ -103,22 +103,40 @@ effort:
     qwen3.8-27b:
       default_when_unset: xhigh
       maps: {minimal: low, high: xhigh, max: xhigh}
+      evidence: >-
+        The template this model's vLLM slugs mount:
+        models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template
+        chat_template.jinja folds high->xhigh, minimal->low and max->xhigh, then
+        raise_exception()s on anything still outside low|medium|xhigh. The unset
+        default is the checkpoint template's own `reasoning_effort |
+        default('xhigh')` (docs/engines/STRATA.md "Reasoning and sampling
+        defaults"). Mirrored in effort_budget.py ALIASES; the model profile
+        carries the same citation plus the 2026-10-20 wire probe.
     thinkingcap-qwen3.8-27b:
       default_when_unset: xhigh
       maps: {minimal: low, high: xhigh, max: xhigh}
+      evidence: >-
+        A fine-tune on the same template contract: its composes mount that same
+        vendored qwen38-reasoning-effort-template chat_template.jinja over the
+        checkpoint's own — the mount and its line are cited in
+        models/thinkingcap-qwen3.8-27b.yml's effort.evidence — which folds
+        high->xhigh, minimal->low and max->xhigh and raise_exception()s on
+        anything still outside low|medium|xhigh.
     qwen3.8-flash-next:
       default_when_unset: xhigh
       maps: {minimal: low, high: xhigh, max: xhigh}
+      evidence: >-
+        Same template family as qwen3.8-27b: the vLLM composes mount
+        models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template, which
+        folds high->xhigh, minimal->low and max->xhigh and raise_exception()s on
+        anything still outside low|medium|xhigh; wire-probed 2026-10-20 through
+        the byte-identical GGUF twin (qwen3.8-27b/llama-cpp/patches/
+        qwen38-gguf-reasoning-effort-template/PROVENANCE.md).
   evidence: >-
-    Pair-scoped (by_model): the Qwen3.8 checkpoint template's own
-    `reasoning_effort|default('xhigh')` (docs/engines/STRATA.md "Reasoning and
-    sampling defaults" — the same template family our vLLM slugs mount), and the
-    clamps of the vendored qwen38-reasoning-effort-template chat_template.jinja,
-    mirrored in effort_budget.py ALIASES. The three listed models are exactly the
-    ones whose model profile cites that template contract (qwen3.8-27b, its
-    thinking-cap fine-tune, flash-next). The engine's other models are NOT
-    listed: their template's default and clamps were never read, so they get no
-    fold facts rather than Qwen's.
+    The three listed models are exactly the ones whose model profile cites that
+    template contract. The engine's other models are NOT listed: their
+    template's default and clamps were never read, so they get no fold facts
+    rather than Qwen's.
     Engine-wide (off_switch / supports_none): the wire accepts a top-level
     `none`, which the engine turns into enable_thinking=false before the template
     runs (models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template patch

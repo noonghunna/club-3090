@@ -176,10 +176,11 @@ holds what the engine does with a rung (also `effort:`) — but only what holds
 for EVERY model it serves: `off_switch` / `supports_none` / `unknown_name`.
 What a request gets when it names no effort, and how an out-of-ladder name
 folds, are properties of the **(model, engine) pair**, so they go under
-`by_model: <model_id>:`; an engine-level `default_when_unset` / `maps` is
-refused by the loader rather than inherited by a model it was never measured
-on. The **compose** keeps only the default — `REASONING_EFFORT:-<rung>` is a
-serving choice, not a model fact.
+`by_model: <model_id>:` — and each entry cites its own source in its own
+`evidence:`; an engine-level `default_when_unset` / `maps` is refused by the
+loader rather than inherited by a model it was never measured on. The
+**compose** keeps only the default — `REASONING_EFFORT:-<rung>` is a serving
+choice, not a model fact.
 
 Three shapes, and the loader (`compat.py → _effort`) rejects anything else:
 
@@ -213,6 +214,12 @@ PR-bundle/cockpit paths):
   `mm3_settings.py:54,57`), and `qwen3.8-flash-next` gets a `minimal→low` fold
   on vLLM but none on strata. A model the engine does not list gets NO fold
   facts — unknown, never its sibling's.
+- **A pair fact cites its own source.** Each `by_model.<model_id>:` entry needs
+  its own `evidence:`: the engine block's `evidence:` cites the engine-wide
+  facts (wire behaviour, server code), which say nothing about why *this* model
+  folds this way on it. A new entry without one is refused by the loader —
+  otherwise adding an entry is an uncited copy, the failure this block exists to
+  prevent (#1951 review r6).
 - **Unknown stays unknown.** `status: unprobed` renders NOTHING downstream —
   never invent a ladder, never emit `supports_reasoning: false` for a
   thinking model, never an empty `reasoning_effort_levels`.

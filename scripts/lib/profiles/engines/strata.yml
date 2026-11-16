@@ -41,16 +41,18 @@ effort:
     qwen3.8-flash-next:
       default_when_unset: xhigh
       maps: {high: xhigh, max: xhigh}
+      evidence: >-
+        docs/engines/STRATA.md "Reasoning and sampling defaults": with no
+        settings, a request that names no effort runs at the checkpoint
+        template's `reasoning_effort|default('xhigh')`, and `high` and `max`
+        also map to `xhigh`. This fold table is NOT the one the same model gets
+        on vllm-stable, which also folds minimal->low.
   evidence: >-
-    docs/engines/STRATA.md "Reasoning and sampling defaults": with no
-    settings, a request that names no effort runs at the checkpoint
-    template's `reasoning_effort|default('xhigh')`, and `high` and `max` also
-    map to `xhigh`. Measured 2026-11-15 on qwen3.8-flash-next-iq3s-dual
-    (:8018): reasoning_effort none -> 0 chars of reasoning_content (low ->
-    214); the server's own 400 names the accepted set: "use none, low, medium
-    or high". The pair entry is qwen3.8-flash-next because that is the model
-    both the doc and the probe cover — and its fold table here is NOT the one
-    the same model gets on vllm-stable, which also folds minimal->low.
+    Engine-wide (off_switch / supports_none): measured 2026-11-15 on
+    qwen3.8-flash-next-iq3s-dual (:8018) — reasoning_effort none -> 0 chars of
+    reasoning_content (low -> 214); the server's own 400 names the accepted set:
+    "use none, low, medium or high". Measured on that one pair; it is the
+    server's request handling, not a template property.
 
 notes: >
   Strata (github.com/Niko1221/Strata, MIT): its own C++/CUDA engine for Qwen3.8-Flash-Next plus a
