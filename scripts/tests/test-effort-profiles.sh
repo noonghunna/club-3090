@@ -212,8 +212,10 @@ scan = []                     # (path, text, levels, model_id)
 seen_scan = set()
 for model_dir in sorted(os.listdir(mdir)):
     levels, status = model_levels(model_dir)
-    if not levels:
-        continue                      # unprobed / no ladder: nothing to check against
+    # No levels still scans: the thinking-budget knob sweep below runs on
+    # every compose regardless of the model's ladder (#2055 review it7-4) —
+    # only the REASONING_EFFORT default check needs the ladder, and it is
+    # gated on `levels` in the loop below.
     for dirpath, _dirs, files in os.walk(os.path.join(mdir, model_dir)):
         if "_archive" in dirpath or "compose" not in dirpath.split(os.sep):
             continue
@@ -232,8 +234,8 @@ for tag, e in sorted(entries.items()):
     if not cp or not mid or "_archive" in cp or cp in seen_scan:
         continue
     levels, _status = model_levels(mid)
-    if not levels:
-        continue
+    # No levels still scans — same reason as the walk above (it7-4): the knob
+    # sweep runs regardless; only the default check needs the ladder.
     try:
         text = io.open(cp, encoding="utf-8", errors="replace").read()
     except OSError:
@@ -243,25 +245,29 @@ for tag, e in sorted(entries.items()):
     scan.append((cp, text, levels, mid))
     seen_scan.add(cp)
 for path, text, levels, mid in scan:
-    for dflt in sorted(set(default_re.findall(text))):
-        checked += 1
-        if dflt not in levels:
-            bad(f"{path}: REASONING_EFFORT default {dflt!r} is not one "
-                f"of {mid}'s levels {levels}")
-        if dflt == "max" and mid not in MAX_DEFAULT_MODELS:
-            bad(f"{path}: REASONING_EFFORT:-max default for {mid} — "
-                "litellm's default_reasoning_effort Literal excludes max, "
-                "so the render must OMIT it, never downgrade; add the model "
-                "to MAX_DEFAULT_MODELS only after re-verifying that rule")
-    for line in text.splitlines():
-        if not knob_name_re.search(line):
-            continue
-        if (default_re.search(line) or bare_knob_re.match(line.strip())
-                or var_ref_re.search(line)):
-            continue
-        bad(f"{path}: unparseable REASONING_EFFORT line — a form the "
-            f"emit's _compose_effort_default does not read, so the pair "
-            f"default would fill it: {line.strip()[:120]}")
+    # The default check needs the ladder; the knob sweeps below run on every
+    # compose regardless (#2055 review it7-4 — a knob line in a no-ladder
+    # model's compose was invisible drift before).
+    if levels:
+        for dflt in sorted(set(default_re.findall(text))):
+            checked += 1
+            if dflt not in levels:
+                bad(f"{path}: REASONING_EFFORT default {dflt!r} is not one "
+                    f"of {mid}'s levels {levels}")
+            if dflt == "max" and mid not in MAX_DEFAULT_MODELS:
+                bad(f"{path}: REASONING_EFFORT:-max default for {mid} — "
+                    "litellm's default_reasoning_effort Literal excludes max, "
+                    "so the render must OMIT it, never downgrade; add the model "
+                    "to MAX_DEFAULT_MODELS only after re-verifying that rule")
+        for line in text.splitlines():
+            if not knob_name_re.search(line):
+                continue
+            if (default_re.search(line) or bare_knob_re.match(line.strip())
+                    or var_ref_re.search(line)):
+                continue
+            bad(f"{path}: unparseable REASONING_EFFORT line — a form the "
+                f"emit's _compose_effort_default does not read, so the pair "
+                f"default would fill it: {line.strip()[:120]}")
     # The thinking-budget knob's own drift guard (#2055 review it6-7c): a
     # compose line naming the knob that budget_knob_re cannot read means the
     # emit silently returns None for it — the route loses its declared
@@ -335,7 +341,16 @@ LLAMA_PIN_BUILDS = {
 for eid, want in sorted(LLAMA_PIN_BUILDS.items()):
     eng = profiles.engines.get(eid)
     lin = (getattr(eng, "lineage", None) or {}) if eng else {}
-    got = lin.get("base_version") or lin.get("source_ref")
+    # The pin field follows the lineage's relation: a stock engine pins the
+    # upstream build (base_version), a fork pins its own commit (source_ref) —
+    # a fork that later records a non-null base_version (the upstream version
+    # it forked from, the natural thing to note on a rebase) must not shadow
+    # its commit, or this check fails permanently and tempts a loosening
+    # (#2055 review it7-6).
+    if (lin.get("relation") or "fork") == "stock":
+        got = lin.get("base_version") or lin.get("source_ref")
+    else:
+        got = lin.get("source_ref") or lin.get("base_version")
     if got != want:
         bad(f"{eid}: llama.cpp pin moved (build/commit {got!r} != {want!r}) — "
             f"the effort disclosure's STALE note no longer names the running "
@@ -467,12 +482,16 @@ if len(failures) == n0:
 # enable_thinking=false before the template runs; whether THIS model's template
 # then closes the thinking block is the model's contract. A ladder model on
 # such an engine advertises `supports_none: true` the moment it probes a
-# ladder, so its pair entry must exist AND carry the pair's own none claim —
-# `supports_none` or `off_switch` with its citation — before the advertise is
-# trusted: an entry holding only fold facts would leave the route advertising
-# a wire none claim resting on nothing pair-specific (#1951 review r7 + r8).
-# `false` engines need no entry: the server ignoring `none` is engine-level
-# behaviour, and the advertise direction is conservative.
+# ladder, so its pair entry must exist AND carry the pair's own
+# `supports_none` with its citation — before the advertise is trusted: an
+# entry holding only fold facts would leave the route advertising a wire none
+# claim resting on nothing pair-specific (#1951 review r7 + r8). `off_switch`
+# does NOT satisfy this: it records how thinking turns OFF (the kwargs form),
+# not whether `none` is honored, and the emit reads only the pair's
+# `supports_none` — an off_switch-only entry would leave the advertise on the
+# engine-level claim (#2055 review it7-2). `false` engines need no entry: the
+# server ignoring `none` is engine-level behaviour, and the advertise
+# direction is conservative.
 n0 = len(failures)
 for e in entries.values():
     m, eng_id = e.get("model"), e.get("engine")
@@ -491,14 +510,16 @@ for e in entries.values():
             f"route advertises the engine's supports_none: true without a pair "
             f"fact citing THIS model's template (verify it honors `none`, or "
             f"record the pair's own measurement in its by_model entry)")
-    elif "supports_none" not in pair and "off_switch" not in pair:
-        bad(f"{m} on {eng_id}: by_model entry holds fold facts but no none claim "
-            f"— the route advertises the engine's supports_none: true resting on "
-            f"nothing pair-specific; declare the pair's own supports_none (or "
-            f"off_switch) with its citation (#1951 review r8)")
+    elif "supports_none" not in pair:
+        bad(f"{m} on {eng_id}: by_model entry holds fold facts but no pair "
+            f"supports_none claim — the route advertises the engine's "
+            f"supports_none: true resting on nothing pair-specific; declare "
+            f"the pair's own supports_none with its citation (#1951 review r8, "
+            f"#2055 review it7-2: off_switch is not a none claim and the emit "
+            f"reads only the pair's supports_none)")
 if len(failures) == n0:
     print("  ✓ every supports_none:true engine's ladder pairs carry a by_model "
-          "entry with the pair's own none claim")
+          "entry with the pair's own supports_none claim")
 # ---- 5b. the loader REFUSES an engine-wide fold fact (#1951 review r5) -------
 # An engine-level `default_when_unset`/`maps` is the silent-inheritance bug the
 # review named: a model never measured on it would be folded and defaulted by a
@@ -662,16 +683,31 @@ else:
                 "(the family->models binding stays hand-kept until phase 2)")
             continue
         for mdl in mdls:
-            if f["ladder"] != model_levels(mdl)[0]:
-                bad(f"FAMILIES {fam}: ladder {f['ladder']} != model {mdl}'s levels "
-                    f"{model_levels(mdl)[0]} — drifted from the profiles (#1951)")
+            # The omp ladder is the rungs EVERY engine serving the family's
+            # models accepts as a request name — the model's levels minus the
+            # union of the engines' pair `refuses` (#2055 review it7-1: strata's
+            # flash-next pair refuses xhigh, so the omp surface must not offer
+            # it; the omp override is rendered at setup time and cannot know
+            # which engine will boot). An engine with no by_model entry records
+            # no refuses — unknown stays unknown there.
+            refused: set = set()
+            for eid, eng in sorted(profiles.engines.items()):
+                pair = ((eng.effort or {}).get("by_model") or {}).get(mdl) or {}
+                refused |= set(pair.get("refuses") or [])
+            expected = [r for r in model_levels(mdl)[0] if r not in refused]
+            if f["ladder"] != expected:
+                bad(f"FAMILIES {fam}: ladder {f['ladder']} != model {mdl}'s "
+                    f"nameable rungs {expected} (levels {model_levels(mdl)[0]} "
+                    f"minus refused {sorted(refused)}) — drifted from the "
+                    "profiles (#1951)")
             # The defaultLevel is what omp requests when the agent names no
             # effort, and the request lands on whichever slug of the family's
             # models is booted — so it must be a name every engine serving
-            # those models accepts (#2055 review it6-4). A pair's `refuses`
-            # are rungs the server 400s as request names; the ladder pin
-            # above cannot see them. An engine with no by_model entry
-            # records no refuses — unknown stays unknown there.
+            # those models accepts (#2055 review it6-4). The ladder pin above
+            # already drops refused rungs from the ladder itself; this sweep
+            # catches the defaultLevel, which is not a ladder rung. An engine
+            # with no by_model entry records no refuses — unknown stays
+            # unknown there.
             for eid, eng in sorted(profiles.engines.items()):
                 pair = ((eng.effort or {}).get("by_model") or {}).get(mdl) or {}
                 if f["dflt"] in (pair.get("refuses") or []):

@@ -180,8 +180,13 @@ FAMILIES = [
      "maxTokens": 32768,
      "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True,
                 "extraBody": {"thinking_token_budget": 8192}}},
+    # The ladder is the rungs EVERY engine serving the family's models accepts
+    # as a request name: strata's qwen3.8-flash-next pair refuses `xhigh` (its
+    # server 400s it; the xhigh rung is reached via unset and via the `high`
+    # fold), so the omp surface must not offer it — check 6 pins this shape
+    # (test-effort-profiles.sh, #2055 review it7-1).
     {"name": "flash-next", "ids": FLASH_NEXT_IDS,
-     "ladder": {"efforts": ["low", "medium", "xhigh"], "defaultLevel": "medium"},
+     "ladder": {"efforts": ["low", "medium"], "defaultLevel": "medium"},
      "maxTokens": 32768,
      "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True,
                 "supportsReasoningSummary": False,

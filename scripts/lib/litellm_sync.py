@@ -280,7 +280,7 @@ def serves_anthropic(port: int, model: str, key: str = "",
     8 tokens, once per live port per render. A thinking engine can spend that
     whole budget inside its thinking block and answer with no text at all — a
     budget artifact, not a dead endpoint. Two rules decide what the envelope
-    means (#1951 review r6; #2055 review it5-3):
+    means (#2055 review it5-3):
       - a route whose compose declares a default thinking budget bigger than
         the retry's 512 (bucko's CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET,
         16,384) gets the thinking-only envelope accepted as native on the
@@ -289,9 +289,17 @@ def serves_anthropic(port: int, model: str, key: str = "",
         block (measured 2026-11-15: text-only, thinking dropped) — so the
         envelope is proof of native serving;
       - without such a knob, ONE retry at 512: text there → native; an
-        endpoint with no text at any budget the probe can reach is one Claude
-        Code cannot use, and the translation — which always answers with
-        text — is the better route for it."""
+        endpoint with no text at either budget is classified translated.
+        The boundary this accepts (#2055 review it7-7): a route whose
+        default-effort thinking exceeds BOTH budgets on the trivial probe
+        prompt — the flash-next strata/vllm routes run the template's xhigh
+        with no knob — loses the reasoning the passthrough exists to
+        preserve, and Claude Code's own max_tokens is far larger, so text
+        WOULD appear for it. The translation always answers with text, so
+        Claude Code keeps working either way; the reasoning loss is the
+        accepted cost of a probe that must stay cheap (8 tokens, once per
+        live port per render) until a heavier probe is justified. test 16's
+        "think" stub pins exactly this classification."""
     probe = anthropic_call(
         port, model, [{"role": "user", "content": "Reply with the single word OK."}], key)
     if not (isinstance(probe, dict) and probe.get("type") == "message"):

@@ -731,8 +731,12 @@ def _effort_facts(model_id: str, engine_id: str, compose_path: str):
     me = (getattr(m, "effort", None) or {}) if m else {}
     e = profiles.engines.get(engine_id)
     ee = (getattr(e, "effort", None) or {}) if e else {}
+    budget = _compose_thinking_budget(compose_path)
     if not me and not ee:
-        return None
+        # Neither side declares an effort block, but the compose's thinking
+        # budget is still a live fact the budgets map reads (#2055 review
+        # it7-4) — return it alone rather than dropping it with the block.
+        return {"default_thinking_budget": budget} if budget else None
     # What an unset request gets, and how an out-of-ladder name folds, are
     # (model, engine) PAIR facts (#1951 review r5): the engine's `by_model` entry
     # for THIS model, never the engine block. A model the engine does not list
