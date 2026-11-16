@@ -12,7 +12,12 @@
 #   Drafter:   DSpark: peasantsmith's dspark-xs2 (Maya-XS's 2-bit drafter, 4.25 GB; draft block 5)
 #   KV:        fp16 latent cache (maya-ds4 has no other)
 #   Vision:    no (the image never fetches DeepSeek's vision tower: --vision off)
-#   Max ctx:   65536
+#   Max ctx:   262144 (Maya's setup recommends 256K for DeepSeek wherever VRAM + RAM hold the model, as here;
+#              with the layer split each card keeps its own layers' caches, so 256K over 64K cost the two pools
+#              21 experts: caches +0.11 / +0.07 GB, the CPU lane +0.1 GB of RAM). MEASURED 2026-11-16 (v1.1.61
+#              image, 230 W caps, its own boot through switch.sh): ready in 60 s, verify-full all ✓,
+#              verify-stress all ✓ with the ceiling ladder fillable to 240,972 tok (91%), prefill 780 tok/s at
+#              that depth
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
 #   Caveats:   Not gate-passing yet: quality unmeasured here (8-pack pending), one request at a time. The FIRST
@@ -40,6 +45,12 @@
 #   ⤷ MEASURED 2026-10-25 on this compose (v1.1.28): MemAvailable fell 106 GB (decimal) at its peak on the
 #     first start, 105.6 GB on the bench boot; the CPU lane's 100.4 GB of experts copied into RAM
 #     (--mmap-experts auto), on a 224 GB host.
+#   ⤷ ABOVE ~90 GB OF LANE, SET THE MARGIN — "fits" is not "fits the machine" (4× 16 GB cards, 65 536 ctx,
+#     measured 2026-11-16 on a 125.2 GiB host): the CPU lane's 97.6 GB fit a 108.7 GB planning budget and that
+#     run still paged — 501 MB of the serving process in swap on entry, 1 087 MB at the end, 267 MB swapped in
+#     over the bench. The prompt rings (4 × ~390 MB), the KV, the CUDA host allocations and the host's own
+#     needs sit outside the budget the engine prints. DS4_RAM_MARGIN_GB 8 and 10 copy and page here; from 12
+#     the engine leaves the lane in place by itself and the swap gate passes (WARN, 49 MB swapped in).
 #   Best for:  DeepSeek-V4.1-Flash on two 24 GB cards with ~128 GB+ of host RAM; long prompts (agents): in a
 #              hand-run test at 8K context a layer split read a 6K prompt 55% faster than tensor parallel
 # ---------------------------------------------------------------------------
@@ -52,7 +63,7 @@
 # a 6K prompt -35%; not re-measured on this compose).
 services:
   strata-maya:
-    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:7696232074064ea69012fcd9bc4366b84fcca7c03400b55661b5bde4b6204ec3}
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:bfb381430741a60323b1b328ae830ec3cb3f9c136a26d42e3f95b62d1e1520b6}
     container_name: ${ESTATE_CONTAINER:-strata-maya-deepseek41-flash-dual-ista-iq2-xxs}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
@@ -64,7 +75,7 @@ services:
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8047}}:8080"
     environment:
-      CONTEXT: "${CONTEXT:-65536}"
+      CONTEXT: "${CONTEXT:-262144}"
       SETUP_ONLY: "${SETUP_ONLY:-0}"
       REPACK: "${REPACK:-0}"
       VERIFY: "${VERIFY:-1}"
@@ -85,6 +96,10 @@ services:
       SERVED_NAME:
       LOOP_GUARD:
       THREADS:
+      # how maya-ds4 holds the CPU lane's experts (#2042): on = read in place from the files, off = copied into
+      # RAM, auto (Maya's default) = copied when they all fit. Picks the mode directly instead of through
+      # DS4_RAM_MARGIN_GB's sizing; ds4_settings.py writes it as --mmap-experts and refuses any other word
+      MMAP_EXPERTS:
       # Maya's model load/unload endpoints (/models/load, /models/unload, /models/sse; on by default from
       # v1.1.47) and, from v1.1.50, its model API (/api/tags, /api/ps, /api/chat, ...). These composes set
       # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
@@ -97,6 +112,31 @@ services:
       # streamed expert straight from its pinned RAM copy instead of copying it into staging first (the
       # same bytes). Only with the experts copied into RAM; nothing under MAYA_TP=2. Unset = off
       DS4_FLOW_COPY_DMA:
+      # maya-ds4 tensor parallel on a GGUF pack (MAYA_TP >= 2; #2042), both read by the engine itself
+      # (src/ds4/ds4_model.cu): MAYA_DS4_TP_GGUF_UNEVEN=1 splits each expert's FFN in whole blocks, as even as they
+      # go, so a group whose members can't take equal parts still forms (Maya-XS on four cards); DS4_TP_SHARES=w0,w1,..
+      # sets each member's share by hand, `off` the split as before. Unset = Maya's own (off; shares from each
+      # member's free VRAM). More cards also need MAYA_GPUS and the launcher's --gpus
+      MAYA_DS4_TP_GGUF_UNEVEN:
+      DS4_TP_SHARES:
+      # the PCIe expert lane on more than one GPU (v1.1.64, mw00/project-maya#956; read by maya-ds4): keep = it
+      # streams as before v1.1.64, off = the lane off. Unset = Maya's own rule: a layer split turns the lane off
+      # unless it measures faster, and the times file keeps that for the next start
+      DS4_STREAM_TIE:
+      # tensor parallel on Maya's own quants (MAYA_TP >= 2 with MAYA_DS4_TP_GGUF_UNEVEN; read by maya-ds4):
+      # DS4_FLOW_TP=1 has the group's members read prompts on the flow too, each streaming its own rows (off the
+      # flow, a box that streams experts from the disk reads prompts much slower). Unset = off
+      DS4_FLOW_TP:
+      # tensor parallel groups of 3 on a GGUF pack (experimental; read by maya-ds4): DS4_TP_UNEVEN_HEADS=1 keeps a
+      # width the 64 attention heads don't split into evenly, the extra member computing only its FFN share.
+      # Unset = off
+      DS4_TP_UNEVEN_HEADS:
+      # conversations kept (read by maya-ds4 and Maya's server): MAYA_DS4_SLOT_KEEP=1 keeps a conversation's state
+      # when another one takes the model, so an agent's parent and workers each continue their own instead of
+      # reading it again from token 0; MAYA_DS4_KEEP_THINKING=1 keeps earlier turns' reasoning in the prompt,
+      # which a chat without tools needs beside it (a request with tools keeps it already). Unset = off for both
+      MAYA_DS4_SLOT_KEEP:
+      MAYA_DS4_KEEP_THINKING:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/deepseek-v4.1-flash-1017-gsq-rco-gguf:/gguf:ro"

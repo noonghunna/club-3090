@@ -26,7 +26,7 @@ ok()  { echo "  ✓ $*"; }
 bad() { echo "  ✗ $*"; rc=1; }
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-SETTINGS="REASONING_EFFORT ENABLE_THINKING THINKING_BUDGET MAX_TOKENS KV SPEC_N TEMP TOP_P TOP_K MIN_P PRESENCE_PENALTY REPEAT_PENALTY SERVED_NAME THREADS LOOP_GUARD"
+SETTINGS="REASONING_EFFORT ENABLE_THINKING THINKING_BUDGET MAX_TOKENS KV SPEC_N TEMP TOP_P TOP_K MIN_P PRESENCE_PENALTY REPEAT_PENALTY SERVED_NAME THREADS LOOP_GUARD MMAP_EXPERTS"
 clean() { for v in $SETTINGS; do printf -- '-u %s ' "$v"; done; }
 # config() for ista-iq2-xxs into $work/ista-iq2-xxs/maya-ds4.json, with the given settings
 write() {
@@ -55,8 +55,8 @@ write >/dev/null || bad "config() failed with no settings"
   && ok "--tp 1 (layer split), --vision off, --dspark on, --max-context 65536" || bad "args: $(get 'a')"
 want="$(env $(clean) python3 -c "import sys; sys.path.insert(0, '$L'); import ds4_settings; print(ds4_settings.threads())")"
 [[ "$(arg --cpu-threads)" == "$want" && "$want" -ge 1 ]] && ok "--cpu-threads $want = threads()" || bad "--cpu-threads $(arg --cpu-threads), threads() $want"
-[[ "$(get '"thinking_budget" in c or "--kv" in a or "--spec" in a or "loop_guard" in c')" == False ]] \
-  && ok "no thinking_budget / --kv / --spec / loop_guard: Maya's own" || bad "an unset setting was written"
+[[ "$(get '"thinking_budget" in c or "--kv" in a or "--spec" in a or "loop_guard" in c or "--mmap-experts" in a')" == False ]] \
+  && ok "no thinking_budget / --kv / --spec / loop_guard / --mmap-experts: Maya's own" || bad "an unset setting was written"
 [[ "$(get 'c["gpu"]') $(get 'c["log"].endswith("/ista-iq2-xxs/maya-ds4.log")')" == "[0, 1] True" ]] \
   && ok "GPUs [0, 1], the engine log in the quant's folder" || bad "gpu/log: $(get 'c["gpu"], c["log"]')"
 
@@ -74,18 +74,25 @@ write REASONING_EFFORT=xhigh >/dev/null; [[ "$(get 'c["reasoning_effort"]')" == 
 write SERVED_NAME=llm >/dev/null; [[ "$(get 'c["model_name"]')" == llm ]] && ok "SERVED_NAME=llm -> model_name llm" || bad "served name: $(get 'c["model_name"]')"
 write LOOP_GUARD=false >/dev/null; [[ "$(get 'c["loop_guard"]')" == False ]] && ok "LOOP_GUARD=false -> loop_guard false" || bad "loop guard off: $(get 'c.get("loop_guard")')"
 write LOOP_GUARD=true >/dev/null; [[ "$(get 'c["loop_guard"]')" == True ]] && ok "LOOP_GUARD=true -> loop_guard true" || bad "loop guard on: $(get 'c.get("loop_guard")')"
+# MMAP_EXPERTS (#2042): the CPU lane's experts read in place (on) or copied into RAM (off), chosen directly
+# instead of through DS4_RAM_MARGIN_GB; maya-ds4 reads any other word as auto, so the setting checks it
+for m in on off auto; do
+  write MMAP_EXPERTS=$m >/dev/null
+  [[ "$(arg --mmap-experts)" == "$m" ]] && ok "MMAP_EXPERTS=$m -> --mmap-experts $m" || bad "mmap $m: $(get 'a')"
+done
 out="$(write ENABLE_THINKING=false REASONING_EFFORT=low)"
 [[ "$(get 'c["reasoning_effort"]')" == none ]] && command grep -q "ENABLE_THINKING=false wins" <<<"$out" \
   && ok "ENABLE_THINKING=false -> none, with a note" || bad "thinking off: $out"
 
 echo "== 3. a removed setting is gone"
 write >/dev/null
-[[ "$(get 'c["reasoning_effort"], "thinking_budget" in c, c["model_name"], a[a.index("--cpu-threads")+1], "loop_guard" in c')" == "('high', False, 'deepseek-v4.1-flash', '$want', False)" ]] \
+[[ "$(get 'c["reasoning_effort"], "thinking_budget" in c, c["model_name"], a[a.index("--cpu-threads")+1], "loop_guard" in c, "--mmap-experts" in a')" == "('high', False, 'deepseek-v4.1-flash', '$want', False, False)" ]] \
   && ok "back to the defaults" || bad "a setting lingered: $(get 'c["reasoning_effort"], "thinking_budget" in c, c["model_name"], a')"
 
 echo "== 4. a bad value"
 for probe in REASONING_EFFORT=minimal REASONING_EFFORT=75 ENABLE_THINKING=off THINKING_BUDGET=-1 TEMP=x TOP_P=0 \
-             TOP_K=65 MIN_P=2 PRESENCE_PENALTY=-1 REPEAT_PENALTY=0 THREADS=0 THREADS=four LOOP_GUARD=off LOOP_GUARD=0; do
+             TOP_K=65 MIN_P=2 PRESENCE_PENALTY=-1 REPEAT_PENALTY=0 THREADS=0 THREADS=four LOOP_GUARD=off LOOP_GUARD=0 \
+             MMAP_EXPERTS=yes MMAP_EXPERTS=ON; do
   err="$(env $(clean) "$probe" python3 "$L/ds4_settings.py" validate 2>&1)"; r=$?
   [[ $r -eq 2 && "$err" == *"${probe%%=*}"* ]] && ok "$probe refused" || bad "$probe: rc=$r $err"
 done

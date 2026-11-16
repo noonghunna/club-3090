@@ -207,11 +207,19 @@ cat > "$bin/docker" <<MOCK
 case "\$1" in
   inspect)
     for a in "\$@"; do case "\$a" in --format*|'{{'*) fmt="\$a" ;; esac; done
+    case "\$2\$3" in
+      *qengine-mock*)
+        if [[ -n "\${fmt:-}" ]]; then
+          case "\$*" in *Config.Image*) echo "ghcr.io/bpx03/qengine:1.3.5.9" ;; *RestartCount*) echo 0 ;; esac
+        else cat "$tmp/qe-inspect.json"; fi
+        exit 0 ;;
+    esac
     [[ "\$2" == "vllm-mock" || "\$3" == "vllm-mock" ]] || exit 1
     if [[ -n "\${fmt:-}" ]]; then
       case "\$*" in *Config.Image*) echo "vllm/vllm-openai:v0.30.0" ;; *RestartCount*) echo 0 ;; esac
     else cat "$tmp/inspect.json"; fi ;;
-  logs) cat "$tmp/boot.log" ;;
+  logs)
+    [[ "\$2" == "qengine-mock" ]] && cat "$tmp/qe-boot.log" || cat "$tmp/boot.log" ;;
   *) exit 1 ;;
 esac
 MOCK
@@ -261,6 +269,61 @@ echo '{}' > "$tmp/resume.partial.jsonl"
 argv="$(cat "$tmp/argv")"
 [[ -n "$argv" ]] || fail "the --resume leg never reached benchlocal-cli — its assertion would be vacuous"
 assert_not_contains "$argv" "--run-meta"            # the journal already holds the first session's values
+
+# ---------------------------------------------------------------- 9. QEngine per-mode rows (#2030)
+echo "--- 9. QEngine prints one sampling row per reasoning mode: the gate picks the row ---"
+printf '%s\n' "QEngine 1.3.5.9 (build ee98bd10)" \
+  "sampling defaults, thinking (when the request has none): temperature 1.00, top_p 0.95, top_k 20, min_p 0.00, presence_penalty 0.00" \
+  "sampling defaults, non-thinking (when the request has none): temperature 0.70, top_p 0.80, top_k 20, min_p 0.00, presence_penalty 1.50" > "$tmp/qe-modes.log"
+got="$(rc --engine qengine --boot-log "$tmp/qe-modes.log" --thinking on 2>/dev/null | jq_py 'd["server_defaults"]')"
+assert_contains "$got" '"temperature": 1.0'
+assert_contains "$got" '"presence_penalty": 0.0'
+assert_contains "$got" 'thinking row'
+assert_not_contains "$got" '0.7'
+got="$(rc --engine qengine --boot-log "$tmp/qe-modes.log" --thinking off 2>/dev/null | jq_py 'd["server_defaults"]')"
+assert_contains "$got" '"temperature": 0.7'
+assert_contains "$got" '"top_p": 0.8'
+assert_contains "$got" '"presence_penalty": 1.5'   # QEngine sets it server-side; vLLM/SGLang cannot
+assert_contains "$got" 'non-thinking row'
+assert_not_contains "$got" '1.00'
+out="$(rc --engine qengine --boot-log "$tmp/qe-modes.log" 2>"$tmp/err")"
+assert_contains "$(jq_py 'd["server_defaults"]' <<<"$out")" "null"    # gate unknown: never a guess
+assert_contains "$(cat "$tmp/err")" "one sampling row per reasoning mode"
+echo "--- 9b. the pre-1.3.5.3 mode-less line still resolves under either gate ---"
+got="$(rc --engine qengine --boot-log "$tmp/qe.log" --thinking on 2>/dev/null | jq_py 'd["server_defaults"]')"
+assert_contains "$got" '"temperature": 1.0'
+# the single line has no mode, so the source names none (not "thinking row") and doesn't repeat itself
+assert_contains "$got" '"source": "QEngine start-up line (sampling defaults for requests that send none)"'
+got="$(rc --engine qengine --boot-log "$tmp/qe.log" 2>/dev/null | jq_py 'd["server_defaults"]')"
+assert_contains "$got" '"source": "QEngine start-up line (sampling defaults for requests that send none)"'
+echo "--- 9b'. only the OTHER mode's row (a trimmed or hand-made log): nothing claimed, a note, no crash ---"
+printf '%s\n' "sampling defaults, non-thinking (when the request has none): temperature 0.70, top_p 0.80, top_k 20, min_p 0.00, presence_penalty 1.50" > "$tmp/qe-nt-only.log"
+out="$(rc --engine qengine --boot-log "$tmp/qe-nt-only.log" --thinking on 2>"$tmp/err")"; code=$?
+[[ $code -eq 0 ]] || fail "a missing thinking row must not crash run_context.py (rc=$code): $(tail -2 "$tmp/err")"
+assert_contains "$(jq_py 'd["server_defaults"]' <<<"$out")" "null"
+assert_contains "$(cat "$tmp/err")" "no thinking sampling row"
+assert_not_contains "$(cat "$tmp/err")" "Traceback"
+echo "--- 9c. presence_penalty is kept for QEngine only ---"
+printf '%s\n' "[maya] sampling defaults from the config: temperature=1.0, top_p=1.0, presence_penalty=1.5" > "$tmp/maya-pp.log"
+got="$(rc --engine strata --boot-log "$tmp/maya-pp.log" 2>/dev/null | jq_py 'd["server_defaults"]')"
+assert_contains "$got" '"temperature": 1.0'
+assert_not_contains "$got" 'presence_penalty'
+echo "--- 9d. the wrapper hands the leg's gate to run_context (per-mode row recorded) ---"
+printf '[{"Config":{"Image":"ghcr.io/bpx03/qengine:1.3.5.9","Env":["PATH=/usr/bin"]},"HostConfig":{"DeviceRequests":[{"Driver":"nvidia","Count":0,"DeviceIDs":["0","1"]}]}}]' > "$tmp/qe-inspect.json"
+cp "$tmp/qe-modes.log" "$tmp/qe-boot.log"
+: > "$tmp/argv"
+out="$(PATH="${bin}:$PATH" MOCK_ARGV="$tmp/argv" PREFLIGHT_NO_AUTODETECT=1 \
+  URL=http://mock MODEL=mock-model CONTAINER=qengine-mock bash "$WRAPPER" --quick --enable-thinking 2>&1)"
+argv="$(cat "$tmp/argv")"
+[[ -n "$argv" ]] || fail "the qengine leg never reached benchlocal-cli — its assertion would be vacuous"
+assert_contains "$argv" $'--server-defaults\n{"temperature":1.0,'
+assert_not_contains "$argv" '"temperature":0.7'
+: > "$tmp/argv"
+out="$(PATH="${bin}:$PATH" MOCK_ARGV="$tmp/argv" PREFLIGHT_NO_AUTODETECT=1 \
+  URL=http://mock MODEL=mock-model CONTAINER=qengine-mock bash "$WRAPPER" --quick --no-thinking 2>&1)"
+argv="$(cat "$tmp/argv")"
+assert_contains "$argv" $'--server-defaults\n{"temperature":0.7,'
+assert_contains "$argv" '"presence_penalty":1.5'
 
 if [[ "$fails" -gt 0 ]]; then
   echo "test-run-context: $fails failure(s)" >&2

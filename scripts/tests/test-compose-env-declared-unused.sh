@@ -57,7 +57,7 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 "DEBIAN_FRONTEND", "PYTHONUNBUFFERED", "PYTHONUTF8",
                 # QEngine's Flash-Next engine (libqflash.so) reads these; named one by one,
                 # because a FLASH_ prefix would also excuse FLASH_ATTN on the vLLM composes
-                "FLASH_MAX_SEQS", "FLASH_KV_ARCHIVE_GB", "FLASH_NGRAM_PIN",
+                "FLASH_MAX_SEQS", "FLASH_KV_ARCHIVE_GB", "FLASH_KV_BITS", "FLASH_NGRAM_PIN",
                 "FLASH_EC_MARGIN_MB", "FLASH_LOOKUP", "FLASH_COMM",
                 # from 1.3.1
                 "FLASH_KV", "FLASH_KV_RAM_TOKENS", "FLASH_PFB_BIG", "FLASH_EC_RECLAIM_S",
@@ -92,7 +92,14 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 # Project Maya's DeepSeek engine (build/maya-ds4) reads it: its RAM headroom, from v1.1.51
                 "DS4_RAM_MARGIN_GB",
                 # ... and this: the flow's expert DMA from the pinned RAM copies, from v1.1.53
-                "DS4_FLOW_COPY_DMA"}
+                "DS4_FLOW_COPY_DMA",
+                # ... and these: a GGUF tensor-parallel group's uneven split and its shares by hand
+                # (src/ds4/ds4_model.cu, v1.1.61; #2042)
+                "MAYA_DS4_TP_GGUF_UNEVEN", "DS4_TP_SHARES",
+                # ... and these, each found in the v1.1.65 image (build/maya-ds4; the last two in
+                # serve/ too): the PCIe lane rule (#956), the TP prompt flow, TP groups of 3, kept conversations
+                "DS4_STREAM_TIE", "DS4_FLOW_TP", "DS4_TP_UNEVEN_HEADS", "MAYA_DS4_SLOT_KEEP",
+                "MAYA_DS4_KEEP_THINKING"}
 
 # DEBT REGISTER — each entry must name WHY the dead knob is deliberate.
 # Shrink it; never grow it silently. An entry here means a documented knob is

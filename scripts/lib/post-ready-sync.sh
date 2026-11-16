@@ -4,22 +4,27 @@
 #   post-ready-sync.sh --url <ready url> --container <name> --port <port>
 #                      [--owui] [--timeout S] [--interval S]
 #
-# switch.sh syncs the LiteLLM gateway at two points: after teardown (which
-# renders the OLD model's route away) and after the new server is ready. The
-# second sync only ran when switch.sh itself waited for ready, so `--no-wait`,
-# or a boot slower than READY_TIMEOUT, left the gateway with no local routes
-# for a model that came up fine minutes later (#1522). switch.sh now starts
-# this script, detached, in exactly those two cases.
+# On a switch, switch.sh advertises the model being loaded at the teardown
+# (LITELLM_BOOTING_PORT — a retryable 500 while it boots, not a routeless
+# window), then renders the gateway accurately once the new server is ready.
+# This script is that accurate render for the cases switch.sh does not wait for
+# itself: `--no-wait`, or a boot slower than READY_TIMEOUT (#1522). It is also
+# the prune when the boot never comes up.
 #
 # It polls the ready URL, and when the server answers runs the same two steps
 # switch.sh runs after a waited launch: owui-register.sh <port> (with --owui)
 # and litellm-sync.sh --quiet. It does NOT run switch.sh's generation probe,
 # so "the gateway was synced" is not "generation was verified".
 #
-# Exits without syncing when the container is gone or has stopped (a failed
-# boot leaves nothing to route to; the teardown sync already removed the old
-# route), and after --timeout seconds (default 3600) as a ceiling for a boot
-# that never comes up. Exit codes: 0 synced, 2 container gone, 3 timed out.
+# When the boot fails instead — the container is stopped/dead, or nothing
+# answers before --timeout (default 3600, the ceiling for a boot that never
+# comes up) — it renders the gateway back to what actually answers (a prune):
+# a failed boot must not leave the model it was loading advertised. A
+# container that is GONE is the exception: it was removed by a later
+# switch.sh or --down, which rendered the gateway itself, so pruning here
+# would drop that run's route and reopen the routeless window. Exit codes:
+# 0 synced, 2 container stopped/dead (pruned), 4 container gone (no render),
+# 3 timed out (pruned).
 set -uo pipefail
 
 URL="" CONTAINER="" PORT="" OWUI=0
@@ -49,10 +54,20 @@ until curl -sf -o /dev/null --max-time 3 "$URL"; do
   state="$(docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null || true)"
   case "$state" in
     running|restarting|created) ;;
-    *) say "container ${CONTAINER} is ${state:-gone}: not syncing"; exit 2 ;;
+    "") # Gone, not merely down: removed by a later switch.sh or --down, which
+        # has already rendered the gateway (optimistically for its own model,
+        # or pruned for --down). Pruning here would drop that run's route for
+        # the rest of its boot — the same routeless 400 window the optimistic
+        # teardown render exists to close. Leave the render to that run.
+        say "container ${CONTAINER} is gone (removed by a later switch or --down, which rendered the gateway itself): leaving the render alone"
+        exit 4 ;;
+    *) say "container ${CONTAINER} is ${state}: rendering the gateway back to what serves"
+       bash "${LIB_DIR}/litellm-sync.sh" --quiet || say "litellm-sync failed (exit $?)"
+       exit 2 ;;
   esac
   if (( SECONDS - start >= TIMEOUT )); then
-    say "no answer from ${URL} after ${TIMEOUT}s: not syncing"
+    say "no answer from ${URL} after ${TIMEOUT}s: rendering the gateway back to what serves"
+    bash "${LIB_DIR}/litellm-sync.sh" --quiet || say "litellm-sync failed (exit $?)"
     exit 3
   fi
   sleep "$INTERVAL"

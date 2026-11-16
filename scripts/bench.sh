@@ -811,10 +811,15 @@ if [[ "$CAPTURE" == "1" && -f "${ROOT_DIR}/scripts/lib/capture.sh" ]]; then
   # Strata keeps its per-request numbers in GET /metrics, not in docker logs, so the
   # window is two /metrics snapshots (scripts/lib/strata_metrics.py) instead of a log offset.
   if [[ "$ENGINE_KIND" == "strata" ]]; then
-    # Project Maya (strata-maya) counts its drafts only in its engine log: the reader needs the container
+    # Project Maya (strata-maya) counts its drafts only in its engine log: the reader needs the container,
+    # or on a host run (CONTAINER=none) the log itself, given as SERVER_LOG — as the host-RAM read above
+    # and verify-full's draft check take it (#1915). Without either, a host run read 0 drafts and warned
+    # that a drafter keeping 100 of 107 was off.
     STRATA_SM_C=()
     if [[ -n "${CONTAINER:-}" && "$CONTAINER" != none ]] && docker inspect --type container "$CONTAINER" >/dev/null 2>&1; then
       STRATA_SM_C=(--container "$CONTAINER")
+    elif [[ -n "${SERVER_LOG:-}" && -r "$SERVER_LOG" ]]; then
+      STRATA_SM_C=(--log-file "$SERVER_LOG")
     fi
     python3 "${ROOT_DIR}/scripts/lib/strata_metrics.py" snapshot "$URL" "${STRATA_SM_C[@]}" > "$CAP_WORK/strata0.json" 2> "$CAP_WORK/strata0.err" \
       || rm -f "$CAP_WORK/strata0.json"
@@ -830,7 +835,7 @@ CLUB_SCRIPTS_LIB="${ROOT_DIR}/scripts/lib" python3 - "$URL" "$MODEL" "$WARMUPS" 
             "$ENABLE_THINKING" "$FORCE_TOKENS" \
             "$PROMPT_NARR" "$MAX_TOKENS_NARR" \
             "$PROMPT_CODE" "$MAX_TOKENS_CODE" << 'PYEOF'
-import json, os, random, re, shutil, string, subprocess, sys, time, urllib.request, statistics as s
+import json, os, random, re, shutil, string, subprocess, sys, time, urllib.error, urllib.request, statistics as s
 # every request to the engine goes through scripts/lib/engine_http.py — it resolves the
 # engine's API key (Strata 0.2+) from the URL through the repo's own helpers, lazily.
 sys.path.insert(0, os.environ["CLUB_SCRIPTS_LIB"])
@@ -1037,6 +1042,75 @@ def token_ratio():
     return ratio
 
 
+# Set once the server refuses ignore_eos. Project Maya's MiniMax engine (maya-mm3)
+# answers it with HTTP 400 "ignore_eos: this engine does not apply token biases" and
+# accepts min_tokens alone. Every forced request carries ignore_eos (the depth runs
+# force DEPTH_DECODE_TOKENS=128 by default), so on 2026-11-14 every measured
+# prefill-depth run there failed with nothing but "HTTP Error 400: Bad Request".
+_IGNORE_EOS_REFUSED = []
+
+
+def _http_reason(e):
+    """The server's own reason for an HTTP error. str(HTTPError) is only the status
+    line ("HTTP Error 400: Bad Request"); the reason is in the body."""
+    try:
+        raw = e.read().decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+    try:
+        doc = json.loads(raw)
+        err = doc.get("error", doc) if isinstance(doc, dict) else doc
+        msg = err.get("message") or err.get("detail") if isinstance(err, dict) else err
+        if msg:
+            return " ".join(str(msg).split())[:300]
+    except Exception:
+        pass
+    return " ".join(raw.split())[:300]
+
+
+class StreamError(RuntimeError):
+    """The server ended a stream with an error chunk (data: {"error": ...}, no choices):
+    Project Maya v1.1.65 ends an answer the engine faulted on that way (#827), and vLLM
+    and llama.cpp report a mid-stream error the same way. Raised so the run counts as a
+    failed request: skipping the chunk scored a cut-off answer as a short normal run."""
+
+
+def _stream_error_text(err):
+    """An error chunk's reason: "<type>: <message>" when it is OpenAI's object, else the value."""
+    if isinstance(err, dict):
+        kind = err.get("type") or err.get("code") or "error"
+        msg = err.get("message") or err.get("detail") or ""
+        return f"{kind}: {' '.join(str(msg).split())[:300]}" if msg else str(kind)
+    return " ".join(str(err).split())[:300]
+
+
+def _open_stream(path, req_body):
+    """POST req_body and return (response, send time). A 400 whose reason names
+    ignore_eos drops it for the rest of the run (said once) and sends again with
+    min_tokens alone. Any other HTTP error is raised with the server's reason."""
+    def _post(b):
+        req = urllib.request.Request(f"{URL}{path}", data=json.dumps(b).encode(),
+                                     headers=engine_http.headers(URL))
+        t0 = time.time()
+        return engine_http.urlopen(req, timeout=600), t0
+    try:
+        return _post(req_body)
+    except urllib.error.HTTPError as e:
+        why = _http_reason(e)
+        if not (e.code == 400 and req_body.get("ignore_eos") and "ignore_eos" in why):
+            raise RuntimeError(f"HTTP {e.code}: {why or e.reason}") from None
+    if not _IGNORE_EOS_REFUSED:
+        _IGNORE_EOS_REFUSED.append(why)
+        print(f"  [bench] the server refused ignore_eos (HTTP 400: {why}).\n"
+              f"          Forced runs send min_tokens alone from here on; an engine that"
+              f" does not honour it lets the model stop early.", flush=True)
+        progress(f"[bench] server refused ignore_eos; forced runs now send min_tokens alone")
+    try:
+        return _post({k: v for k, v in req_body.items() if k != "ignore_eos"})
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"HTTP {e.code}: {_http_reason(e) or e.reason}") from None
+
+
 def run_once(prompt, max_tokens, force=0):
     # FORCE>0: force EXACTLY FORCE output tokens (overrides the per-prompt cap) so the
     # model can't self-terminate early — required to measure sustained throughput at a
@@ -1082,16 +1156,15 @@ def run_once(prompt, max_tokens, force=0):
         # ignore_eos alone is what makes this work on llama.cpp (no min_tokens
         # support there); vLLM honours both. Output past the natural stop is
         # throwaway text — this is a throughput measurement, not a quality one.
+        # A server that refuses ignore_eos gets min_tokens alone (_open_stream).
         req_body["min_tokens"] = _force
-        req_body["ignore_eos"] = True
-    body = json.dumps(req_body).encode()
-    req = urllib.request.Request(f"{URL}{path}", data=body,
-                                 headers=engine_http.headers(URL))
-    t_send = time.time()
+        if not _IGNORE_EOS_REFUSED:
+            req_body["ignore_eos"] = True
+    r, t_send = _open_stream(path, req_body)
     ttft = None
     completion_tokens = 0
     prompt_tokens = 0
-    with engine_http.urlopen(req, timeout=600) as r:
+    with r:
         for line in r:
             line = line.decode("utf-8", errors="ignore").rstrip()
             if not line.startswith("data: "):
@@ -1103,6 +1176,9 @@ def run_once(prompt, max_tokens, force=0):
                 chunk = json.loads(payload)
             except json.JSONDecodeError:
                 continue
+            if isinstance(chunk, dict) and chunk.get("error"):
+                raise StreamError(f"the server ended the stream with an error: "
+                                  f"{_stream_error_text(chunk['error'])}")
             choices = chunk.get("choices") or []
             if choices:
                 delta = choices[0].get("delta", {})
@@ -1528,7 +1604,10 @@ def run_prefill_probe():
                 print(f"  [calibrated: {ptoks} tok at request={target} → measured runs request {request_tokens}]")
         except Exception as e:
             msg = str(e)
-            if any(x in msg for x in ("400", "maximum context", "max_model_len", "context length", "context window")):
+            # The STATUS, not the digits: "400" anywhere in the reason read a 422 that named
+            # a position ("at position 14003") as a context overflow. _open_stream raises
+            # "HTTP <code>: <reason>"; llama.cpp's over-context 400 names no phrase below.
+            if msg.startswith("HTTP 400") or any(x in msg for x in ("maximum context", "max_model_len", "context length", "context window")):
                 print(f"  SKIP: {target} tokens exceeds the served context ({msg[:100]})")
                 continue
             print(f"  warm-1     FAIL: {e}")
@@ -1572,6 +1651,12 @@ def run_prefill_probe():
                 # MATCHED depth. NOT comparable to the narrative/code decode_TPS
                 # above, which is measured at shallow context.
                 print(stats(f"decode tok/s @ {label.replace('prefill-','')} depth", dtps))
+            elif _depth_toks > 0:
+                # Say so: a leg that vanishes reads as one that was never asked for.
+                print(f"  decode tok/s @ {label.replace('prefill-','')} depth  n/a (no measured run "
+                      f"decoded 2+ tokens over 0.25 s or more"
+                      + ("; the server refused ignore_eos, and min_tokens alone did not hold "
+                         "the runs open)" if _IGNORE_EOS_REFUSED else ")"))
             print(
                 f"  TTFT          mean={s.mean(ttfts)*1000:6.0f}ms  "
                 f"std={(s.stdev(ttfts)*1000 if len(ttfts) > 1 else 0):5.0f}ms  "
@@ -1756,10 +1841,15 @@ if (( CAP_ENABLED )); then
        && _sm="$(python3 "${ROOT_DIR}/scripts/lib/strata_metrics.py" delta "$CAP_WORK/strata0.json" "$CAP_WORK/strata1.json" 2> "$CAP_WORK/strata1.err")"; then
       _sv() { sed -n "s/^$1=//p" <<<"$_sm"; }
       echo "  Strata /metrics, every request in the capture window (warm-ups included): $(_sv requests) requests"
-      if [[ "$(_sv drafts_offered)" == 0 ]]; then
-        echo "  ⚠ WARN: no MTP drafts offered in the window: the draft layer is off or not working"
+      if [[ "$(_sv drafts_offered)" == 0 && ${#STRATA_SM_C[@]} -eq 0 ]] \
+         && [[ -n "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["engine"].get("maya_version") or "")' "$CAP_WORK/strata0.json" 2>/dev/null)" ]]; then
+        # Project Maya's /metrics carries no draft counts; with no container and no log there is nothing
+        # to count, which is not the same as no drafts
+        echo "  drafts: not read. Project Maya counts them only in its engine log: on a host run, set SERVER_LOG=<that log, e.g. maya-ds4.log>"
+      elif [[ "$(_sv drafts_offered)" == 0 ]]; then
+        echo "  ⚠ WARN: no drafts offered in the window: the draft layer (MTP or DSpark) is off or not working"
       else
-        echo "  MTP drafts accepted $(_sv drafts_accepted) of $(_sv drafts_offered) ($(awk -v a="$(_sv accept_rate)" 'BEGIN{printf "%.1f", a*100}')%)"
+        echo "  drafts accepted $(_sv drafts_accepted) of $(_sv drafts_offered) ($(awk -v a="$(_sv accept_rate)" 'BEGIN{printf "%.1f", a*100}')%)"
       fi
       echo "  engine decode $(_sv decode_tok_s) tok/s · engine prefill $(_sv prefill_tok_s) tok/s (output tokens / decode time, prompt tokens read / prompt time)"
     else

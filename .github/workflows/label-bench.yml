@@ -1,0 +1,55 @@
+name: Label bench contributions
+
+# The "Numbers from your rig" template titles an issue "[bench] …" and gives it
+# the bench-contribution label. An issue filed with `gh issue create` or the API
+# skips the template, and the label with it: 30 of the 204 [bench] issues had
+# none on 2026-11-14, and the next one (#2033) arrived the same way an hour
+# later. This adds the label when an issue is opened or reopened with a [bench]
+# title, or edited to one. It never removes a label.
+#
+# The same holds for two other prefixes (2026-11-15):
+# - "[power-cap]": power-cap sweep data (#2041). CONTRIBUTING asks for it and no
+#   template titles it, so it gets bench-contribution too.
+# - "[bug]": the bug-report template adds the bug label, so an API-filed [bug]
+#   issue got none (#2028, #2037).
+#
+# Only the issue number reaches the shell; the title is read in `if:`, where it
+# is an expression value, not a command line.
+
+on:
+  issues:
+    types: [opened, reopened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    # startsWith is case-insensitive. On `edited`, act only when the title changed.
+    # The job-level test keeps a runner from starting for every other issue.
+    if: >-
+      (startsWith(github.event.issue.title, '[bench]')
+       || startsWith(github.event.issue.title, '[power-cap]')
+       || startsWith(github.event.issue.title, '[bug]'))
+      && (github.event.action != 'edited' || github.event.changes.title)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add bench-contribution
+        if: >-
+          (startsWith(github.event.issue.title, '[bench]')
+           || startsWith(github.event.issue.title, '[power-cap]'))
+          && !contains(github.event.issue.labels.*.name, 'bench-contribution')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: gh api "repos/$REPO/issues/$ISSUE/labels" -X POST -f 'labels[]=bench-contribution' --silent
+      - name: Add bug
+        if: >-
+          startsWith(github.event.issue.title, '[bug]')
+          && !contains(github.event.issue.labels.*.name, 'bug')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: gh api "repos/$REPO/issues/$ISSUE/labels" -X POST -f 'labels[]=bug' --silent

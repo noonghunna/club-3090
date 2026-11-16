@@ -41,12 +41,17 @@ trap cleanup EXIT
 # MOCK_MODE=whole_toolcall → QEngine's shape (#1862): an empty role chunk, the
 #                       decode, then the WHOLE tool call in one chunk and a
 #                       finish chunk. Three chunks, one of them output.
+# MOCK_GROW=<s>       → the prompt read takes <s> × 8^(n-1) seconds on the n-th
+#                       request, before anything is sent: TTFT grows past 4× the
+#                       warm baseline by turn 3, the "O(n)-like" grade (#2033).
 cat > "$tmp/mock.py" <<'PY'
 import json, os, sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 EMIT_TC = os.environ.get("MOCK_EMIT_TOOLCALL", "0") == "1"
 MODE = os.environ.get("MOCK_MODE", "ar")
+GROW = float(os.environ.get("MOCK_GROW", "0"))
+_n = [0]
 
 TC = [{"index": 0, "id": "call_mock_0",
        "function": {"name": "Read", "arguments": "{}"}}]
@@ -65,6 +70,9 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         self.rfile.read(length)
+        _n[0] += 1
+        if GROW:
+            time.sleep(GROW * 8 ** (_n[0] - 1))   # the prompt read, growing per turn
         self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
         def ev(d): self.wfile.write(f"data: {json.dumps(d)}\n".encode()); self.wfile.flush()
         if MODE == "canvas":
@@ -279,5 +287,27 @@ for unwanted in "whole reply in one output chunk" "whole replies"; do
   assert_absent "$ar_out" "$unwanted"
 done
 echo "  ✓ whole tool call: n/a with the reason, TTFT flagged, not canvas, AR runs unaffected"
+
+echo "── TTFT growth on whole replies is stated, not graded (#2033) ──"
+# 12 of 12 QEngine replies arrived whole and turns 10-12 read "O(n)-like growth":
+# their TTFT is the prompt read plus the whole reply. Positive control first: the
+# same growth on a streamed reply must still be graded, or the absence below is vacuous.
+# Exported, not passed to run_bench: that env reaches bench-agentic, and this
+# configures the MOCK, which run_bench launches from the ambient environment.
+export MOCK_GROW=0.04
+run_bench 1 ar QUIET=0
+grow_ar="$out"
+assert_contains "$grow_ar" "warm-baseline (O(n)-like growth for this arch_class)"
+assert_contains "$grow_ar" "TTFT grew near-linearly"
+assert_absent   "$grow_ar" "not graded"
+assert_absent   "$grow_ar" "No growth verdict"
+run_bench 1 whole_toolcall QUIET=0
+unset MOCK_GROW
+assert_absent   "$out" "O(n)-like growth for this arch_class"
+assert_absent   "$out" "TTFT grew near-linearly"
+assert_contains "$out" "warm-baseline (not graded: this turn arrived whole, so its TTFT includes the reply)"
+assert_contains "$out" "No growth verdict: turn 2 and turn 3 arrived whole"
+assert_contains "$out" "so this growth is not prompt-read cost alone"
+echo "  ✓ whole replies: the ratio is stated, never graded O(n); a streamed ramp still is"
 
 echo "test-bench-agentic-ramp: ok"

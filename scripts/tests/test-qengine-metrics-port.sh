@@ -26,6 +26,7 @@ bad() { echo "  ✗ $*" >&2; fail=1; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export CLUB3090_DATA_DIR="$T/data" CLUB3090_CACHE_DIR="$T/cache"   # never your real ones
+export C3_LITELLM_FAKE_LIVE= C3_LITELLM_RUNTIME="$T/config.runtime.yaml"   # the gateway render stays in $T and never restarts the real gateway, nor does the waiter switch.sh leaves behind
 SLUG=qengine/qwen38-27b-dual
 C27="models/qwen3.8-27b/qengine/compose/dual/redhat-int4/mtp.yml"
 CFN="models/qwen3.8-flash-next/qengine/compose/dual/qengine-int4/mtp.yml"

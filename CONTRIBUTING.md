@@ -78,6 +78,8 @@ bash scripts/submit-bench.sh --tag <your-tag> --auto-submit --as-pr
 
 For contributors who know the `BENCHMARKS.md` section structure and want to propose the exact row. The maintainer may still redirect to an issue thread for context-gathering before merge — direct PRs aren't a fast-path bypass.
 
+The script picks the section itself only for Qwen3.6-27B and Gemma 4 31B rows. For any other model or engine, add `--section "<heading>"` with the heading copied from `BENCHMARKS.md` (without the `#`s). It refuses a heading that heads more than one model's table, because the row would land under the first; open an issue (Path A) for those.
+
 ---
 
 ## Process for non-trivial changes

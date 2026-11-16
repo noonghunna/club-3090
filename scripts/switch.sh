@@ -453,6 +453,24 @@ apply_launch_settings() {
   rm -f "$rec"
 }
 
+# #2059 — TEMP/TEMPERATURE are the sampler-temperature knobs, and composes
+# interpolate them straight from this process's environment. A caller that
+# exports TEMP as a path (AI-agent runtimes export TEMP/TMP/TMPDIR to scratch
+# directories) used to reach vLLM as temperature=/path and crash-loop the
+# container before the first token. Drop non-numeric values before compose up,
+# with a one-line warning naming the variable and what it held; numeric values
+# keep working as knobs either way.
+guard_sampler_env() {
+  local var value
+  for var in TEMP TEMPERATURE; do
+    value="${!var:-}"
+    if [[ -n "$value" ]] && ! [[ "$value" =~ ^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$ ]]; then
+      echo "[switch] [sampler-env] ${var}='${value}' is not a number — dropping it for this launch. A numeric ${var} still sets sampler temperature; unset it to silence this. (#2059)" >&2
+      unset "$var"
+    fi
+  done
+}
+
 # --set <slug> KEY=VALUE… / --unset <slug> KEY… are terminal: every word after the
 # slug is a setting, so a flag there is a mistake, not an option.
 _slug_settings_args_ok() {  # <flag> <slug> <args…>
@@ -1326,8 +1344,25 @@ down_running() {
   fi
   # Same for the gateway: after a teardown its local routes point at ports that
   # are no longer listening, which is the dead-route state this sync exists to
-  # prevent. Cloud routes are untouched.
-  bash "$(dirname "$0")/lib/litellm-sync.sh" --quiet || true
+  # prevent. Cloud routes are untouched. On a SWITCH (SWITCH_GATEWAY_OPTIMISTIC,
+  # set in main) the render advertises the model being LOADED: LITELLM_BOOTING_PORT
+  # tells the renderer to include the target's route before its port answers, so
+  # the gateway points at the new model (a retryable 500 while it boots) instead
+  # of going routeless (a terminal 400 on `live`). The accurate render at ready
+  # corrects the name and key. `--down` (no new model coming) prunes as before.
+  if [[ "${SWITCH_GATEWAY_OPTIMISTIC:-0}" == "1" ]]; then
+    _boot_port="${READY_URL:-}"; _boot_port="${_boot_port#*://}"; _boot_port="${_boot_port#*:}"; _boot_port="${_boot_port%%/*}"
+    if [[ "$_boot_port" =~ ^[0-9]+$ ]]; then
+      LITELLM_BOOTING_PORT="$_boot_port" bash "$(dirname "$0")/lib/litellm-sync.sh" --quiet \
+        && echo "[switch] gateway now advertises the model loading on :${_boot_port} (retryable until it answers)" \
+        || echo "[switch] WARN: gateway render failed; the booting model is not advertised"
+    else
+      echo "[switch] WARN: could not derive the booting port from READY_URL='${READY_URL:-}'; rendering without the hint"
+      bash "$(dirname "$0")/lib/litellm-sync.sh" --quiet || true
+    fi
+  else
+    bash "$(dirname "$0")/lib/litellm-sync.sh" --quiet || true
+  fi
 }
 
 gpu_preflight() {
@@ -1731,6 +1766,7 @@ up_variant() {
   export_variant_engine_pin "$v"
   preflight_ik_llama_image "$v"   # #633 — cu12 fallback on <13.2 drivers (unless pinned)
   apply_launch_settings "$v"      # #1465 — per-slug / thinking-pin / global launch settings → the compose env
+  guard_sampler_env               # #2059 — drop a non-numeric TEMP/TEMPERATURE (e.g. a harness's scratch path) before compose interpolates it
   # #1466 4a/4b — compile caches in ~/.cache/club-3090/<engine image>/, the KV disk tier in
   # ~/.local/share/club-3090/kv-offload: created as you, keyed by the image this compose
   # is about to run (so AFTER the engine pin and launch settings above). No-op for a
@@ -1872,11 +1908,14 @@ warn_if_custom_ar_setup_failed() {
 }
 
 schedule_post_ready_sync() {
-  # #1522 — the gateway and OWUI syncs below the launch only run after a WAITED
-  # ready. With --no-wait, or a boot slower than READY_TIMEOUT, they never ran:
-  # the teardown sync had already rendered the old route away, so the gateway
-  # served no local route for a model that came up fine minutes later. Hand the
-  # same two steps to a detached waiter that runs them once the port answers.
+  # #1522 — the accurate gateway and OWUI syncs below the launch only run after a
+  # WAITED ready. With --no-wait, or a boot slower than READY_TIMEOUT, they never
+  # ran: the gateway kept advertising the model optimistically (a 500) but never
+  # got the accurate name and key. Hand the same two steps to a detached waiter
+  # that runs them once the port answers. On a timeout the EXIT trap has already
+  # pruned the gateway (fail fast at READY_TIMEOUT); the waiter renders when the
+  # slow boot comes up and prunes on its own failure paths (the --no-wait case,
+  # where the trap never fires).
   local container="$1" port log_dir log
   port="${READY_URL#*://}"; port="${port#*:}"; port="${port%%/*}"
   if [[ -z "$container" ]]; then
@@ -1977,7 +2016,8 @@ wait_ready() {
       echo "[switch] timeout — server not ready after ${READY_TIMEOUT}s" >&2
       echo "[switch] tail logs:  docker logs --tail 100 ${container}" >&2
       # The crash checks above passed this round, so the container is still
-      # booting, not broken: a slow boot must not leave the gateway empty
+      # booting, not broken. The EXIT trap prunes the gateway now (fail fast at
+      # READY_TIMEOUT); the waiter re-renders when the slow boot comes up
       # (#1522). Still exit 1, because nothing has answered yet.
       echo "[switch] the container is still booting (raise READY_TIMEOUT to wait longer)." >&2
       schedule_post_ready_sync "$container" >&2
@@ -2140,6 +2180,21 @@ resolve_ready_url "${VARIANT}"
 # move them to ~/.config/club-3090. They keep working either way.
 club_config_migrate_notice "${ROOT_DIR}" "[switch]"
 check_variant "${VARIANT}"   # every refusal that doesn't need freed resources, BEFORE the teardown
+# The teardown render (see down_running) advertises the model being loaded —
+# LITELLM_BOOTING_PORT — so the gateway points at the new model (a retryable 500
+# while it boots) instead of going routeless (a terminal 400 on `live`). The
+# accurate render at ready corrects the name and key. If the switch dies before
+# that render — a crash, or a boot that outlasts READY_TIMEOUT — this EXIT trap
+# renders back to what actually answers, so a failed boot ends with a pruned
+# gateway at the timeout. A scheduled detached waiter still renders when a slow
+# boot comes up.
+SWITCH_GATEWAY_OPTIMISTIC=1
+switch_gateway_render_on_fail() {
+  local rc=$?
+  [[ "$rc" -ne 0 ]] || return 0
+  bash "${ROOT_DIR}/scripts/lib/litellm-sync.sh" --quiet || true
+}
+trap switch_gateway_render_on_fail EXIT
 down_running
 up_variant "${VARIANT}"
 [[ $WAIT -eq 1 ]] && wait_ready

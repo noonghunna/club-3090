@@ -16,7 +16,7 @@
 #   CONTEXT             --max-context (default 65536: Maya's own DeepSeek default until v1.1.30, which picks 256K
 #                       where the PC's VRAM and RAM hold the model); ds4_settings.py validates it (>= 4096)
 #   REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, TEMP, TOP_P, TOP_K, MIN_P, PRESENCE_PENALTY,
-#   REPEAT_PENALTY, SERVED_NAME, THREADS
+#   REPEAT_PENALTY, SERVED_NAME, THREADS, MMAP_EXPERTS
 #                       written into maya-ds4.json at every boot by ds4_prepare.py through ds4_settings.py
 #                       (its header maps each to Maya's key); unset = the defaults below. A bad value stops
 #                       the boot before the SHA-256 check.

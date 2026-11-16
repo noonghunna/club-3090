@@ -552,6 +552,38 @@ C3_LITELLM_LOCAL_CONFIG="$LOCAL_CFG.absent" render "8182=alpha-model" \
   && ! command grep -q "THIS RIG'S OWN ROUTES" "$RUNTIME" \
   && ok "without config.local.yaml: no local block, clean render" || bad "a missing config.local.yaml must be a no-op"
 
+# --- 13b: a render under the test seam never restarts the gateway ------------
+# A test's docker shim is not enough on its own: switch.sh --no-wait starts a
+# detached post-ready-sync.sh that outlives the test, and once the shim's dir is
+# gone its `docker restart` reaches the real daemon. The seam is inherited, so
+# the sync itself must refuse. A docker stub records the calls here; the
+# positive control (no seam, same stub) shows the stub does see a restart.
+stub13b="$(mktemp -d)"; calls13b="$stub13b/calls"
+cat > "$stub13b/docker" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$(dirname "$0")/calls"
+case "$1" in
+  ps) echo litellm ;;
+  *)  exit 1 ;;   # inspect: no mount to follow, so the render stays on C3_LITELLM_RUNTIME
+esac
+STUB
+chmod +x "$stub13b/docker"
+echo "stale: not a render" > "$RUNTIME"
+out13b="$(PATH="$stub13b:$PATH" C3_LITELLM_FAKE_LIVE="8182=alpha-model" bash "$SYNC" 2>&1)"
+if ! command grep -q '^restart' "$calls13b" 2>/dev/null && [[ "$out13b" == *"not restarting litellm"* ]]; then
+  ok "a changed render under C3_LITELLM_FAKE_LIVE does not restart litellm"
+else
+  bad "the test seam restarted the gateway (calls: $(tr '\n' ';' < "$calls13b" 2>/dev/null); out: $out13b)"
+fi
+: > "$calls13b"; echo "stale: not a render" > "$RUNTIME"
+env -u C3_LITELLM_FAKE_LIVE PATH="$stub13b:$PATH" bash "$SYNC" --quiet >/dev/null 2>&1
+if command grep -qx 'restart litellm' "$calls13b"; then
+  ok "positive control: the same changed render without the seam restarts litellm"
+else
+  bad "positive control: no restart without the seam, so the check above proves nothing (calls: $(tr '\n' ';' < "$calls13b"))"
+fi
+rm -rf "$stub13b"
+
 # --- 14: the TRACKED catalog carries no route that leaves the machine -----------
 # A cloud endpoint (and its workspace URL) is one rig's business: it belongs in the
 # gitignored config.local.yaml. In the catalog it ships to every user, and omp's
@@ -856,6 +888,117 @@ if [[ -n "$shown" && "$shown" == *"$(basename "$RUNTIME")" && "$out" == *"-> $sh
   ok "#1945: the render log names the file it wrote"
 else
   bad "#1945: render log doesn't name the written file (want '-> $shown'): $out"
+fi
+
+# --- 23: the optimistic route — the model mid-boot is advertised before it answers ---
+# switch.sh sets LITELLM_BOOTING_PORT to the target's port on the teardown render,
+# so the gateway points at the model being loaded (a retryable 500 while it boots)
+# instead of going routeless (a terminal 400 on `live`). The name is a registry
+# placeholder (served_name → model id → booting-<port>) that the accurate render
+# at ready corrects. The route is PREPENDED so the `live` alias (which mirrors the
+# first route) points at the model being loaded.
+C3_LITELLM_FAKE_LIVE="" LITELLM_BOOTING_PORT=9999 bash "$SYNC" --no-restart --quiet
+got="$(routes)"
+live_count="$(tr ' ' '\n' <<< "$got" | command grep -cx live || true)"
+if [[ "$got" == *booting-9999* && "$live_count" == "1" ]]; then
+  ok "a booting model is advertised before it answers, with the live alias"
+else
+  bad "booting model not advertised (got: $got)"
+fi
+[[ "$(route_field live litellm_params.api_base)" == "http://host.docker.internal:9999/v1" ]] \
+  && ok "the live alias mirrors the booting route's port" \
+  || bad "live alias api_base=$(route_field live litellm_params.api_base) (want :9999)"
+# Name resolution: served_name → model id → booting-<port>, and booting-<port>
+# whenever the port's own rows disagree. Ports are found dynamically so the test
+# follows the registry rather than pinning one.
+reg_json="$(bash scripts/lib/registry-emit.sh --json 2>/dev/null)"
+boot_name() { python3 -c "
+import json,collections,sys
+d=json.load(sys.stdin)
+by_port=collections.defaultdict(list)
+for v in d.get('variants',[]):
+    if v.get('port'): by_port[v['port']].append(v)
+want=sys.argv[1]=='with'
+for p,rows in sorted(by_port.items()):
+    if len(rows)==1 and bool(rows[0].get('served_name'))==want and rows[0].get('model'):
+        r=rows[0]; print(p, r.get('served_name') or r['model']); break
+" "$1" <<< "$reg_json"; }
+read -r sport sname <<< "$(boot_name with)"
+if [[ -n "$sport" ]]; then
+  C3_LITELLM_FAKE_LIVE="" LITELLM_BOOTING_PORT="$sport" bash "$SYNC" --no-restart --quiet
+  got="$(routes)"
+  if [[ "$got" == *"$sname"* ]]; then
+    ok "a registered port advertises its served_name ($sname on :$sport)"
+  else
+    bad "served_name not advertised for :$sport (want $sname, got: $got)"
+  fi
+else
+  echo "  skip — no registry port with a unique served_name"
+fi
+read -r mport mname <<< "$(boot_name without)"
+if [[ -n "$mport" ]]; then
+  C3_LITELLM_FAKE_LIVE="" LITELLM_BOOTING_PORT="$mport" bash "$SYNC" --no-restart --quiet
+  got="$(routes)"
+  if [[ "$got" == *"$mname"* ]]; then
+    ok "a port without a served_name advertises the model id ($mname on :$mport)"
+  else
+    bad "model id not advertised for :$mport (want $mname, got: $got)"
+  fi
+else
+  echo "  skip — no registry port without a served_name"
+fi
+# A port hosting two DIFFERENT models must never be named after either: the
+# registry really has such ports (:8030 serves gemma-4-31b and
+# deepseek-v4-flash-0731), so the placeholder is the only honest name.
+read -r xport xnames <<< "$(python3 -c "
+import json,collections,sys
+d=json.load(sys.stdin)
+by_port=collections.defaultdict(list)
+for v in d.get('variants',[]):
+    if v.get('port'): by_port[v['port']].append(v)
+for p,rows in sorted(by_port.items()):
+    models={v.get('model') for v in rows if v.get('model')}
+    if len(models)>1:
+        print(p, ' '.join(sorted(models))); break
+" <<< "$reg_json")"
+if [[ -n "$xport" ]]; then
+  C3_LITELLM_FAKE_LIVE="" LITELLM_BOOTING_PORT="$xport" bash "$SYNC" --no-restart --quiet
+  got="$(routes)"
+  leak=""
+  for n in $xnames; do [[ "$got" == *"$n"* ]] && leak="$leak $n"; done
+  if [[ -n "$leak" ]]; then
+    bad "multi-model port :$xport advertises a model that may not be the one loading:$leak"
+  elif [[ "$got" == *"booting-$xport"* ]]; then
+    ok "a multi-model port gets the placeholder, never either model's name (:$xport)"
+  else
+    bad "multi-model port :$xport got no placeholder route (got: $got)"
+  fi
+else
+  echo "  skip — no registry port hosts two different models"
+fi
+# A garbage hint is a clean no-op (no crash, no route).
+C3_LITELLM_FAKE_LIVE="" LITELLM_BOOTING_PORT=abc bash "$SYNC" --no-restart --quiet
+got="$(routes)"
+if [[ "$got" != *booting-* ]]; then
+  ok "a garbage hint is a clean no-op"
+else
+  bad "garbage hint produced a route (got: $got)"
+fi
+# Once the port answers, the optimistic route yields to the probed name (no-op).
+C3_LITELLM_FAKE_LIVE="9999=real-name" LITELLM_BOOTING_PORT=9999 bash "$SYNC" --no-restart --quiet
+got="$(routes)"
+if [[ "$got" == *real-name* && "$got" != *booting-9999* ]]; then
+  ok "once the port answers, the optimistic route yields to the probed name"
+else
+  bad "optimistic route not a no-op once answering (got: $got)"
+fi
+# No hint → no optimistic route (the routeless case, as before).
+C3_LITELLM_FAKE_LIVE="" bash "$SYNC" --no-restart --quiet
+got="$(routes)"
+if [[ "$got" != *booting-* ]]; then
+  ok "without the hint, nothing booting is advertised"
+else
+  bad "optimistic route without the hint (got: $got)"
 fi
 
 [[ $fail -eq 0 ]] && echo "test-litellm-sync: ok" || echo "test-litellm-sync: FAIL"

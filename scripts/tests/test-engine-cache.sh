@@ -118,7 +118,7 @@ chmod +x "$T/bin/docker" "$T/bin/sudo"
 [[ "$(PATH="$T/bin:$PATH" command -v docker)" == "$T/bin/docker" && "$(PATH="$T/bin:$PATH" command -v sudo)" == "$T/bin/sudo" ]] \
   || { bad "shims not first on PATH — refusing to run"; echo "test-engine-cache: FAIL"; exit 1; }
 export MOCK_LOG="$T/calls.log" MOCK_ENV_OUT="$T/env.out" MOCK_RENDER="$T/render.json"
-export PREFLIGHT_NO_FETCH=1 PREFLIGHT_NO_COMPOSE_DEPS=1 CLUB3090_SHM_CLEANUP=0 C3_LITELLM_FAKE_LIVE=
+export PREFLIGHT_NO_FETCH=1 PREFLIGHT_NO_COMPOSE_DEPS=1 CLUB3090_SHM_CLEANUP=0 C3_LITELLM_FAKE_LIVE= C3_LITELLM_RUNTIME="$T/config.runtime.yaml"
 reset_mock() { : > "$MOCK_LOG"; rm -f "$MOCK_ENV_OUT" "$MOCK_RENDER"; }
 envout() { command grep -E "^$1=" "$MOCK_ENV_OUT" 2>/dev/null | head -1 | cut -d= -f2-; }
 # rendered_user → the `user:` of the rendered compose's service (one service here)

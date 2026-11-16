@@ -52,6 +52,25 @@ FAKE_SCENARIO:
                   even requests span two (a genuine, measurable window). Four runs
                   read plausibly, one printed 690000000.00, and the shape mean came
                   out at 2728143.37 with CV=223.6%
+  maya            healthy, plus Project Maya's /metrics document (engine.maya_version,
+                  no draft counts) and one maya-ds4 draft line per request in the
+                  log, the way a host-run Maya writes them: bench.sh reads the drafts
+                  only from SERVER_LOG, with no container (D#1572)
+  no_ignore_eos   healthy, but a request carrying ignore_eos gets HTTP 400 with
+                  maya-mm3's reason ("ignore_eos: this engine does not apply token
+                  biases"); min_tokens alone is served. FAKE_400_MSG rewords the 400
+  stream_error    healthy start, then the stream ends on an ERROR CHUNK, the way
+                  Project Maya v1.1.65 ends an answer the engine faulted on (#827):
+                  a few content deltas, data: {"error": {...}} with no choices,
+                  the usage chunk and [DONE]. bench.sh must count the run as a
+                  failed request, not a short normal one
+  engine_422      every completion gets HTTP 422 with Maya's engine_error body,
+                  whose reason carries the digits 400 (a position): the prefill
+                  calibrator must report it as a FAIL, not 'exceeds the served
+                  context'
+  ctx_400         every completion gets llama.cpp's own over-context 400
+                  (exceed_context_size_error), whose wording names none of the
+                  phrases bench.sh matches: only the status says it is context
   probefail       the n_layer line NEVER appears, so the layer probe times out --
                   and the process IGNORES SIGTERM, the way a real server does
                   while still inside model load. Only a probe that escalates past
@@ -234,6 +253,9 @@ class H(BaseHTTPRequestHandler):
             self.end_headers(); self.wfile.write(b"ok")
         elif self.path.startswith("/v1/models"):
             self._json({"object": "list", "data": [{"id": "fake-model", "object": "model"}]})
+        elif self.path.startswith("/metrics") and SC == "maya":
+            # Project Maya's /metrics: its version, and totals with no draft counts (they go to its log)
+            self._json({"engine": {"maya_version": "1.1.61"}, "totals": {"requests": _req_n[0]}})
         elif self.path.startswith("/props"):
             # Shaped like llama-server's real /props: the fields bench.sh's config
             # fingerprint reads (served ctx, slots, ftype, drafter) and nothing else.
@@ -267,7 +289,34 @@ class H(BaseHTTPRequestHandler):
             self.send_response(500); self.send_header("Content-Length", "0"); self.end_headers()
             return
 
+        if SC == "ctx_400":
+            self._json({"error": {"code": 400, "type": "exceed_context_size_error",
+                        "message": "the request exceeds the available context size, try increasing it"}},
+                       code=400)
+            return
+
+        if SC == "engine_422":
+            # Maya v1.1.65 (#827), a request the engine stopped on an error before
+            # anything was streamed: 422, not a 5xx the SDKs would resend
+            self._json({"error": {"type": "engine_error", "code": "engine_error",
+                        "message": "the engine stopped at position 14003: a GPU's state is unknown",
+                        "partial_text": ""}}, code=422)
+            return
+
+        # Every request's forcing fields, so a test can see what bench.sh sent.
+        log(f"[fake] forcing ignore_eos={'ignore_eos' in req} min_tokens={req.get('min_tokens')}")
+        if SC == "no_ignore_eos" and "ignore_eos" in req:
+            # maya-mm3's validation 400, in its own error shape. FAKE_400_MSG swaps
+            # the wording for a 400 that does NOT name ignore_eos (no retry then).
+            log("[fake] refused: ignore_eos")
+            self._json({"error": {"message": os.environ.get("FAKE_400_MSG",
+                        "ignore_eos: this engine does not apply token biases - update Maya "
+                        "(./maya.sh --setup)"), "type": "invalid_request_error"}}, code=400)
+            return
+
         _req_n[0] += 1
+        if SC == "maya":
+            log("maya ds4 serve: drafts 100 of 107 kept; 7 rejected")
         # Which endpoint was actually driven — bench.sh's ENDPOINT knob is only
         # meaningful if it changes the request, so a test must be able to see it.
         log(f"[fake] request endpoint={self.path}")
@@ -319,6 +368,8 @@ class H(BaseHTTPRequestHandler):
                 emit_loop = range(0)
             else:
                 emit_loop = range(emit)
+            if SC == "stream_error":
+                emit_loop = range(min(emit, 4))     # the answer was under way
             for i in emit_loop:
                 if raw_completion:
                     d = {"choices": [{"text": f"tok{i} "}]}
@@ -326,6 +377,11 @@ class H(BaseHTTPRequestHandler):
                     d = {"choices": [{"delta": {"content": f"tok{i} "}}]}
                 chunk("data: " + json.dumps(d) + "\n\n")
                 time.sleep(TOK_DELAY)
+            if SC == "stream_error":
+                # Maya's StreamJob: the fault becomes a choices-less error chunk
+                chunk("data: " + json.dumps({"error": {"type": "server_error",
+                      "message": "the engine stopped this answer on an error at position 14003"}}) + "\n\n")
+                emit = min(emit, 4)
             if want_usage:
                 # ONLY when asked. The sweep's driver indexes choices[0]
                 # unconditionally and would raise IndexError on a choices-less
