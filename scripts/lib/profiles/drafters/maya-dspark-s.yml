@@ -1,0 +1,26 @@
+schema_version: 1
+id: maya-dspark-s
+display_name: DeepSeek-V4.1-Flash DSpark drafter, Maya-S's build (Project Maya format)
+spec_method: dspark
+model_compat:
+  - deepseek-v4.1-flash-1017
+engine_compat:
+  engine_type: strata
+n_default: 5
+n_max: 5
+download:
+  hf_repo: peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF
+  size_gb: 8.0
+vram_footprint_gb: variable
+status: incubating
+# peasantsmith's dspark/dspark (.bin + .json, drafter_pack.py's format): the drafter Maya's manifest pairs with the
+# Maya-S quant, 8.0 GB (maya-dspark-xs2, 4.25 GB, is the smaller build of Maya-XS and the ISTA quant). Maya's
+# tools/ds4/pack_gguf.py takes it with --drafter; maya-ds4's `--dspark on` engages it (the launcher passes `on`
+# explicitly: Maya's own setup writes `--dspark none` until its calibration says drafting pays). Draft block 5, from
+# the pack's geometry rather than a flag.
+#
+# MEASURED 2026-11-12 on two NVLink-bridged 3090 Tis (325 W caps, v1.1.57, Maya-S): 81.7% of drafts kept on the club
+# canonical prompts; switching the drafter off gave 44 tok/s fresh-text decode against ~55-60 with it (-20%, one boot each).
+requires_engine_min: null
+speculative_config_template: null   # N/A — Maya's engine, not vLLM
+local_model_path: null

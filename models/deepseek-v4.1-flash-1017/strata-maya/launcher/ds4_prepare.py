@@ -104,12 +104,37 @@ WEIGHTS = {
             "dspark-xs2.json": "56d47ad12d6548a8d3d50a79be96451411f18d5b77064de7b8544bb2da22988f",
         },
     },
+    "maya-s": {
+        "gguf": {   # peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF @d1fc0100, Maya-S/: the split's backbone shards 1-4
+                    # (routed experts IQ2_XXS gate/up + IQ3_XXS down, the rest Q8_0)
+            "DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00001-of-00006.gguf":
+                "1f3437f57042e69f94c141ffbcba0d5610dab63feb07244fb468be4940d6763f",
+            "DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00002-of-00006.gguf":
+                "66501fee8702ffd54e6f065323ab54bb3150d20b10b01922c589e7462c7b5ba6",
+            "DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00003-of-00006.gguf":
+                "3195b23f33337c46a07c48583946d99147c3635412bc4adc6acdc4cf42bf30ad",
+            "DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00004-of-00006.gguf":
+                "d60dba35fac9601cd5c6026439dd980c457a5bb1c009192ea539b220108ea0db",
+        },
+        "engram": {   # shards 5-6 of the same split hold only the two Engram tables (Q6_K, 80.6 GB each). Like Maya-XS's
+                      # pair they are mounted one by one at /engram and handed to the pack with --engram, while --shards
+                      # names the four backbone shards
+            "DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00005-of-00006.gguf":
+                "c98d46f96a25d17c4c54da5a60782c130255c364a22e621ea28d5c98a692ceb2",
+            "DeepSeek-V4.1-Flash-1017-Maya-S-IQ2_XXS-00006-of-00006.gguf":
+                "98d65ef4f36e0b193935d44c3586241ca09b1b47e90f118e85332cfdb5860263",
+        },
+        "dspark": {   # the quant's own drafter, same revision, dspark/ (8.0 GB .bin + its .json)
+            "dspark.bin": "42df65159f980a9189d80597e42b30012c7b10e0dd385a47051f3b2fd659bb7b",
+            "dspark.json": "639c3144bca8cfe4db59057047dca40411f0cc732796e2a9321feb98fee2295f",
+        },
+    },
 }
 # Each tag's files as Maya shows them (its dashboard, /health and /metrics' model_label: tools/maya_quants.config_label,
 # from the installer record's ds4_quant - without one it names Maya's own EXL3 2.9 bpw quant). ISTA's quant is not one
 # of Maya's, so the name is shown as given; UD-IQ3_S is in Maya's setup list, so its key is recorded and Maya shows it
 # as "UD-IQ3_S" (maya_quants.py's table), as its own setup would.
-SHOWN = {"ista-iq2-xxs": "ISTA IQ2_XXS", "ud-iq3-s": "gguf-iq3_s", "maya-xs": "maya-xs"}
+SHOWN = {"ista-iq2-xxs": "ISTA IQ2_XXS", "ud-iq3-s": "gguf-iq3_s", "maya-xs": "maya-xs", "maya-s": "maya-s"}
 
 
 def say(msg: str) -> None:
