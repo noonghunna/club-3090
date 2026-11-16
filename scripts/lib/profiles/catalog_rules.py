@@ -482,7 +482,8 @@ def _effort_rule(root: Path, entry: dict, text: str) -> list[Finding]:
     to; this covers the PR-bundle and cockpit paths that never run that test."""
     sp = entry.get("sampler_profiles")
     thinking = isinstance(sp, dict) and any("thinking" in str(k).lower() for k in sp)
-    body = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+    body = "\n".join(l.split("#", 1)[0] for l in text.splitlines()
+                     if not l.lstrip().startswith("#"))
     knob = "REASONING_EFFORT" in body or "reasoning_effort" in body
     if not (thinking or knob):
         return [Finding("effort-block", REQUIRED, PASS,

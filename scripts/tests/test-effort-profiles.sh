@@ -121,8 +121,11 @@ for model_dir in sorted(os.listdir(mdir)):
             text = io.open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace").read()
             if fn.endswith((".yml", ".py")):
                 # Prose in a comment ("this template doesn't read
-                # reasoning_effort") is not an effort knob; only code counts.
-                text = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+                # reasoning_effort") is not an effort knob; only code counts —
+                # full-line OR inline, or a comment mention fires the gate on a
+                # model whose only mention is prose (#1951 review r6).
+                text = "\n".join(l.split("#", 1)[0] for l in text.splitlines()
+                                 if not l.lstrip().startswith("#"))
             if "REASONING_EFFORT" in text or "reasoning_effort" in text:
                 effort_aware.setdefault(model_dir, f"effort knob/template under {dirpath}")
 for model_id, reason in sorted(effort_aware.items()):
@@ -152,7 +155,23 @@ if len(failures) == n0:
     print(f"  ✓ budget_map agrees with effort_budget.py LEVELS {list(eb_levels)}")
 
 # ---- 3. COMPOSE DEFAULTS inside the model's ladder --------------------------
-default_re = re.compile(r'REASONING_EFFORT["\']?:-["\']?([a-z]+)')
+# Three forms a compose can set THE knob in: the env-default (`:-`), the YAML
+# mapping (`REASONING_EFFORT: low`), and the equals list form (`= low`). The
+# lookbehind/lookahead keep a LONGER variable (QE_REASONING_EFFORT,
+# LLAMA_ARG_REASONING_EFFORT_ALLOW) from being mistaken for it — those are
+# other knobs, not defaults for this one.
+default_re = re.compile(
+    r'(?<![A-Za-z_])REASONING_EFFORT(?:["\']?:-["\']?|["\']?:\s*["\']?|=)["\']?([a-z]+)')
+# The knob handed to a launcher with no value of its own (the strata-maya
+# composes' bare `REASONING_EFFORT:`, the knob-list lines) is NOT a default —
+# the launcher's default is what the pair fact records. A value that is a
+# VARIABLE reference (REASONING_EFFORT=$from_env) is a hop the launch-time
+# override owns, not a catalogue default. A literal the emit cannot read is
+# what stays flagged.
+bare_knob_re = re.compile(r'^[ \t\-]*["\']?REASONING_EFFORT["\']?:?[ \t]*$')
+knob_name_re = re.compile(r'(?<![A-Za-z_])REASONING_EFFORT(?![A-Za-z_])')
+var_ref_re = re.compile(
+    r'(?<![A-Za-z_])REASONING_EFFORT(?![A-Za-z_])["\']?[:=]["\']?\$')
 # `max` defaults are ratcheted: litellm's default_reasoning_effort Literal
 # (v1.100.3) EXCLUDES max, so phase 2's gateway render must OMIT a max
 # default, never downgrade it. Today only GLM-5.3-Flash legitimately defaults
@@ -187,9 +206,14 @@ for model_dir in sorted(os.listdir(mdir)):
                         "so the render must OMIT it, never downgrade; add the model "
                         "to MAX_DEFAULT_MODELS only after re-verifying that rule")
             for line in text.splitlines():
-                if "REASONING_EFFORT:-" in line and not default_re.search(line):
-                    bad(f"{path}: unparseable REASONING_EFFORT default line: "
-                        f"{line.strip()[:120]}")
+                if not knob_name_re.search(line):
+                    continue
+                if (default_re.search(line) or bare_knob_re.match(line.strip())
+                        or var_ref_re.search(line)):
+                    continue
+                bad(f"{path}: unparseable REASONING_EFFORT line — a form the "
+                    f"emit's _compose_effort_default does not read, so the pair "
+                    f"default would fill it: {line.strip()[:120]}")
 if len(failures) == n0:
     print(f"  ✓ {checked} compose REASONING_EFFORT defaults all inside their "
           "model's ladder (max ratcheted to GLM-5.3-Flash)")
@@ -302,6 +326,24 @@ if len(failures) == n0:
     print(f"  ✓ {fold_checked} pair fold facts land on accepted rungs (floor "
           f"{PAIR_FACT_FLOOR} pinned); off_switch round-trips as 'none'")
 
+# ---- 5c. ONE PORT, ONE MODEL ------------------------------------------------
+# A port hosting two models advertises one model's facts for both: port_facts
+# agree-or-drops across the rows, but a no-thinking model beside a knob-less
+# thinking model would advertise supports_reasoning false for a thinker, and
+# two ladders on one port advertise nothing at all. The render already refuses
+# to name such a port (booting-<port>); the catalogue must not create one
+# (#1951 review r6).
+n0 = len(failures)
+port_models: "dict[int, set]" = {}
+for e in entries.values():
+    if e.get("port") and e.get("model"):
+        port_models.setdefault(e["port"], set()).add(e["model"])
+for port, models in sorted(port_models.items()):
+    if len(models) > 1:
+        bad(f"port {port} hosts {len(models)} models ({sorted(models)}) — split "
+            f"the ports: the render advertises one model's effort facts for both")
+if len(failures) == n0:
+    print("  ✓ every registry port serves exactly one model")
 # ---- 5b. the loader REFUSES an engine-wide fold fact (#1951 review r5) -------
 # An engine-level `default_when_unset`/`maps` is the silent-inheritance bug the
 # review named: a model never measured on it would be folded and defaulted by a

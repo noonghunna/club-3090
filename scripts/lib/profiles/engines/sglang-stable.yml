@@ -176,10 +176,11 @@ effort:
       default_when_unset: xhigh
       maps: {minimal: low, high: xhigh, max: xhigh}
       evidence: >-
-        Its profile cites the same vendored template mount and the same fold
-        table as qwen3.8-27b. Nothing engine-specific changes the fold: SGLang's
-        own difference is HOW the default is passed (below), not what the
-        template folds.
+        The same vendored qwen38-reasoning-effort-template mount over the
+        checkpoint's own template — its model profile cites the mount and the
+        fold table that template enforces. Nothing engine-specific changes the
+        fold: SGLang's own difference is HOW the default is passed (below), not
+        what the template folds.
   evidence: >-
     The two listed models are the two SGLang slugs' models whose profiles cite
     that contract. nanbeige4.3-33b also routes here but declares no effort ladder
