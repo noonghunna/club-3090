@@ -119,6 +119,24 @@ services:
       # member's free VRAM). More cards also need MAYA_GPUS and the launcher's --gpus
       MAYA_DS4_TP_GGUF_UNEVEN:
       DS4_TP_SHARES:
+      # the PCIe expert lane on more than one GPU (v1.1.64, mw00/project-maya#956; read by maya-ds4): keep = it
+      # streams as before v1.1.64, off = the lane off. Unset = Maya's own rule: a layer split turns the lane off
+      # unless it measures faster, and the times file keeps that for the next start
+      DS4_STREAM_TIE:
+      # tensor parallel on Maya's own quants (MAYA_TP >= 2 with MAYA_DS4_TP_GGUF_UNEVEN; read by maya-ds4):
+      # DS4_FLOW_TP=1 has the group's members read prompts on the flow too, each streaming its own rows (off the
+      # flow, a box that streams experts from the disk reads prompts much slower). Unset = off
+      DS4_FLOW_TP:
+      # tensor parallel groups of 3 on a GGUF pack (experimental; read by maya-ds4): DS4_TP_UNEVEN_HEADS=1 keeps a
+      # width the 64 attention heads don't split into evenly, the extra member computing only its FFN share.
+      # Unset = off
+      DS4_TP_UNEVEN_HEADS:
+      # conversations kept (read by maya-ds4 and Maya's server): MAYA_DS4_SLOT_KEEP=1 keeps a conversation's state
+      # when another one takes the model, so an agent's parent and workers each continue their own instead of
+      # reading it again from token 0; MAYA_DS4_KEEP_THINKING=1 keeps earlier turns' reasoning in the prompt,
+      # which a chat without tools needs beside it (a request with tools keeps it already). Unset = off for both
+      MAYA_DS4_SLOT_KEEP:
+      MAYA_DS4_KEEP_THINKING:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       # the quant's own folder (unsloth's repo layout: one folder a quant); no drafter is mounted, so the pack

@@ -12,10 +12,10 @@
 #   Drafter:   DSpark: peasantsmith's dspark-xs2 (this quant's own 2-bit drafter, 4.25 GB; draft block 5)
 #   KV:        fp16 latent cache (maya-ds4 has no other)
 #   Vision:    no (the image never fetches DeepSeek's vision tower: --vision off)
-#   Max ctx:   262144 (Maya's setup recommends 256K for DeepSeek wherever VRAM + RAM hold the model, as here;
-#              on the ISTA sibling, the same engine and KV, 256K over 64K cost the two pools 21 experts and
-#              the host +0.1 GB, inside the 73-85 GB band below. Not booted at 256K here: these weights are
-#              not on the reference rig; the ISTA sibling filled to 240,972 tok, 2026-11-16)
+#   Max ctx:   65536. Not 262144 (Maya's setup recommendation, the default for one day on 2026-11-16):
+#              on a 125.2 GiB host with four 16 GB cards, 262144 failed the swap check where 65536
+#              passed (#2047, #2054), and 256K hasn't been booted on this quant's own target, two 24 GB
+#              cards and a ~92 GB host. CONTEXT=262144 (or switch.sh --set) tries it; watch the swap check
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
 #   Caveats:   Not promoted yet: measured on one community rig (#1989), and its v1.1.56 run lost the engine
@@ -105,7 +105,7 @@ services:
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8146}}:8080"
     environment:
-      CONTEXT: "${CONTEXT:-262144}"
+      CONTEXT: "${CONTEXT:-65536}"
       SETUP_ONLY: "${SETUP_ONLY:-0}"
       REPACK: "${REPACK:-0}"
       VERIFY: "${VERIFY:-1}"
@@ -151,6 +151,24 @@ services:
       # member's free VRAM). More cards also need MAYA_GPUS and the launcher's --gpus
       MAYA_DS4_TP_GGUF_UNEVEN:
       DS4_TP_SHARES:
+      # the PCIe expert lane on more than one GPU (v1.1.64, mw00/project-maya#956; read by maya-ds4): keep = it
+      # streams as before v1.1.64, off = the lane off. Unset = Maya's own rule: a layer split turns the lane off
+      # unless it measures faster, and the times file keeps that for the next start
+      DS4_STREAM_TIE:
+      # tensor parallel on Maya's own quants (MAYA_TP >= 2 with MAYA_DS4_TP_GGUF_UNEVEN; read by maya-ds4):
+      # DS4_FLOW_TP=1 has the group's members read prompts on the flow too, each streaming its own rows (off the
+      # flow, a box that streams experts from the disk reads prompts much slower). Unset = off
+      DS4_FLOW_TP:
+      # tensor parallel groups of 3 on a GGUF pack (experimental; read by maya-ds4): DS4_TP_UNEVEN_HEADS=1 keeps a
+      # width the 64 attention heads don't split into evenly, the extra member computing only its FFN share.
+      # Unset = off
+      DS4_TP_UNEVEN_HEADS:
+      # conversations kept (read by maya-ds4 and Maya's server): MAYA_DS4_SLOT_KEEP=1 keeps a conversation's state
+      # when another one takes the model, so an agent's parent and workers each continue their own instead of
+      # reading it again from token 0; MAYA_DS4_KEEP_THINKING=1 keeps earlier turns' reasoning in the prompt,
+      # which a chat without tools needs beside it (a request with tools keeps it already). Unset = off for both
+      MAYA_DS4_SLOT_KEEP:
+      MAYA_DS4_KEEP_THINKING:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       # the quant's own folder (Maya's repo layout: one folder a quant) and, beside it, the shared dspark/ folder the

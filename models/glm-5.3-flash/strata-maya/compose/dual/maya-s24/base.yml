@@ -56,7 +56,7 @@
 #              · DataExtract-15 11/15 (73%) · ReasonMath-15 13/15 (87%) · BugFind-15 13/15 (87%)
 #              · HermesAgent-20 13/20 (65%) · CLI-40 26/40 (65%)
 #              (--full, thinking OFF, sampling=server, validity=valid,
-#               packs tc1.0.1·if2.0.0·so2.1.0·de1.2.0·rm1.1.0·bf1.0.1·hermes1.0.0·cli1.0.2, 2026-11-11;
+#               packs tc1.0.1·if2.0.0·so2.1.0·de1.2.0·rm1.1.0·bf1.0.1·hm1.0.0·cli1.0.2, 2026-11-11;
 #               thinking ON: 124/150 (83%) pass@1 — tc 80% · if 100% · so 87% · de 73% · rm 100% ·
 #               bf 87% · hermes 55% · cli 85%)
 # ---------------------------------------------------------------------------
