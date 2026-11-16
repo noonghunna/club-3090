@@ -233,35 +233,47 @@ if len(failures) == n0:
     print(f"  ✓ all {len(runks)} declared effort names are litellm Literal members "
           f"(pin {pin_tag or '?'})")
 
-# ---- 5. ENGINE FOLDS land on rungs the served model accepts -----------------
+# ---- 5. PAIR FOLD FACTS land on rungs the served model accepts --------------
+# `default_when_unset` and `maps` are per (model, engine) facts, not engine-wide
+# ones (#1951 review r5): strata-maya's three launchers default to max / high /
+# auto and two of them fold differently, and qwen3.8-flash-next folds differently
+# on strata than on vLLM. So this walks the engine's `by_model` entries — a pair
+# that is not listed simply has no fold facts.
 budget_models = {mid for mid, m in profiles.models.items()
                  if (m.effort or {}).get("budget_map")}
 pairs = {(e.get("model"), e.get("engine")) for e in entries.values()
          if e.get("model") and e.get("engine")}
 n0 = len(failures)
 fold_checked = 0
-for model_id, engine_id in sorted(pairs):
-    eff = (profiles.engines.get(engine_id) or type("x", (), {"effort": None})()).effort
-    if not eff:
-        continue
-    levels, status = model_levels(model_id)
-    if not levels:
-        continue                      # unknown model: the render emits nothing anyway
-    d = eff.get("default_when_unset")
-    if d and d not in levels:
-        bad(f"{model_id} on {engine_id}: engine default_when_unset {d!r} is not a "
-            f"rung of the model's ladder {levels}")
-    maps = eff.get("maps") or {}
-    for src, dst in maps.items():
-        if dst not in levels:
-            bad(f"{model_id} on {engine_id}: fold {src}->{dst} lands outside the "
-                f"model's ladder {levels}")
-    # Identity folds (src->src) are legal — the engine accepts the name as-is.
-    if maps and model_id in budget_models and not all(
-            dst == src or (src, dst) in eb_aliases.items() for src, dst in maps.items()):
-        bad(f"{engine_id}: maps {maps} fold outside effort_budget.py ALIASES "
-            f"{eb_aliases} while serving budget_map model {model_id}")
-    fold_checked += 1
+for engine_id, eng in sorted(profiles.engines.items()):
+    for model_id, facts in sorted(((eng.effort or {}).get("by_model") or {}).items()):
+        if model_id not in profiles.models:
+            bad(f"{engine_id}: effort.by_model.{model_id} is not a known model id")
+            continue
+        if (model_id, engine_id) not in pairs:
+            bad(f"{engine_id}: effort.by_model.{model_id} names a pair no slug "
+                f"routes — the fact is unreachable, drop it or fix the id")
+        levels, _status = model_levels(model_id)
+        if not levels:
+            bad(f"{engine_id}: effort.by_model.{model_id} records fold facts for a "
+                f"model with no probed ladder — a fold has nothing to land on")
+            continue
+        d = facts.get("default_when_unset")
+        if d and d not in levels:
+            bad(f"{model_id} on {engine_id}: default_when_unset {d!r} is not a "
+                f"rung of the model's ladder {levels}")
+        maps = facts.get("maps") or {}
+        for src, dst in maps.items():
+            if dst not in levels:
+                bad(f"{model_id} on {engine_id}: fold {src}->{dst} lands outside "
+                    f"the model's ladder {levels}")
+        # Identity folds (src->src) are legal — the engine accepts the name as-is.
+        if maps and model_id in budget_models and not all(
+                dst == src or (src, dst) in eb_aliases.items()
+                for src, dst in maps.items()):
+            bad(f"{engine_id}: by_model.{model_id} maps {maps} fold outside "
+                f"effort_budget.py ALIASES {eb_aliases} for a budget_map model")
+        fold_checked += 1
 # off_switch round-trip: the LOADED value must be the STRING "none". YAML 1.1
 # nulls only an empty value, `null` and `~` — never the word `none` (measured
 # on this rig 2026-11-15: `off_switch: none` loads as 'none'), so what this pins
@@ -274,8 +286,45 @@ for eid in ("qengine", "sglang-stable", "vllm-stable", "strata", "strata-maya"):
             'an empty value, `null` or `~` parses to null; give it a value '
             '(off_switch: "none") or drop the key')
 if len(failures) == n0:
-    print(f"  ✓ {fold_checked} (model, engine) pairs: folds and defaults land on "
-          "accepted rungs; off_switch round-trips as 'none'")
+    print(f"  ✓ {fold_checked} pair fold facts land on accepted rungs; off_switch "
+          "round-trips as 'none'")
+
+# ---- 5b. the loader REFUSES an engine-wide fold fact (#1951 review r5) -------
+# An engine-level `default_when_unset`/`maps` is the silent-inheritance bug the
+# review named: a model never measured on it would be folded and defaulted by a
+# fact from its sibling's launcher. The loader must refuse it and name by_model.
+from pathlib import Path
+from profiles.compat import _engine_effort, ProfileError
+
+def expect_refusal(block, needle, what):
+    try:
+        _engine_effort(block, Path("negative-test.yml"))
+    except ProfileError as exc:
+        if needle not in str(exc):
+            bad(f"{what}: refused, but the message does not name {needle!r}: {exc}")
+        return
+    bad(f"{what}: the loader ACCEPTED it — silent inheritance is back")
+
+n0 = len(failures)
+expect_refusal({"evidence": "x", "default_when_unset": "xhigh"},
+               "by_model", "engine-level effort.default_when_unset")
+expect_refusal({"evidence": "x", "maps": {"high": "xhigh"}},
+               "by_model", "engine-level effort.maps")
+expect_refusal({"evidence": "x", "by_model": {}}, "non-empty", "empty by_model")
+expect_refusal({"evidence": "x", "by_model": {"m": {"off_switch": "none"}}},
+               "allows only", "by_model entry holding an engine-wide key")
+expect_refusal({"evidence": "x", "by_model": {"m": {}}}, "is empty", "empty by_model entry")
+expect_refusal({"evidence": "x", "by_model": {"m": {"maps": {}}}},
+               "non-empty", "empty maps inside by_model")
+try:
+    _engine_effort({"off_switch": "none", "supports_none": True,
+                    "by_model": {"m": {"default_when_unset": "xhigh",
+                                       "maps": {"high": "xhigh"}}},
+                    "evidence": "x"}, Path("negative-test.yml"))
+except ProfileError as exc:
+    bad(f"valid pair-scoped block was refused: {exc}")
+if len(failures) == n0:
+    print("  ✓ engine-level fold facts refused (6 shapes), pair-scoped block loads")
 
 # ---- 6. omp-setup FAMILIES agree with the profiles ---------------------------
 env = dict(os.environ, HOME=os.environ["T_HOME"],

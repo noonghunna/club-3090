@@ -84,8 +84,9 @@ requires_genesis: false
 # #1951 — the reasoning-effort surface, written down ONCE here; the gateway
 # render and the omp overrides read this instead of restating it. The compose
 # keeps the DEFAULT — note the Strata and bucko-vllm routes deliberately leave
-# REASONING_EFFORT unset and so run at their engines' xhigh (the engine
-# profiles' default_when_unset); that is a per-route default, not this ladder.
+# REASONING_EFFORT unset and so run at xhigh (their engines'
+# `by_model.qwen3.8-flash-next.default_when_unset`); that is a per-route
+# default, not this ladder.
 effort:
   levels: [low, medium, xhigh]
   template_kwarg: true    # llama.cpp and Project Maya also read chat_template_kwargs.reasoning_effort

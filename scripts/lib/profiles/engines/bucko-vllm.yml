@@ -34,12 +34,16 @@ supported_drafters: []    # MTP3 is bucko's built-in compact draft, not a club d
 # REASONING_EFFORT, so default_when_unset is load-bearing for the render. The
 # off switch is UNPROBED on this derivative, so it stays absent.
 effort:
-  default_when_unset: xhigh
+  by_model:
+    qwen3.8-flash-next:
+      default_when_unset: xhigh
   evidence: >-
     docs/engines/STRATA.md "Reasoning and sampling defaults": the bucko-vllm
     slugs keep the checkpoint template's xhigh default, with a 16,384-token
     default thinking budget on top (the vendored
-    bucko-default-thinking-budget patch, patches.yml).
+    bucko-default-thinking-budget patch, patches.yml). Pair-scoped because that
+    default is the checkpoint template's, and qwen3.8-flash-next is the only
+    model this engine serves.
 
 notes: >
   DominikBucko's runtime for Qwen3.8-Flash-Next on 2x RTX 3090 (Apache-2.0): a vLLM derivative,

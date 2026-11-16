@@ -172,10 +172,14 @@ One source for the reasoning-effort facts, so the gateway's `/model_group/info`
 advertise and the `omp-setup.sh` overrides can be **generated** instead of
 hand-copied per surface ([#1951](https://github.com/noonghunna/club-3090/issues/1951)).
 The **model** profile holds the ladder (a model fact); the **engine** profile
-holds what the engine does with a rung (also `effort:`, keys
-`default_when_unset` / `off_switch` / `supports_none` / `unknown_name` /
-`maps`); the **compose** keeps only the default — `REASONING_EFFORT:-<rung>`
-is a serving choice, not a model fact.
+holds what the engine does with a rung (also `effort:`) — but only what holds
+for EVERY model it serves: `off_switch` / `supports_none` / `unknown_name`.
+What a request gets when it names no effort, and how an out-of-ladder name
+folds, are properties of the **(model, engine) pair**, so they go under
+`by_model: <model_id>:`; an engine-level `default_when_unset` / `maps` is
+refused by the loader rather than inherited by a model it was never measured
+on. The **compose** keeps only the default — `REASONING_EFFORT:-<rung>` is a
+serving choice, not a model fact.
 
 Three shapes, and the loader (`compat.py → _effort`) rejects anything else:
 
@@ -199,9 +203,16 @@ PR-bundle/cockpit paths):
   xhigh max` as of v1.100.3) — `declared_reasoning_efforts()` silently DROPS
   anything else from the advertise. Re-check on every gateway pin bump.
 - **`budget_map: true` only over `effort_budget.py`'s own ladder** (the patch
-  only knows the Qwen rungs); an engine's `maps:` must fold onto rungs the
+  only knows the Qwen rungs); a pair's `maps:` must fold onto rungs the
   served model accepts, and inside `effort_budget.ALIASES` for budget-map
   models.
+- **A fold fact names its pair.** `default_when_unset` and `maps` live under
+  `by_model.<model_id>:` because they differ per pair in BOTH directions:
+  Project Maya's three launchers default to `max` / `high` / `auto` and only two
+  of them fold (`maya_settings.py:44,46`, `ds4_settings.py:51,54`,
+  `mm3_settings.py:54,57`), and `qwen3.8-flash-next` gets a `minimal→low` fold
+  on vLLM but none on strata. A model the engine does not list gets NO fold
+  facts — unknown, never its sibling's.
 - **Unknown stays unknown.** `status: unprobed` renders NOTHING downstream —
   never invent a ladder, never emit `supports_reasoning: false` for a
   thinking model, never an empty `reasoning_effort_levels`.

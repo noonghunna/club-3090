@@ -36,10 +36,14 @@ requires_genesis: false
 effort:
   status: unprobed
   evidence: >-
-    maya_settings.py's EFFORTS map (none|low|high|max, medium/xhigh folded) is
-    the launcher's server-knob vocabulary, not a measured request-surface
-    promise for this model; no wire probe exists. Do not copy the knob's value
-    set to the wire without one.
+    mm3_settings.py is this model's launcher, NOT maya_settings.py:
+    DEFAULT_EFFORT = "auto" (:54) and EFFORTS = (none, auto, low, medium, high,
+    xhigh, max) (:57) — seven names, NONE folded. So the GLM launcher's
+    medium/xhigh folding describes neither this model's default nor its ladder,
+    which is why the strata-maya engine block lists no by_model entry here.
+    Either way this is the launcher's server-knob vocabulary, not a measured
+    request-surface promise for this model; no wire probe exists. Do not copy the
+    knob's value set to the wire without one.
 
 weights:
   maya-s:

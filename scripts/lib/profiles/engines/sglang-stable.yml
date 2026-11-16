@@ -159,16 +159,25 @@ required_genesis: false
 # #1951 — what this engine changes about effort (see the model profiles for
 # what the MODEL accepts; the compose keeps the DEFAULT).
 effort:
-  default_when_unset: xhigh
   off_switch: "none"
   supports_none: true
-  maps: {minimal: low, high: xhigh, max: xhigh}
+  by_model:
+    qwen3.8-27b:
+      default_when_unset: xhigh
+      maps: {minimal: low, high: xhigh, max: xhigh}
+    thinkingcap-qwen3.8-27b:
+      default_when_unset: xhigh
+      maps: {minimal: low, high: xhigh, max: xhigh}
   evidence: >-
-    Same Qwen3.8 template family as vllm-stable (default xhigh; a top-level
-    `none` becomes enable_thinking=false before the template; the template's
-    clamps mirrored in effort_budget.py ALIASES). Engine-specific: the
-    composes pass the default as `default_reasoning_effort`, not
-    `reasoning_effort`, because SGLang <= 0.5.20 lets a default
+    Pair-scoped (by_model): same Qwen3.8 template family as vllm-stable — the
+    template's clamps, mirrored in effort_budget.py ALIASES — and the two listed
+    models are the two SGLang slugs' models whose profiles cite that contract.
+    nanbeige4.3-33b also routes here but declares no effort ladder and its
+    template was never read, so it is not listed and inherits nothing.
+    Engine-wide (off_switch / supports_none): a top-level `none` becomes
+    enable_thinking=false before the template runs.
+    Engine-specific: the composes pass the default as `default_reasoning_effort`,
+    not `reasoning_effort`, because SGLang <= 0.5.20 lets a default
     reasoning_effort override the request's own (sglang#38104), and the boot
     case-gates it to low|medium|xhigh — high/minimal/max are refused at boot
     although the same template would map them (launch-knobs.json,

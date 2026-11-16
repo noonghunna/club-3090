@@ -466,14 +466,20 @@ WEIGHTS_VARIANT_KEYS = {
 MODEL_EFFORT_KEYS = {"status", "levels", "template_kwarg", "budget_map", "evidence"}
 MODEL_EFFORT_STATUSES = ("no-thinking", "unprobed", "no-string-ladder")
 
-# Keys allowed inside an engine profile's `effort:` block (#1951). Every key is
-# optional — an engine records only the facts it has evidence for; the render
-# treats a missing fact as unknown, never as a default. `maps` remaps names the
-# engine/template folds (e.g. Qwen template high/max -> xhigh); `unknown_name`
-# is what an effort name OUTSIDE even the fold map becomes (QEngine: medium).
-ENGINE_EFFORT_KEYS = {"default_when_unset", "off_switch", "supports_none",
-                      "unknown_name", "maps", "evidence"}
+# Keys allowed inside an engine profile's `effort:` block (#1951). What stays
+# here is what holds for EVERY model the engine serves: how the wire says "no
+# thinking", and whether it honors that. What a request gets when it names no
+# effort, and how an out-of-ladder name folds, are per (model, engine) PAIR —
+# strata-maya's three launchers default to max / high / auto and fold two of
+# them differently, and qwen3.8-flash-next folds differently on strata than on
+# vLLM. Those facts live in `by_model:` under the model id; an engine-level
+# `default_when_unset`/`maps` is refused rather than silently inherited by a
+# model it was never measured on (#1951 review r5).
+ENGINE_EFFORT_KEYS = {"off_switch", "supports_none", "unknown_name",
+                      "by_model", "evidence"}
 ENGINE_EFFORT_OFF_SWITCHES = ("none", "enable-thinking-kwarg")
+# Keys allowed inside one `effort.by_model.<model_id>:` entry: the pair-scoped half.
+ENGINE_EFFORT_PAIR_KEYS = {"default_when_unset", "maps"}
 
 # Keys allowed inside a model's `setup:` dispatch-policy dict (consumed by
 # weights.py's catalog derivation for setup.sh).
@@ -832,6 +838,36 @@ def _effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
     return dict(value)
 
 
+def _effort_pair_facts(value: Any, path: Path, where: str) -> dict[str, Any]:
+    """Validate one `effort.by_model.<model_id>:` entry (#1951) — the two facts
+    that are properties of a (model, engine) pair, not of either alone. Same
+    shape rules they had at engine level; `where` names the entry in the message."""
+    if not isinstance(value, dict):
+        raise ProfileError(f"{path}: {where} must be a mapping, got {value!r}")
+    for key in value.keys() - ENGINE_EFFORT_PAIR_KEYS:
+        raise ProfileError(
+            f"{path}: {where} allows only {sorted(ENGINE_EFFORT_PAIR_KEYS)}, got {key!r}")
+    if not value:
+        raise ProfileError(f"{path}: {where} is empty — drop it or record a fact")
+    for key in ENGINE_EFFORT_PAIR_KEYS:
+        if key in value and value[key] is None:
+            raise ProfileError(
+                f"{path}: {where}.{key} is explicitly null — an empty value, `null` or `~` "
+                f"parses to null; give it a real value or drop the key")
+    default = value.get("default_when_unset")
+    if default is not None and (not isinstance(default, str) or not default):
+        raise ProfileError(
+            f"{path}: {where}.default_when_unset must be a non-empty string, got {default!r}")
+    maps = value.get("maps")
+    if maps is not None:
+        if (not isinstance(maps, dict) or not maps
+                or not all(isinstance(k, str) and k and isinstance(v, str) and v
+                           for k, v in maps.items())):
+            raise ProfileError(
+                f"{path}: {where}.maps must be a non-empty {{name: name}} mapping, got {maps!r}")
+    return dict(value)
+
+
 def _engine_effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
     """Validate an engine profile's `effort:` block (#1951). Every fact key is
     optional — absent means UNKNOWN, which the render must render as nothing.
@@ -840,7 +876,12 @@ def _engine_effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
         return None
     if not isinstance(value, dict):
         raise ProfileError(f"{path}: engine `effort:` must be a mapping, got {value!r}")
-    default = value.get("default_when_unset")
+    for key in ENGINE_EFFORT_PAIR_KEYS:
+        if key in value:
+            raise ProfileError(
+                f"{path}: effort.{key} is a per-(model, engine) fact, not an engine-wide "
+                f"one — move it under effort.by_model.<model_id>:. A model that is not "
+                f"listed gets no {key}, which the render treats as UNKNOWN (#1951 review r5)")
     # Same present-but-null trap as the model side (#1951 review r1-1).
     for key in ENGINE_EFFORT_KEYS - {"evidence"}:
         if key in value and value[key] is None:
@@ -849,8 +890,6 @@ def _engine_effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
                 f"or `~` parses to null (YAML does not null the word `none`: "
                 f"`off_switch: none` loads as the string 'none'). Give the key a real "
                 f"value or drop it; null means UNKNOWN and must never be stored.")
-    if default is not None and (not isinstance(default, str) or not default):
-        raise ProfileError(f"{path}: effort.default_when_unset must be a non-empty string, got {default!r}")
     off = value.get("off_switch")
     if off is not None and off not in ENGINE_EFFORT_OFF_SWITCHES:
         raise ProfileError(
@@ -860,11 +899,17 @@ def _engine_effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
     unknown = value.get("unknown_name")
     if unknown is not None and (not isinstance(unknown, str) or not unknown):
         raise ProfileError(f"{path}: effort.unknown_name must be a non-empty string, got {unknown!r}")
-    maps = value.get("maps")
-    if maps is not None:
-        if (not isinstance(maps, dict) or not maps
-                or not all(isinstance(k, str) and k and isinstance(v, str) and v for k, v in maps.items())):
-            raise ProfileError(f"{path}: effort.maps must be a non-empty {{name: name}} mapping, got {maps!r}")
+    by_model = value.get("by_model")
+    if by_model is not None:
+        if not isinstance(by_model, dict) or not by_model:
+            raise ProfileError(
+                f"{path}: effort.by_model must be a non-empty {{model_id: facts}} mapping, "
+                f"got {by_model!r}")
+        for model_id, facts in by_model.items():
+            if not isinstance(model_id, str) or not model_id:
+                raise ProfileError(
+                    f"{path}: effort.by_model keys must be non-empty model ids, got {model_id!r}")
+            _effort_pair_facts(facts, path, f"effort.by_model.{model_id}")
     evidence = value.get("evidence")
     if not isinstance(evidence, str) or not evidence.strip():
         raise ProfileError(
@@ -878,7 +923,11 @@ def _engine_effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
 def _engine(data: dict[str, Any], path: Path) -> EngineProfile:
     _check_profile_keys(path, data, ENGINE_PROFILE_KEYS,
                         nested={"lineage": (data.get("lineage"), LINEAGE_KEYS),
-                                "effort": (data.get("effort"), ENGINE_EFFORT_KEYS)})
+                        # The pair-scoped keys stay in the allowlist here so the
+                        # specific "move it under by_model:" error from _engine_effort
+                        # is what a user sees, not a generic unknown-key.
+                                "effort": (data.get("effort"),
+                                           ENGINE_EFFORT_KEYS | ENGINE_EFFORT_PAIR_KEYS)})
     families = _tuple(data.get("supported_model_families"))
     return EngineProfile(
         schema_version=data["schema_version"],

@@ -32,8 +32,12 @@ requires_genesis: false
 effort:
   status: unprobed
   evidence: >-
-    maya_settings.py's EFFORTS map (none|low|high|max, medium/xhigh folded) is
-    the launcher's server-knob vocabulary, not a measured request-surface
+    ds4_settings.py is this model's launcher, NOT maya_settings.py:
+    DEFAULT_EFFORT = "high" (:51) and EFFORTS = {none, low, medium->high, high,
+    xhigh->max, max} (:54), applied at :120. Same fold table as GLM's launcher,
+    a different default — which is why the strata-maya engine block keeps these
+    facts under by_model.glm-5.3-flash and lists no entry here. Either way this
+    is the launcher's server-knob vocabulary, not a measured request-surface
     promise for this model; no wire probe exists. Do not copy the knob's value
     set to the wire without one.
 
