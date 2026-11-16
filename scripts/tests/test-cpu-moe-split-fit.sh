@@ -42,6 +42,18 @@ warn_for() { # warn_for <compose> <free-list> [PIN]
     resolve_cpu_moe_split "$1" 2>&1 >/dev/null' _ "$1"
 }
 
+# Capture, then match. Piping warn_for into `grep -q` is the #1574 SIGPIPE race
+# (club-3090#1574): the warning is several writes, grep -q exits at its first
+# match, the producer takes SIGPIPE on the next write, and under this file's
+# `set -uo pipefail` the pipeline returns 141 — a FOUND match reads as a miss.
+# It is a race: idle it wins, under sweep load it loses (measured 2026-11-16,
+# two red Tier-0 runs of this check while the standalone run passed).
+warn_has() { # warn_has <pattern> <compose> <free-list> [PIN]
+  local out
+  out="$(warn_for "$2" "$3" "${4:-}")" || true
+  command grep -q "$1" <<<"$out"
+}
+
 # --- 1. the calibration anchors -----------------------------------------------
 # 2x24 GB, free 24,123 MiB/card, ctx 204800, cache-mode Q4.
 # 3.05@120 (exl3 1.6.5, 2026-10-30: the 104 boot fit plus full-context margin) and 4.05@256 (exl3 1.5.0, not re-checked on
@@ -79,7 +91,7 @@ big="$(split_for "$C405" "32100 32100")"
 got="$(split_for "$C305" "$ANCHOR" 300)"
 [[ "$got" == "300" ]] && ok "explicit MOE_SPLIT=300 is kept, not clobbered" \
                       || bad "explicit pin: want 300, got ${got}"
-warn_for "$C305" "$ANCHOR" 300 | grep -q "would be 120" \
+warn_has "would be 120" "$C305" "$ANCHOR" 300 \
   && ok "a pin still reports the fit it overrode (the actual diagnostic)" \
   || bad "a pin hid the fit — 'my pin vs what the rig holds' is the whole question"
 
@@ -87,13 +99,13 @@ warn_for "$C305" "$ANCHOR" 300 | grep -q "would be 120" \
 # exllamav3.yml: over ~50% CPU-resident the model belongs on an engine with a
 # real expert cache. GLM-5.3-Flash was rejected on exactly this basis at 80%.
 # Nothing told you that you were at the threshold before this line existed.
-warn_for "$C305" "24123" | grep -q "REAL EXPERT CACHE" \
+warn_has "REAL EXPERT CACHE" "$C305" "24123" \
   && ok ">50% CPU-resident warns and cites the engine profile's own rule" \
   || bad ">50% warning is silent — a single-card rig lands at ~64% and hears nothing"
-warn_for "$C405" "$ANCHOR" | grep -q "exactly 50%" \
+warn_has "exactly 50%" "$C405" "$ANCHOR" \
   && ok "the 4.05 tier is flagged as sitting exactly ON the 50% threshold" \
   || bad "the 4.05 anchor is 256/512 = exactly 50% and must say so"
-warn_for "$C305" "$ANCHOR" | grep -q "REAL EXPERT CACHE" \
+warn_has "REAL EXPERT CACHE" "$C305" "$ANCHOR" \
   && bad "the >50% warning fired at 28% — it is not reading the fraction" \
   || ok "no >50% warning at the 3.05 anchor (the warning discriminates)"
 
@@ -101,10 +113,10 @@ warn_for "$C305" "$ANCHOR" | grep -q "REAL EXPERT CACHE" \
 # One calibration point per tier means every other rig is an extrapolation, and
 # the risky direction is DOWN: too small a split crash-loops with "Insufficient
 # VRAM in split" WHILE THE PORT STAYS OPEN (RestartCount is the only signal).
-warn_for "$C405" "32100 32100" | grep -q "EXTRAPOLATED" \
+warn_has "EXTRAPOLATED" "$C405" "32100 32100" \
   && ok "a rig far from the anchor is labelled an extrapolation" \
   || bad "no extrapolation warning off-anchor — an unmeasured number reads as measured"
-warn_for "$C405" "$ANCHOR" | grep -q "EXTRAPOLATED" \
+warn_has "EXTRAPOLATED" "$C405" "$ANCHOR" \
   && bad "extrapolation warning fired AT the calibration anchor" \
   || ok "no extrapolation warning at the anchor itself"
 
