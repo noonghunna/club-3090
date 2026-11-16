@@ -85,7 +85,13 @@ effort:
         engine evidence below) feeds this checkpoint's template, whose
         thinking-off rendering is wire-probed 2026-11-15 on the strata pair
         (qwen3.8-flash-next-iq3s-dual :8018: reasoning_effort none -> 0 chars
-        of reasoning_content) — the same checkpoint template.
+        of reasoning_content). The two checkpoints' templates are NOT
+        byte-identical (verified 2026-11-16 by comparing the strata GSQ-RCO
+        IQ3_S GGUF's tokenizer.chat_template with the qengine-int4's
+        chat_template.jinja: the strata's carries system-merging and a
+        high->xhigh fold the QEngine's lacks), but their thinking-off
+        rendering paths are identical — both render enable_thinking:false as
+        `\n\n` with no reasoning content, which is what the probe measured.
   evidence: >-
     Engine-wide: the fold of an UNRECOGNISED name to medium and the `none` →
     thinking-off handling (1.3.5.5 on) are the server's own code, so they hold

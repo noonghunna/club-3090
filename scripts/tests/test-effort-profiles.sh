@@ -173,19 +173,23 @@ if len(failures) == n0:
 # normal compose `environment:` form), whose fallback names the compose's own
 # unset-case default. The lookbehind/lookahead keep a LONGER variable
 # (QE_REASONING_EFFORT, LLAMA_ARG_REASONING_EFFORT_ALLOW) from being mistaken
-# for it — those are other knobs, not defaults for this one.
+# for it — those are other knobs, not defaults for this one. All four effort
+# regexes are CASE-INSENSITIVE (#2055 review it9-6): the chat_template_kwargs
+# key form is lowercase (`"reasoning_effort": "high"`), the same shape check 1
+# and catalog_rules._model_dir_knob already treat as a knob, and the emit's
+# reader must see every default those scans see.
 default_re = re.compile(
-    r'(?<![A-Za-z_])REASONING_EFFORT(?:["\']?:-["\']?|["\']?[:=][ \t]*["\']?\$\{[A-Za-z_]+:-|["\']?:\s*["\']?|=)["\']?([a-z]+)')
+    r'(?i)(?<![A-Za-z_])REASONING_EFFORT(?:["\']?:-["\']?|["\']?[:=][ \t]*["\']?\$\{[A-Za-z_]+:-|["\']?:[ \t]*["\']?|=)["\']?([a-z]+)')
 # The knob handed to a launcher with no value of its own (the strata-maya
 # composes' bare `REASONING_EFFORT:`, the knob-list lines) is NOT a default —
 # the launcher's default is what the pair fact records. A value that is a
 # VARIABLE reference is a hop the launch-time override owns, not a catalogue
 # default — UNLESS it carries a fallback, which default_re reads as the
 # compose's own default. A literal the emit cannot read is what stays flagged.
-bare_knob_re = re.compile(r'^[ \t\-]*["\']?REASONING_EFFORT["\']?:?[ \t]*$')
-knob_name_re = re.compile(r'(?<![A-Za-z_])REASONING_EFFORT(?![A-Za-z_])')
+bare_knob_re = re.compile(r'(?i)^[ \t\-]*["\']?REASONING_EFFORT["\']?:?[ \t]*$')
+knob_name_re = re.compile(r'(?i)(?<![A-Za-z_])REASONING_EFFORT(?![A-Za-z_])')
 var_ref_re = re.compile(
-    r'(?<![A-Za-z_])REASONING_EFFORT(?![A-Za-z_])["\']?[:=][ \t]*["\']?\$')
+    r'(?i)(?<![A-Za-z_])REASONING_EFFORT(?![A-Za-z_])\\?["\']?[:=][ \t]*\\?["\']?\$')
 # The thinking-budget knob gets the same drift guard as the effort default
 # (#2055 review it6-7c): a compose writing CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET
 # with a differently-named inner variable is silently unread by the emit's
@@ -259,15 +263,19 @@ for path, text, levels, mid in scan:
                     "litellm's default_reasoning_effort Literal excludes max, "
                     "so the render must OMIT it, never downgrade; add the model "
                     "to MAX_DEFAULT_MODELS only after re-verifying that rule")
-        for line in text.splitlines():
-            if not knob_name_re.search(line):
-                continue
-            if (default_re.search(line) or bare_knob_re.match(line.strip())
-                    or var_ref_re.search(line)):
-                continue
-            bad(f"{path}: unparseable REASONING_EFFORT line — a form the "
-                f"emit's _compose_effort_default does not read, so the pair "
-                f"default would fill it: {line.strip()[:120]}")
+    # The unparseable-line tripwire runs on EVERY compose regardless of the
+    # ladder (#2055 review it9-2): a knob form the emit cannot read makes it
+    # return compose_default None and the pair default fill the advertise,
+    # ladder or not — the comment above promised exactly this coverage.
+    for line in text.splitlines():
+        if not knob_name_re.search(line):
+            continue
+        if (default_re.search(line) or bare_knob_re.match(line.strip())
+                or var_ref_re.search(line)):
+            continue
+        bad(f"{path}: unparseable REASONING_EFFORT line — a form the "
+            f"emit's _compose_effort_default does not read, so the pair "
+            f"default would fill it: {line.strip()[:120]}")
     # The thinking-budget knob's own drift guard (#2055 review it6-7c): a
     # compose line naming the knob that budget_knob_re cannot read means the
     # emit silently returns None for it — the route loses its declared
@@ -462,8 +470,10 @@ if len(failures) == n0:
 # `port` made this check vacuous (it saw no ports at all while :8030/:8031
 # hosted two models each behind deprecated+experimental pairings; measured
 # 2026-11-16, #2055 review it5-5 follow-up). Deprecated slugs are excluded:
-# they are historical, need --force to boot, and the render's placeholder
-# rule already covers their co-existence with a live slug.
+# they are historical, need --force to boot, and the render's agree-or-drop
+# rule (port_facts/_port_effort) already advertises nothing when a co-hosted
+# slug's ladder differs — the booting-<port> placeholder rule covers only the
+# booting port (#2055 review it9-3).
 n0 = len(failures)
 port_models: "dict[int, set]" = {}
 for e in entries.values():

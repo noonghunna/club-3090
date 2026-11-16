@@ -680,7 +680,7 @@ def _compose_served_name(compose_path: str):
 # None when the compose sets no default — unknown, which the render must render
 # as nothing.
 _EFFORT_DEFAULT_RX = _re.compile(
-    r'(?<![A-Za-z_])REASONING_EFFORT(?:["\']?:-["\']?|["\']?[:=][ \t]*["\']?\$\{[A-Za-z_]+:-|["\']?:\s*["\']?|=)["\']?([a-z]+)')
+    r'(?i)(?<![A-Za-z_])REASONING_EFFORT(?:["\']?:-["\']?|["\']?[:=][ \t]*["\']?\$\{[A-Za-z_]+:-|["\']?:[ \t]*["\']?|=)["\']?([a-z]+)')
 
 
 def _compose_effort_default(compose_path: str):
@@ -748,9 +748,10 @@ def _effort_facts(model_id: str, engine_id: str, compose_path: str):
         "supports_none": (pair["supports_none"] if "supports_none" in pair
                           else ee.get("supports_none")),
         # off_switch stays OUT of the payload: neither _port_effort nor
-        # model_info reads it and the omp overrides read the profiles
-        # directly, so carrying it here only invited silent drift
-        # (#2055 review it6-7a).
+        # model_info reads it, and neither do the omp overrides — their
+        # ladders are the guard-pinned FAMILIES copy in omp-setup.sh, which
+        # carries no off_switch at all — so carrying it here only invited
+        # silent drift with no consumer (#2055 review it6-7a, it9-5).
         "default_when_unset": pair.get("default_when_unset"),
         "maps": dict(pair["maps"]) if pair.get("maps") else None,
         "refuses": list(pair["refuses"]) if pair.get("refuses") else None,
