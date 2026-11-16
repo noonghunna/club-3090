@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-registry-compose-defaults — the registry's max_num_seqs / mem_util must match the compose defaults they describe.
+# test-registry-compose-defaults — the registry's max_num_seqs / mem_util / max_ctx must match the compose defaults they describe.
 #
 # WHY THIS TEST EXISTS
 # --------------------
@@ -11,6 +11,13 @@
 # mem_util 0.9 after 0.95, and two vLLM slugs kept a mem_util their compose had since derated. Tools
 # that read the registry (c3, kv-calc) then describe a config the compose does not boot.
 # The compose is what runs, so it is the source of truth here; fix the registry, not the compose.
+#
+# max_ctx (#2054) is the third number, checked on every engine: the card pages and c3 show it, and a
+# context change made on one side only ships one context while documenting another. Until 2026-11-16
+# only the generated slug tables noticed (test-docs-slug-tables), and only by accident. It is read from
+# whichever context flag or env default the compose sets; deprecated slugs are skipped (nothing boots
+# them, and three retired ik-llama slugs disagree), and a compose whose context isn't a plain or
+# defaulted literal is counted as not statically resolvable.
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
@@ -63,15 +70,57 @@ for slug, e in sorted(reg.items()):
         if cast(got) != cast(want):
             bad.append(f"{slug}: registry {field}={want} but {cp} boots {flag} {got}")
 
+# max_ctx, on every engine: the context the compose boots with, from its context flag or env default
+CTX_FLAGS = ("--max-model-len", "--context-length", "--ctx-size", "-c", "--max-ctx", "--max-seq-len",
+             "--max-context")
+CTX_ENVS = ("CONTEXT", "MAX_MODEL_LEN", "CTX_SIZE", "CTX", "MAX_CTX", "CONTEXT_LENGTH", "MAX_SEQ_LEN")
+INT = r'"?\$*\{?(?:[A-Z_]+:-)?([0-9]+)\}?"?'
+
+def ctx_defaults(txt):
+    """Every context default the compose's non-comment lines set, as ints: a flag inline or as the next list
+    item, or an env key (`KEY: "${KEY:-N}"`, `- KEY=${KEY:-N}`). One value is a reading; none or several is not."""
+    body = "\n".join(l for l in txt.splitlines() if not l.lstrip().startswith("#"))
+    vals = set()
+    for flag in CTX_FLAGS:
+        f = re.escape(flag)
+        vals.update(re.findall(rf'(?<![\w-]){f}[ =]+{INT}(?=[\s"\\]|$)', body, re.M))
+        vals.update(re.findall(rf"-\s+['\"]?{f}['\"]?\s*\n\s*-\s+['\"]?{INT}['\"]?\s*$", body, re.M))
+    for key in CTX_ENVS:
+        vals.update(re.findall(rf'^\s+{key}:\s*{INT}\s*$', body, re.M))
+        vals.update(re.findall(rf'^\s+-\s+{key}=\$\{{{key}:-([0-9]+)\}}', body, re.M))
+    return sorted({int(v) for v in vals})
+
+ctx_checked, ctx_unparsed = 0, []
+for slug, e in sorted(reg.items()):
+    e = e if isinstance(e, dict) else vars(e)
+    cp, want = e.get("compose_path") or "", e.get("max_ctx")
+    if not want or "_archive" in cp.split("/") or e.get("status") == "deprecated":
+        continue
+    try:
+        txt = open(cp, encoding="utf-8").read()
+    except OSError:
+        continue
+    got = ctx_defaults(txt)
+    if len(got) != 1:
+        ctx_unparsed.append(f"{slug}:max_ctx={got or None}")
+        continue
+    ctx_checked += 1
+    if got[0] != int(want):
+        bad.append(f"{slug}: registry max_ctx={want} but {cp} boots context {got[0]}")
+
 for b in bad:
     print(f"✗ {b}", file=sys.stderr)
 if bad:
-    print(f"test-registry-compose-defaults: {len(bad)} drifted field(s) of {checked} checked — fix registry.yaml "
-          f"(the compose is what runs), then re-run migrate_registry_to_yaml.py", file=sys.stderr)
+    print(f"test-registry-compose-defaults: {len(bad)} drifted field(s) of {checked + ctx_checked} checked — fix "
+          f"registry.yaml (the compose is what runs), then re-run migrate_registry_to_yaml.py", file=sys.stderr)
     sys.exit(1)
 if checked < 100:
     print(f"✗ only {checked} fields compared — the parser has stopped recognising the compose flags", file=sys.stderr)
     sys.exit(1)
-print(f"test-registry-compose-defaults: ok ({checked} registry fields match their compose defaults; "
-      f"{len(unparsed)} not statically resolvable, skipped)")
+if ctx_checked < 120:
+    print(f"✗ only {ctx_checked} max_ctx values compared — the parser has stopped recognising the compose context "
+          f"settings", file=sys.stderr)
+    sys.exit(1)
+print(f"test-registry-compose-defaults: ok ({checked} registry fields and {ctx_checked} max_ctx values match their "
+      f"compose defaults; {len(unparsed) + len(ctx_unparsed)} not statically resolvable, skipped)")
 PY
