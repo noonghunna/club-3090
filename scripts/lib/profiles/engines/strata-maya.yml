@@ -39,19 +39,23 @@ supported_drafters:
                           # NextN block (two or more GPUs), not a club drafter
 # #1951 — what this engine changes about effort. The Maya slugs' composes
 # leave REASONING_EFFORT unset (empty) on purpose, so default_when_unset is
-# load-bearing for the render. The off facts are SERVER-knob evidence only:
-# the wire-level off switch (a request's own `reasoning_effort: "none"`) is
-# UNPROBED and GLM's own template cannot turn thinking off
-# (models/glm-5.3-flash.yml effort/evidence), so off_switch/supports_none
-# stay absent.
+# load-bearing for the render. The wire off switch is PROBED (2026-11-15,
+# maya-s24 :8194): the launcher maps a request's reasoning_effort none to
+# Maya's own none (maya_settings.py EFFORTS), the same state ENABLE_THINKING
+# =false produces, and the server answers it with no thinking block — so
+# off_switch/supports_none are declared.
 effort:
   default_when_unset: max
+  off_switch: "none"
+  supports_none: true
   maps: {medium: high, xhigh: max}
   evidence: >-
     models/glm-5.3-flash/strata-maya/launcher/maya_settings.py: DEFAULT_EFFORT
-    = "max" (:44); EFFORTS runs medium as high and xhigh as max (:46);
-    ENABLE_THINKING=false makes the server close the thinking block and wins
-    over REASONING_EFFORT (:10, :95-101) — a server knob, not a wire promise.
+    = "max" (:44); EFFORTS runs medium as high and xhigh as max (:46) and maps
+    the wire `none` to Maya's own none (:46) — the state ENABLE_THINKING=false
+    produces, "the server closes the thinking block" (:10, :95-101). Measured
+    2026-11-15 on maya-s24 (:8194): reasoning_effort none -> 0 chars of
+    reasoning_content (low -> 60, max -> 1391 on a 900-token cap).
 
 notes: >
   Project Maya (github.com/mw00/project-maya, MIT): a fork of Strata (Niko1221/Strata) for
