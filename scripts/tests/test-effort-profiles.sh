@@ -265,7 +265,7 @@ for model_id, engine_id in sorted(pairs):
 # off_switch round-trip: the YAML must carry the STRING "none" — a bare
 # `none` parses to null (the loader now rejects it), and this pins the LOADED
 # value so the silent downgrade can't come back (#1951 review r1-1).
-for eid in ("qengine", "sglang-stable", "vllm-stable"):
+for eid in ("qengine", "sglang-stable", "vllm-stable", "strata", "strata-maya"):
     off = (profiles.engines[eid].effort or {}).get("off_switch")
     if off != "none":
         bad(f"{eid}: off_switch must load as the string 'none', got {off!r} — "

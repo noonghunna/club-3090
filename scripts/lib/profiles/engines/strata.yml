@@ -31,16 +31,22 @@ supported_drafters: []    # MTP is Strata's built-in draft layer (--spec), not a
 # #1951 — what this engine changes about effort. The Flash-Next Strata
 # composes leave REASONING_EFFORT unset ON PURPOSE (#1951 decision 2026-11-06:
 # these routes stay at the template's xhigh), so default_when_unset is
-# load-bearing for the render. The wire off-switch is UNPROBED (ENABLE_THINKING
-# is the server-side knob), so it stays absent.
+# load-bearing for the render. The wire off switch is PROBED (2026-11-15,
+# qwen3.8-flash-next-iq3s-dual :8018): a request's reasoning_effort none
+# answers with no thinking block, so off_switch/supports_none are declared.
 effort:
   default_when_unset: xhigh
+  off_switch: "none"
+  supports_none: true
   maps: {high: xhigh, max: xhigh}
   evidence: >-
     docs/engines/STRATA.md "Reasoning and sampling defaults": with no
     settings, a request that names no effort runs at the checkpoint
     template's `reasoning_effort|default('xhigh')`, and `high` and `max` also
-    map to `xhigh`.
+    map to `xhigh`. Measured 2026-11-15 on qwen3.8-flash-next-iq3s-dual
+    (:8018): reasoning_effort none -> 0 chars of reasoning_content (low ->
+    214); the server's own 400 names the accepted set: "use none, low, medium
+    or high".
 
 notes: >
   Strata (github.com/Niko1221/Strata, MIT): its own C++/CUDA engine for Qwen3.8-Flash-Next plus a
