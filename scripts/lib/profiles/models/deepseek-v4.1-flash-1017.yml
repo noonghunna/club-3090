@@ -12,7 +12,7 @@ num_attn_heads: 64               # num_attention_heads
 num_kv_heads: 1                  # MLA: one latent KV head (same shape as deepseek4-moe)
 head_dim_attn: 512               # head_dim
 attention_k_eq_v: true
-max_ctx_supported: 1048576       # max_position_embeddings (yarn factor 16 over 65536) — we SHIP 262144 on ISTA's IQ2_XXS and Maya-XS, 65536 on UD-IQ3_S
+max_ctx_supported: 1048576       # max_position_embeddings (yarn factor 16 over 65536) — we SHIP 262144 on ISTA's IQ2_XXS and Maya-XS, 65536 on UD-IQ3_S and Maya-S
 num_experts: 384                 # n_routed_experts
 num_experts_per_tok: 6           # num_experts_per_tok
 moe_intermediate_size: 2304      # moe_intermediate_size
