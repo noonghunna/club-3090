@@ -119,7 +119,6 @@ required_genesis: false
 # forced-thinking template (models/glm-5.3-flash.yml effort/evidence).
 effort:
   off_switch: enable-thinking-kwarg
-  supports_none: false
   evidence: >-
     llama-server request handling shared with llama-cpp-local, measured
     2026-10-20 on the then-pinned upstream v0.7.0 (b11669)
@@ -128,8 +127,13 @@ effort:
     ⚠️ STALE vs PIN: three upstream bumps since (v0.8.0 b11960, v0.9.0 b12110,
     v1.0.0 b12359 — docs/UPSTREAM.md) and none re-measured `none`'s rendering
     or the off-switch kwargs (the v1.0.0 boot validation covered only the
-    ladder rungs) — re-measure on THIS binary before trusting either claim
-    for a new model.
+    ladder rungs). The supports_none claim measured on v0.7.0 is DROPPED from
+    this block (#2055 review it6-5): unknown stays unknown until this binary
+    is re-measured — boot a llama.cpp slug, wire-probe `none`'s rendering,
+    and re-declare it with the new citation. off_switch stays because it has
+    no wire consumer (the omp overrides render their own off-switch and the
+    emit payload no longer carries the key), so the stale value is inert —
+    re-measure it on the same boot.
 
 notes: >
   🧪 rc0 — PUBLISHED IS NOT VALIDATED. test-moe-cache, soak-continuous and the

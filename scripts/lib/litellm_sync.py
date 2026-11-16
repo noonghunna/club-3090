@@ -539,7 +539,8 @@ def _port_effort(rows: list[dict]) -> "dict | None":
                 tables = [b.get("maps") for b in blocks]
                 if all(isinstance(t, dict) and t for t in tables):
                     # Preserve the first row's key order — the render appends
-                    # fold sources in maps order and the guard pins that order.
+                    # fold sources in maps order and test-litellm-sync.sh's
+                    # it4-1 advertise assertion pins that rendered order.
                     common = {s: d for s, d in tables[0].items()
                               if all(t.get(s) == d for t in tables[1:])}
                     common = {s: d for s, d in common.items() if s not in rf}
@@ -1052,16 +1053,30 @@ def main() -> int:
 
     variants = registry_variants(a.root)
     ports = registry_ports(variants)
-    # The compose's declared default thinking budget, per port (max across the
-    # port's variants): the probe's retry cannot cover a budget bigger than
-    # its own 512, so a route whose knob declares one gets the thinking-only
-    # envelope accepted as native (#2055 review it5-3).
+    # The compose's declared default thinking budget, per port: the probe's
+    # retry cannot cover a budget bigger than its own 512, so a route whose
+    # knob declares one gets the thinking-only envelope accepted as native
+    # (#2055 review it5-3). The rule it feeds is per ROUTE — the running
+    # boot's compose — but the probe is per port and the render cannot know
+    # which variant is booted: every flash-next slug shares the model id and
+    # none declares a served_name, so no per-variant match is possible. A
+    # port hosting a knob-less sibling beside a knob-bearing one therefore
+    # gets NO budget at all: the honest 512 retry runs and measures
+    # whichever boot is actually up (#2055 review it6-2) instead of
+    # inheriting the sibling's 16384 for a compose that declares nothing.
     budgets: "dict[int, int]" = {}
+    knobless: "set[int]" = set()
     for v in variants:
-        eb = (v.get("effort") or {}).get("default_thinking_budget") or 0
         p = v.get("port")
-        if eb > 0 and p:
+        if not p:
+            continue
+        eb = (v.get("effort") or {}).get("default_thinking_budget") or 0
+        if eb > 0:
             budgets[p] = max(eb, budgets.get(p, 0))
+        else:
+            knobless.add(p)
+    for p in knobless:
+        budgets.pop(p, None)
     live = live_routes(ports, budgets)
     live = add_booting_route(live, variants)
     for p in sorted(loopback_only_ports({r.port for r in live})):

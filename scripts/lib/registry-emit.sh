@@ -743,8 +743,10 @@ def _effort_facts(model_id: str, engine_id: str, compose_path: str):
         "status": me.get("status"),
         "supports_none": (pair["supports_none"] if "supports_none" in pair
                           else ee.get("supports_none")),
-        "off_switch": (pair["off_switch"] if "off_switch" in pair
-                       else ee.get("off_switch")),
+        # off_switch stays OUT of the payload: neither _port_effort nor
+        # model_info reads it and the omp overrides read the profiles
+        # directly, so carrying it here only invited silent drift
+        # (#2055 review it6-7a).
         "default_when_unset": pair.get("default_when_unset"),
         "maps": dict(pair["maps"]) if pair.get("maps") else None,
         "refuses": list(pair["refuses"]) if pair.get("refuses") else None,

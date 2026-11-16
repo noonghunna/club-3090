@@ -564,12 +564,15 @@ for owned_by, behaviour, serves, cache, want, budget in cases:
 sys.exit(bad)
 PY2
 
-# --- 16b: the emit's default regex and the guard's are ONE shape ---------------
-# Two copies of the REASONING_EFFORT default regex exist (registry-emit.sh reads
-# the compose for the advertise; test-effort-profiles.sh check 3 pins every
-# compose against the same shape). They must stay identical: a form one reads
-# and the other does not is a default the advertise and the guard disagree on.
-python3 - <<'PY' && ok "the emit's REASONING_EFFORT default regex is byte-identical to the guard's" || bad "the two default regexes drifted (see above)"
+# --- 16b: the emit's effort-default and budget-knob regexes and the guard's ---
+# are ONE shape. Two copies of the REASONING_EFFORT default regex exist
+# (registry-emit.sh reads the compose for the advertise; test-effort-profiles.sh
+# check 3 pins every compose against the same shape), and since #2055 review
+# it6-7c a second pair: the CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET knob regex
+# the emit's _compose_thinking_budget reads vs the guard's budget_knob_re.
+# Each pair must stay identical: a form one reads and the other does not is a
+# fact the advertise and the guard disagree on.
+python3 - <<'PY' && ok "the emit's effort-default and budget-knob regexes are byte-identical to the guard's" || bad "a regex pair drifted (see above)"
 import re
 RAW = r"r'((?:[^'\\]|\\.)*)'"          # a raw string literal, escapes included
 def pattern(path, marker):
@@ -580,6 +583,11 @@ emit = pattern("scripts/lib/registry-emit.sh", r"_EFFORT_DEFAULT_RX = _re\.compi
 guard = pattern("scripts/tests/test-effort-profiles.sh", r"default_re = re\.compile\(")
 assert emit and guard, f"could not extract a pattern: emit={emit!r} guard={guard!r}"
 assert emit == guard, f"drift:\n  emit  = {emit!r}\n  guard = {guard!r}"
+emit_kb = pattern("scripts/lib/registry-emit.sh", r"_THINKING_BUDGET_RX = _re\.compile\(")
+guard_kb = pattern("scripts/tests/test-effort-profiles.sh", r"budget_knob_re = re\.compile\(")
+assert emit_kb and guard_kb, (f"could not extract the knob pattern: "
+                              f"emit={emit_kb!r} guard={guard_kb!r}")
+assert emit_kb == guard_kb, f"knob drift:\n  emit  = {emit_kb!r}\n  guard = {guard_kb!r}"
 PY
 
 # --- 17: an engine without /v1/responses gets the chat-completions bridge (#1520)

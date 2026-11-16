@@ -34,8 +34,12 @@
 #      omp-setup.sh source (no hand-kept family->id map): every family
 #      renders, every rendered ladder equals its model profile's levels,
 #      every family id is present with that ladder, and every defaultLevel
-#      is a rung of its own ladder (ABSENT is legal — omp falls back to the
-#      ladder TOP; a PRESENT off-ladder default would be a silent xhigh).
+#      is a rung of its own ladder AND nameable on every engine serving the
+#      family's models — a pair's `refuses` are rungs the server 400s as
+#      request names, so a refused defaultLevel would 400 omp's default
+#      (#2055 review it6-4). ABSENT is NOT silently legal: fam_re requires
+#      the field, so an absent one fails the shape parse; omp's fallback
+#      there is the ladder TOP, exactly the rung the refuses check clears.
 #
 # Unknown stays unknown: a `status: unprobed` / `no-string-ladder` model
 # renders nothing, so checks 3/5 skip it rather than inventing a ladder.
@@ -182,6 +186,14 @@ bare_knob_re = re.compile(r'^[ \t\-]*["\']?REASONING_EFFORT["\']?:?[ \t]*$')
 knob_name_re = re.compile(r'(?<![A-Za-z_])REASONING_EFFORT(?![A-Za-z_])')
 var_ref_re = re.compile(
     r'(?<![A-Za-z_])REASONING_EFFORT(?![A-Za-z_])["\']?[:=][ \t]*["\']?\$')
+# The thinking-budget knob gets the same drift guard as the effort default
+# (#2055 review it6-7c): a compose writing CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET
+# with a differently-named inner variable is silently unread by the emit's
+# _compose_thinking_budget — conservative (the honest 512 retry runs) but
+# invisible. budget_knob_re is a byte-copy of the emit's _THINKING_BUDGET_RX;
+# the 16b-style parity assertion in test-litellm-sync.sh pins the two copies.
+budget_knob_re = re.compile(
+    r'CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET:\s*(?:"?\$\{THINKING_TOKEN_BUDGET:-(\d+)\}"?|(\d+)\s*)')
 # `max` defaults are ratcheted: litellm's default_reasoning_effort Literal
 # (v1.100.3) EXCLUDES max, so phase 2's gateway render must OMIT a max
 # default, never downgrade it. Today only GLM-5.3-Flash legitimately defaults
@@ -250,6 +262,19 @@ for path, text, levels, mid in scan:
         bad(f"{path}: unparseable REASONING_EFFORT line — a form the "
             f"emit's _compose_effort_default does not read, so the pair "
             f"default would fill it: {line.strip()[:120]}")
+    # The thinking-budget knob's own drift guard (#2055 review it6-7c): a
+    # compose line naming the knob that budget_knob_re cannot read means the
+    # emit silently returns None for it — the route loses its declared
+    # budget and the probe falls back to the honest 512 retry without
+    # anyone knowing why.
+    for line in text.splitlines():
+        if "CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET" not in line:
+            continue
+        if budget_knob_re.search(line):
+            continue
+        bad(f"{path}: unreadable CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET line — "
+            f"a form the emit's _compose_thinking_budget does not read, so "
+            f"the route's declared budget is silently lost: {line.strip()[:120]}")
 if len(failures) == n0:
     print(f"  ✓ {checked} compose REASONING_EFFORT defaults all inside their "
           "model's ladder, registry compose_paths included (max ratcheted to "
@@ -640,6 +665,19 @@ else:
             if f["ladder"] != model_levels(mdl)[0]:
                 bad(f"FAMILIES {fam}: ladder {f['ladder']} != model {mdl}'s levels "
                     f"{model_levels(mdl)[0]} — drifted from the profiles (#1951)")
+            # The defaultLevel is what omp requests when the agent names no
+            # effort, and the request lands on whichever slug of the family's
+            # models is booted — so it must be a name every engine serving
+            # those models accepts (#2055 review it6-4). A pair's `refuses`
+            # are rungs the server 400s as request names; the ladder pin
+            # above cannot see them. An engine with no by_model entry
+            # records no refuses — unknown stays unknown there.
+            for eid, eng in sorted(profiles.engines.items()):
+                pair = ((eng.effort or {}).get("by_model") or {}).get(mdl) or {}
+                if f["dflt"] in (pair.get("refuses") or []):
+                    bad(f"FAMILIES {fam}: defaultLevel {f['dflt']!r} is refused on "
+                        f"{eid}'s {mdl} pair — omp would default to a rung that "
+                        "engine 400s as a request name")
         if not f["ids"]:
             bad(f"FAMILIES {fam}: no ids parsed — check the {fam.upper()}_IDS "
                 "constant name in fam_re/ids_const")

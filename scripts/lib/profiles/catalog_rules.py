@@ -472,12 +472,14 @@ def _load_profiles_cached(root_str: str, stamp: tuple):
     return load_profiles(Path(root_str) / "scripts/lib/profiles")
 
 
-@functools.lru_cache(maxsize=512)
-def _model_dir_knob(root_str: str, stamp: tuple, model_id: str) -> bool:
+def _model_dir_knob(root_str: str, model_id: str) -> bool:
     """Whether the model's OWN tree carries an effort knob — a vendored template
     or patch under models/<id>/ (.jinja included) — the same scan the guard's
-    check 1 runs. Cached per (root, stamp, model): the stamp is what makes an
-    edited template visible on the next call (#1951 review r8)."""
+    check 1 runs. Deliberately uncached: one os.walk over one model directory
+    (1-3 ms measured), and the fresh scan is what makes an edited template
+    visible on the very next call. The earlier lru_cache was keyed on the
+    profiles stamp, which a models/<id>/ edit never moves — a long-lived
+    cockpit would keep the stale False (#2055 review it6-3)."""
     base = Path(root_str) / "models" / model_id
     if not base.is_dir():
         return False
@@ -525,9 +527,7 @@ def _effort_rule(root: Path, entry: dict, text: str) -> list[Finding]:
         # a vendored template or patch under models/<id>/ makes the slug
         # effort-aware exactly like a compose knob does (the guard's check 1
         # scans the same tree; #1951 review r8).
-        stamp = _profiles_stamp(root)
-        if stamp is not None and _model_dir_knob(str(root), stamp,
-                                                 str(entry.get("model"))):
+        if _model_dir_knob(str(root), str(entry.get("model"))):
             knob = True
         else:
             return [Finding("effort-block", REQUIRED, PASS,
