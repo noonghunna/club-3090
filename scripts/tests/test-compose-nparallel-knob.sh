@@ -37,15 +37,34 @@ done < <(grep -rl -e "- '-np'" models/*/*/compose --include='*.yml' 2>/dev/null 
 # --- 2. delivery path + NEGATIVE CONTROL -------------------------------------
 # For a command arg, `docker compose config` resolution IS what reaches argv.
 SAMPLE=models/glm-5.3-flash/llamacpp-club3090/compose/dual/unsloth-ud-iq3xxs/moecache.yml
+instrument_failed=0
 if command -v docker >/dev/null 2>&1 && [[ -f "$SAMPLE" ]]; then
-  eff() { MODEL_DIR="${MODEL_DIR:-/tmp}" ${1:+env NPARALLEL="$1"} docker compose -f "$SAMPLE" config 2>/dev/null \
-            | grep -A1 -e '- -np' | tail -1 | sed -E 's/^[[:space:]]*-[[:space:]]*//' | tr -d '"'; }
+  # A FAILED `docker compose config` IS NOT A FAILED KNOB — and here it used to be worse than
+  # noisy: under `set -euo pipefail` the failing command ended the script before any `✗` line
+  # printed, so a Tier-0 sweep saw a bare non-zero exit and no finding. Capture the status and
+  # first stderr line, report it as an INSTRUMENT failure, and exit 3 (distinct from 1).
+  eff() {
+    local out errf rc
+    errf=$(mktemp)
+    if out=$(MODEL_DIR="${MODEL_DIR:-/tmp}" ${1:+env NPARALLEL="$1"} docker compose -f "$SAMPLE" config 2>"$errf"); then
+      rc=0
+    else
+      rc=$?
+    fi
+    if [[ $rc -ne 0 ]]; then
+      echo "INSTRUMENT: docker compose config failed for $SAMPLE (rc=$rc) — $(head -1 "$errf")" >&2
+      rm -f "$errf"; printf '__COMPOSE_CONFIG_FAILED__'; return 0
+    fi
+    rm -f "$errf"
+    printf '%s' "$out" | grep -A1 -e '- -np' | tail -1 | sed -E 's/^[[:space:]]*-[[:space:]]*//' | tr -d '"' || true
+  }
   base=$(eff "");   set4=$(eff 4)
-  if [[ "$base" != "1" ]]; then
+  [[ "$base" == "__COMPOSE_CONFIG_FAILED__" || "$set4" == "__COMPOSE_CONFIG_FAILED__" ]] && instrument_failed=1
+  if [[ $instrument_failed -eq 0 && "$base" != "1" ]]; then
     echo "FAIL: negative control — with NPARALLEL unset the effective -np is '$base', expected '1' (shipped behaviour must not change)" >&2
     fails=$((fails+1))
   fi
-  if [[ "$set4" != "4" ]]; then
+  if [[ $instrument_failed -eq 0 && "$set4" != "4" ]]; then
     echo "FAIL: delivery path — NPARALLEL=4 produced -np '$set4', expected '4' (the knob is inert)" >&2
     fails=$((fails+1))
   fi
@@ -55,6 +74,12 @@ fi
 
 if [[ $fails -gt 0 ]]; then
   echo "$fails -np knob check(s) failed" >&2
+  [[ $instrument_failed -ne 0 ]] && echo "INSTRUMENT: the delivery-path leg also could not run (above)" >&2
   exit 1
+fi
+
+if [[ $instrument_failed -ne 0 ]]; then
+  echo "INSTRUMENT: the delivery-path leg could not run (docker compose config failed, above) — the static checks stand, and this is NOT a knob failure" >&2
+  exit 3
 fi
 echo "PASS: $checked composes parameterise -np; NPARALLEL=4 -> 4 and unset -> 1 through docker compose config"

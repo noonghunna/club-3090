@@ -5,7 +5,7 @@
 ## What it is
 
 [HyperQwen](https://github.com/syv-ai/HyperQwen) (Apache-2.0, syv-ai) is a vLLM derivative for Qwen3.8-27B. It has three parts:
-- **a patch series on a pinned vLLM** (0.32.0 at our pin; its `patches/series` lists 56, one line each in `PATCHES.md`), among them int8 Marlin GEMM layer selection, the MTP draft vocabulary, GDN spec-decode bounds (vllm#50021) and a hybrid-KV CUDA-graph fix, plus the KVarN 4/2-bit KV cache;
+- **a patch series on a pinned vLLM** (0.33.0 at our pin since 2026-11-10; its `patches/series` lists 65, described in `PATCHES.md`), among them int8 Marlin GEMM layer selection, the MTP draft vocabulary, GDN spec-decode bounds (vllm#50021) and a hybrid-KV CUDA-graph fix, plus the KVarN 4/2-bit KV cache;
 - **its own launchers**, `single-user/` (speculative decoding, for one or a few users) and `batch/` (throughput), with their own env names (`SPEC`, `CTX`, `DFLASH_TOKENS`, `GPU_UTIL`, `EXTRA_ARGS`);
 - **a model-preparation step** (`prepare/`) that runs at every container start. The first time, it rewrites the W4A16 checkpoint's `lm_head`, embeddings and MTP module to int8 in place, builds a draft vocabulary, and assembles the single-user "fast" variant from syv-ai's own Hugging Face repo. After that it takes seconds.
 

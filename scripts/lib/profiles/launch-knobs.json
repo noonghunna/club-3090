@@ -2362,7 +2362,7 @@
      "text": "Measured on vllm/qwen38-27b-dual-max: with the MTP drafter on, prefix reuse snaps to the attention-block boundary (zero below about two blocks, ~3.2K tokens there); with SPEC_N=0 it reuses at 16-token granularity. Turning the drafter off trades decode speed for that.",
      "source": {
       "file": "models/qwen3.8-27b/vllm/compose/dual/autoround-int4/mtp.yml",
-      "what": "the --mamba-cache-mode comment (club-3090#1246)"
+      "what": "the --prefix-match-unit comment (club-3090#1246)"
      }
     },
     {
