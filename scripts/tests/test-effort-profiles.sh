@@ -734,10 +734,12 @@ else:
         for mdl in mdls:
             # The omp ladder is the rungs EVERY engine serving the family's
             # models accepts as a request name — the model's levels minus the
-            # union of the engines' pair `refuses` (#2055 review it7-1: strata's
-            # flash-next pair refuses xhigh, so the omp surface must not offer
-            # it; the omp override is rendered at setup time and cannot know
-            # which engine will boot). An engine with no by_model entry records
+            # union of the engines' pair `refuses` (#2055 review it7-1: the omp
+            # override is rendered at setup time and cannot know which engine
+            # will boot, so a rung ANY engine refuses is offered by NONE).
+            # No pair records a refusal today — strata's flash-next pair once
+            # refused xhigh on a mis-read 400, corrected 2026-11-17 (see
+            # engines/strata.yml). An engine with no by_model entry records
             # no refuses — unknown stays unknown there.
             refused: set = set()
             for eid, eng in sorted(profiles.engines.items()):

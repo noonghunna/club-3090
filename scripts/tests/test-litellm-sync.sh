@@ -328,15 +328,16 @@ render "8198=flash-live@262144,8119=glm-live@262144,8094=mimo-live@8192,8084=ink
 # MiniMax and three DeepSeek slugs on the SAME engine (strata-maya) would have
 # been defaulted GLM's way once they got a ladder.
 render "8198=flash-live@262144,8119=glm-live@262144,8094=mimo-live@8192,8084=inkling-live@262144,8018=strata-live@262144"
-[[ -z "$(route_field strata-live model_info.default_reasoning_effort)" ]] \
-  && ok "a refused default is omitted, never downgraded — the unset default stays xhigh but the advertise cannot name a rung the server 400s (#2055 review it5-1)" \
+[[ "$(route_field strata-live model_info.default_reasoning_effort)" == "xhigh" ]] \
+  && ok "the pair default is advertised once its rung is nameable — the unset default is xhigh and the server accepts the name (the 2026-11-15 reading that it 400'd was the unknown-name message, under-inclusive; corrected 2026-11-17, see engines/strata.yml)" \
   || bad "strata default: '$(route_field strata-live model_info.default_reasoning_effort)'"
-# The nameable set (#2055 review it4-1): the refused rung (xhigh — the server
-# 400s it as a request name) is dropped from the advertise and the fold source
-# (high) is listed instead; the raw ladder would advertise a rung the server
-# rejects and omit one it accepts.
-[[ "$(route_field strata-live model_info.reasoning_effort_levels)" == "['low', 'medium', 'high']" ]] \
-  && ok "the refused rung is dropped and the fold source is advertised" \
+# The nameable set (#2055 review it4-1): the model's rungs plus BOTH fold
+# sources — `high` and `max` reach xhigh on the request path, and the pair
+# refuses nothing (the earlier `refuses: [xhigh]` came from that same
+# mis-read 400; the refuse mechanism itself stays pinned by the synthetic
+# disagreeing-ladders case below).
+[[ "$(route_field strata-live model_info.reasoning_effort_levels)" == "['low', 'medium', 'xhigh', 'high', 'max']" ]] \
+  && ok "the full nameable set renders: ladder plus the fold sources" \
   || bad "strata levels: '$(route_field strata-live model_info.reasoning_effort_levels)'"
 
 # An honest `status:` instead of a ladder: the model DOES think (`unprobed` /
