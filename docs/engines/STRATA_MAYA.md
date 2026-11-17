@@ -55,7 +55,7 @@ Measurements, with dates and settings, are in each compose's header and in [BENC
 ## What club-3090 adds
 
 - **A launcher for every compose** (`models/glm-5.3-flash/strata-maya/launcher/`: `maya-entrypoint.sh` and `maya_prepare.py`). Maya's own setup isn't used in the image. The model folder is mounted read-only, but Maya writes its pack next to the shards, so the launcher links the shards into a folder of their own on the data volume, checks their SHA-256 there, builds the pack with Maya's `tools/iq_pack.py` (and stamps it as `maya.py` does, so a changed shard rebuilds it), writes the config and starts `serve/server.py` on the cards `MAYA_GPUS` names. The compose passes the quant as the launcher's one argument, not as a setting, so no saved value can point a slug at another quant's pack.
-- **Calibration knobs:** `MAYA_PCIE_SHARE` and `MAYA_CPU_LANE` become the engine's `STRATA_GLM_PCIE_SHARE` / `STRATA_GLM_CPU_LANE` when set. They are what Maya's own calibration tunes for a PC; the composes ship the engine's own choice. See [Tuning for your PC](#tuning-for-your-pc).
+- **Calibration knobs:** `MAYA_PCIE_SHARE` and `MAYA_CPU_LANE` become the engine's `MAYA_GLM_PCIE_SHARE` / `MAYA_GLM_CPU_LANE` when set (the launcher exports them under the older `STRATA_GLM_*` names, which Maya maps to these). They are what Maya's own calibration tunes for a PC; the composes ship the engine's own choice. See [Tuning for your PC](#tuning-for-your-pc).
 - **Launch settings, written into Maya's config at every boot** (`launcher/maya_settings.py`). The launcher writes `maya.json` afresh at each start, so a setting you remove is gone at the next boot. A bad value stops the boot with the reason, before the SHA-256 check. `REASONING_EFFORT`, `ENABLE_THINKING` and `CONTEXT` are catalogued, so `bash scripts/switch.sh --set <slug> REASONING_EFFORT=high` saves them for one slug; save the others with `bash scripts/settings.sh set TEMP=0.7` (they apply to every slug that reads them) or give them as a shell prefix.
 
   | Setting | Maya config | Values | Unset |
@@ -212,9 +212,9 @@ rm -f "$f"
 
 For another slug, use its compose and its quant's folder (`/data/maya-m/…`, `/data/maya-l/…`).
 - **Keep `--no-start`.** Without it Maya starts a server when it finishes, from the config our launcher wrote: listening on every address in the container, with no API key.
-- **It prints** each split and thread count it tried, then the settings it changed, e.g. `tuned for this PC: STRATA_GLM_PCIE_SHARE=0.10 (32.3 tok/s)`, or that the engine's own settings are already the fastest here.
+- **It prints** each split and thread count it tried, then the settings it changed, e.g. `tuned for this PC: MAYA_GLM_PCIE_SHARE=0.10 (32.3 tok/s)`, or that the engine's own settings are already the fastest here.
 - **The `down`** removes the network the one-off run created; without it, each tuned quant leaves one behind.
-- **Save what it printed as settings**, because the launcher writes Maya's config afresh at every boot and drops what the tuning wrote there. `STRATA_GLM_PCIE_SHARE` becomes `MAYA_PCIE_SHARE` and `STRATA_GLM_CPU_LANE` becomes `MAYA_CPU_LANE`: `bash scripts/settings.sh set MAYA_PCIE_SHARE=0.10`. Every Maya slug reads a saved value, whatever its quant or card count, so save the result of the slug you run. `switch.sh --set` doesn't accept these two settings yet.
+- **Save what it printed as settings**, because the launcher writes Maya's config afresh at every boot and drops what the tuning wrote there. `MAYA_GLM_PCIE_SHARE` becomes `MAYA_PCIE_SHARE` and `MAYA_GLM_CPU_LANE` becomes `MAYA_CPU_LANE`: `bash scripts/settings.sh set MAYA_PCIE_SHARE=0.10`. Every Maya slug reads a saved value, whatever its quant or card count, so save the result of the slug you run. `switch.sh --set` doesn't accept these two settings yet.
 
 ## Known gaps
 

@@ -22,7 +22,7 @@
 #
 # The server's defaults for requests that name none, with nothing set: effort auto (MiniMax's adaptive thinking,
 # as Maya's own setup writes it) and sampling 1.0 / 0.95 (the model card's), the name minimax-m3.1-flash, an INT8
-# K / V cache, the DSpark drafter off (Maya's own default until a speed calibration says it pays) and a CPU lane
+# K / V cache, the DSpark drafter on (Maya's speed calibration kept it on two 3090s and on one; DSPARK=off turns it off) and a CPU lane
 # of half the CPUs (nproc / 2). A request's own reasoning_effort / chat_template_kwargs win, and so do the Chat
 # settings saved from Maya's web page (maya-mm3.shared-settings.json next to the config).
 #
