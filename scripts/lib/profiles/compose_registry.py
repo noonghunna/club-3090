@@ -79,7 +79,8 @@ def _entry(
     act_format="16bit",
     # True when the slug's compose is wired for the W4A8 int8-activation knob AND
     # its weights are positive-symmetric int4 (the c3 serve-confirm checkbox reads
-    # this to offer VLLM_MARLIN_INPUT_DTYPE=int8 per-launch). #609.
+    # this to offer the knob per-launch through the W4A8 gate). #609. On vLLM
+    # v0.34.0+ the knob serves --quantization humming (vllm-humming-w4a8).
     act8_capable=False,
     # Weight-offload backend when the slug serves a model too large to fit VRAM
     # by paging expert/layer weights to host RAM. None = fully resident (the

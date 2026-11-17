@@ -30,7 +30,7 @@ entries:
     spec_method: null
     kv_format: fp8_e4m3
     act_format: 16bit
-    act8_capable: true
+    act8_capable: false
     offload: null
     moe_cache: false
     host_ram_gb: null
@@ -61,7 +61,7 @@ entries:
     spec_method: null
     kv_format: fp8_e4m3
     act_format: 16bit
-    act8_capable: true
+    act8_capable: false
     offload: null
     moe_cache: false
     host_ram_gb: null
@@ -92,7 +92,7 @@ entries:
     spec_method: null
     kv_format: fp8_e4m3
     act_format: 16bit
-    act8_capable: true
+    act8_capable: false
     offload: null
     moe_cache: false
     host_ram_gb: null
@@ -216,7 +216,7 @@ entries:
     spec_method: null
     kv_format: fp8_e4m3
     act_format: 16bit
-    act8_capable: true
+    act8_capable: false
     offload: null
     moe_cache: false
     host_ram_gb: null
@@ -3211,7 +3211,7 @@ entries:
     default_port: 8099
     kvcalc_key: SKIP
     status: caveats
-    status_note: "ThinkingCap-Qwen3.6-27B AutoRound W4A16 (LeaderboardModel1; sym INT4 g128, mtp.fc@BF16 working head) served W4A8 — int8 activations via VLLM_MARLIN_INPUT_DTYPE=int8 + 2 vendored patches (patches/w4a8: INC input_dtype + negative-scale fold; AutoRound emits ~50% negative scales, folded at boot). Same qwen35-dense hybrid (48 linear + 16 full attn) + built-in MTP as Tess (DEFAULT n=3 since 2026-07-31; all TPS below were benched at n=5). TP=2 @262K + fp8_e4m3 KV. rebench-full 2026-07-21 (thinkingcap-27b-20260721-0758): 73.3 narrative / 106.1 code tok/s (MTP accept 5.0/80%), verify-stress boundary 8/8 (NIAH clean to 240K), soak PASS (0/100 silent-empty, p50 119.75 decode), 8-pack 113/150 off / 120/150 on — TOPS Tess W4A16 (108/115) and Qwen fast-tier (109) on BOTH legs (esp. reasoning: IF 15/15 + BugFind 15/15 think-on). n-sweep knee n=5 (code +64% 65->107; n=6/8 regress). CAVEAT (why caveats not production): ⚠️ MTP n>=4 CRASHES the engine under sustained multi-turn load (#758) — drafter intermittently emits all-`-1` draft token IDs → out-of-bounds embedding gather → cudaErrorIllegalAddress → dead worker; depth- and VRAM-independent (seen ~25K after a clean 240K prefill; lowering util and max-model-len both changed nothing); n=5 dies within 1-2 sessions, n=4 eventually, n=3/n=0 stable; hit on 3 rigs incl. 2x 5090. Default lowered 5→3; n=3 is UNBENCHED on the reference rig. Also THIN 69 MB VRAM margin at the 262K ceiling with MTP (MTP eats ~1.2 GB headroom; no-MTP ladder had 1245 MB) — NIAH recall is clean to 240K but sustained agents at MAX ctx should size below 262K or lower util. Vision tower resident but untested (text-only validated). Single-card W4A8 tops ~76K (vision-limited). Native template works (no froggeric pin needed). SPEC_N overridable."
+    status_note: "ThinkingCap-Qwen3.6-27B AutoRound W4A16 (LeaderboardModel1; sym INT4 g128, mtp.fc@BF16 working head) served W4A8 — int8 activations via VLLM_MARLIN_INPUT_DTYPE=int8 + 2 vendored patches (patches/w4a8: INC input_dtype + negative-scale fold; AutoRound emits ~50% negative scales, folded at boot). Same qwen35-dense hybrid (48 linear + 16 full attn) + built-in MTP as Tess (DEFAULT n=3 since 2026-07-31; all TPS below were benched at n=5). TP=2 @262K + fp8_e4m3 KV. rebench-full 2026-07-21 (thinkingcap-27b-20260721-0758): 73.3 narrative / 106.1 code tok/s (MTP accept 5.0/80%), verify-stress boundary 8/8 (NIAH clean to 240K), soak PASS (0/100 silent-empty, p50 119.75 decode), 8-pack 113/150 off / 120/150 on — TOPS Tess W4A16 (108/115) and Qwen fast-tier (109) on BOTH legs (esp. reasoning: IF 15/15 + BugFind 15/15 think-on). n-sweep knee n=5 (code +64% 65->107; n=6/8 regress). CAVEAT (why caveats not production): ⚠️ MTP n>=4 CRASHES the engine under sustained multi-turn load (#758) — drafter intermittently emits all-`-1` draft token IDs → out-of-bounds embedding gather → cudaErrorIllegalAddress → dead worker; depth- and VRAM-independent (seen ~25K after a clean 240K prefill; lowering util and max-model-len both changed nothing); n=5 dies within 1-2 sessions, n=4 eventually, n=3/n=0 stable; hit on 3 rigs incl. 2x 5090. Default lowered 5→3; n=3 is UNBENCHED on the reference rig. Also THIN 69 MB VRAM margin at the 262K ceiling with MTP (MTP eats ~1.2 GB headroom; no-MTP ladder had 1245 MB) — NIAH recall is clean to 240K but sustained agents at MAX ctx should size below 262K or lower util. Vision tower resident but untested (text-only validated). Single-card W4A8 tops ~76K (vision-limited). Native template works (no froggeric pin needed). SPEC_N overridable. ⚠️ vLLM v0.34.0 (2026-11-17): Marlin int8 is gone (#65542), so W4A8 now runs --quantization humming with the vllm-humming-w4a8 fixes, ported exactly like the Qwen3.8-27B W4A8 tiers that were booted on v0.34.0. This slug was NOT booted on v0.34.0: its weights are not on the reference rig."
     weights_companions: []
     gateway: false
     serve_aliases: []

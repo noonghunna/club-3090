@@ -1092,7 +1092,7 @@ class TestNavNodesExist:
         assert cap._act8_env_prefix() == []
         cap._act8_on = True
         inj = cap._with_act8_env(cap._plan.cmd, cap._act8_env_prefix())
-        assert inj[:2] == ["env", "VLLM_MARLIN_INPUT_DTYPE=int8"]
+        assert inj[:2] == ["env", "W4A8=1"]
         assert cap._with_act8_env(inj, cap._act8_env_prefix()) == inj  # idempotent
 
         # NON-capable slug → no knob at all
@@ -1118,8 +1118,8 @@ class TestNavNodesExist:
         from club3090_cockpit.data import ActionPlan, CatalogEntry
         from club3090_cockpit.services import _variant_row_from_dict
 
-        GATED = "# comment\n- W4A8=${W4A8:-1}\n- VLLM_MARLIN_INPUT_DTYPE\n"
-        HARDCODED = "- VLLM_MARLIN_INPUT_DTYPE=int8\n"
+        GATED = "# comment\n- W4A8=${W4A8:-1}\n- VLLM_HUMMING_INPUT_QUANT_CONFIG\n"
+        HARDCODED = "- 'VLLM_HUMMING_INPUT_QUANT_CONFIG={\"dtype\":\"int8\"}'\n"
 
         def modal(compose):
             d = tmp_path / "models" / "m"
