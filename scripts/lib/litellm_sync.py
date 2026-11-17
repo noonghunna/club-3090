@@ -353,7 +353,16 @@ def serves_messages(port: int, model: str, key: str = "",
     Claude Code sequence on their own endpoint: thinking blocks out, a replayed
     thinking block answered from, `tool_use` with `stop_reason: tool_use`, prefix
     reuse reported (QEngine `cache_read_input_tokens: 1585` on the follow-up).
-    Project Maya passes the cache-based one (keeps_system_in_place)."""
+    Project Maya passes the cache-based one (keeps_system_in_place).
+    End-to-end coverage under the Claude Code CLI, on the engine's OWN endpoint:
+    SGLang and vLLM (the two the old allowlist was built from), QEngine and
+    Strata (2026-11-15, the sequence above). Project Maya's gate is the
+    cache-based probe — it has not been through the CLI here. The probe is
+    behaviour-based, so llama.cpp (which serves both /v1/messages and
+    count_tokens), TabbyAPI and bucko can pass it too; none of the three has
+    been through the CLI on this rig — a pass means the endpoint answers and
+    keeps `system` in place, not a verified agentic session on that engine.
+    """
     if not serves_anthropic(port, model, key, declared_budget):
         return False
     turns = [{"role": "user", "content": "a"}, {"role": "user", "content": "b"}]

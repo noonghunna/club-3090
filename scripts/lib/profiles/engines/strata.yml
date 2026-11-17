@@ -41,32 +41,36 @@ effort:
     qwen3.8-flash-next:
       default_when_unset: xhigh
       supports_none: true
-      maps: {high: xhigh}
-      refuses: [xhigh]
+      maps: {high: xhigh, max: xhigh}
       evidence: >-
         docs/engines/STRATA.md "Reasoning and sampling defaults": with no
         settings, a request that names no effort runs at the checkpoint
         template's `reasoning_effort|default('xhigh')`, and `high` also maps to
         `xhigh`. This fold table is NOT the one the same model gets on
-        vllm-stable, which also folds minimal->low. The server bounds the
-        NAMEABLE names: its 400 names the accepted set "use none, low, medium
-        or high" (measured 2026-11-15 on qwen3.8-flash-next-iq3s-dual :8018,
-        the engine evidence below), so `max` and `xhigh` 400 as request names
-        and the fold table records only names the server accepts — the xhigh
-        rung is reached via unset (the template default) and via `high` (the
-        fold). `refuses` records the one of those the ladder advertises as
-        nameable (xhigh), so the gateway render drops it from
-        reasoning_effort_levels and lists `high` — the fold source — instead;
-        `max`/`minimal` 400 too but are advertised nowhere. The unset default
-        stays xhigh: true unset behaviour, and a client echoing it gets the
-        same 400. The pair's none claim is that same probe: reasoning_effort
-        none -> 0 chars of reasoning_content (low -> 214).
+        vllm-stable, which also folds minimal->low. The request path's accepted
+        set is the pinned image's own `EFFORT` table
+        (`terminal/serve/frontend.py`: none/off/minimal/disabled/false -> off,
+        low, medium, high -> xhigh, xhigh, max -> xhigh, maximum -> xhigh);
+        `effort_kwargs` raises only for a name outside that table, and its 400
+        text "use none, low, medium or high" lists FEWER names than the server
+        accepts. The one check that does refuse `xhigh` is
+        `clean_shared_defaults` (`server.py` ~9220), which validates the saved
+        defaults of `POST /settings`, not a request. CORRECTION 2026-11-17
+        (review of #2091): the 2026-11-15 reading that `xhigh`/`max` 400 as
+        request names — and with it `refuses: [xhigh]` and the claim that a
+        client echoing the unset default back gets a 400 — is superseded: on
+        the same pinned image (0.2.13, b6e18765) `reasoning_effort: xhigh` and
+        `max` answer 200 with real reasoning content, and only names outside
+        the table (e.g. `extreme`) 400. The pair's none claim stands from that
+        same probe: reasoning_effort none -> 0 chars of reasoning_content
+        (low -> 214).
   evidence: >-
     Engine-wide (off_switch / supports_none): measured 2026-11-15 on
     qwen3.8-flash-next-iq3s-dual (:8018) — reasoning_effort none -> 0 chars of
-    reasoning_content (low -> 214); the server's own 400 names the accepted set:
-    "use none, low, medium or high". Measured on that one pair; it is the
-    server's request handling, not a template property.
+    reasoning_content (low -> 214). Measured on that one pair; it is the
+    server's request handling, not a template property. The 400 wording is
+    under-inclusive of the accepted set — see the pair's evidence and its
+    2026-11-17 correction.
 
 notes: >
   Strata (github.com/Niko1221/Strata, MIT): its own C++/CUDA engine for Qwen3.8-Flash-Next plus a

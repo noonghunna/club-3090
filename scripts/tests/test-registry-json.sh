@@ -101,6 +101,10 @@ VARIANT_KEYS = {
     # sorted list, [] for none; scanned from the compose by launch_knobs.py.
     # Its per-slug correctness is guarded by test-launch-knobs.sh.
     "knobs",
+    # Per-variant reasoning-effort facts (#1951): the model's ladder + this
+    # engine pair's fold/refuse/default, emitted so the gateway and omp render
+    # the same surface. None when the slug's model+engine pair declares none.
+    "effort",
 }
 v0 = d["variants"][0]
 need(set(v0.keys()) == VARIANT_KEYS,
