@@ -34,20 +34,8 @@
 #   Vision:    yes (VISION=0 for --language-model-only); verify-full vision 4/4
 #   Max ctx:   262K
 #   Genesis:   none
-#   Status:    🧪 Experimental
-#   Caveats:   needs two cards of 64 GB: more than 80 GiB of VRAM goes to weights before
-#              any KV cache, so the entrypoint refuses smaller cards (on 3090s use
-#              strata/qwen3.8-flash-next-iq3s-dual or bucko-vllm/qwen3.8-flash-next-ple-dual).
-#              Measured on ONE rig (2x CMP 170HX 64 GB, Gen2 x8, no P2P, 175 W). Nine overlays
-#              on the stock image; ple-mmap is a port per vLLM version (0.32.0, 0.33.0; it
-#              refuses any other, PLE_PLACEMENT=ram avoids it). ⚠️ Not booted on vLLM 0.33.0
-#              (the pin from 2026-11-10; no 64 GB cards here): each overlay was checked offline on
-#              the image (applies, a second run is a no-op; pp-ple-rank0 and ple-mmap re-anchored),
-#              and W4A8=1 was checked offline only (above). The numbers below are v0.32.0's. No KV offload to RAM: it does not
-#              start under PP=2 (vllm#50653). Concurrent requests: vllm#61281 (prompt-boundary
-#              state freed mid-request) can make a follow-up miss its whole prompt in the
-#              prefix cache, and PREFIX_MATCH_UNIT=16 makes nearly every prompt end mid-block;
-#              read from the source, not reproduced here. Launch: switch.sh --force (🧪).
+#   Status:    🗑️ Deprecated
+#   Caveats:   Retired 2026-11-17 with the vLLM v0.34.0 pin (maintainer decision): its four Flash-Next overlays refuse v0.34.0, nobody in the community runs Flash-Next on vLLM, and QEngine and Strata serve this model better on 2x RTX 3090. Held on vLLM v0.33.0 by a literal image line, so it still boots with --force. Needs two 64 GB cards (more than 80 GiB of weights); last measured on 2x CMP 170HX 64 GB on v0.32.0.
 #   Validated: 2026-10-18 on the official vllm/vllm-openai:v0.32.0 image (sha256:befccf0e…),
 #              this compose: verify-full PASS incl. vision 4/4; bench.sh 122.9 / 170.9 narr/code,
 #              prefill 5,147 @10K / 7,610 @90K, peak 63.2 / 62.4 GB, KV pool 2.23M tokens (stock
@@ -137,7 +125,10 @@
 #   rm -f "$f"
 services:
   vllm-qwen38-flash-next-dual:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.33.0}
+    # Retired 2026-11-17 and held on vLLM v0.33.0: a LITERAL image, so the launchers' VLLM_IMAGE injection
+    # (the vllm-stable pin, v0.34.0 from that day) does not reach it. Its overlays (pp-ple-rank0, mtp-pp,
+    # mtp-draft-head, ple-mmap, w4a8-inc-moe) apply on v0.33.0 and refuse v0.34.0.
+    image: vllm/vllm-openai:v0.33.0
     container_name: "${ESTATE_CONTAINER:-vllm-qwen38-flash-next-dual}"
     user: "0:${DOCKER_GID:-1000}"
     # ⚠️ When debugging a boot failure set CLUB3090_RESTART=no: under unless-stopped a
@@ -401,9 +392,6 @@ services:
       - "${MAX_MODEL_LEN:-262144}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.95}"
-      # vLLM v0.34.0's extensible KV cache holds a >=1 GiB margin on top of this
-      # fraction, so 262K no longer fits on 24 GB cards (vllm#68184, docs/UPSTREAM.md).
-      - --no-enable-extensible-kv-cache
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-8}"
       - --max-num-batched-tokens
