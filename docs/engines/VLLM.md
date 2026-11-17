@@ -72,6 +72,17 @@ bash scripts/bench.sh               # 3 warmups + 5 measured (narr + code)
 
 Control context vs activation headroom. See the [Activation-memory caveat](../../README.md#activation-memory-caveat-read-this-before-raising---max-model-len) — this is the most consequential tuning lever.
 
+**From vLLM v0.34.0 our composes also pass `--no-enable-extensible-kv-cache`.** v0.34.0's new default,
+the extensible KV cache, sizes the pool after warmup and keeps the larger of the activation peak and
+torch's reservation growth free in full, plus a margin of at least 1 GiB, on top of
+`--gpu-memory-utilization`. On 24 GB cards that stops `vllm/qwen38-27b-dual-max` at 262,144 context
+(3.25 GiB of KV against the 4.46 it needs) and shrinks `dual-fast`'s pool from 605K to 466K tokens.
+The flag returns to v0.33.0's estimate-based sizing: 283,527 and 602,678 tokens. What it gives up is
+the extensible cache's protection against memory spikes the profiling run misses; `verify-stress`
+fills `dual-max` to 240,663 tokens without an OOM. Composes that set `--kv-cache-memory-bytes` don't
+need it: that turns the extensible cache off by itself. Upstream: vllm#68184 in
+[UPSTREAM.md](../UPSTREAM.md).
+
 ### KV cache type (`--kv-cache-dtype`)
 
 | Type | Per-token bytes | 24 GB ceiling | Notes |

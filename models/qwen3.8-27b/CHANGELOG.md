@@ -2,6 +2,27 @@
 
 Dated history for Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-11-17 — vLLM v0.34.0: W4A8 moves to humming, KV sized the v0.33.0 way
+
+`vllm-stable` moves to v0.34.0. That release removed Marlin's 8-bit activations (#65542), so every
+W4A8 tier here (`vllm/qwen38-27b-*-fast`, `-superfast`, `-ultrafast`, single and multi included)
+now serves `W4A8=1` as `--quantization humming` with `VLLM_HUMMING_INPUT_QUANT_CONFIG='{"dtype":"int8"}'`.
+The command line keeps `--quantization auto_round` and the entrypoint rewrites it; `W4A8=0` still
+serves Marlin W4A16. Humming needs two fixes on these checkpoints, vendored as
+`vllm/patches/vllm-humming-w4a8` (vllm#68194, the fix from open PR #68202; vllm#68195, ours), and
+the boot log prints `[humming-w4a8] effective activations a_dtype=int8`.
+
+v0.34.0's new extensible KV cache keeps a margin of at least 1 GiB on top of the memory fraction,
+which cost `dual-max` its 262K fit. Every compose passes `--no-enable-extensible-kv-cache`, back to
+v0.33.0's sizing.
+
+Measured 2026-11-17 (2× RTX 3090, 230 W, one boot per arm): `dual-fast` loads 9.17 GiB a card, pools
+602,678 tokens at 262,144 (605,009 on v0.33.0) and prefills 2,555 / 1,626 tok/s at 10K / 90K
+(v0.33.0 Marlin W4A8: 2,030 / 1,409). `dual-max` pools 283,527 (285,111 on v0.33.0) and fills to
+240,663 tokens under verify-stress. Boots on v0.34.0 with verify-full passing: `dual-fast`,
+`dual-ultrafast` (the DFlash2 drafter keeps its own Marlin W4A16 checkpoint) and the slugs listed in
+the bump PR.
+
 ## 2026-11-07 — HyperQwen moves to commit 6ab9bd05
 
 `vllm-hyperqwen/qwen38-27b-single-ultrafast` now runs syv-ai's `:sha-6ab9bd0` (commit `6ab9bd05`,
