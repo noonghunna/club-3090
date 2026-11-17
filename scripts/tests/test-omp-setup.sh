@@ -98,137 +98,75 @@ need = [d["provider"]["appendOnlyContext"] == "on", d["compaction"]["thresholdPe
 sys.exit(0 if all(need) else 1)
 PY
 
-# 8. the override keys are EXACTLY the ids the Qwen3.8-family composes serve —
-#    the registry's model name is not what omp sees; the engine's /v1/models (and
-#    so the gateway) says --served-model-name / --alias. A key nothing serves is
-#    dead; a served id with no key gets no effort (#1444: ThinkingCap's key was
-#    `thinkingcap-qwen3.8-27b` while every ThinkingCap compose served thinkingcap38-27b).
-python3 - "$ROOT" <<'PY' || bad "omp-setup.sh QWEN38_IDS must equal the ids the Qwen3.8-family composes serve"
-import ast, glob, io, re, sys
-root = sys.argv[1]
-src = io.open(f"{root}/scripts/omp-setup.sh", encoding="utf-8").read()
-keys = set(ast.literal_eval(re.search(r"^QWEN38_IDS = (\[.*\])$", src, re.M).group(1)))
-served = set()
-def add(tok):
-    m = re.fullmatch(r"\$\{\w+:-([^}]+)\}", tok)          # ${SERVED_NAME:-qwen3.8-27b} -> its default
-    if m: tok = m.group(1)
-    if re.fullmatch(r"[A-Za-z0-9][\w.\-]*", tok): served.add(tok)
-for d in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b"):
-    for f in glob.glob(f"{root}/models/{d}/*/compose/*/*/*.yml"):
-        lines = [l for l in io.open(f, encoding="utf-8").read().splitlines() if not l.lstrip().startswith("#")]
-        for i, l in enumerate(lines):
-            m = re.search(r"--(?:served-model-name|served-name|alias)\b(.*)$", l)   # served-name: QEngine's
-            if not m: continue
-            rest = m.group(1).strip().rstrip("\\").strip().strip('"')
-            if rest and not rest.startswith("-"):                    # one-line form
-                for tok in rest.split():
-                    add(tok.strip('"'))
-                continue
-            for nxt in lines[i + 1:]:                                # YAML list form
-                v = nxt.strip()
-                if not v.startswith("- ") or v[2:].lstrip().startswith("-"): break
-                add(v[2:].strip().strip("\"'"))
-if not served:
-    sys.exit("found no served names — the scan itself is broken")
-if keys != served:
-    print(f"  served but no override: {sorted(served - keys)}   override nothing serves: {sorted(keys - served)}", file=sys.stderr)
+# 8. the override keys are EXACTLY the served names the gateway serves for the models
+#    the `club` provider covers. They are generated from the registry (the same source
+#    the gateway's model_info renders), not written down: the registry's served_name
+#    (else the model id) is what the engine's own /v1/models — and so the gateway —
+#    reports, so a key nothing serves is impossible and a served name with no key can't
+#    slip through. The hand-maintained id lists this used to pin are gone.
+bash "$ROOT/scripts/omp-setup.sh" --print | python3 -c '
+import sys, yaml
+mo = yaml.safe_load(sys.stdin.read())["providers"]["club"]["modelOverrides"]
+expected = {"qwen3.8-27b", "thinkingcap38-27b", "qwen3.8-flash-next", "glm-5.3-flash"}
+if set(mo) != expected:
+    print("  modelOverrides keys %s != expected %s" % (sorted(mo), sorted(expected)), file=sys.stderr)
     sys.exit(1)
-PY
+' || bad "omp-setup.sh modelOverrides keys must be exactly the served names the gateway serves"
 
-# 9. the same for Qwen3.8-Flash-Next and GLM-5.3-Flash (Discussion #1690): without a
-#    key omp treated them as non-reasoning, sent NO effort, and every request ran at
-#    the server's slowest default. Two engines name the model themselves, so their ids
-#    are derived the way they derive them: Strata as "<family name>-<quant>" (its
-#    setup; the family is the argument after strata-entrypoint.sh in the compose's
-#    entrypoint, the quant the one after it, else the launcher's default set), Project Maya from its launcher's model_name. A compose whose
-#    id this can't tell fails, rather than going unchecked.
-python3 - "$ROOT" <<'PY' || bad "omp-setup.sh FLASH_NEXT_IDS / GLM53_IDS must equal the ids the Flash-Next / GLM composes serve"
-import ast, glob, io, os, re, sys
-root = sys.argv[1]
-src = io.open(f"{root}/scripts/omp-setup.sh", encoding="utf-8").read()
-def listed(name):
-    return set(ast.literal_eval(re.search(rf"^{name} = (\[.*?\])$", src, re.M | re.S).group(1)))
-STRATA_FAMILY = {"qwen": "qwen3.8-flash-next", "swift": "swift-1.5",
-                 "unsloth": "qwen3.8-flash-next-unsloth"}   # Strata setup.py FAMILIES[...]["name"]
-def read(p): return io.open(p, encoding="utf-8").read()
-def strata_quant(engine_dir):
-    # the launcher's default set: SET="${2:-IQ3_S}" (the compose's second argument overrides it)
-    m = re.search(r'^SET="\$\{2:-([^}"]+)\}"', read(f"{engine_dir}/launcher/strata-entrypoint.sh"), re.M)
-    return m.group(1).lower() if m else None
-def maya_name(engine_dir):
-    m = re.search(r'"model_name":\s*"([^"]+)"', read(f"{engine_dir}/launcher/maya_prepare.py"))
-    return m.group(1) if m else None
-def compose_ids(f):
-    out = set()
-    def add(tok):
-        tok = tok.strip().strip("\"'")
-        m = re.fullmatch(r"\$\{\w+:-([^}]+)\}", tok)
-        if m: tok = m.group(1)
-        if re.fullmatch(r"[A-Za-z0-9][\w.\-]*", tok): out.add(tok)
-    lines = [l for l in read(f).splitlines() if not l.lstrip().startswith("#")]
-    for i, l in enumerate(lines):
-        m = re.search(r"SERVED_MODEL_NAME:\s*\"?(\$\{SERVED_MODEL_NAME:-[^}]+\})", l)
-        if m: add(m.group(1))
-        m = re.search(r"--(?:served-model-name|served-name|alias|model-name)\b['\"]?(.*)$", l)   # served-name: QEngine's
-        if not m: continue
-        rest = m.group(1).strip().rstrip("\\").strip().strip("\"'")
-        if rest and not rest.startswith("-"):
-            for tok in rest.split(): add(tok)
-            continue
-        for nxt in lines[i + 1:]:                                    # YAML list form
-            v = nxt.strip()
-            val = v[2:].strip().strip("\"'") if v.startswith("- ") else ""
-            if not val or val.startswith("-"): break                 # the next flag ('--x' quoted too)
-            add(val)
-    engine_dir = f.split("/compose/")[0]
-    engine = os.path.basename(engine_dir)
-    if engine == "strata":
-        m = re.search(r"entrypoint:\s*\[([^\]]*)\]", read(f))
-        args = re.findall(r'"([^"]+)"', m.group(1)) if m else []
-        at = next((i for i, a in enumerate(args) if a.endswith("strata-entrypoint.sh")), None)   # the family follows it
-        fam = args[at + 1] if at is not None and len(args) > at + 1 else "qwen"
-        q = args[at + 2].lower() if at is not None and len(args) > at + 2 else strata_quant(engine_dir)
-        if fam in STRATA_FAMILY and q: out.add(f"{STRATA_FAMILY[fam]}-{q}")
-    elif engine == "strata-maya":
-        n = maya_name(engine_dir)
-        if n: out.add(n)
-    return out
-ok = True
-for model_dir, name in (("qwen3.8-flash-next", "FLASH_NEXT_IDS"), ("glm-5.3-flash", "GLM53_IDS")):
-    keys, served, unknown = listed(name), set(), []
-    for f in sorted(glob.glob(f"{root}/models/{model_dir}/*/compose/*/*/*.yml")):
-        got = compose_ids(f)
-        if not got: unknown.append(os.path.relpath(f, root))
-        served |= got
-    if unknown:
-        print(f"  {name}: can't tell what these serve — teach test-omp-setup: {unknown}", file=sys.stderr); ok = False
-    if keys != served:
-        print(f"  {name}: served but no override: {sorted(served - keys)}   override nothing serves: {sorted(keys - served)}", file=sys.stderr); ok = False
-sys.exit(0 if ok else 1)
-PY
 
-# 10. each family's ladder: Flash-Next takes the Qwen3.8 template's levels, GLM its
-#     own (it has no `medium`, and Project Maya 400s an effort it doesn't know). The
-#     new overrides send no reasoning summary — LiteLLM's Responses -> chat bridge
-#     (tabbyAPI and Maya routes) otherwise forwards the whole {effort, summary} object
-#     as reasoning_effort — while the Qwen3.8-27B ones stay as they were measured.
+# 9. each family's ladder and default are the ones the registry's per-variant effort
+#    facts derive, not written down: the rungs every route serving the name accepts
+#    (the model's levels minus any rung a route refuses, plus the fold sources only when
+#    every route folds the same src->dst), and the LOWEST of the routes' compose defaults
+#    (an empty REASONING_EFFORT falling back to that engine's pair default). This is the
+#    rendering test the #1951 drift tripwire becomes: the override and the routes it
+#    names share one source, so they cannot drift.
+bash "$ROOT/scripts/omp-setup.sh" --print | python3 -c '
+import sys, yaml
+mo = yaml.safe_load(sys.stdin.read())["providers"]["club"]["modelOverrides"]
+expected = {
+    "qwen3.8-27b": (["low", "medium", "xhigh"], "low"),
+    "thinkingcap38-27b": (["low", "medium", "xhigh", "high", "max", "minimal"], "low"),
+    "qwen3.8-flash-next": (["low", "medium"], "low"),
+    "glm-5.3-flash": (["low", "high", "max"], "max"),
+}
+bad = []
+for mid, v in mo.items():
+    t = v.get("thinking") or {}
+    if mid not in expected:
+        bad.append("%s: unexpected family" % mid); continue
+    ladder, default = expected[mid]
+    if t.get("efforts") != ladder: bad.append("%s: ladder %r != %r" % (mid, t.get("efforts"), ladder))
+    if t.get("defaultLevel") != default: bad.append("%s: default %r != %r" % (mid, t.get("defaultLevel"), default))
+if bad:
+    print("  " + "\n  ".join(bad), file=sys.stderr); sys.exit(1)
+' || bad "omp-setup.sh overrides: a family's ladder or default drifted from the registry (see above)"
+
+
+# 10. the compat pins ride the right families: supportsReasoningSummary: false on
+#     Flash-Next and GLM (omp adds `summary: "auto"` to the Responses reasoning object,
+#     and LiteLLM's Responses -> chat-completions bridge — tabbyAPI, Project Maya —
+#     would otherwise forward the whole {effort, summary} object as reasoning_effort,
+#     which both reject), and the 8192 thinking budget on the Qwen line (vLLM enforces
+#     it on the THINKING field, not the reply; SGLang ignores it).
 bash "$ROOT/scripts/omp-setup.sh" --print | python3 -c '
 import sys, yaml
 mo = yaml.safe_load(sys.stdin.read())["providers"]["club"]["modelOverrides"]
 bad = []
 for mid, v in mo.items():
-    t, c = v.get("thinking") or {}, v.get("compat") or {}
-    if mid == "glm-5.3-flash":
-        if t.get("efforts") != ["low", "high", "max"] or t.get("defaultLevel") != "max": bad.append(f"{mid}: ladder {t}")
-        if c.get("supportsReasoningSummary") is not False: bad.append(f"{mid}: must set supportsReasoningSummary: false")
-    else:
-        if t.get("efforts") != ["low", "medium", "xhigh"]: bad.append(f"{mid}: ladder {t}")
-        flash = mid.startswith("qwen3.8-flash-next") or mid.startswith("swift-1.5")
-        if flash and c.get("supportsReasoningSummary") is not False: bad.append(f"{mid}: must set supportsReasoningSummary: false")
-        if not flash and "supportsReasoningSummary" in c: bad.append(f"{mid}: the 27B overrides keep their measured shape")
+    c = v.get("compat") or {}
+    if mid in ("qwen3.8-flash-next", "glm-5.3-flash"):
+        if c.get("supportsReasoningSummary") is not False: bad.append("%s: must set supportsReasoningSummary: false" % mid)
+    elif "supportsReasoningSummary" in c:
+        bad.append("%s: the Qwen line keeps its measured shape (no summary pin)" % mid)
+    if mid in ("qwen3.8-27b", "thinkingcap38-27b", "qwen3.8-flash-next"):
+        if c.get("extraBody", {}).get("thinking_token_budget") != 8192: bad.append("%s: must pin the 8192 thinking budget" % mid)
+    elif "extraBody" in c:
+        bad.append("%s: no thinking budget on this family" % mid)
 if bad:
     print("  " + "\n  ".join(bad), file=sys.stderr); sys.exit(1)
-' || bad "omp-setup.sh overrides: wrong effort ladder or summary setting (see above)"
+' || bad "omp-setup.sh overrides: wrong compat pins (see above)"
+
 
 # 7. the config.yml block the doc tells readers to paste == the overlay we ship
 python3 - "$ROOT/docs/CODING_AGENTS.md" "$ROOT/services/omp/omp-club.yml" <<'PY' || bad "docs/CODING_AGENTS.md's config.yml block and services/omp/omp-club.yml have drifted apart"
@@ -340,5 +278,5 @@ sys.exit(0 if json.load(io.open(sys.argv[1], encoding="utf-8"))["renderedCfg"] =
 PY
 
 
-[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served ids, Flash-Next + GLM keys and ladders, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container)"
+[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served names, per-family ladders and defaults, compat pins, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container)"
 exit "$fail"
