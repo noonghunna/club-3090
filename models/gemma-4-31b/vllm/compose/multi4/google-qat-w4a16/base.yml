@@ -165,6 +165,9 @@ services:
       # Keep >1 GiB physical VRAM outside vLLM for sustained agent/checkpoint overhead.
       # Final MTP n=2 stress leaves 1,213 MiB at 0.91; another 1% would cross the gate.
       - "${GPU_MEMORY_UTILIZATION:-0.91}"
+      # vLLM v0.34.0's extensible KV cache holds a >=1 GiB margin on top of this
+      # fraction, so 262K no longer fits on 24 GB cards (vllm#68184, docs/UPSTREAM.md).
+      - --no-enable-extensible-kv-cache
       # --max-num-seqs is a cap, not a KV reservation. Keep two streams available;
       # the measured pool determines whether two long requests can overlap.
       - --max-num-seqs

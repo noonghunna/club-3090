@@ -161,6 +161,9 @@ services:
       - "${MAX_MODEL_LEN:-${CTX:-229376}}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      # vLLM v0.34.0's extensible KV cache holds a >=1 GiB margin on top of this
+      # fraction, so 262K no longer fits on 24 GB cards (vllm#68184, docs/UPSTREAM.md).
+      - --no-enable-extensible-kv-cache
       # bf16 KV is ~2×/token vs int8-PTH → tighter pool. --max-num-seqs is a CAP:
       #   2 = one un-preempted long-ctx agent (or 2 short) · 1 = single long request
       # ⚠️ vision + near-max ctx: drop max-num-seqs/mem-util (thin headroom near 224K).

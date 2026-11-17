@@ -214,6 +214,9 @@ services:
       # a concurrent prefill. 0.88–0.90 is the safe "more room" bump; boot + soak before trusting >0.90.
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.85}"
+      # vLLM v0.34.0's extensible KV cache holds a >=1 GiB margin on top of this
+      # fraction, so 262K no longer fits on 24 GB cards (vllm#68184, docs/UPSTREAM.md).
+      - --no-enable-extensible-kv-cache
       # No --quantization flag: vLLM auto-detects the mixed NVFP4/FP8 scheme from the
       # checkpoint's quant config (faithful to NVIDIA). If auto-detect misfires on
       # Ampere, try:  --quantization modelopt_fp4

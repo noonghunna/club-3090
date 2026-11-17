@@ -360,6 +360,9 @@ services:
       - "${MAX_MODEL_LEN:-65536}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.85}"
+      # vLLM v0.34.0's extensible KV cache holds a >=1 GiB margin on top of this
+      # fraction, so 262K no longer fits on 24 GB cards (vllm#68184, docs/UPSTREAM.md).
+      - --no-enable-extensible-kv-cache
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-1}"
       - --max-num-batched-tokens

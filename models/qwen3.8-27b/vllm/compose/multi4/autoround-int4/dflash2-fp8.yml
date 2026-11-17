@@ -294,6 +294,9 @@ services:
       - "${MAX_MODEL_LEN:-262144}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      # vLLM v0.34.0's extensible KV cache holds a >=1 GiB margin on top of this
+      # fraction, so 262K no longer fits on 24 GB cards (vllm#68184, docs/UPSTREAM.md).
+      - --no-enable-extensible-kv-cache
       - --max-num-seqs
       # ⚠️ 2 here (dual is 1): at TP=4 freed weights SHOULD leave room for the
       # drafter + 2 streams — UNTESTED on 2 GPUs. OOM -> lower this or SPEC_N=0.
