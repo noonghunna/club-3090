@@ -491,17 +491,18 @@ if len(failures) == n0:
 # An engine-level `supports_none: true` says the engine maps `none` to
 # enable_thinking=false before the template runs; whether THIS model's template
 # then closes the thinking block is the model's contract. A ladder model on
-# such an engine advertises `supports_none: true` the moment it probes a
-# ladder, so its pair entry must exist AND carry the pair's own
-# `supports_none` with its citation — before the advertise is trusted: an
-# entry holding only fold facts would leave the route advertising a wire none
-# claim resting on nothing pair-specific (#1951 review r7 + r8). `off_switch`
-# does NOT satisfy this: it records how thinking turns OFF (the kwargs form),
-# not whether `none` is honored, and the emit reads only the pair's
-# `supports_none` — an off_switch-only entry would leave the advertise on the
-# engine-level claim (#2055 review it7-2). `false` engines need no entry: the
-# server ignoring `none` is engine-level behaviour, and the advertise
-# direction is conservative.
+# such an engine does NOT inherit the engine's claim: the emit carries a pair's
+# `supports_none` only from the pair itself — inheriting True for an unprobed
+# pair is the r6/r8 failure #2055 review it10-3 corrects — so an entry holding
+# only fold facts leaves the route advertising NO none claim: safe, but
+# unverified. Check 5d forces the pair to record its own `supports_none` with
+# its citation, so the advertise, when it appears at all, rests on THIS model's
+# template (#1951 review r7 + r8). `off_switch` does NOT satisfy this: it
+# records how thinking turns OFF (the kwargs form), not whether `none` is
+# honored, and the emit reads only the pair's `supports_none` — an
+# off_switch-only entry also leaves the route advertising nothing (#2055
+# review it7-2). `false` engines need no entry: the server ignoring `none` is
+# engine-level behaviour, and the advertise direction is conservative.
 n0 = len(failures)
 for e in entries.values():
     m, eng_id = e.get("model"), e.get("engine")
@@ -517,13 +518,14 @@ for e in entries.values():
     pair = (eff.get("by_model") or {}).get(m)
     if not pair:
         bad(f"{m} on {eng_id}: probed ladder {levels} but no by_model entry — the "
-            f"route advertises the engine's supports_none: true without a pair "
-            f"fact citing THIS model's template (verify it honors `none`, or "
-            f"record the pair's own measurement in its by_model entry)")
+            f"emit drops the engine-level supports_none (it never inherits True, "
+            f"#2055 review it10-3), so the route advertises NO none claim today; "
+            f"verify THIS model's template honors `none` and record the pair's "
+            f"own measurement to make the advertise appear")
     elif "supports_none" not in pair:
         bad(f"{m} on {eng_id}: by_model entry holds fold facts but no pair "
-            f"supports_none claim — the route advertises the engine's "
-            f"supports_none: true resting on nothing pair-specific; declare "
+            f"supports_none claim — the route advertises no none claim (the emit "
+            f"drops the engine-level one rather than inherit it); declare "
             f"the pair's own supports_none with its citation (#1951 review r8, "
             f"#2055 review it7-2: off_switch is not a none claim and the emit "
             f"reads only the pair's supports_none)")
