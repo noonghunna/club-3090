@@ -395,7 +395,7 @@ Not hardware, but the same "we pass it — does the pinned engine still take it?
 | TabbyAPI | `--reasoning` default False → True; reasoning tokens and `--tool-format` default to auto (we pass all explicitly) | §5 |
 | llama.cpp b10920 → b12359 | `--port` default 8080 → 9931 (we pass 8080); mainline `--moe-cache-mib` / `--moe-cache-cpu-share` added (unused); `--no-mmap` users 1 → 0 | §6 |
 | Strata 0.2.12 → 0.2.13, Maya v1.1.61 → v1.1.65, QEngine 1.3.5.9 → 1.3.6 | no flag or env we pass was removed or renamed | §§9–11 |
-| Maya | GLM `MAYA_PCIE_SHARE` / `MAYA_CPU_LANE` exported under `STRATA_GLM_*` names the engine reads only through a legacy alias | §10 |
+| Maya | GLM `MAYA_PCIE_SHARE` / `MAYA_CPU_LANE` exported under `STRATA_GLM_*` names the engine reads only through a legacy alias (the launcher exports `MAYA_GLM_*` since 2026-11-17) | §10 |
 
 ⚠️ **The reach table will rot the same way the rows above do.** It describes *injection*, which changes whenever a resolver or a launcher gate does — unlike §§1–6 and 8–11, which change when an engine pin or a compose moves. Re-derive it with `resolve_variant_pin` across the registry rather than trusting the numbers here.
 
@@ -538,6 +538,7 @@ Pin `ghcr.io/noonghunna/strata-maya-club3090@sha256:bfb38143…` = Maya **v1.1.6
   - They still arrive, because `server.py` imports `tools/maya_names.py`, whose `alias_env` copies every `STRATA_X` to `MAYA_X` `[maya-src c81fab6c]`. They work through a legacy alias, not by name.
   - Not new at this pin: v1.1.61 already read only the `MAYA_` names.
   - `docs/engines/STRATA_MAYA.md` still describes the old names.
+  - **Since 2026-11-17** the launcher exports `MAYA_GLM_PCIE_SHARE` / `MAYA_GLM_CPU_LANE` itself, and `STRATA_MAYA.md` gives those names, so neither depends on the alias any more.
 - **`--engine strata` (16/16) is a legacy spelling.** `server.py` keeps it as "the old name, kept for older scripts" and rewrites it to `maya` `[maya-src c81fab6c]`. The help lists `{mock,maya,strata}`.
 - **Upstream's help contradicts its own source on GLM `--kv`.**
   - `build/maya --help` says "default fp16 until gate G-C accepts int8".
@@ -567,7 +568,7 @@ Pin `ghcr.io/noonghunna/strata-maya-club3090@sha256:bfb38143…` = Maya **v1.1.6
 | — (not passed) | expert pool in VRAM: GLM `--expert-cache auto` / `--vram-reserve-mib` (default 700); mm3 `--cache-gb` / `--reserve-gb`; ds4 `--reserve-mib` / `--vram-experts` | `[maya-bin v1.1.65]` | 0/16 — engine defaults | `engine-auto` — "takes the free VRAM less the reserve" (GLM help) |
 | — (`LIT`) | `--prefill auto` (GLM) | "the largest chunk up to 8192 whose buffers the expert cache can lend" `[maya-bin v1.1.65]` | GLM 11 | `engine-auto` |
 | — (`LIT`) | `--expert-profile data/expert-profile-glm.bin` (GLM) · `--profile data/expert-profile-mm3.bin` (mm3) | GLM: "pre-load the VRAM tier from a profile.bin" `[maya-bin v1.1.65]`; mm3 `--profile`: parsed, not in the usage line (`mm3_main.cpp`) `[maya-src c81fab6c]` | 11 · 2 | — (which experts first; how many is the pool's fit) |
-| `MAYA_PCIE_SHARE` · `MAYA_CPU_LANE` | exported as `STRATA_GLM_PCIE_SHARE` / `STRATA_GLM_CPU_LANE` when non-empty `[maya-launcher]` → aliased to `MAYA_GLM_*` by `maya_names.alias_env` | share of a route's RAM-tier experts sent over PCIe (0..1); CPU-lane threads (0 = off), default one per physical core; unset = timed at start (`lane_plan`) `[maya-src c81fab6c]` — **the `STRATA_` names are not read** | GLM 11/11 — `${…:-}` (unset) | `engine-auto` (measured per machine at start) |
+| `MAYA_PCIE_SHARE` · `MAYA_CPU_LANE` | exported as `STRATA_GLM_PCIE_SHARE` / `STRATA_GLM_CPU_LANE` when non-empty `[maya-launcher]` → aliased to `MAYA_GLM_*` by `maya_names.alias_env` (since 2026-11-17 exported as `MAYA_GLM_PCIE_SHARE` / `MAYA_GLM_CPU_LANE` directly) | share of a route's RAM-tier experts sent over PCIe (0..1); CPU-lane threads (0 = off), default one per physical core; unset = timed at start (`lane_plan`) `[maya-src c81fab6c]` — **the `STRATA_` names are not read** | GLM 11/11 — `${…:-}` (unset) | `engine-auto` (measured per machine at start) |
 | `THREADS` | `--cpu-threads N`; unset = nproc/2 of the container's affinity (`threads()`) `[maya-launcher]` | `--cpu-threads N` `[maya-bin v1.1.65]` | mm3 2 + ds4 3 — pass-through, unset | CPU count, computed in-container (same floor as `launcher-bash:resolve_offload_threads`, which does not fire here) |
 | `MMAP_EXPERTS` | `--mmap-experts on\|off\|auto` (ds4) `[maya-launcher]` | `--mmap-experts on\|off\|auto` `[maya-bin v1.1.65]`; auto = copy into RAM when they all fit (compose comment) | ds4 3 — pass-through, unset (= engine's auto) | `engine-auto` (host RAM) |
 | `DS4_RAM_MARGIN_GB` | engine env (pass-through) | RAM left to the rest, default 8 GiB, 0–4096 (`src/ds4/ds4_model.cu`) `[maya-src c81fab6c]` | ds4 3 — pass-through, unset | Host RAM — `bare` |
