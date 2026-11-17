@@ -1532,6 +1532,29 @@ if [[ -z "$RESUME" && -n "${CONTAINER:-}" && "${CONTAINER}" != "none" ]] \
     if [[ "$_rc_kind" == "unknown" ]]; then
       _rc_kind="$(engine_kind_from_image "$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)")"
     fi
+    if [[ "$_rc_kind" == "unknown" ]]; then
+      # #2084: the container name and the image ref both said nothing (a run by bare
+      # image ID, or an untagged image under a name with no engine prefix — a
+      # repository-and-digest reference never reaches here, Config.Image keeps the
+      # repository). The endpoint itself declares its engine in /v1/models' owned_by,
+      # the same last resort health.sh, verify-stress.sh and capture.sh use. Same
+      # bearer discipline as the reachability probe above: header from a process
+      # substitution, `command curl` to skip engine-auth's wrapper.
+      if [[ -n "$API_KEY" ]]; then
+        _rc_models="$(command curl -s -m 8 -H @<(printf 'Authorization: Bearer %s\n' "$API_KEY") "${URL}/v1/models" 2>/dev/null || true)"
+      else
+        _rc_models="$(command curl -s -m 8 "${URL}/v1/models" 2>/dev/null || true)"
+      fi
+      _rc_owned="$(printf '%s' "$_rc_models" | python3 -c "import sys,json;d=json.load(sys.stdin);print((d.get('data') or [{}])[0].get('owned_by',''))" 2>/dev/null || true)"
+      if [[ -n "$_rc_owned" ]]; then
+        _rc_kind="$(engine_kind_from_owned_by "$_rc_owned")"
+      fi
+      if [[ "$_rc_kind" == "unknown" ]]; then
+        # No more silence: today a log reads as "looked and found nothing" when
+        # nothing was looked for. Say the resolver gave up, so no sampler row is claimed.
+        echo "[run-context] no engine recognised (container name, image ref and /v1/models owned_by all said nothing) — no sampler row is claimed" >&2
+      fi
+    fi
     # #2030: QEngine (1.3.5.3+) prints ONE sampling row per reasoning mode, so the
     # row recorded has to be the one THIS leg ran under. --both-modes re-execs the
     # wrapper per leg with --no-thinking / --enable-thinking, so each leg resolves
