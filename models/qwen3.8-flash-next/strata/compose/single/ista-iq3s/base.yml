@@ -8,6 +8,9 @@
 #   Topology:  Single 3090 (GPU0; ESTATE_GPUS picks another), Strata `--gpu 0`. Shares the data
 #              volume (install, pack, MTP layer, config) with the dual slug; only the start flag differs.
 #   Drafter:   MTP — Strata's own draft layer (--spec 4, min-p 0.5), fetched into the data volume at setup
+#              ⚠️ Measured on pins that ran the MTP. On the pinned 0.2.13, Auto's CUDA default for this set is DFlash2
+#              (strata_control/drafting.py), which falls back to the MTP on a streaming-class card, a layer split
+#              or several requests at once. Not re-checked here: the weights aren't on the reference rig
 #   KV:        Strata default (int8): 32K cells in VRAM, the rest streamed to RAM
 #   Vision:    no
 #   Max ctx:   131072

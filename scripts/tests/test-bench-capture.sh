@@ -796,6 +796,38 @@ gq '2;x' cap_vram_used >/dev/null && fail "a malformed BENCH_GPUS must fail, not
 gq '2;x' cap_gpus_valid && fail "cap_gpus_valid must reject '2;x'"
 echo "  ✓ BENCH_GPUS: sums, labels, dmon and link state follow the selection; absent/malformed = unavailable"
 
+# --- BENCH_GPUS unset: the serving process's cards (#2081) -------------------------
+# A slug on GPUs 0,1 of a four-card box was measured over all four, its VRAM summed
+# with two idle neighbours. Unset, cap_init now narrows to the cards the server's
+# process tree holds a compute context on, by nvidia-smi's compute apps. A real
+# parent + child, with the context on the CHILD, so the tree walk is exercised.
+bash -c 'sleep 600 & wait' & _gp=$!
+_gc=""; for _i in 1 2 3 4 5 6 7 8 9 10; do _gc="$(pgrep -P "$_gp" | head -1)"; [[ -n "$_gc" ]] && break; sleep 0.2; done
+[[ -n "$_gc" ]] || fail "could not start the parent/child pair for the GPU-follow test"
+gi() {   # $1=FAKE_APPS $2=SERVER_PID $3=BENCH_GPUS → "BENCH_GPUS|CAP_NGPU|vram|CAP_GPUS_SOURCE"
+  PATH="$TMP/bin:$PATH" FAKE_NGPU=3 FAKE_VRAM_MIB=22000,22000,1000 FAKE_APPS="$1" \
+    SERVER_PID="$2" CONTAINER=none BENCH_GPUS="$3" \
+    bash -c "source '$LIB'; cap_init '$TMP'; echo \"\${BENCH_GPUS:-}|\$CAP_NGPU|\$(cap_vram_used)|\$CAP_GPUS_SOURCE\"" 2>/dev/null
+}
+_r="$(gi "$_gc:2" "$_gp" '')"
+[[ "$_r" == "2|1|1000|the serving process's cards; BENCH_GPUS=all for every card" ]] \
+  || fail "unset BENCH_GPUS must narrow to the card the server's child holds (GPU2), got: $_r"
+_r="$(gi "$_gc:2" "$_gp" all)"
+[[ "$_r" == "|3|45000|every card: BENCH_GPUS=all" ]] || fail "BENCH_GPUS=all must measure every card, got: $_r"
+_r="$(gi "$_gc:2" "$_gp" 0)"
+[[ "$_r" == "0|1|22000|" ]] || fail "an explicit BENCH_GPUS must win over the server's cards, got: $_r"
+_r="$(gi "" "$_gp" '')"
+[[ "$_r" == "|3|45000|" ]] || fail "no compute context found must fall back to every card, got: $_r"
+_r="$(gi "999999:2" "$_gp" '')"
+[[ "$_r" == "|3|45000|" ]] || fail "another process's context must not count as the server's, got: $_r"
+_r="$(gi "$_gc:0,$_gc:1,$_gc:2" "$_gp" '')"
+[[ "$_r" == "|3|45000|the serving process uses every card" ]] \
+  || fail "a server on every card must keep every card and say so, got: $_r"
+_r="$(gi "$_gc:2" none '')"
+[[ "$_r" == "|3|45000|" ]] || fail "SERVER_PID=none must not look for the server's cards, got: $_r"
+kill "$_gc" "$_gp" 2>/dev/null || true; wait "$_gp" 2>/dev/null || true   # a killed job exits 143
+echo "  ✓ BENCH_GPUS unset follows the server's cards (child context, explicit wins, =all, none found, foreign pid, SERVER_PID=none)"
+
 # ===========================================================================
 # TIER 1b — end-to-end bench.sh against the fake server
 # ===========================================================================

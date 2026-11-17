@@ -425,6 +425,11 @@ services:
       # does NOT turn align off. PREFIX_CACHE_ARG=--no-enable-prefix-caching does (it
       # drops prefix caching too). The A/B above therefore ran align in both arms; its
       # win is most likely --prefix-match-unit 16. See docs/UPSTREAM.md, mamba-align row.
+      # ⚠️ 2026-11-17: --mamba-cache-mode is no longer passed. vLLM v0.33.0 deprecates it
+      # with no effect ("Mamba prefix caching follows --enable-prefix-caching"), and
+      # v0.32.0, the rollback pin, puts this hybrid model in align itself whenever prefix
+      # caching is on, so dropping the flag changes nothing on either pin. MAMBA_CACHE_MODE
+      # no longer does anything.
       # ⚠️ CORRECTED 2026-09-11 (club-3090#1246): pmu is inert unless align is
       # active — AND inert whenever the MTP drafter is on, which is the default
       # on this compose. Measured on vllm/qwen38-27b-dual-max (v0.27.1; 7 prompt
@@ -440,8 +445,6 @@ services:
       # was measured — don't quote 1,600 for this compose without checking.
       # NOT a reason to drop MTP: it buys decode throughput, and which side wins
       # end-to-end is UNBENCHED.
-      - --mamba-cache-mode
-      - "${MAMBA_CACHE_MODE:-align}"
       - --prefix-match-unit
       - "${PREFIX_MATCH_UNIT:-16}"
       - --reasoning-parser

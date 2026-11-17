@@ -352,6 +352,40 @@ def parse_quality(blob: dict | None) -> dict:
     }
 
 
+def _quality_section(lines: list, quality: dict, heading: str) -> None:
+    """One quality block: the table, the paste-ready schema line and the failure examples.
+
+    Pulled out of the renderer so the thinking-OFF and thinking-ON legs can share it —
+    `--with-8pack-thinking=both` writes `quality-full.json` and `quality-full-thinking.json`,
+    and only the first used to be rendered (the ON leg then looked unmeasured)."""
+    lines.append(heading)
+    lines.append("")
+    if quality.get("packs"):
+        lines.append("| Pack | Pass / Total | Score | p50 latency | p95 latency |")
+        lines.append("|---|---:|---:|---:|---:|")
+        for p in quality["packs"]:
+            p50 = f"{p['p50_latency_s']:.2f}s" if p.get("p50_latency_s") is not None else "—"
+            p95 = f"{p['p95_latency_s']:.2f}s" if p.get("p95_latency_s") is not None else "—"
+            lines.append(f"| {p['pack_id']} | {p['passed']} / {p['total']} | {p['score_pct']}% | {p50} | {p95} |")
+        lines.append(f"| **TOTAL** | **{quality['total_passed']} / {quality['total_total']}** | **{quality['total_pct']}%** | | |")
+        if quality.get("one_liner"):
+            lines.append("")
+            lines.append("**Paste-ready compose `Quality:` schema line:**")
+            lines.append("```")
+            lines.append(quality["one_liner"])
+            lines.append("```")
+        if quality.get("failure_examples"):
+            lines.append("")
+            lines.append("**Failure examples (top 3 per pack):**")
+            for pack, examples in sorted(quality["failure_examples"].items()):
+                lines.append(f"- `{pack}`:")
+                for ex in examples:
+                    lines.append(f"  - {ex}")
+    else:
+        lines.append("_(quality JSON missing or unparsed)_")
+    lines.append("")
+
+
 # --- section: soak ----------------------------------------------------------
 
 def parse_soak(log: str) -> dict:
@@ -612,33 +646,22 @@ def render(report: dict) -> str:
     lines.append("")
 
     # --- quality ---
+    # A `=both` (or `=on`) run writes a second leg. Render it, and name the mode on both so a
+    # reader can tell which leg a number came from. A run with only the OFF leg keeps the
+    # original heading and wording, so existing reports do not change shape.
     quality = report.get("quality", {})
-    lines.append("## Quality — `quality-test.sh --full`")
-    lines.append("")
-    if quality.get("packs"):
-        lines.append("| Pack | Pass / Total | Score | p50 latency | p95 latency |")
-        lines.append("|---|---:|---:|---:|---:|")
-        for p in quality["packs"]:
-            p50 = f"{p['p50_latency_s']:.2f}s" if p.get("p50_latency_s") is not None else "—"
-            p95 = f"{p['p95_latency_s']:.2f}s" if p.get("p95_latency_s") is not None else "—"
-            lines.append(f"| {p['pack_id']} | {p['passed']} / {p['total']} | {p['score_pct']}% | {p50} | {p95} |")
-        lines.append(f"| **TOTAL** | **{quality['total_passed']} / {quality['total_total']}** | **{quality['total_pct']}%** | | |")
-        if quality.get("one_liner"):
-            lines.append("")
-            lines.append("**Paste-ready compose `Quality:` schema line:**")
-            lines.append("```")
-            lines.append(quality["one_liner"])
-            lines.append("```")
-        if quality.get("failure_examples"):
-            lines.append("")
-            lines.append("**Failure examples (top 3 per pack):**")
-            for pack, examples in sorted(quality["failure_examples"].items()):
-                lines.append(f"- `{pack}`:")
-                for ex in examples:
-                    lines.append(f"  - {ex}")
+    quality_on = report.get("quality_thinking") or {}
+    off_has = bool(quality.get("packs"))
+    on_has = bool(quality_on.get("packs"))
+    if off_has and on_has:
+        _quality_section(lines, quality, "## Quality (thinking OFF) — `quality-test.sh --full --no-thinking`")
+        _quality_section(lines, quality_on, "## Quality (thinking ON) — `quality-test.sh --full --enable-thinking`")
+    elif on_has:
+        _quality_section(lines, quality_on, "## Quality (thinking ON) — `quality-test.sh --full --enable-thinking`")
+        lines.append("_(no thinking-OFF leg in this tag: the run passed `--with-8pack-thinking=on`)_")
+        lines.append("")
     else:
-        lines.append("_(quality JSON missing or unparsed)_")
-    lines.append("")
+        _quality_section(lines, quality, "## Quality — `quality-test.sh --full`")
 
     # --- soak ---
     soak = report.get("soak", {})
@@ -772,9 +795,17 @@ def render_discuss(report: dict) -> str:
         lines.append(f"**Stress:** {passed}/{total} checks PASS.")
         lines.append("")
     q = report.get("quality", {})
+    q_on = report.get("quality_thinking") or {}
+    both_legs = bool((q_on or {}).get("packs"))
     if q.get("packs"):
         rows = " · ".join(f"{p['pack_id']} {p['passed']}/{p['total']} ({p['score_pct']}%)" for p in q["packs"])
-        lines.append(f"**Quality:** {q['total_passed']}/{q['total_total']} ({q['total_pct']}%) — {rows}")
+        label = "Quality (thinking OFF)" if both_legs else "Quality"
+        lines.append(f"**{label}:** {q['total_passed']}/{q['total_total']} ({q['total_pct']}%) — {rows}")
+        lines.append("")
+    if q_on.get("packs"):
+        rows = " · ".join(f"{p['pack_id']} {p['passed']}/{p['total']} ({p['score_pct']}%)" for p in q_on["packs"])
+        lines.append(f"**Quality (thinking ON):** {q_on['total_passed']}/{q_on['total_total']} "
+                     f"({q_on['total_pct']}%) — {rows}")
         lines.append("")
     soak = report.get("soak", {})
     if soak:
@@ -829,9 +860,16 @@ def compute_tldr(report: dict) -> list[str]:
         total = len(stress["checks"])
         bullets.append(f"Verify-stress: **{passed}/{total}** boundary checks PASS.")
     q = report.get("quality", {})
+    q_on = report.get("quality_thinking") or {}
     if q.get("total_total"):
+        mode = " (thinking OFF)" if q_on.get("total_total") else ""
         bullets.append(
-            f"Quality (8 packs, {q['total_total']} scenarios): **{q['total_passed']}/{q['total_total']} ({q['total_pct']}%)**."
+            f"Quality{mode} (8 packs, {q['total_total']} scenarios): **{q['total_passed']}/{q['total_total']} ({q['total_pct']}%)**."
+        )
+    if q_on.get("total_total"):
+        bullets.append(
+            f"Quality (thinking ON) (8 packs, {q_on['total_total']} scenarios): "
+            f"**{q_on['total_passed']}/{q_on['total_total']} ({q_on['total_pct']}%)**."
         )
     soak = report.get("soak", {})
     if soak.get("verdict"):
@@ -998,6 +1036,8 @@ def main(argv=None):
     stress_log = read_file(tag_dir / "verify-stress.log")
     quality_blob = read_json(tag_dir / "quality-full.json")
     quality_log = read_file(tag_dir / "quality-full.log")
+    quality_thinking_blob = read_json(tag_dir / "quality-full-thinking.json")
+    quality_thinking_log = read_file(tag_dir / "quality-thinking.log")
     soak_log = read_file(tag_dir / "soak.log")
     aider_blob = read_json(tag_dir / "aider-polyglot.json")
     container_blob = read_json(tag_dir / "container-config.json")
@@ -1029,6 +1069,12 @@ def main(argv=None):
     if one_liner:
         quality["one_liner"] = one_liner
 
+    # the thinking leg (`--with-8pack-thinking=on|both`) — its own JSON and log, rendered separately
+    quality_thinking = parse_quality(quality_thinking_blob)
+    one_liner_on = extract_quality_oneliner(quality_thinking_log)
+    if one_liner_on:
+        quality_thinking["one_liner"] = one_liner_on
+
     report = {
         "tag": tag_dir.name,
         "tag_dir": str(tag_dir),
@@ -1045,6 +1091,7 @@ def main(argv=None):
         "bench": parse_bench(bench_log),
         "verify_stress": parse_verify_stress(stress_log),
         "quality": quality,
+        "quality_thinking": quality_thinking,
         "soak": parse_soak(soak_log),
         "aider": parse_aider(aider_blob),
         "timings": timings_blob,
@@ -1069,6 +1116,12 @@ def main(argv=None):
             "total_total": report["quality"].get("total_total"),
             "total_pct": report["quality"].get("total_pct"),
             "packs": report["quality"].get("packs"),
+        },
+        "quality_thinking": {
+            "total_passed": report["quality_thinking"].get("total_passed"),
+            "total_total": report["quality_thinking"].get("total_total"),
+            "total_pct": report["quality_thinking"].get("total_pct"),
+            "packs": report["quality_thinking"].get("packs"),
         },
         "aider": {
             "passed_count": report["aider"].get("passed_count"),
