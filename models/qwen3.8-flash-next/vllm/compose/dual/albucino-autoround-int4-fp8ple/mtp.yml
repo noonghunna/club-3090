@@ -413,8 +413,9 @@ services:
       - --enable-chunked-prefill
       - --long-prefill-token-threshold
       - "${LONG_PREFILL_TOKEN_THRESHOLD:-4096}"
-      - --mamba-cache-mode
-      - "${MAMBA_CACHE_MODE:-align}"
+      # (no --mamba-cache-mode since 2026-11-17: vLLM v0.33.0 deprecates it with no effect,
+      # and v0.32.0, the rollback pin, picks align itself whenever prefix caching is on.
+      # MAMBA_CACHE_MODE no longer does anything.)
       - --reasoning-parser
       - qwen3
       - --enable-auto-tool-choice
