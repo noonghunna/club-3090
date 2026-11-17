@@ -147,10 +147,14 @@
 #   BENCH_GPUS         Cards to measure: comma-separated nvidia-smi indices or GPU
 #                      UUIDs (`BENCH_GPUS=2`, `BENCH_GPUS=0,1`). VRAM idle/peak/post,
 #                      PCIe dmon and link state, and the closing GPU-state table then
-#                      read only those cards. Set it whenever the box serves anything
-#                      else: the VRAM figures are SUMS, so unset they include every
-#                      neighbour. Default: all GPUs. A malformed or absent selection
-#                      stops the run rather than measure the wrong cards.
+#                      read only those cards. Default: the cards the serving process
+#                      holds a compute context on (nvidia-smi's compute apps for the
+#                      container's processes, or the serving pid's tree), when that is
+#                      fewer than every card; else all GPUs. The VRAM figures are SUMS,
+#                      so set it when the server can't be found and the box serves
+#                      anything else. BENCH_GPUS=all measures every card. A malformed
+#                      or absent selection stops the run rather than measure the
+#                      wrong cards.
 #   SHORT_EOS_FRAC     A run whose completion is below this fraction of max_tokens
 #                      counts as a short-EOS run and is excluded from "n-usable".
 #                      Chat-tuned models EOS early and silently degenerate a 5-run
@@ -688,7 +692,7 @@ if [[ "$CAPTURE" == "1" && -f "${ROOT_DIR}/scripts/lib/capture.sh" ]]; then
     echo "  serving pid    : unknown (set SERVER_PID=<pid> for argv/RSS/swap capture)"
   fi
   echo "  log source     : ${CAP_LOG_SOURCE:-none}${SERVER_LOG:+ (${SERVER_LOG})}"
-  echo "  GPUs measured  : ${BENCH_GPUS:-all} (${CAP_NGPU} card(s); BENCH_GPUS)"
+  echo "  GPUs measured  : ${BENCH_GPUS:-all} (${CAP_NGPU} card(s); ${CAP_GPUS_SOURCE:-BENCH_GPUS})"
   _v="$(cap_props_get "default_generation_settings.n_ctx" || true)"
   _s="$(cap_props_get "total_slots" || true)"
   [[ -n "$_v" ]] && echo "  served ctx     : ${_v}${_s:+  (slots=${_s})}"

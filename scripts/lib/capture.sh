@@ -57,7 +57,9 @@
 #   SERVER_PID   pin the serving process; "none" disables /proc inspection
 #   URL          endpoint base, for /props
 #   BENCH_GPUS   limit every nvidia-smi read to these cards (comma-separated
-#                indices or GPU UUIDs, the `nvidia-smi -i` syntax). Unset = all.
+#                indices or GPU UUIDs, the `nvidia-smi -i` syntax). Unset: cap_init
+#                picks the serving process's cards (cap_server_gpus), else all;
+#                "all" = every card.
 
 [[ -n "${_CAPTURE_SH_LOADED:-}" ]] && return 0
 _CAPTURE_SH_LOADED=1
@@ -125,6 +127,7 @@ CAP_PID=""          # serving process pid, or "" when unknown
 CAP_LOG=""          # path to a readable log snapshot, or "" when unavailable
 CAP_LOG_SOURCE=""   # "server-log" | "docker" | ""
 CAP_NGPU=0
+CAP_GPUS_SOURCE=""  # why these cards: "" = BENCH_GPUS as given (or all)
 CAP_TMPDIR=""
 
 cap_gpu_count() {
@@ -136,6 +139,47 @@ cap_gpu_count() {
   else
     echo 0
   fi
+}
+
+# cap_pid_tree <pid> — the pid and all its descendants, one per line.
+cap_pid_tree() {
+  [[ "${1:-}" =~ ^[0-9]+$ ]] || return 1
+  ps -e -o pid=,ppid= 2>/dev/null | awk -v r="$1" '
+    { kids[$2] = kids[$2] " " $1 }
+    END { q[1] = r; n = 1; i = 1
+          while (i <= n) { p = q[i++]; print p; m = split(kids[p], c, " ")
+                           for (j = 1; j <= m; j++) q[++n] = c[j] } }'
+}
+
+# cap_server_gpus — the nvidia-smi indices (comma-separated, ascending) of the
+# cards the server holds a compute context on: the processes of CONTAINER when it
+# names a running one, else the serving pid's process tree. Read from
+# `nvidia-smi --query-compute-apps`, so it is what the engine actually opened, not
+# what a compose or CUDA_VISIBLE_DEVICES says (CUDA's numbering inside a container
+# need not match nvidia-smi's). Prints nothing and fails when nothing is found: no
+# server process, SERVER_PID=none, or no compute-app row for any of its pids.
+cap_server_gpus() {
+  cap_have nvidia-smi || return 1
+  [[ "${SERVER_PID:-}" == "none" ]] && return 1
+  local pids="" uuids idx
+  if [[ -n "${CONTAINER:-}" && "${CONTAINER}" != "none" ]] && cap_have docker; then
+    pids="$(docker top "$CONTAINER" -eo pid 2>/dev/null | awk 'NR > 1 && $1 ~ /^[0-9]+$/ { print $1 }')"
+  fi
+  if [[ -z "$pids" && -n "${CAP_PID:-}" ]]; then
+    pids="$(cap_pid_tree "$CAP_PID" || true)"
+  fi
+  [[ -n "$pids" ]] || return 1
+  uuids="$(nvidia-smi --query-compute-apps=pid,gpu_uuid --format=csv,noheader,nounits 2>/dev/null \
+           | awk -F', *' -v want="$(tr '\n' ' ' <<<"$pids")" '
+               BEGIN { n = split(want, a, " "); for (i = 1; i <= n; i++) w[a[i]] = 1 }
+               ($1 in w) && $2 ~ /^GPU-/ { print $2 }' | sort -u)"
+  [[ -n "$uuids" ]] || return 1
+  idx="$(nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits 2>/dev/null \
+         | awk -F', *' -v want="$(tr '\n' ' ' <<<"$uuids")" '
+             BEGIN { n = split(want, a, " "); for (i = 1; i <= n; i++) w[a[i]] = 1 }
+             $1 ~ /^[0-9]+$/ && ($2 in w) { print $1 }' | sort -n | paste -sd, -)"
+  [[ -n "$idx" ]] || return 1
+  echo "$idx"
 }
 
 # cap_server_pid — pid of the local serving process.
@@ -260,8 +304,31 @@ except Exception:
 # Safe to call more than once. Never fails the caller.
 cap_init() {
   CAP_TMPDIR="${1:-${CAP_TMPDIR:-$(mktemp -d 2>/dev/null || echo /tmp)}}"
+  # BENCH_GPUS unset measures the cards the server holds a compute context on
+  # (cap_server_gpus) when that is fewer than the host's: a slug on GPUs 0,1 of a
+  # four-card box was measured, and its VRAM summed, over all four (#2081).
+  # BENCH_GPUS=all measures every card; an explicit list always wins.
+  CAP_GPUS_SOURCE=""
+  if [[ "${BENCH_GPUS:-}" == "all" ]]; then
+    BENCH_GPUS=""
+    CAP_GPUS_SOURCE="every card: BENCH_GPUS=all"
+  fi
   CAP_NGPU="$(cap_gpu_count)"
   CAP_PID="$(cap_server_pid || true)"
+  if [[ -z "${BENCH_GPUS:-}" && -z "$CAP_GPUS_SOURCE" ]]; then
+    local _g _n
+    if _g="$(cap_server_gpus)"; then
+      _n="$(awk -F, '{ print NF }' <<<"$_g")"
+      if [[ "$_n" -lt "${CAP_NGPU:-0}" ]]; then
+        BENCH_GPUS="$_g"
+        export BENCH_GPUS
+        CAP_NGPU="$(cap_gpu_count)"
+        CAP_GPUS_SOURCE="the serving process's cards; BENCH_GPUS=all for every card"
+      else
+        CAP_GPUS_SOURCE="the serving process uses every card"
+      fi
+    fi
+  fi
 
   CAP_LOG=""; CAP_LOG_SOURCE=""
   if [[ -n "${SERVER_LOG:-}" ]]; then
