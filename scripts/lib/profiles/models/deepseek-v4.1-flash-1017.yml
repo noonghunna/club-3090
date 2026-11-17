@@ -25,6 +25,22 @@ compatible_drafters: [maya-dspark-xs2]
 kv_calc_supported: false
 requires_genesis: false
 
+# #1951 — honest placeholder: the strata-maya composes carry the
+# REASONING_EFFORT knob (the engine's SERVER-side effort), so the effort gate
+# fires, but the WIRE ladder for this model has never been probed. The render
+# emits NOTHING for it. Probe it like gate M10 and replace this block.
+effort:
+  status: unprobed
+  evidence: >-
+    ds4_settings.py is this model's launcher, NOT maya_settings.py:
+    DEFAULT_EFFORT = "high" (:51) and EFFORTS = {none, low, medium->high, high,
+    xhigh->max, max} (:54), applied at :120. Same fold table as GLM's launcher,
+    a different default — which is why the strata-maya engine block keeps these
+    facts under by_model.glm-5.3-flash and lists no entry here. Either way this
+    is the launcher's server-knob vocabulary, not a measured request-surface
+    promise for this model; no wire probe exists. Do not copy the knob's value
+    set to the wire without one.
+
 weights:
   ista-iq2-xxs:
     path: deepseek-v4.1-flash-1017-gsq-rco-gguf

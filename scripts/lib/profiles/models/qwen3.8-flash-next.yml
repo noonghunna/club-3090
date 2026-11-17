@@ -81,6 +81,26 @@ requires_genesis: false
 # SUMMED. Reading one pool's `used=N/N` as the device total under-reports badly.
 # ---------------------------------------------------------------------------
 
+# #1951 — the reasoning-effort surface, written down ONCE here; the gateway
+# render and the omp overrides read this instead of restating it. The compose
+# keeps the DEFAULT — note the Strata and bucko-vllm routes deliberately leave
+# REASONING_EFFORT unset and so run at xhigh (their engines'
+# `by_model.qwen3.8-flash-next.default_when_unset`); that is a per-route
+# default, not this ladder.
+effort:
+  levels: [low, medium, xhigh]
+  template_kwarg: true    # llama.cpp and Project Maya also read chat_template_kwargs.reasoning_effort
+  budget_map: true        # effort_budget.py LEVELS == this ladder (pinned by test-effort-profiles)
+  evidence: >-
+    Same template family as qwen3.8-27b: the vLLM composes mount
+    models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template and the
+    llamacpp-club3090 moecache compose the GGUF twin
+    (models/qwen3.8-flash-next/llamacpp-club3090/compose/dual/unsloth-ud-q4kxl/moecache.yml:110)
+    — both fold high->xhigh, minimal->low and max->xhigh, then raise_exception
+    on anything still outside low|medium|xhigh (`none`, unrecognized strings).
+    Wire-probed 2026-10-20 (qwen3.8-27b/llama-cpp/patches/
+    qwen38-gguf-reasoning-effort-template/PROVENANCE.md, the byte-identical template).
+
 weights:
   unsloth-ud-q4kxl:
     path: qwen3.8-flash-next-gguf/UD-Q4_K_XL

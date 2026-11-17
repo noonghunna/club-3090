@@ -223,6 +223,16 @@ class ModelProfile:
     # DECODE_GRANULARITY instead of the operator remembering the knob.
     decode_granularity: str = "token"
     canvas_tokens: int | None = None
+    # #1951 — the reasoning-effort surface this model accepts, written down ONCE
+    # here: the ladder the wire accepts, whether the chat-template form of the
+    # effort is read, and whether effort_budget.py's map covers the levels. The
+    # gateway render (litellm_sync) and the omp overrides both read this instead
+    # of restating it; the compose keeps the DEFAULT (principle 1: what a request
+    # that names no effort gets stays the compose's call). Shape: `levels:` +
+    # flags once probed on the served model, or `status:` for the honest
+    # non-ladder cases (no-thinking / unprobed / no-string-ladder). Guard:
+    # scripts/tests/test-effort-profiles.sh; contract: docs/ADDING_MODELS.md.
+    effort: Optional[dict[str, Any]] = None
 
     def hf_repos_for(self, variant: str) -> tuple[str, ...]:
         """v0.8.0 Pull-Gate — full HF slugs that resolve to this model's
@@ -293,6 +303,12 @@ class EngineProfile:
     # own tensor parallel and is tuned for three cards, a size vLLM's list leaves
     # out. Empty for every engine that runs the model's list.
     valid_tp_by_family: dict[str, tuple[int, ...]] = field(default_factory=dict)
+    # #1951 — what THIS engine changes about effort: its own default when the
+    # compose leaves REASONING_EFFORT unset, how it turns thinking off on the
+    # wire, which effort names it remaps or substitutes. Facts with evidence
+    # only (PROVENANCE / compose headers / source); absent means unknown, and
+    # the render must then render nothing for that fact, never a guess.
+    effort: Optional[dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -441,6 +457,34 @@ WEIGHTS_VARIANT_KEYS = {
     "act8_capable",
     "quant_label",
 }
+
+# Keys allowed inside a model profile's `effort:` block (#1951). Exactly one of
+# `levels:` (probed ladder) or `status:` must be present — checked by _effort().
+# The block is a mapping, never a scalar: `effort:` with NO value parses to null,
+# which is exactly what an absent block parses to. A model that cannot think says
+# `status: no-thinking` instead of naming a rung.
+MODEL_EFFORT_KEYS = {"status", "levels", "template_kwarg", "budget_map", "evidence"}
+MODEL_EFFORT_STATUSES = ("no-thinking", "unprobed", "no-string-ladder")
+
+# Keys allowed inside an engine profile's `effort:` block (#1951). What stays
+# here is what holds for EVERY model the engine serves: how the wire says "no
+# thinking", and whether it honors that. What a request gets when it names no
+# effort, and how an out-of-ladder name folds, are per (model, engine) PAIR —
+# strata-maya's three launchers default to max / high / auto and fold two of
+# them differently, and qwen3.8-flash-next folds differently on strata than on
+# vLLM. Those facts live in `by_model:` under the model id; an engine-level
+# `default_when_unset`/`maps` is refused rather than silently inherited by a
+# model it was never measured on (#1951 review r5).
+ENGINE_EFFORT_KEYS = {"off_switch", "supports_none", "unknown_name",
+                      "by_model", "evidence"}
+ENGINE_EFFORT_OFF_SWITCHES = ("none", "enable-thinking-kwarg")
+# Keys allowed inside one `effort.by_model.<model_id>:` entry: the pair-scoped half.
+ENGINE_EFFORT_PAIR_KEYS = {"default_when_unset", "maps"}
+# A pair entry carries its OWN provenance: the engine block's `evidence:` cites the
+# engine-wide facts (wire behaviour, server code), which say nothing about why THIS
+# model folds THIS way on it. Without it, adding a by_model entry is an uncited
+# copy — the exact failure the effort block exists to prevent (#1951 review r6).
+ENGINE_EFFORT_PAIR_ENTRY_KEYS = ENGINE_EFFORT_PAIR_KEYS | {"evidence"}
 
 # Keys allowed inside a model's `setup:` dispatch-policy dict (consumed by
 # weights.py's catalog derivation for setup.sh).
@@ -610,6 +654,9 @@ def _model(data: dict[str, Any], path: Path) -> ModelProfile:
     }
     if data.get("setup") is not None:
         nested["setup"] = (data["setup"], SETUP_KEYS)
+    # Same shape as the engine side: pass unconditionally — _check_profile_keys
+    # skips non-dict values itself, so both nested wirings stay symmetric.
+    nested["effort"] = (data.get("effort"), MODEL_EFFORT_KEYS)
     _check_profile_keys(path, data, MODEL_PROFILE_KEYS, nested)
     return ModelProfile(
         schema_version=data["schema_version"],
@@ -655,6 +702,7 @@ def _model(data: dict[str, Any], path: Path) -> ModelProfile:
         decode_granularity=_decode_granularity(data),
         canvas_tokens=(int(data["canvas_tokens"])
                        if data.get("canvas_tokens") is not None else None),
+        effort=_effort(data.get("effort"), path),
     )
 
 
@@ -736,9 +784,166 @@ def _valid_tp_by_family(raw: Any, families: tuple[str, ...], path: Path) -> dict
     return out
 
 
+def _effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
+    """Validate a model profile's `effort:` block (#1951). Shape only — the
+    cross-file invariants (compose default inside the ladder, budget_map vs
+    effort_budget.py, the gateway render) live in test-effort-profiles.sh."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ProfileError(
+            f"{path}: `effort:` must be a mapping with `levels:` or `status:` "
+            f"(a bare scalar is never valid, and `effort:` with no value parses to "
+            f"null — indistinguishable from an absent block), got {value!r}")
+    levels, status = value.get("levels"), value.get("status")
+    # A key that is PRESENT but null is a typo trap: an empty `key:` (or
+    # `key: null` / `key: ~`) parses to null, silently turning a measured fact
+    # into "absent" — the render then treats it as unknown (#1951 review r1-1).
+    # YAML 1.1 does NOT null the word `none`: measured on this rig 2026-11-15,
+    # `off_switch: none` loads as the STRING 'none'. The trap is the empty value,
+    # not the spelling — quoting that word is style, not a guard.
+    for key in MODEL_EFFORT_KEYS - {"evidence"}:
+        if key in value and value[key] is None:
+            raise ProfileError(
+                f"{path}: effort.{key} is explicitly null — an empty value, `null` "
+                f"or `~` parses to null (YAML does not null the word `none`: that is "
+                f"a string). Give the key a real value or drop it; null means "
+                f"UNKNOWN and must never be stored.")
+    if (levels is None) == (status is None):
+        raise ProfileError(
+            f"{path}: effort needs EXACTLY ONE of `levels:` (the probed ladder) "
+            f"or `status:` ({' / '.join(MODEL_EFFORT_STATUSES)}); got "
+            f"levels={levels!r} status={status!r}")
+    if levels is not None:
+        if (not isinstance(levels, list) or not levels
+                or not all(isinstance(x, str) and x for x in levels)
+                or len(set(levels)) != len(levels)):
+            raise ProfileError(
+                f"{path}: effort.levels must be a non-empty list of unique non-empty "
+                f"strings, got {levels!r}")
+    else:
+        if status not in MODEL_EFFORT_STATUSES:
+            raise ProfileError(
+                f"{path}: effort.status must be one of {MODEL_EFFORT_STATUSES}, got {status!r}")
+    for flag in ("template_kwarg", "budget_map"):
+        if value.get(flag) is not None and not isinstance(value[flag], bool):
+            raise ProfileError(f"{path}: effort.{flag} must be a bool, got {value[flag]!r}")
+    if status is not None and (value.get("template_kwarg") is not None
+                               or value.get("budget_map") is not None):
+        raise ProfileError(
+            f"{path}: effort.template_kwarg/budget_map are meaningless on a "
+            f"`status:` block (there is no ladder to wire) — move them to the "
+            f"levels block once a probe pins one")
+    evidence = value.get("evidence")
+    if not isinstance(evidence, str) or not evidence.strip():
+        raise ProfileError(
+            f"{path}: effort.evidence is REQUIRED — the ladder is verified by probing the "
+            "served model (gate M10 class), not copied from its card; name the probe, "
+            "the patch, or the measurement that this block records.")
+    return dict(value)
+
+
+def _effort_pair_facts(value: Any, path: Path, where: str) -> dict[str, Any]:
+    """Validate one `effort.by_model.<model_id>:` entry (#1951) — the two facts
+    that are properties of a (model, engine) pair, not of either alone. Same
+    shape rules they had at engine level; `where` names the entry in the message."""
+    if not isinstance(value, dict):
+        raise ProfileError(f"{path}: {where} must be a mapping, got {value!r}")
+    for key in value.keys() - ENGINE_EFFORT_PAIR_ENTRY_KEYS:
+        raise ProfileError(
+            f"{path}: {where} allows only {sorted(ENGINE_EFFORT_PAIR_ENTRY_KEYS)}, got {key!r}")
+    if not value:
+        raise ProfileError(f"{path}: {where} is empty — drop it or record a fact")
+    for key in ENGINE_EFFORT_PAIR_ENTRY_KEYS:
+        if key in value and value[key] is None:
+            raise ProfileError(
+                f"{path}: {where}.{key} is explicitly null — an empty value, `null` or `~` "
+                f"parses to null; give it a real value or drop the key")
+    default = value.get("default_when_unset")
+    if default is not None and (not isinstance(default, str) or not default):
+        raise ProfileError(
+            f"{path}: {where}.default_when_unset must be a non-empty string, got {default!r}")
+    maps = value.get("maps")
+    if maps is not None:
+        if (not isinstance(maps, dict) or not maps
+                or not all(isinstance(k, str) and k and isinstance(v, str) and v
+                           for k, v in maps.items())):
+            raise ProfileError(
+                f"{path}: {where}.maps must be a non-empty {{name: name}} mapping, got {maps!r}")
+    # Last, so every shape error above keeps its specific message.
+    ev = value.get("evidence")
+    if not isinstance(ev, str) or not ev.strip():
+        raise ProfileError(
+            f"{path}: {where}.evidence is REQUIRED — a pair fact cites what was read on "
+            f"THIS pair (a launcher/settings file and line, a template, a probe), never "
+            f"a sibling model's fact or the engine's own behaviour.")
+    return dict(value)
+
+
+def _engine_effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
+    """Validate an engine profile's `effort:` block (#1951). Every fact key is
+    optional — absent means UNKNOWN, which the render must render as nothing.
+    A block with evidence but no fact is a typo trap, so it fails."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ProfileError(f"{path}: engine `effort:` must be a mapping, got {value!r}")
+    for key in ENGINE_EFFORT_PAIR_KEYS:
+        if key in value:
+            raise ProfileError(
+                f"{path}: effort.{key} is a per-(model, engine) fact, not an engine-wide "
+                f"one — move it under effort.by_model.<model_id>:. A model that is not "
+                f"listed gets no {key}, which the render treats as UNKNOWN (#1951 review r5)")
+    # Same present-but-null trap as the model side (#1951 review r1-1).
+    for key in ENGINE_EFFORT_KEYS - {"evidence"}:
+        if key in value and value[key] is None:
+            raise ProfileError(
+                f"{path}: effort.{key} is explicitly null — an empty value, `null` "
+                f"or `~` parses to null. Give the key a real value or drop it; null "
+                f"means UNKNOWN and must never be stored."
+                # The YAML-1.1 `none` caveat is specific to off_switch, the only key
+                # whose VALUE could be mistaken for a null spelling; quoting it on a
+                # null `by_model:` sends the reader to the wrong key (#1951 review r6).
+                + (" (YAML does not null the word `none`: `off_switch: none` loads as "
+                   "the string 'none'.)" if key == "off_switch" else ""))
+    off = value.get("off_switch")
+    if off is not None and off not in ENGINE_EFFORT_OFF_SWITCHES:
+        raise ProfileError(
+            f"{path}: effort.off_switch must be one of {ENGINE_EFFORT_OFF_SWITCHES}, got {off!r}")
+    if value.get("supports_none") is not None and not isinstance(value["supports_none"], bool):
+        raise ProfileError(f"{path}: effort.supports_none must be a bool, got {value['supports_none']!r}")
+    unknown = value.get("unknown_name")
+    if unknown is not None and (not isinstance(unknown, str) or not unknown):
+        raise ProfileError(f"{path}: effort.unknown_name must be a non-empty string, got {unknown!r}")
+    by_model = value.get("by_model")
+    if by_model is not None:
+        if not isinstance(by_model, dict) or not by_model:
+            raise ProfileError(
+                f"{path}: effort.by_model must be a non-empty {{model_id: facts}} mapping, "
+                f"got {by_model!r}")
+        for model_id, facts in by_model.items():
+            if not isinstance(model_id, str) or not model_id:
+                raise ProfileError(
+                    f"{path}: effort.by_model keys must be non-empty model ids, got {model_id!r}")
+            _effort_pair_facts(facts, path, f"effort.by_model.{model_id}")
+    evidence = value.get("evidence")
+    if not isinstance(evidence, str) or not evidence.strip():
+        raise ProfileError(
+            f"{path}: effort.evidence is REQUIRED — an engine effort fact cites its source "
+            "(PROVENANCE.md, the compose header, the engine's own source), never a guess.")
+    if not (value.keys() - {"evidence"}):
+        raise ProfileError(f"{path}: effort block carries only `evidence:` — record at least one fact")
+    return dict(value)
+
+
 def _engine(data: dict[str, Any], path: Path) -> EngineProfile:
     _check_profile_keys(path, data, ENGINE_PROFILE_KEYS,
-                        nested={"lineage": (data.get("lineage"), LINEAGE_KEYS)})
+                        nested={"lineage": (data.get("lineage"), LINEAGE_KEYS),
+                        # The pair-scoped keys stay in the allowlist here so the
+                        # specific "move it under by_model:" error from _engine_effort
+                        # is what a user sees, not a generic unknown-key.
+                                "effort": (data.get("effort"),
+                                           ENGINE_EFFORT_KEYS | ENGINE_EFFORT_PAIR_KEYS)})
     families = _tuple(data.get("supported_model_families"))
     return EngineProfile(
         schema_version=data["schema_version"],
@@ -762,6 +967,7 @@ def _engine(data: dict[str, Any], path: Path) -> EngineProfile:
         image_env=data.get("image_env"),
         lineage=_lineage(data.get("lineage"), path),
         valid_tp_by_family=_valid_tp_by_family(data.get("valid_tp_by_family"), families, path),
+        effort=_engine_effort(data.get("effort"), path),
     )
 
 

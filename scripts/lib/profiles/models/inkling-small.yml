@@ -107,6 +107,16 @@ vram_sizing:
     ub2048_1m:   { cuda0: 9450 }        # OOMs here — recorded as the failure point
   kv_total_mib_262k: 7518               # 7,168 non-SWA + 350 SWA
 
+# #1951 — the effort gate fires (its compose passes reasoning_effort through
+# chat_template_kwargs), but this model has NO OpenAI-string ladder: the
+# render must emit no ladder for it, and no client ladder may be inferred.
+effort:
+  status: no-string-ladder
+  evidence: >-
+    Its template reads `reasoning_effort` as a FLOAT dial 0.0-0.99, not a
+    string ladder, and silently ignores an unrecognised switch; reasoning is ON
+    by default at effort 0.9 (see the unsloth-ud-iq4xs manual_note below).
+
 weights:
   unsloth-ud-iq4xs:
     path: inkling-small-gguf/UD-IQ4_XS

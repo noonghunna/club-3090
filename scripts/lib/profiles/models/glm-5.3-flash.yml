@@ -80,6 +80,24 @@ requires_genesis: false
 # `used=N/N` counter as the device total under-reported this model ~4× for a while.
 # ---------------------------------------------------------------------------
 
+# #1951 — the reasoning-effort surface, written down ONCE here; the gateway
+# render and the omp overrides read this instead of restating it. The compose
+# keeps the DEFAULT (max on every GLM route). ⚠️ `max` is this model's top rung
+# and is OUTSIDE litellm's `default_reasoning_effort` Literal (types/utils.py,
+# pinned v1.100.3) though inside its `REASONING_EFFORT` Literal — the render
+# may declare the ladder but must not pin the default through that field
+# (issue #1951, maintainer note 2026-11-06).
+effort:
+  levels: [low, high, max]
+  template_kwarg: true    # llama.cpp and Project Maya also read chat_template_kwargs.reasoning_effort
+  budget_map: false       # effort_budget.py knows only the Qwen ladder; no GLM budget hook exists
+  evidence: >-
+    The GGUF tokenizer.chat_template's own conformance (knob-conformance.json
+    glm-5.3-flash: reasoning_effort in ['low','high'] else 'max'), measured on
+    the served model — see the unsloth-ud-iq4xs manual_note below: forced
+    thinking, thinking CANNOT be disabled, `none` is silently ignored (runs
+    max), measured low -> 0 chars of reasoning, max -> ~1,170 ch.
+
 weights:
   unsloth-ud-iq4xs:
     path: glm-5.3-flash-gguf/UD-IQ4_XS

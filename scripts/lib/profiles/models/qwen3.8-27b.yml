@@ -67,6 +67,22 @@ kv_calc_supported: true
 #                     `kind: mmproj` weights entry and a `-vision.yml` compose
 #                     (see the qwen3.6-27b gguf_mmproj_f16 entry for the shape).
 vision_capable: true
+# #1951 — the reasoning-effort surface, written down ONCE here; the gateway
+# render and the omp overrides read this instead of restating it. The compose
+# keeps the DEFAULT (REASONING_EFFORT): what a request that names no effort
+# gets stays the compose's call.
+effort:
+  levels: [low, medium, xhigh]
+  template_kwarg: true    # llama.cpp and Project Maya also read chat_template_kwargs.reasoning_effort
+  budget_map: true        # effort_budget.py LEVELS == this ladder (pinned by test-effort-profiles)
+  evidence: >-
+    The vendored templates enforce it: the vLLM/SGLang slugs mount
+    models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template and the
+    llama.cpp slugs the GGUF twin under llama-cpp/patches — both fold
+    high->xhigh, minimal->low and max->xhigh, then raise_exception on
+    anything still outside low|medium|xhigh (`none`, unrecognized strings).
+    Wire-probed 2026-10-20 (llama-cpp/patches/qwen38-gguf-reasoning-effort-template/PROVENANCE.md).
+
 weights:
   unsloth-iq4xs:
     path: qwen3.8-27b-gguf/unsloth-iq4xs

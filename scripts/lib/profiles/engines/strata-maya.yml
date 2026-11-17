@@ -37,6 +37,37 @@ supported_drafters:
   - dspark                # DeepSeek-V4.1-Flash's DSpark drafter (maya-ds4 --dspark on) and MiniMax-M3.1-Flash's
                           # (maya-mm3 --dspark on; Maya's own setup leaves it off). GLM's MTP is the model's own
                           # NextN block (two or more GPUs), not a club drafter
+# #1951 — what this engine changes about effort. The Maya slugs' composes
+# leave REASONING_EFFORT unset (empty) on purpose, so default_when_unset is
+# load-bearing for the render. The wire off switch is PROBED (2026-11-15,
+# maya-s24 :8194): the launcher maps a request's reasoning_effort none to
+# Maya's own none (maya_settings.py EFFORTS), the same state ENABLE_THINKING
+# =false produces, and the server answers it with no thinking block — so
+# off_switch/supports_none are declared.
+effort:
+  off_switch: "none"
+  supports_none: true
+  by_model:
+    glm-5.3-flash:
+      default_when_unset: max
+      maps: {medium: high, xhigh: max}
+      evidence: >-
+        maya_settings.py — GLM-5.3-Flash's own launcher on this engine:
+        DEFAULT_EFFORT = "max" (:44) and EFFORTS running medium as high and
+        xhigh as max (:46) — the state ENABLE_THINKING=false produces, "the
+        server closes the thinking block" (:10, :95-101).
+  evidence: >-
+    Engine-wide (off_switch / supports_none): all three launchers on this engine
+    map a request's `none` to thinking off — maya_settings.py EFFORTS (:46),
+    ds4_settings.py EFFORTS (:54, `none: none`), mm3_settings.py EFFORTS (:57,
+    the tuple includes `none`). Only GLM's is measured on the wire: 2026-11-15 on
+    maya-s24 (:8194), reasoning_effort none -> 0 chars of reasoning_content
+    (low -> 60, max -> 1391 on a 900-token cap).
+    The engine's other two models are deliberately NOT listed under by_model:
+    their launchers disagree — ds4_settings.py defaults to "high" (:51) and
+    mm3_settings.py to "auto" (:54) with seven pass-through levels (:57) — and
+    both are `status: unprobed`, so there is no ladder to fold onto yet.
+
 notes: >
   Project Maya (github.com/mw00/project-maya, MIT): a fork of Strata (Niko1221/Strata) for
   GLM-5.3-Flash, with its own quants, and DeepSeek-V4.1-Flash-1017 on a second engine (maya-ds4). Upstream publishes no Linux image, Dockerfile or

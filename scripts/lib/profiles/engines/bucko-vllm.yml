@@ -30,6 +30,24 @@ supported_weight_formats:
 supported_kv_formats:
   - bf16                  # read from the running engine (kv_cache_dtype=auto on a bf16 model), 2026-09-18
 supported_drafters: []    # MTP3 is bucko's built-in compact draft, not a club drafter
+# #1951 — what this engine changes about effort. The composes set no
+# REASONING_EFFORT, so default_when_unset is load-bearing for the render. The
+# off switch is UNPROBED on this derivative, so it stays absent.
+effort:
+  by_model:
+    qwen3.8-flash-next:
+      default_when_unset: xhigh
+      evidence: >-
+        docs/engines/STRATA.md "Reasoning and sampling defaults": the bucko-vllm
+        slugs keep the checkpoint template's xhigh default, with a 16,384-token
+        default thinking budget on top (the vendored
+        bucko-default-thinking-budget patch, patches.yml). The composes set no
+        REASONING_EFFORT, so this fact is what the render advertises.
+  evidence: >-
+    qwen3.8-flash-next is the only model this engine serves, so every effort
+    fact here is that pair's and is cited in its entry. The off switch is
+    UNPROBED on this derivative, so off_switch/supports_none stay absent.
+
 notes: >
   DominikBucko's runtime for Qwen3.8-Flash-Next on 2x RTX 3090 (Apache-2.0): a vLLM derivative,
   kept a separate engine and never folded into vllm-stable. Its speed is its own expert cache

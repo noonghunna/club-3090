@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import functools
 import json
 import os
 import re
@@ -408,6 +409,7 @@ def _slug_findings(root: Path, slug: str, entry: dict, inp: dict, facts: dict, *
                        DOC_COMPOSES))
 
     out.extend(_same_model_defaults(slug, entry, registry))
+    out.extend(_effort_rule(root, entry, text))
     out.extend(_weights_rules(root, entry, network, hf))
     out.append(_image_rule(inp["image"], str(install.get("method") or ""), network, inspect))
     return out
@@ -435,6 +437,84 @@ def _same_model_defaults(slug: str, entry: dict, registry: dict) -> list[Finding
                         DOC_CASES)]
     return [Finding("same-model-defaults", ADVISORY, PASS,
                     f"chat_template {mine!r} matches the model's other engines", DOC_CASES)]
+
+
+def _profiles_stamp(root: Path):
+    """(newest mtime, file count, total bytes) over the profile YAMLs — the
+    cache KEY. A plain per-root cache would serve a pre-edit tree for the whole
+    life of a long-lived process (the cockpit imports this module). The newest
+    mtime alone misses a DELETION and a swap that leaves the maximum untouched,
+    so count and size ride along. None = the tree cannot be read (or holds no
+    profiles at all): the caller must not cache that."""
+    base = root / "scripts/lib/profiles"
+    if not base.is_dir():
+        return None
+    newest, count, size = 0.0, 0, 0
+    for dirpath, _dirs, files in os.walk(base):
+        for fn in files:
+            if fn.endswith((".yml", ".yaml")):
+                try:
+                    st = os.stat(os.path.join(dirpath, fn))
+                except OSError:
+                    return None
+                newest = max(newest, st.st_mtime)
+                count += 1
+                size += st.st_size
+    return (newest, count, size) if count else None
+
+
+@functools.lru_cache(maxsize=4)
+def _load_profiles_cached(root_str: str, stamp: tuple):
+    """Parse the profile tree once per (root, content) — callers prime sys.path
+    first. The stamp is what makes an edited profile visible on the next call;
+    an unreadable tree never reaches here (the caller bypasses the cache)."""
+    from scripts.lib.profiles.compat import load_profiles
+    return load_profiles(Path(root_str) / "scripts/lib/profiles")
+
+
+def _effort_rule(root: Path, entry: dict, text: str) -> list[Finding]:
+    """#1951: a thinking slug's model must declare its `effort:` block, so the
+    gateway render and the omp overrides have one source for the ladder. The
+    block is the model profile's `effort:` key — levels once a wire probe has
+    pinned them, or an honest `status:` (unprobed / no-string-ladder /
+    no-thinking) until then; the compose keeps only the default (principle 1).
+    Same gate scripts/tests/test-effort-profiles.sh holds the curated catalog
+    to; this covers the PR-bundle and cockpit paths that never run that test."""
+    sp = entry.get("sampler_profiles")
+    thinking = isinstance(sp, dict) and any("thinking" in str(k).lower() for k in sp)
+    body = "\n".join(l.split("#", 1)[0] for l in text.splitlines()
+                     if not l.lstrip().startswith("#"))
+    knob = "REASONING_EFFORT" in body or "reasoning_effort" in body
+    if not (thinking or knob):
+        return [Finding("effort-block", REQUIRED, PASS,
+                        "not an effort-aware slug (no thinking sampler profile, "
+                        "no reasoning-effort knob in the compose)", DOC_CASES)]
+    sys.path.insert(0, str(root))
+    try:
+        from scripts.lib.profiles.compat import load_profiles
+        # Cached per root: the catalog sweep calls this once per slug (~200
+        # loads of the same tree otherwise), and load_profiles parses every
+        # model + engine YAML each time.
+        stamp = _profiles_stamp(root)
+        profiles = (load_profiles(Path(root) / "scripts/lib/profiles")
+                    if stamp is None else _load_profiles_cached(str(root), stamp))
+    finally:
+        sys.path.pop(0)
+    model = profiles.models.get(str(entry.get("model")))
+    if model is None:
+        return [Finding("effort-block", REQUIRED, UNCHECKED,
+                        f"model {entry.get('model')!r} has no profile to check "
+                        "the effort block against", DOC_CASES)]
+    eff = getattr(model, "effort", None)
+    if eff and (eff.get("levels") or eff.get("status")):
+        shown = "/".join(eff["levels"]) if eff.get("levels") else eff.get("status")
+        return [Finding("effort-block", REQUIRED, PASS,
+                        f"model {entry.get('model')} declares effort {shown}", DOC_CASES)]
+    why = "thinking sampler profile" if thinking else "reasoning-effort knob in the compose"
+    return [Finding("effort-block", REQUIRED, FAIL,
+                    f"{why}, but model {entry.get('model')} has no `effort:` block — "
+                    "add the probed ladder or an honest status (docs/ADDING_MODELS.md, "
+                    "#1951)", DOC_CASES)]
 
 
 def _weights_rules(root: Path, entry: dict, network: bool, hf: Callable) -> list[Finding]:

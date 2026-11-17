@@ -156,6 +156,44 @@ supported_kv_formats:
 required_overlays: []
 vendored_overlays: []
 required_genesis: false
+# #1951 — what this engine changes about effort (see the model profiles for
+# what the MODEL accepts; the compose keeps the DEFAULT).
+effort:
+  off_switch: "none"
+  supports_none: true
+  by_model:
+    qwen3.8-27b:
+      default_when_unset: xhigh
+      maps: {minimal: low, high: xhigh, max: xhigh}
+      evidence: >-
+        Same Qwen3.8 template family as vllm-stable: the composes mount the
+        vendored qwen38-reasoning-effort-template chat_template.jinja, whose
+        clamps (high->xhigh, minimal->low, max->xhigh, raise_exception outside
+        low|medium|xhigh) are mirrored in effort_budget.py ALIASES; the unset
+        default is the checkpoint template's `reasoning_effort |
+        default('xhigh')`. The model profile carries the probe.
+    thinkingcap-qwen3.8-27b:
+      default_when_unset: xhigh
+      maps: {minimal: low, high: xhigh, max: xhigh}
+      evidence: >-
+        The same vendored qwen38-reasoning-effort-template mount over the
+        checkpoint's own template — its model profile cites the mount and the
+        fold table that template enforces. Nothing engine-specific changes the
+        fold: SGLang's own difference is HOW the default is passed (below), not
+        what the template folds.
+  evidence: >-
+    The two listed models are the two SGLang slugs' models whose profiles cite
+    that contract. nanbeige4.3-33b also routes here but declares no effort ladder
+    and its template was never read, so it is not listed and gets no fold facts.
+    Engine-wide (off_switch / supports_none): a top-level `none` becomes
+    enable_thinking=false before the template runs.
+    Engine-specific: the composes pass the default as `default_reasoning_effort`,
+    not `reasoning_effort`, because SGLang <= 0.5.20 lets a default
+    reasoning_effort override the request's own (sglang#38104), and the boot
+    case-gates it to low|medium|xhigh — high/minimal/max are refused at boot
+    although the same template would map them (launch-knobs.json,
+    REASONING_EFFORT entry).
+
 notes: >-
   SGLang stable. WIRED: the qwen3.8-27b and thinkingcap-qwen3.8-27b SGLang composes target
   this engine (23 registered sgl/ slugs); first booted on the reference rig 2026-09-10

@@ -24,6 +24,18 @@ max_ctx_supported: 262144
 # q8_0, 8192.00 MiB at f16 — i.e. 16 KiB/token and 32 KiB/token respectively.
 # ⚠️ Do NOT extrapolate per-layer x 32 layers; that overshoots ~4x.
 vision_capable: true
+# #1951 — honest placeholder: the registry declares a `thinking` sampler
+# profile (llamacpp/mimo9b-single-vision), so the effort gate fires, but the
+# ladder has never been probed on the served model. The render emits NOTHING
+# for this model (unknown stays unknown). Probe it like gate M10 and replace
+# this block with the measured `levels:`.
+effort:
+  status: unprobed
+  evidence: >-
+    No wire probe exists for this model's reasoning_effort behavior; the
+    thinking sampler profile is the only declared fact. Do not copy a ladder
+    from the model card.
+
 weights:
   bartowski-q8:
     path: mimo-v2.6-distill-qwen-9b-gguf-bartowski

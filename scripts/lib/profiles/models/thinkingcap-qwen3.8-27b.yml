@@ -76,6 +76,20 @@ kv_calc_supported: false
 #                     `kind: mmproj` weights entry and a `-vision.yml` compose
 #                     (see the qwen3.6-27b gguf_mmproj_f16 entry for the shape).
 vision_capable: true
+# #1951 — the reasoning-effort surface, written down ONCE here; the gateway
+# render and the omp overrides read this instead of restating it. The compose
+# keeps the DEFAULT (REASONING_EFFORT).
+effort:
+  levels: [low, medium, xhigh]
+  template_kwarg: true    # llama.cpp and Project Maya also read chat_template_kwargs.reasoning_effort
+  budget_map: true        # effort_budget.py LEVELS == this ladder (pinned by test-effort-profiles)
+  evidence: >-
+    A Qwen3.8-27B fine-tune on the same template contract: the composes mount
+    the vendored qwen38-reasoning-effort-template chat_template.jinja over the
+    checkpoint's own (e.g. vllm/compose/dual/autoround-int4/mtp.yml:205), which
+    folds high->xhigh, minimal->low and max->xhigh, then raise_exception()s on
+    anything still outside low|medium|xhigh (`none`, unrecognized strings).
+
 weights:
   # Our own AutoRound INT4 (no INT4 of ThinkingCap exists upstream) — built 2026-09-23 with the Tess
   # "shot 2" recipe; packed-layout twin of Frozenlock's qwen3.8 INT4, so the Frozenlock composes serve
