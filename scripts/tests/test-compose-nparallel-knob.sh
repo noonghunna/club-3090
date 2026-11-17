@@ -56,7 +56,7 @@ if command -v docker >/dev/null 2>&1 && [[ -f "$SAMPLE" ]]; then
       rm -f "$errf"; printf '__COMPOSE_CONFIG_FAILED__'; return 0
     fi
     rm -f "$errf"
-    printf '%s' "$out" | grep -A1 -e '- -np' | tail -1 | sed -E 's/^[[:space:]]*-[[:space:]]*//' | tr -d '"'
+    printf '%s' "$out" | grep -A1 -e '- -np' | tail -1 | sed -E 's/^[[:space:]]*-[[:space:]]*//' | tr -d '"' || true
   }
   base=$(eff "");   set4=$(eff 4)
   [[ "$base" == "__COMPOSE_CONFIG_FAILED__" || "$set4" == "__COMPOSE_CONFIG_FAILED__" ]] && instrument_failed=1
@@ -72,13 +72,14 @@ else
   echo "NOTE: docker unavailable — static check only; the delivery-path leg did NOT run." >&2
 fi
 
+if [[ $fails -gt 0 ]]; then
+  echo "$fails -np knob check(s) failed" >&2
+  [[ $instrument_failed -ne 0 ]] && echo "INSTRUMENT: the delivery-path leg also could not run (above)" >&2
+  exit 1
+fi
+
 if [[ $instrument_failed -ne 0 ]]; then
   echo "INSTRUMENT: the delivery-path leg could not run (docker compose config failed, above) — the static checks stand, and this is NOT a knob failure" >&2
   exit 3
-fi
-
-if [[ $fails -gt 0 ]]; then
-  echo "$fails -np knob check(s) failed" >&2
-  exit 1
 fi
 echo "PASS: $checked composes parameterise -np; NPARALLEL=4 -> 4 and unset -> 1 through docker compose config"

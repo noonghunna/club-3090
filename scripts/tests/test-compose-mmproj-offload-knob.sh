@@ -82,13 +82,14 @@ else
   echo "NOTE: docker unavailable — static check only; the delivery-path leg did NOT run." >&2
 fi
 
+if [[ $fails -gt 0 ]]; then
+  echo "$fails mmproj-offload knob check(s) failed" >&2
+  [[ $instrument_failed -ne 0 ]] && echo "INSTRUMENT: the delivery-path leg also could not run (above)" >&2
+  exit 1
+fi
+
 if [[ $instrument_failed -ne 0 ]]; then
   echo "INSTRUMENT: the delivery-path leg could not run (docker compose config failed, above) — the static checks stand, and this is NOT a knob failure" >&2
   exit 3
-fi
-
-if [[ $fails -gt 0 ]]; then
-  echo "$fails mmproj-offload knob check(s) failed" >&2
-  exit 1
 fi
 echo "PASS: $checked compose(s) declare LLAMA_ARG_MMPROJ_OFFLOAD bare with no overriding argv; false -> false and unset -> absent through docker compose config"
