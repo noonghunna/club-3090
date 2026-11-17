@@ -30,7 +30,7 @@
 # value can't point a slug at another quant's pack. Each quant has its own folder on /data.
 set -eu
 umask 0002                   # group-writable, so the launcher's user can clear /data
-TAG="${1:?the quant (ista-iq2-xxs, ud-iq3-s or maya-xs) is this script's argument}"
+TAG="${1:?the quant (ista-iq2-xxs, ud-iq3-s or maya-xs) is the argument to this script}"
 here="$(dirname "$0")"
 
 /opt/maya/.venv/bin/python "$here/ds4_prepare.py" --tag "$TAG" --context "${CONTEXT:-65536}" \
