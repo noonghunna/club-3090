@@ -37,7 +37,7 @@
 # MAYA_CPU_LANE reach it.
 set -eu
 umask 0002                   # group-writable, so the launcher's user can clear /data
-TAG="${1:?the quant (maya-s, maya-s24, maya-m or maya-l) is this script's argument}"
+TAG="${1:?the quant (maya-s, maya-s24, maya-m or maya-l) is the argument to this script}"
 here="$(dirname "$0")"
 
 /opt/maya/.venv/bin/python "$here/maya_prepare.py" --tag "$TAG" --context "${CONTEXT:-131072}" \
