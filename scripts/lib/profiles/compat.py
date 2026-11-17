@@ -892,10 +892,12 @@ def _effort_pair_facts(value: Any, path: Path, where: str) -> dict[str, Any]:
         raise ProfileError(f"{path}: {where}.supports_none must be a bool, got {sn!r}")
     refuses = value.get("refuses")
     if refuses is not None:
-        if (not isinstance(refuses, list) or not refuses
+        if (not isinstance(refuses, list)
                 or not all(isinstance(r, str) and r for r in refuses)):
             raise ProfileError(
-                f"{path}: {where}.refuses must be a non-empty list of rung names, got {refuses!r}")
+                f"{path}: {where}.refuses must be a list of rung names — empty records a "
+                f"probe that found nothing refused, non-empty the rungs the server 400s "
+                f"as request names — got {refuses!r}")
     # Last, so every shape error above keeps its specific message.
     ev = value.get("evidence")
     if not isinstance(ev, str) or not ev.strip():

@@ -533,16 +533,25 @@ if len(failures) == n0:
 # ---- 5e. a refuses-recording engine's other ladder pairs declare theirs -----
 # `refuses` is pair-scoped by design (the intersection of the engine's 400
 # behaviour and THIS model's ladder — the loader refuses an engine-level one,
-# #2055 review it7-5), and the loader refuses an EMPTY list, so "nothing
-# refused" can only be expressed by omitting the key. But once one pair on an
-# engine records a non-empty `refuses`, the engine's server 400s request names
-# outside its accepted set — a fact that does not depend on the template — so
-# every OTHER ladder model on that engine must probe and record its own
-# refuses too: absent the key the render names the full ladder
-# (litellm_sync.py:681-683), advertising a rung the server 400s (#2055 review
-# it8-4). Engines with no refuses recorded anywhere stay untriggered: the
-# guard has no structured 400 fact to key on, and forcing a probe it cannot
-# cite would be a false positive.
+# #2055 review it7-5). Once one pair on an engine records a non-empty
+# `refuses`, the engine's server 400s request names outside its accepted set —
+# a fact that does not depend on the template — so every OTHER ladder model on
+# that engine must probe and record its own outcome too: absent the key the
+# render names the full ladder (litellm_sync.py:681-683), advertising a rung
+# the server 400s (#2055 review it8-4). The EMPTY list is the expressible
+# "probed, nothing refused" record (#2091 GLM review f1): a ladder disjoint
+# from the server's 400-set honestly refuses nothing, and while the loader
+# rejected empty lists there was NO recordable shape — the sweep forced a
+# false refusal (inventing a rung would feed the render's union a lie).
+# Omission still means unprobed. Engines with no refuses recorded anywhere
+# stay untriggered: the guard has no structured 400 fact to key on, and
+# forcing a probe it cannot cite would be a false positive.
+def _pair_records_refusal(pair):
+    # The pair recorded its probe outcome iff the refuses key is present:
+    # non-empty = rungs the server 400s, empty = probed, nothing refused.
+    # Absent = unprobed (#2091 GLM review f1).
+    return bool(pair) and pair.get("refuses") is not None
+
 n0 = len(failures)
 refusing_engines = {}
 for eng_id, eng in profiles.engines.items():
@@ -560,15 +569,22 @@ for e in entries.values():
     if not levels:
         continue
     pair = ((profiles.engines.get(eng_id).effort or {}).get("by_model") or {}).get(m)
-    if not pair or not pair.get("refuses"):
+    if not _pair_records_refusal(pair):
         bad(f"{m} on {eng_id}: probed ladder {levels} but no pair refuses while "
             f"sibling {refusing_engines[eng_id]} records {[(profiles.engines[eng_id].effort or {}).get('by_model', {}).get(s, {}).get('refuses') for s in refusing_engines[eng_id]]} — "
             f"the render names the full ladder when the key is absent, so a "
             f"rung the server 400s would be advertised; probe this pair's "
-            f"request names and record its refuses (#2055 review it8-4)")
+            f"request names and record its refuses — a non-empty list of the "
+            f"rungs it 400s, or an empty list recording probed-nothing-refused "
+            f"(#2055 review it8-4, #2091 GLM review f1)")
 if len(failures) == n0:
     print("  ✓ every refuses-recording engine's other ladder pairs declare "
           "their own refuses")
+
+for _shape, _want in (({"evidence": "probed, nothing refused", "refuses": []}, False),
+                      ({"evidence": "never probed"}, True)):
+    if (not _pair_records_refusal(_shape)) != _want:
+        bad(f"5e predicate: {_shape} must flag={_want}")
 # ---- 5b. the loader REFUSES an engine-wide fold fact (#1951 review r5) -------
 # An engine-level `default_when_unset`/`maps` is the silent-inheritance bug the
 # review named: a model never measured on it would be folded and defaulted by a
@@ -610,7 +626,7 @@ expect_refusal({"evidence": "x", "by_model": {"m": {"maps": {"a": 5}}}},
                "non-empty", "non-string maps value inside by_model")
 expect_refusal({"evidence": "x",
                 "by_model": {"m": {"refuses": "xhigh"}}},
-               "non-empty list", "non-list pair refusal inside by_model")
+               "must be a list of rung names", "non-list pair refusal inside by_model")
 expect_refusal({"evidence": "x",
                 "by_model": {"m": {"default_when_unset": "xhigh"}}},
                "evidence is REQUIRED", "pair entry with no own evidence")
@@ -636,6 +652,16 @@ try:
                     "evidence": "x"}, Path("negative-test.yml"))
 except ProfileError as exc:
     bad(f"a pair's own none measurement was refused: {exc}")
+try:
+    # The empty list is the "probed, nothing refused" record (#2091 GLM
+    # review f1): a ladder disjoint from the server's 400-set must be
+    # expressible, not forced into a false refusal.
+    _engine_effort({"off_switch": "none", "supports_none": True,
+                    "by_model": {"m": {"refuses": [],
+                                       "evidence": "probed the ladder, nothing 400'd"}},
+                    "evidence": "x"}, Path("negative-test.yml"))
+except ProfileError as exc:
+    bad(f"an empty refuses (probed, nothing refused) was refused: {exc}")
 if len(failures) == n0:
     print("  ✓ engine-level fold facts refused (14 shapes), pair-scoped block "
           "and its none-override load")
