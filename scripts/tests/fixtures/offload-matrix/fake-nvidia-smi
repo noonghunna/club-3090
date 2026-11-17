@@ -27,8 +27,13 @@ Implements exactly the invocations our suites make, and nothing else:
          Fewer than 9 fields on a data line and every bandwidth column
          silently becomes '-', so the width matters.
 
+  nvidia-smi --query-compute-apps=pid,gpu_uuid --format=csv,noheader,nounits
+      -> one "<pid>, GPU-fake<idx>" row per FAKE_APPS entry (capture.sh's
+         cap_server_gpus); no FAKE_APPS = no rows, as with nothing running.
+
 Knobs (env):
   FAKE_NGPU        number of GPUs (default 2)
+  FAKE_APPS        compute contexts as "pid:gpu-index,pid:gpu-index" (default none)
   FAKE_VRAM_MIB    comma list of per-GPU memory.used, or one value for all
   FAKE_SM / FAKE_MEMCTL / FAKE_RXPCI / FAKE_TXPCI   dmon values
 """
@@ -81,9 +86,19 @@ if any(a.startswith("--query-gpu") for a in argv):
                 row.append(vram[i])
             elif f == "utilization.gpu":
                 row.append(os.environ.get("FAKE_SM", "40"))
+            elif f == "uuid":
+                row.append("GPU-fake%08d" % i)
             else:
                 row.append("0")
         print(", ".join(row))
+    sys.exit(0)
+
+# --- compute-apps form (cap_server_gpus) ---
+if any(a.startswith("--query-compute-apps") for a in argv):
+    for ent in [e.strip() for e in os.environ.get("FAKE_APPS", "").split(",") if e.strip()]:
+        pid, _, gpu = ent.partition(":")
+        if gpu.isdigit() and int(gpu) < NGPU:
+            print("%s, GPU-fake%08d" % (pid, int(gpu)))
     sys.exit(0)
 
 # --- dmon form ---
