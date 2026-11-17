@@ -58,12 +58,16 @@ effort:
         defaults of `POST /settings`, not a request. CORRECTION 2026-11-17
         (review of #2091): the 2026-11-15 reading that `xhigh`/`max` 400 as
         request names — and with it `refuses: [xhigh]` and the claim that a
-        client echoing the unset default back gets a 400 — is superseded: on
-        the same pinned image (0.2.13, b6e18765) `reasoning_effort: xhigh` and
-        `max` answer 200 with real reasoning content, and only names outside
-        the table (e.g. `extreme`) 400. The pair's none claim stands from that
-        same probe: reasoning_effort none -> 0 chars of reasoning_content
-        (low -> 214).
+        client echoing the unset default back gets a 400 — is superseded.
+        Re-measured 2026-11-17 on this rig's qwen3.8-flash-next-iq3s-dual
+        (:8018, the same slug and pinned image 0.2.13, b6e18765): `none`,
+        `low`, `medium`, `high`, `xhigh`, `max` and `maximum` all answer 200
+        with real reasoning content; only a name outside the table (`extreme`)
+        400s. And `POST /settings` with `xhigh` or `max` 400s with exactly
+        "reasoning_effort: none, low, medium or high" — the only 400 that
+        rejects those two names. The pair's none claim stands from the
+        2026-11-15 probe: reasoning_effort none -> 0 chars of
+        reasoning_content (low -> 214).
   evidence: >-
     Engine-wide (off_switch / supports_none): measured 2026-11-15 on
     qwen3.8-flash-next-iq3s-dual (:8018) — reasoning_effort none -> 0 chars of
