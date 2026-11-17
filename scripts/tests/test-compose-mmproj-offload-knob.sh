@@ -42,23 +42,49 @@ done < <(command grep -rlE '^\s*- LLAMA_ARG_MMPROJ_OFFLOAD' models/*/*/compose -
 # --- 2. delivery path + NEGATIVE CONTROL -------------------------------------
 # `docker compose config` resolves the container environment exactly as `up` does.
 SAMPLE=models/qwen3.8-27b/llama-cpp/compose/single/unsloth-iq4xs/q4kv-vision.yml
+instrument_failed=0
 if command -v docker >/dev/null 2>&1 && [[ -f "$SAMPLE" ]]; then
+  # A FAILED `docker compose config` IS NOT A FAILED KNOB. It used to arrive here as a
+  # `JSONDecodeError` traceback (the document was piped into json.load with stderr dropped),
+  # which in a Tier-0 sweep reads as "the mmproj knob is broken on this compose". Capture the
+  # command's own status and first stderr line, report it as an INSTRUMENT failure, and exit 3
+  # (distinct from 1 = a check failed) so a sweep can tell the two apart.
   eff() {
-    env -u LLAMA_ARG_MMPROJ_OFFLOAD MODEL_DIR="${MODEL_DIR:-/tmp}" ${1:+LLAMA_ARG_MMPROJ_OFFLOAD="$1"} \
-      docker compose -f "$SAMPLE" config --format json 2>/dev/null \
-      | python3 -c 'import json,sys; e=next(iter(json.load(sys.stdin)["services"].values())).get("environment") or {}; v=e.get("LLAMA_ARG_MMPROJ_OFFLOAD"); print("<absent>" if v is None else v)'
+    local out errf rc
+    errf=$(mktemp)
+    if out=$(env -u LLAMA_ARG_MMPROJ_OFFLOAD MODEL_DIR="${MODEL_DIR:-/tmp}" ${1:+LLAMA_ARG_MMPROJ_OFFLOAD="$1"} \
+               docker compose -f "$SAMPLE" config --format json 2>"$errf"); then
+      rc=0
+    else
+      rc=$?
+    fi
+    if [[ $rc -ne 0 ]]; then
+      echo "INSTRUMENT: docker compose config failed for $SAMPLE (rc=$rc) — $(head -1 "$errf")" >&2
+      rm -f "$errf"; printf '__COMPOSE_CONFIG_FAILED__'; return 0
+    fi
+    if ! printf '%s' "$out" | python3 -c 'import json,sys; e=next(iter(json.load(sys.stdin)["services"].values())).get("environment") or {}; v=e.get("LLAMA_ARG_MMPROJ_OFFLOAD"); print("<absent>" if v is None else v)' 2>/dev/null; then
+      echo "INSTRUMENT: docker compose config exited 0 but its output is not a JSON document for $SAMPLE — $(head -1 "$errf")" >&2
+      rm -f "$errf"; printf '__COMPOSE_CONFIG_FAILED__'; return 0
+    fi
+    rm -f "$errf"
   }
   base=$(eff "");   off=$(eff false)
-  if [[ "$base" != "<absent>" ]]; then
+  [[ "$base" == "__COMPOSE_CONFIG_FAILED__" || "$off" == "__COMPOSE_CONFIG_FAILED__" ]] && instrument_failed=1
+  if [[ $instrument_failed -eq 0 && "$base" != "<absent>" ]]; then
     echo "FAIL: negative control — with the var unset the container gets LLAMA_ARG_MMPROJ_OFFLOAD='$base', expected it absent (the default boot must not change)" >&2
     fails=$((fails+1))
   fi
-  if [[ "$off" != "false" ]]; then
+  if [[ $instrument_failed -eq 0 && "$off" != "false" ]]; then
     echo "FAIL: delivery path — LLAMA_ARG_MMPROJ_OFFLOAD=false reached the container as '$off', expected 'false' (the knob is inert)" >&2
     fails=$((fails+1))
   fi
 else
   echo "NOTE: docker unavailable — static check only; the delivery-path leg did NOT run." >&2
+fi
+
+if [[ $instrument_failed -ne 0 ]]; then
+  echo "INSTRUMENT: the delivery-path leg could not run (docker compose config failed, above) — the static checks stand, and this is NOT a knob failure" >&2
+  exit 3
 fi
 
 if [[ $fails -gt 0 ]]; then
