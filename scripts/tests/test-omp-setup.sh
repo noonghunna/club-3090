@@ -127,7 +127,7 @@ mo = yaml.safe_load(sys.stdin.read())["providers"]["club"]["modelOverrides"]
 expected = {
     "qwen3.8-27b": (["low", "medium", "xhigh"], "low"),
     "thinkingcap38-27b": (["low", "medium", "xhigh", "high", "max", "minimal"], "low"),
-    "qwen3.8-flash-next": (["low", "medium"], "low"),
+    "qwen3.8-flash-next": (["low", "medium", "xhigh"], "low"),
     "glm-5.3-flash": (["low", "high", "max"], "max"),
 }
 bad = []
