@@ -479,7 +479,13 @@ ENGINE_EFFORT_KEYS = {"off_switch", "supports_none", "unknown_name",
                       "by_model", "evidence"}
 ENGINE_EFFORT_OFF_SWITCHES = ("none", "enable-thinking-kwarg")
 # Keys allowed inside one `effort.by_model.<model_id>:` entry: the pair-scoped half.
-ENGINE_EFFORT_PAIR_KEYS = {"default_when_unset", "maps"}
+# `supports_none`/`off_switch` are engine-wide by default, but a pair entry may
+# carry its OWN measurement — the engine-level claim is "the wire accepts none";
+# whether THIS model's template then closes the thinking block is the model's
+# contract, and this is the only place that contract can be recorded (#1951
+# review r7). A pair value overrides the engine-level one in the emit.
+ENGINE_EFFORT_PAIR_KEYS = {"default_when_unset", "maps", "refuses",
+                           "supports_none", "off_switch"}
 # A pair entry carries its OWN provenance: the engine block's `evidence:` cites the
 # engine-wide facts (wire behaviour, server code), which say nothing about why THIS
 # model folds THIS way on it. Without it, adding a by_model entry is an uncited
@@ -844,7 +850,7 @@ def _effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
 
 
 def _effort_pair_facts(value: Any, path: Path, where: str) -> dict[str, Any]:
-    """Validate one `effort.by_model.<model_id>:` entry (#1951) — the two facts
+    """Validate one `effort.by_model.<model_id>:` entry (#1951) — the facts
     that are properties of a (model, engine) pair, not of either alone. Same
     shape rules they had at engine level; `where` names the entry in the message."""
     if not isinstance(value, dict):
@@ -854,6 +860,11 @@ def _effort_pair_facts(value: Any, path: Path, where: str) -> dict[str, Any]:
             f"{path}: {where} allows only {sorted(ENGINE_EFFORT_PAIR_ENTRY_KEYS)}, got {key!r}")
     if not value:
         raise ProfileError(f"{path}: {where} is empty — drop it or record a fact")
+    if value.keys() == {"evidence"}:
+        raise ProfileError(
+            f"{path}: {where} carries only `evidence:` — record at least one fact "
+            f"(default_when_unset, maps, refuses, supports_none, off_switch); a "
+            f"citation alone is a typo trap, not a fact (#2055 review it5-2)")
     for key in ENGINE_EFFORT_PAIR_ENTRY_KEYS:
         if key in value and value[key] is None:
             raise ProfileError(
@@ -870,6 +881,23 @@ def _effort_pair_facts(value: Any, path: Path, where: str) -> dict[str, Any]:
                            for k, v in maps.items())):
             raise ProfileError(
                 f"{path}: {where}.maps must be a non-empty {{name: name}} mapping, got {maps!r}")
+    # Same shape rules the engine-level block enforces (#1951 review r7): a pair
+    # measurement is a bool / a known off-switch, never prose.
+    off = value.get("off_switch")
+    if off is not None and off not in ENGINE_EFFORT_OFF_SWITCHES:
+        raise ProfileError(
+            f"{path}: {where}.off_switch must be one of {ENGINE_EFFORT_OFF_SWITCHES}, got {off!r}")
+    sn = value.get("supports_none")
+    if sn is not None and not isinstance(sn, bool):
+        raise ProfileError(f"{path}: {where}.supports_none must be a bool, got {sn!r}")
+    refuses = value.get("refuses")
+    if refuses is not None:
+        if (not isinstance(refuses, list)
+                or not all(isinstance(r, str) and r for r in refuses)):
+            raise ProfileError(
+                f"{path}: {where}.refuses must be a list of rung names — empty records a "
+                f"probe that found nothing refused, non-empty the rungs the server 400s "
+                f"as request names — got {refuses!r}")
     # Last, so every shape error above keeps its specific message.
     ev = value.get("evidence")
     if not isinstance(ev, str) or not ev.strip():
@@ -888,7 +916,11 @@ def _engine_effort(value: Any, path: Path) -> Optional[dict[str, Any]]:
         return None
     if not isinstance(value, dict):
         raise ProfileError(f"{path}: engine `effort:` must be a mapping, got {value!r}")
-    for key in ENGINE_EFFORT_PAIR_KEYS:
+    # ONLY the pair facts: an engine-level one would silently hand a sibling's
+    # measurement to a model never measured on it (#1951 review r5).
+    # `supports_none`/`off_switch` are exempt — engine-wide wire claims a pair
+    # entry may override with its own measurement (#1951 review r7).
+    for key in ("default_when_unset", "maps", "refuses"):
         if key in value:
             raise ProfileError(
                 f"{path}: effort.{key} is a per-(model, engine) fact, not an engine-wide "
@@ -1064,6 +1096,53 @@ def _validate_cross_refs(profiles: Profiles) -> None:
             compose = row.get("compose")
             if compose not in COMPOSE_REGISTRY:
                 failures.append(f"calibration/{cal.model}.yml references unknown compose `{compose}`")
+
+    # #1951: an engine's `effort.by_model.<id>:` entry is a PAIR fact the
+    # gateway render reads by exactly this lookup — a typo'd id or a rung off
+    # the model's ladder silently drops the pair's fold facts from every
+    # render, the "unknown" the design forbids. The whole-catalog guard
+    # (test-effort-profiles check 5) checks the same shapes, but the cockpit
+    # and PR-bundle paths load profiles WITHOUT running the guard suite, so
+    # the cross-refs must live here too (#2055 review it10-2). The pair must
+    # also be routed by some slug, or the fact is unreachable.
+    routed_pairs = {(e.get("model"), e.get("engine"))
+                    for e in get_registry().values()
+                    if e.get("model") and e.get("engine")}
+    for engine_id, eng in profiles.engines.items():
+        by_model = (eng.effort or {}).get("by_model") or {}
+        for model_id, facts in by_model.items():
+            where = f"engines/{engine_id}.yml effort.by_model.{model_id}"
+            model = profiles.models.get(model_id)
+            if model is None:
+                failures.append(
+                    f"{where} is not a known model id. "
+                    f"Available models: {_known(profiles.models)}")
+                continue
+            if (model_id, engine_id) not in routed_pairs:
+                failures.append(
+                    f"{where} names a pair no slug routes — the fact is "
+                    f"unreachable, drop it or fix the id")
+            levels = (model.effort or {}).get("levels") or []
+            if not levels:
+                failures.append(
+                    f"{where} records pair facts for a model with no probed "
+                    f"ladder — a fold has nothing to land on")
+                continue
+            d = facts.get("default_when_unset")
+            if d and d not in levels:
+                failures.append(
+                    f"{where}: default_when_unset {d!r} is not a rung of "
+                    f"the model's ladder {levels}")
+            for src, dst in (facts.get("maps") or {}).items():
+                if dst not in levels:
+                    failures.append(
+                        f"{where}: fold {src}->{dst} lands outside the "
+                        f"model's ladder {levels}")
+            for r in facts.get("refuses") or []:
+                if r not in levels:
+                    failures.append(
+                        f"{where}: refused rung {r!r} is not a rung of the "
+                        f"model's ladder {levels}")
 
     for name, entry in get_registry().items():
         for field_name, table in (

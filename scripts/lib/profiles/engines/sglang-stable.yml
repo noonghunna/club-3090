@@ -164,6 +164,7 @@ effort:
   by_model:
     qwen3.8-27b:
       default_when_unset: xhigh
+      supports_none: true
       maps: {minimal: low, high: xhigh, max: xhigh}
       evidence: >-
         Same Qwen3.8 template family as vllm-stable: the composes mount the
@@ -171,16 +172,29 @@ effort:
         clamps (high->xhigh, minimal->low, max->xhigh, raise_exception outside
         low|medium|xhigh) are mirrored in effort_budget.py ALIASES; the unset
         default is the checkpoint template's `reasoning_effort |
-        default('xhigh')`. The model profile carries the probe.
+        default('xhigh')`. The model profile carries the probe. The pair's
+        none claim: the engine turns a top-level `none` into
+        enable_thinking=false before this template runs (the engine evidence
+        below), and the template's thinking-off rendering is wire-probed
+        2026-10-20 through the byte-identical GGUF twin
+        (models/qwen3.8-27b/llama-cpp/patches/
+        qwen38-gguf-reasoning-effort-template/PROVENANCE.md:
+        chat_template_kwargs enable_thinking:false turns thinking off).
     thinkingcap-qwen3.8-27b:
       default_when_unset: xhigh
+      supports_none: true
       maps: {minimal: low, high: xhigh, max: xhigh}
       evidence: >-
         The same vendored qwen38-reasoning-effort-template mount over the
         checkpoint's own template — its model profile cites the mount and the
         fold table that template enforces. Nothing engine-specific changes the
         fold: SGLang's own difference is HOW the default is passed (below), not
-        what the template folds.
+        what the template folds. The pair's none claim: the same vendored
+        template's thinking-off rendering, wire-probed 2026-10-20 through the
+        byte-identical GGUF twin (models/qwen3.8-27b/llama-cpp/patches/
+        qwen38-gguf-reasoning-effort-template/PROVENANCE.md:
+        chat_template_kwargs enable_thinking:false turns thinking off); the
+        engine feeds it enable_thinking=false (the engine evidence below).
   evidence: >-
     The two listed models are the two SGLang slugs' models whose profiles cite
     that contract. nanbeige4.3-33b also routes here but declares no effort ladder

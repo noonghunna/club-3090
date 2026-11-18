@@ -293,9 +293,148 @@ render "8113=qwen3.8-27b@262144+outcap=none,8142=sgl-live@163840+outcap=65536,80
 [[ "$(route_field gguf-live model_info.max_output_tokens)" == "32768" ]] \
   && ok "a larger window alone does not raise the ceiling (32768 unless declared)" \
   || bad "no declared outcap: $(route_field gguf-live model_info.max_output_tokens)"
-[[ "$(route_field qwen3.8-27b model_info.supports_reasoning)" == "True" && -z "$(route_field sgl-live model_info.supports_reasoning)" ]] \
-  && ok "supports_reasoning only where a slug declares a thinking profile (unknown is omitted, never false)" \
-  || bad "supports_reasoning: qwen=$(route_field qwen3.8-27b model_info.supports_reasoning) sgl='$(route_field sgl-live model_info.supports_reasoning)'"
+[[ "$(route_field qwen3.8-27b model_info.supports_reasoning)" == "True" \
+   && "$(route_field sgl-live model_info.supports_reasoning)" == "True" \
+   && -z "$(route_field gguf-live model_info.supports_reasoning)" ]] \
+  && ok "supports_reasoning comes from the model's effort block on every engine; a slug that declares nothing is still omitted, never false" \
+  || bad "supports_reasoning: qwen=$(route_field qwen3.8-27b model_info.supports_reasoning) sgl='$(route_field sgl-live model_info.supports_reasoning)' gguf='$(route_field gguf-live model_info.supports_reasoning)'"
+
+# --- 11c: the effort ladder the gateway advertises (#1951 phase 2) ----------
+# This is what /model_group/info answers as `supported_reasoning_efforts` — the
+# rungs a client may name. Three shapes, three rules, one from each #1951 layer:
+# the MODEL's ladder, the ENGINE's handling of `none`, the COMPOSE's default.
+render "8198=flash-live@262144,8119=glm-live@262144,8094=mimo-live@8192,8084=inkling-live@262144"
+[[ "$(route_field flash-live model_info.reasoning_effort_levels)" == "['low', 'medium', 'xhigh', 'high', 'max', 'minimal']" ]] \
+  && ok "the advertise is the nameable set: the ladder plus the pair's fold sources (#2055 review it4-1)" \
+  || bad "levels: $(route_field flash-live model_info.reasoning_effort_levels)"
+[[ "$(route_field flash-live model_info.supports_none_reasoning_effort)" == "True" ]] \
+  && ok "an engine that folds the none rung onto the ladder says so" \
+  || bad "supports_none: $(route_field flash-live model_info.supports_none_reasoning_effort)"
+[[ "$(route_field flash-live model_info.default_reasoning_effort)" == "low" ]] \
+  && ok "the compose default is advertised as the server's own default" \
+  || bad "default: $(route_field flash-live model_info.default_reasoning_effort)"
+# litellm's `default_reasoning_effort` Literal (v1.100.3) EXCLUDES max while the
+# engine's REASONING_EFFORT includes it: the rung is advertised, the default is
+# OMITTED. Downgrading it to `high` would tell a client the server applies a
+# choice it does not apply.
+[[ "$(route_field glm-live model_info.reasoning_effort_levels)" == "['low', 'high', 'max']" \
+   && -z "$(route_field glm-live model_info.default_reasoning_effort)" ]] \
+  && ok "a max ladder is advertised whole and its max default is OMITTED, never downgraded" \
+  || bad "max rung: levels=$(route_field glm-live model_info.reasoning_effort_levels) default='$(route_field glm-live model_info.default_reasoning_effort)'"
+# Where the compose names no knob at all, the PAIR fact is what the server
+# applies: the strata route leaves REASONING_EFFORT unset and its launcher runs
+# at the template's xhigh, declared under the engine's `by_model` entry for THIS
+# model. Before #1951 review r5 that fact sat on the engine block, where the two
+# MiniMax and three DeepSeek slugs on the SAME engine (strata-maya) would have
+# been defaulted GLM's way once they got a ladder.
+render "8198=flash-live@262144,8119=glm-live@262144,8094=mimo-live@8192,8084=inkling-live@262144,8018=strata-live@262144"
+[[ "$(route_field strata-live model_info.default_reasoning_effort)" == "xhigh" ]] \
+  && ok "the pair default is advertised once its rung is nameable — the unset default is xhigh and the server accepts the name (the 2026-11-15 reading that it 400'd was the unknown-name message, under-inclusive; corrected 2026-11-17, see engines/strata.yml)" \
+  || bad "strata default: '$(route_field strata-live model_info.default_reasoning_effort)'"
+# The nameable set (#2055 review it4-1): the model's rungs plus BOTH fold
+# sources — `high` and `max` reach xhigh on the request path, and the pair
+# refuses nothing (the earlier `refuses: [xhigh]` came from that same
+# mis-read 400; the refuse mechanism itself stays pinned by the synthetic
+# disagreeing-ladders case below).
+[[ "$(route_field strata-live model_info.reasoning_effort_levels)" == "['low', 'medium', 'xhigh', 'high', 'max']" ]] \
+  && ok "the full nameable set renders: ladder plus the fold sources" \
+  || bad "strata levels: '$(route_field strata-live model_info.reasoning_effort_levels)'"
+
+# An honest `status:` instead of a ladder: the model DOES think (`unprobed` /
+# `no-string-ladder` say the rungs are unknown, not absent), so the capability
+# goes out and the ladder does not. Rendering nothing here would fall back to
+# litellm's off-map `supports_reasoning: false` — the bug measured on this rig
+# 2026-11-15, where a client turned thinking off on a thinking model.
+for f in mimo-live inkling-live; do
+  [[ "$(route_field "$f" model_info.supports_reasoning)" == "True" \
+     && -z "$(route_field "$f" model_info.reasoning_effort_levels)" ]] \
+    && ok "$f: an unprobed/non-string thinking model advertises the capability, not a ladder" \
+    || bad "$f: reasoning=$(route_field "$f" model_info.supports_reasoning) levels='$(route_field "$f" model_info.reasoning_effort_levels)'"
+done
+# Agree-or-drop, the rule port_facts already uses for ctx and vision: a port
+# hosting two ladders advertises NEITHER. litellm intersects a group's levels
+# across its deployments anyway, so a partial fact here would advertise a rung
+# the served model raises on. No real port disagrees today, so this is the one
+# shape only a synthetic pair can pin.
+python3 - scripts/lib/litellm_sync.py <<'PY' || fail=1
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ls", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+low = {"port": 1, "effort": {"levels": ["low", "high"], "compose_default": "low"}}
+tall = {"port": 1, "effort": {"levels": ["low", "medium", "xhigh"], "compose_default": "low"}}
+same = {"port": 1, "effort": {"levels": ["low", "high"], "compose_default": "low"}}
+if m.port_facts([low, tall]).get(1, {}).get("effort"):
+    print("  FAIL — a port hosting two different ladders still advertised one", file=sys.stderr); sys.exit(1)
+if not m.port_facts([low, same]).get(1, {}).get("effort"):
+    print("  FAIL — two slugs agreeing on a ladder dropped the fact", file=sys.stderr); sys.exit(1)
+if m.port_facts([{"port": 1}]).get(1, {}).get("effort"):
+    print("  FAIL — a slug with no effort block invented a fact", file=sys.stderr); sys.exit(1)
+# The pair default is a fact like any other: agree-or-drop across the port, and
+# it fills the advertise only where the compose names no knob.
+pair_x = {"port": 2, "effort": {"levels": ["low", "xhigh"], "default_when_unset": "xhigh"}}
+pair_m = {"port": 2, "effort": {"levels": ["low", "xhigh"], "default_when_unset": "max"}}
+if (m.port_facts([pair_x, pair_m]).get(2, {}).get("effort") or {}).get("default_when_unset"):
+    print("  FAIL — a port with two different pair defaults still advertised one", file=sys.stderr); sys.exit(1)
+one = m.port_facts([pair_x]).get(2, {}).get("effort")
+if not one or one.get("default_when_unset") != "xhigh":
+    print(f"  FAIL — a single pair default did not survive port_facts: {one}", file=sys.stderr); sys.exit(1)
+if "default_reasoning_effort: xhigh" not in "\n".join(m.model_info(262144, {"effort": one})):
+    print("  FAIL — the pair default never reached the advertise", file=sys.stderr); sys.exit(1)
+max_only = m.port_facts([pair_m]).get(2, {}).get("effort")
+if "default_reasoning_effort" in "\n".join(m.model_info(262144, {"effort": max_only})):
+    print("  FAIL — a max pair default was advertised instead of omitted", file=sys.stderr); sys.exit(1)
+refd = {"levels": ["low", "medium", "xhigh"], "refuses": ["xhigh"],
+        "default_when_unset": "xhigh"}
+if "default_reasoning_effort" in "\n".join(m.model_info(262144, {"effort": refd})):
+    print("  FAIL — a refused pair default was advertised instead of omitted",
+          file=sys.stderr); sys.exit(1)
+folded = {"levels": ["low", "medium", "xhigh"], "refuses": ["xhigh"],
+          "maps": {"high": "xhigh"}, "default_when_unset": "high"}
+if "default_reasoning_effort: high" not in "\n".join(m.model_info(262144, {"effort": folded})):
+    print("  FAIL — a fold-source default was omitted instead of advertised",
+          file=sys.stderr); sys.exit(1)
+# One compose sets the knob, the sibling's does not: the pair default must NOT
+# fill the port — the route could boot either compose, and the slug whose
+# compose sets low would be lied to (#1951 review r6).
+mixed = {"port": 3, "effort": {"levels": ["low", "xhigh"], "compose_default": "low",
+                               "default_when_unset": "xhigh"}}
+bare = {"port": 3, "effort": {"levels": ["low", "xhigh"], "default_when_unset": "xhigh"}}
+got = (m.port_facts([mixed, bare]).get(3, {}).get("effort") or {})
+if got.get("default_when_unset") or got.get("compose_default"):
+    print(f"  FAIL — a compose knob beside a bare sibling let the pair default "
+          f"fill the port: {got}", file=sys.stderr); sys.exit(1)
+if not m.port_facts([bare]).get(3, {}).get("effort", {}).get("default_when_unset"):
+    print("  FAIL — a bare compose lost the pair default that should fill it",
+          file=sys.stderr); sys.exit(1)
+# Refusal is a negative fact: on a port that can boot either engine, a rung
+# ANY row refuses is not safely nameable — union, never agree-or-drop
+# (#2055 review it5-5). The fold table intersects per source, minus the
+# refused names.
+strata_row = {"port": 9, "effort": {"levels": ["low", "medium", "xhigh"],
+                                    "refuses": ["xhigh"], "maps": {"high": "xhigh"}}}
+vllm_row = {"port": 9, "effort": {"levels": ["low", "medium", "xhigh"],
+                                  "maps": {"high": "xhigh", "minimal": "low"}}}
+got = (m.port_facts([strata_row, vllm_row]).get(9, {}).get("effort") or {})
+if got.get("refuses") != ["xhigh"] or got.get("maps") != {"high": "xhigh"}:
+    print(f"  FAIL — a strata+vllm port over-advertised: {got}",
+          file=sys.stderr); sys.exit(1)
+if "[low, medium, high]" not in "\n".join(m.model_info(262144, {"effort": got})):
+    print("  FAIL — the consolidated port did not advertise the intersection",
+          file=sys.stderr); sys.exit(1)
+got3 = (m.port_facts([vllm_row, strata_row]).get(9, {}).get("effort") or {})
+if got3 != got:
+    print(f"  FAIL — the fold intersection must be order-independent: {got3}",
+          file=sys.stderr); sys.exit(1)
+no_map = {"port": 9, "effort": {"levels": ["low", "medium", "xhigh"]}}
+got2 = (m.port_facts([strata_row, no_map]).get(9, {}).get("effort") or {})
+if got2.get("maps") or got2.get("refuses") != ["xhigh"]:
+    print(f"  FAIL — a row with no fold table must drop every fold source: {got2}",
+          file=sys.stderr); sys.exit(1)
+print("  ok   — disagreeing ladders or pair defaults advertise nothing; agreeing ones "
+      "still do, a pair default fills an advertise with no compose knob anywhere "
+      "on the port, a refused rung unions across rows, and the fold table "
+      "intersects per source")
+PY
 
 # --- 15: Claude Code's /v1/messages goes to the engine's own endpoint, where it holds up
 # LiteLLM's translation of /v1/messages builds no thinking blocks from vLLM/SGLang
@@ -310,25 +449,45 @@ else
   bad "supported_endpoints: sgl-live='$(eps sgl-live)' qwen3.8-27b='$(eps qwen3.8-27b)' gguf-live='$(eps gguf-live)'"
 fi
 # …and it must never touch supports_reasoning: /model_group/info publishes it, and
-# pi-setup.sh turns thinking off on a false one.
-[[ -z "$(route_field sgl-live model_info.supports_reasoning)" ]] \
+# pi-setup.sh turns thinking off on a false one. "Absent" was the old shape of
+# that property (this route declared no thinking profile); with the #1951 effort
+# block the route DOES carry one, so the property is now "the passthrough does
+# not change it" — same port, rendered with and without +messages.
+render "8142=sgl-live@163840"
+plain="$(route_field sgl-live model_info.supports_reasoning)"
+render "8142=sgl-live@163840+messages"
+passthru="$(route_field sgl-live model_info.supports_reasoning)"
+[[ -n "$plain" && "$plain" == "$passthru" ]] \
   && ok "the passthrough leaves supports_reasoning alone" \
-  || bad "passthrough route carries supports_reasoning=$(route_field sgl-live model_info.supports_reasoning)"
+  || bad "passthrough changed supports_reasoning: $plain -> $passthru"
 
 # --- 16: the REAL probe decides it, against stub servers (not the seam) ------------
-# The property that matters is whether the endpoint keeps Claude Code's per-turn
-# `system` message where it is: an endpoint that moves it to the front re-prefills
-# the conversation every turn (vLLM v0.30.0 without --chat-template). The probe
-# measures it with count_tokens: moved, the message counts exactly like the same text
-# in the top-level system prompt; in place, it adds its own turn markers. Positive
-# controls (SGLang and vLLM keeping it in place) and negatives (vLLM moving it, no
-# endpoint, llama.cpp), so a probe that always says yes or always no both fail.
-python3 - "$ROOT/scripts/lib" <<'PY2' && ok "probe: in-place SGLang/vLLM → passthrough; vLLM that moves the message, no count_tokens, llama.cpp → translated" || bad "probe decision wrong (see above)"
+# Two properties, both measured on THIS boot, decide the /v1/messages passthrough:
+#   - the endpoint answers with a real message. A tiny generation is the only
+#     honest test: an empty-body 400-vs-404 probe cannot tell a working endpoint
+#     from one that answers with empty content, and empty content is exactly the
+#     failure this avoids;
+#   - it keeps Claude Code's per-turn `system` message where it is: an endpoint
+#     that moves it to the front re-prefills the conversation every turn (vLLM
+#     v0.30.0 without --chat-template). count_tokens measures that without
+#     generating: moved, the message counts exactly like the same text in the
+#     top-level system prompt; in place, it adds its own turn markers. An
+#     endpoint without count_tokens (Project Maya 404s it) gets the same
+#     question answered by its prompt cache: a follow-up that only APPENDS the
+#     message must hit the cache on the front it did not touch.
+# The engine's NAME decides nothing: the old allowlist (SGLang, vLLM) silently
+# cost QEngine its whole reply and Strata its thinking, and Strata reports no
+# owned_by at all. Positives and negatives on every leg, so a probe that always
+# says yes or always no both fail.
+python3 - "$ROOT/scripts/lib" <<'PY2' && ok "probe: serves-itself + in-place → passthrough, owned_by or not; moved, empty content, no endpoint, rewritten front → translated; a declared thinking budget past the retry → the thinking-only envelope is native" || bad "probe decision wrong (see above)"
 import http.server, json, sys, threading
 sys.path.insert(0, sys.argv[1])
 import litellm_sync
 
-def stub(owned_by, inline_system):   # inline_system: "in-place" | "moved" | "absent"
+def stub(owned_by, inline_system, serves="real", cache=None):
+    """inline_system: "in-place" | "moved" | "absent" (count_tokens behaviour).
+    serves: "real" (a message with content) | "empty" (content: []) | "absent" (404).
+    cache: (front, cached) — no count_tokens; the cache probe decides."""
     class H(http.server.BaseHTTPRequestHandler):
         def log_message(self, *a): pass
         def _send(self, code, body):
@@ -337,15 +496,45 @@ def stub(owned_by, inline_system):   # inline_system: "in-place" | "moved" | "ab
             self.send_header("content-length", str(len(data))); self.end_headers(); self.wfile.write(data)
         def do_GET(self):
             if self.path == "/v1/models":
-                self._send(200, {"data": [{"id": "m", "owned_by": owned_by, "max_model_len": 4096}]})
+                data = [{"id": "m", "max_model_len": 4096}]
+                if owned_by:
+                    data[0]["owned_by"] = owned_by
+                self._send(200, {"data": data})
             else:
                 self._send(404, {})
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
-            if self.path != "/v1/messages/count_tokens" or inline_system == "absent":
-                return self._send(404, {"error": "stub"})
             if body.get("model") != "m":
                 return self._send(404, {"error": "unknown model"})
+            if self.path == "/v1/messages":
+                if serves == "absent":
+                    return self._send(404, {"error": "stub"})
+                if serves == "empty":
+                    return self._send(200, {"type": "message", "role": "assistant", "content": []})
+                if serves == "think":
+                    # no text at ANY budget: an endpoint Claude Code cannot use
+                    return self._send(200, {"type": "message", "role": "assistant",
+                                            "content": [{"type": "thinking", "thinking": "hmm"}]})
+                if serves == "budget" and body.get("max_tokens", 8) <= 8:
+                    # the 8-token probe: thinking ate the whole budget; the
+                    # retry at a real budget must find the text
+                    return self._send(200, {"type": "message", "role": "assistant",
+                                            "content": [{"type": "thinking", "thinking": "hmm"}]})
+                if cache and len(body.get("messages", [])) > 2:
+                    # the follow-up: the cache answers the placement question
+                    front, cached = cache
+                    return self._send(200, {"type": "message", "role": "assistant",
+                                            "content": [{"type": "text", "text": "DONE"}],
+                                            "usage": {"input_tokens": 14, "cache_read_input_tokens": cached}})
+                if cache:
+                    front, cached = cache
+                    return self._send(200, {"type": "message", "role": "assistant",
+                                            "content": [{"type": "text", "text": "OK"}],
+                                            "usage": {"input_tokens": front}})
+                return self._send(200, {"type": "message", "role": "assistant",
+                                        "content": [{"type": "text", "text": "OK"}]})
+            if self.path != "/v1/messages/count_tokens" or inline_system == "absent":
+                return self._send(404, {"error": "stub"})
             # Both probe requests carry the same text; kept in place, the inline message
             # adds its own turn markers (4 tokens on Qwen), moved it adds none.
             inline = any(m["role"] == "system" for m in body.get("messages", []))
@@ -354,19 +543,57 @@ def stub(owned_by, inline_system):   # inline_system: "in-place" | "moved" | "ab
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
-cases = [("sglang", "in-place", True), ("vllm", "in-place", True), ("vllm", "moved", False),
-         ("sglang", "absent", False), ("llamacpp", "in-place", False)]
+cases = [  # (owned_by, count_tokens, serves, cache, want, declared_budget)
+    ("sglang", "in-place", "real", None, True, 0),
+    ("vllm", "in-place", "real", None, True, 0),
+    ("vllm", "moved", "real", None, False, 0),
+    ("", "in-place", "real", None, True, 0),          # Strata: no owned_by, still passthrough
+    ("", "absent", "real", (1562, 1561), True, 0),    # Maya: no count_tokens, cache says in place
+    ("", "absent", "real", (1562, 3), False, 0),      # Maya-shaped but the front was rewritten
+    ("", "in-place", "budget", None, True, 0),        # thinking ate 8 tokens; retry finds text
+    ("", "in-place", "think", None, False, 0),        # no knob, no text at any budget: translated
+    ("", "in-place", "think", None, True, 16384),     # the knob declares 16,384 past the retry's 512: a budget artifact, native (#2055 review it5-3)
+    ("vllm", "in-place", "empty", None, False, 0),    # answers, but with no content
+    ("llamacpp", "in-place", "absent", None, False, 0),
+]
 bad = 0
-for owned_by, behaviour, want in cases:
-    srv = stub(owned_by, behaviour)
-    got = litellm_sync.probe(srv.server_address[1])
+for owned_by, behaviour, serves, cache, want, budget in cases:
+    srv = stub(owned_by, behaviour, serves, cache)
+    got = litellm_sync.probe(srv.server_address[1], budget)
     srv.shutdown()
     flag = got[0][3] if got else None
     if flag is not want:
-        print(f"    owned_by={owned_by} inline system {behaviour}: passthrough={flag}, want {want}", file=sys.stderr)
+        print(f"    owned_by={owned_by!r} count_tokens={behaviour} serves={serves} cache={cache} "
+              f"declared_budget={budget}: passthrough={flag}, want {want}", file=sys.stderr)
         bad = 1
 sys.exit(bad)
 PY2
+
+# --- 16b: the emit's effort-default and budget-knob regexes and the guard's ---
+# are ONE shape. Two copies of the REASONING_EFFORT default regex exist
+# (registry-emit.sh reads the compose for the advertise; test-effort-profiles.sh
+# check 3 pins every compose against the same shape), and since #2055 review
+# it6-7c a second pair: the CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET knob regex
+# the emit's _compose_thinking_budget reads vs the guard's budget_knob_re.
+# Each pair must stay identical: a form one reads and the other does not is a
+# fact the advertise and the guard disagree on.
+python3 - <<'PY' && ok "the emit's effort-default and budget-knob regexes are byte-identical to the guard's" || bad "a regex pair drifted (see above)"
+import re
+RAW = r"r'((?:[^'\\]|\\.)*)'"          # a raw string literal, escapes included
+def pattern(path, marker):
+    src = open(path, encoding="utf-8").read()
+    m = re.search(marker + r"[^\n]*\n[ \t]+" + RAW, src)
+    return m.group(1) if m else None
+emit = pattern("scripts/lib/registry-emit.sh", r"_EFFORT_DEFAULT_RX = _re\.compile\(")
+guard = pattern("scripts/tests/test-effort-profiles.sh", r"default_re = re\.compile\(")
+assert emit and guard, f"could not extract a pattern: emit={emit!r} guard={guard!r}"
+assert emit == guard, f"drift:\n  emit  = {emit!r}\n  guard = {guard!r}"
+emit_kb = pattern("scripts/lib/registry-emit.sh", r"_THINKING_BUDGET_RX = _re\.compile\(")
+guard_kb = pattern("scripts/tests/test-effort-profiles.sh", r"budget_knob_re = re\.compile\(")
+assert emit_kb and guard_kb, (f"could not extract the knob pattern: "
+                              f"emit={emit_kb!r} guard={guard_kb!r}")
+assert emit_kb == guard_kb, f"knob drift:\n  emit  = {emit_kb!r}\n  guard = {guard_kb!r}"
+PY
 
 # --- 17: an engine without /v1/responses gets the chat-completions bridge (#1520)
 # omp talks Responses to every route and LiteLLM turns Claude Code's /v1/messages

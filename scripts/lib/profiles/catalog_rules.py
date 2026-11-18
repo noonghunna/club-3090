@@ -472,6 +472,40 @@ def _load_profiles_cached(root_str: str, stamp: tuple):
     return load_profiles(Path(root_str) / "scripts/lib/profiles")
 
 
+def _model_dir_knob(root_str: str, model_id: str) -> bool:
+    """Whether the model's OWN tree carries an effort knob — a vendored template
+    or patch under models/<id>/ (.jinja included) — the same scan the guard's
+    check 1 runs. Deliberately uncached: one os.walk over one model directory
+    (1-3 ms measured), and the fresh scan is what makes an edited template
+    visible on the very next call. The earlier lru_cache was keyed on the
+    profiles stamp, which a models/<id>/ edit never moves — a long-lived
+    cockpit would keep the stale False (#2055 review it6-3)."""
+    base = Path(root_str) / "models" / model_id
+    if not base.is_dir():
+        return False
+    for dirpath, _dirs, files in os.walk(base):
+        if "_archive" in dirpath:
+            continue
+        for fn in files:
+            if not fn.endswith((".yml", ".jinja", ".py")):
+                continue
+            try:
+                text = (Path(dirpath) / fn).read_text(encoding="utf-8",
+                                                       errors="replace")
+            except OSError:
+                continue
+            if fn.endswith((".yml", ".py")):
+                text = "\n".join(l.split("#", 1)[0] for l in text.splitlines()
+                                 if not l.lstrip().startswith("#"))
+            elif fn.endswith(".jinja"):
+                # Same rule as the guard's check 1: a Jinja comment is prose,
+                # not a knob (#2055 review it5-6).
+                text = re.sub(r"\{#.*?#\}", " ", text, flags=re.S)
+            if "REASONING_EFFORT" in text or "reasoning_effort" in text:
+                return True
+    return False
+
+
 def _effort_rule(root: Path, entry: dict, text: str) -> list[Finding]:
     """#1951: a thinking slug's model must declare its `effort:` block, so the
     gateway render and the omp overrides have one source for the ladder. The
@@ -479,16 +513,27 @@ def _effort_rule(root: Path, entry: dict, text: str) -> list[Finding]:
     pinned them, or an honest `status:` (unprobed / no-string-ladder /
     no-thinking) until then; the compose keeps only the default (principle 1).
     Same gate scripts/tests/test-effort-profiles.sh holds the curated catalog
-    to; this covers the PR-bundle and cockpit paths that never run that test."""
+    to; this covers the PR-bundle and cockpit paths that never run that test.
+    The awareness scan matches the guard's check 1: a thinking sampler
+    profile, a knob in the compose, or a knob in the model's own tree (a
+    vendored template/patch under models/<id>/, .jinja included)."""
     sp = entry.get("sampler_profiles")
     thinking = isinstance(sp, dict) and any("thinking" in str(k).lower() for k in sp)
     body = "\n".join(l.split("#", 1)[0] for l in text.splitlines()
                      if not l.lstrip().startswith("#"))
     knob = "REASONING_EFFORT" in body or "reasoning_effort" in body
     if not (thinking or knob):
-        return [Finding("effort-block", REQUIRED, PASS,
-                        "not an effort-aware slug (no thinking sampler profile, "
-                        "no reasoning-effort knob in the compose)", DOC_CASES)]
+        # The compose is knobless, but the model's own tree may carry the knob —
+        # a vendored template or patch under models/<id>/ makes the slug
+        # effort-aware exactly like a compose knob does (the guard's check 1
+        # scans the same tree; #1951 review r8).
+        if _model_dir_knob(str(root), str(entry.get("model"))):
+            knob = True
+        else:
+            return [Finding("effort-block", REQUIRED, PASS,
+                            "not an effort-aware slug (no thinking sampler "
+                            "profile, no reasoning-effort knob in the compose "
+                            "or the model's own tree)", DOC_CASES)]
     sys.path.insert(0, str(root))
     try:
         from scripts.lib.profiles.compat import load_profiles

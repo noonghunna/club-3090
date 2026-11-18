@@ -665,6 +665,108 @@ def _compose_served_name(compose_path: str):
     return unwrapped.group(1) if unwrapped else raw
 
 
+# The compose's REASONING_EFFORT default (#1951 phase 2): the serving choice the
+# engine applies when a request names no effort — the third of the three #1951
+# layers (MODEL ladder, ENGINE handling, COMPOSE default). Three forms a compose
+# can set it in: the env-default (`:-`), the YAML mapping (`REASONING_EFFORT:
+# low`), and the equals list form (`= low`). The lookbehind/lookahead keep a
+# LONGER variable (QE_REASONING_EFFORT, LLAMA_ARG_REASONING_EFFORT_ALLOW) from
+# being mistaken for the knob; the bare form (no value — the strata-maya
+# composes hand the knob to the launcher) is not a default, because the
+# launcher's default is what the pair fact records. A reference WITH a
+# fallback (`REASONING_EFFORT: ${REASONING_EFFORT:-low}`) names the compose's
+# own unset-case default — the fallback is read. Same shape the guard pins
+# (test-effort-profiles.sh check 3); comment lines and inline comments ignored.
+# None when the compose sets no default — unknown, which the render must render
+# as nothing.
+_EFFORT_DEFAULT_RX = _re.compile(
+    r'(?i)(?<![A-Za-z_])REASONING_EFFORT(?:["\']?:-["\']?|["\']?[:=][ \t]*["\']?\$\{[A-Za-z_]+:-|["\']?:[ \t]*["\']?|=)["\']?([a-z]+)')
+
+
+def _compose_effort_default(compose_path: str):
+    try:
+        txt = (root / compose_path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in txt.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        m = _EFFORT_DEFAULT_RX.search(line.split("#", 1)[0])
+        if m:
+            return m.group(1)
+    return None
+_THINKING_BUDGET_RX = _re.compile(
+    r'CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET:\s*(?:"?\$\{THINKING_TOKEN_BUDGET:-(\d+)\}"?|(\d+)\s*)')
+
+
+def _compose_thinking_budget(compose_path: str):
+    """The compose's declared server-side DEFAULT thinking budget — the
+    bucko-default-thinking-budget patch's knob, `CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET:
+    "${THINKING_TOKEN_BUDGET:-16384}"`: the budget a request without an explicit
+    thinking_token_budget gets. The /v1/messages probe's retry cannot cover a
+    budget bigger than its own 512, so the render hands this to the probe: a
+    thinking-only envelope on a route whose knob exceeds the retry is a budget
+    artifact and proof of native serving, never a translated route (#2055
+    review it5-3). None when the compose declares no knob."""
+    try:
+        txt = (root / compose_path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in txt.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        m = _THINKING_BUDGET_RX.search(line.split("#", 1)[0])
+        if m:
+            return int(m.group(1) or m.group(2))
+    return None
+
+
+def _effort_facts(model_id: str, engine_id: str, compose_path: str):
+    """The #1951 effort facts one gateway render needs for a slug: the MODEL's
+    ladder (or its honest `status:`), the ENGINE's handling of the wire `none`,
+    the PAIR's fold/default facts, and the COMPOSE's default. A missing fact is
+    None = UNKNOWN — the render emits nothing for it, never an invented ladder
+    and never `supports_reasoning: false` on a thinking model (principle 3)."""
+    m = profiles.models.get(model_id)
+    me = (getattr(m, "effort", None) or {}) if m else {}
+    e = profiles.engines.get(engine_id)
+    ee = (getattr(e, "effort", None) or {}) if e else {}
+    budget = _compose_thinking_budget(compose_path)
+    if not me and not ee:
+        # Neither side declares an effort block, but the compose's thinking
+        # budget is still a live fact the budgets map reads (#2055 review
+        # it7-4) — return it alone rather than dropping it with the block.
+        return {"default_thinking_budget": budget} if budget else None
+    # What an unset request gets, and how an out-of-ladder name folds, are
+    # (model, engine) PAIR facts (#1951 review r5): the engine's `by_model` entry
+    # for THIS model, never the engine block. A model the engine does not list
+    # has none — it must not inherit a sibling launcher's default or fold table.
+    pair = (ee.get("by_model") or {}).get(model_id) or {}
+    return {
+        "levels": list(me["levels"]) if me.get("levels") else None,
+        "status": me.get("status"),
+        # A pair's own claim wins. The engine-level fact is inherited ONLY
+        # when it is False — "this server ignores `none`" is engine-wide
+        # behaviour check 5d endorses for unlisted pairs — but never True:
+        # honoring `none` is a per-template contract, and inheriting it for
+        # an unprobed pair is the r6/r8 failure check 5d exists to refuse
+        # (#2055 review it10-3).
+        "supports_none": (pair["supports_none"] if "supports_none" in pair
+                          else (False if ee.get("supports_none") is False
+                                else None)),
+        # off_switch stays OUT of the payload: neither _port_effort nor
+        # model_info reads it, and neither do the omp overrides — their
+        # ladders are the guard-pinned FAMILIES copy in omp-setup.sh, which
+        # carries no off_switch at all — so carrying it here only invited
+        # silent drift with no consumer (#2055 review it6-7a, it9-5).
+        "default_when_unset": pair.get("default_when_unset"),
+        "maps": dict(pair["maps"]) if pair.get("maps") else None,
+        "refuses": list(pair["refuses"]) if pair.get("refuses") else None,
+        "compose_default": _compose_effort_default(compose_path),
+        "default_thinking_budget": _compose_thinking_budget(compose_path),
+    }
+
+
 def _current_pin(slug: str, compose_path: str):
     """The pin a launcher-started serve actually runs TODAY: the engine
     profile's docker-image spec when the compose's `image:` reads the variable
@@ -820,6 +922,10 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # them (qwen3.8-27b today); null otherwise, so the c3 serve-confirm
             # can gate its tri-state thinking toggle on REAL registry data.
             "sampler_profiles": (REG.get(d["slug"], {}) or {}).get("sampler_profiles"),
+            # #1951 phase 2: the effort facts the gateway render reads — the
+            # model's ladder (or honest status), the engine's handling of a
+            # rung, and the compose's default. None = no effort metadata at all.
+            "effort": _effort_facts(d["model"], d["engine"], d["compose_path"]),
             # Weight-offload backend (catalog "offload" column) — None = resident
             # (default) / "uva" / "residency" / "tensor-override" / "prefetch".
             "offload": (REG.get(d["slug"], {}) or {}).get("offload"),

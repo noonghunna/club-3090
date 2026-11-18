@@ -173,14 +173,19 @@ advertise and the `omp-setup.sh` overrides can be **generated** instead of
 hand-copied per surface ([#1951](https://github.com/noonghunna/club-3090/issues/1951)).
 The **model** profile holds the ladder (a model fact); the **engine** profile
 holds what the engine does with a rung (also `effort:`) — but only what holds
-for EVERY model it serves: `off_switch` / `supports_none` / `unknown_name`.
-What a request gets when it names no effort, and how an out-of-ladder name
-folds, are properties of the **(model, engine) pair**, so they go under
-`by_model: <model_id>:` — and each entry cites its own source in its own
-`evidence:`; an engine-level `default_when_unset` / `maps` is refused by the
-loader rather than inherited by a model it was never measured on. The
-**compose** keeps only the default — `REASONING_EFFORT:-<rung>` is a serving
-choice, not a model fact.
+for EVERY model it serves: `off_switch` / `supports_none` / `unknown_name`
+(engine-level `refuses` is refused by the loader — which rungs a server 400s
+as request names is pair-scoped, #2055 review it7-5). What a request gets when
+it names no effort, and how an out-of-ladder name folds, are properties of the
+**(model, engine) pair**, so they go under `by_model: <model_id>:` — the fold
+facts are `default_when_unset` / `maps` / `refuses`, and an entry may also
+carry its OWN `supports_none` / `off_switch` measurement (the engine-level
+claim is "the wire accepts none"; whether THIS model's template then closes
+the thinking block is the pair's contract). Each entry cites its own source in
+its own `evidence:`; an engine-level `default_when_unset` / `maps` / `refuses`
+is refused by the loader rather than inherited by a model it was never
+measured on. The **compose** keeps only the default — `REASONING_EFFORT:-<rung>`
+is a serving choice, not a model fact.
 
 Three shapes, and the loader (`compat.py → _effort`) rejects anything else:
 

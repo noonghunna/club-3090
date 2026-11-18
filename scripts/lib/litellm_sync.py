@@ -92,7 +92,7 @@ def get_models(port: int, key: str) -> list[dict]:
         return json.load(r).get("data") or []
 
 
-def probe(port: int) -> list[Live]:
+def probe(port: int, declared_budget: int = 0) -> list[Live]:
     """Ask the server what it serves. Names come from /v1/models, NOT from the
     registry's `served_name`: 72 of 138 variants do not declare one, so a
     registry-derived name would have nothing to emit for half the catalog.
@@ -131,7 +131,8 @@ def probe(port: int) -> list[Live]:
         if engine_kind_from_owned_by(owned_by) == "exllamav3":
             data = loaded_model(port) or data
         first_id = next((str(m["id"]) for m in data if m.get("id")), "")
-        native = serves_messages(port, owned_by, first_id, key) if first_id else False
+        native = (serves_messages(port, first_id, key, declared_budget)
+                  if first_id else False)
         responses = serves_responses(port, key)
         out: list[Live] = []
         for m in data:
@@ -247,12 +248,91 @@ def count_tokens(port: int, model: str, body: dict, key: str = "") -> "int | Non
     return n if isinstance(n, int) else None
 
 
-def serves_messages(port: int, owned_by: str, model: str, key: str = "") -> bool:
+def anthropic_call(port: int, model: str, messages: list, key: str = "",
+                   max_tokens: int = 8, timeout: int = 30) -> "dict | None":
+    """POST /v1/messages, parsed. None on any failure."""
+    req = bearer(urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/messages",
+        data=json.dumps({"model": model, "max_tokens": max_tokens, "messages": messages}).encode(),
+        headers={"content-type": "application/json"},
+    ), key)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    except Exception:
+        return None
+
+
+def serves_anthropic(port: int, model: str, key: str = "",
+                     declared_budget: int = 0) -> bool:
+    """Whether the engine answers Anthropic /v1/messages itself, with a real
+    message. Measured on THIS boot, because LiteLLM's own translation is not
+    equivalent: through the Responses bridge Strata answers with a text block
+    only, thinking dropped, streaming and non-streaming alike (measured 2026-11-15:
+    blocks=['text'], thinking_len=0 against 116/304 chars from its own endpoint at
+    effort low/xhigh); through the chat-completions bridge QEngine answered a
+    non-streaming request with `content: []` — the #1520 gap recorded under
+    RESPONSES_BRIDGE. Both engines answer /v1/messages themselves, with a thinking
+    block and a text block.
+    A tiny generation is the only honest test. The empty-body 400-vs-404 trick
+    serves_responses uses cannot tell a working endpoint from one that answers
+    with empty content, and empty content is exactly the failure this avoids.
+    The probe is 8 tokens; the full classification can spend up to four
+    generations per live port per render (the 8-token probe, one 512-token
+    retry, and two ~20-token count_tokens calls in keeps_system_in_place) —
+    still once per render, still cheap. A thinking engine can spend that
+    whole budget inside its thinking block and answer with no text at all — a
+    budget artifact, not a dead endpoint. Two rules decide what the envelope
+    means (#2055 review it5-3):
+      - a route whose compose declares a default thinking budget bigger than
+        the retry's 512 (bucko's CLUB3090_DEFAULT_THINKING_TOKEN_BUDGET,
+        16,384) gets the thinking-only envelope accepted as native on the
+        first probe: the knob guarantees text once the reasoning reaches the
+        declared budget, and LiteLLM's translation never produces a thinking
+        block (measured 2026-11-15: text-only, thinking dropped) — so the
+        envelope is proof of native serving;
+      - without such a knob, ONE retry at 512: text there → native; an
+        endpoint with no text at either budget is classified translated.
+        The boundary this accepts (#2055 review it7-7): a route whose
+        default-effort thinking exceeds BOTH budgets on the trivial probe
+        prompt — the flash-next strata/vllm routes run the template's xhigh
+        with no knob — loses the reasoning the passthrough exists to
+        preserve, and Claude Code's own max_tokens is far larger, so text
+        WOULD appear for it. The translation always answers with text, so
+        Claude Code keeps working either way; the reasoning loss is the
+        accepted cost of a probe that must stay cheap (an 8-token probe, up
+        to four generations per live port per render) until a heavier probe
+        is justified. test 16's
+        "think" stub pins exactly this classification."""
+    probe = anthropic_call(
+        port, model, [{"role": "user", "content": "Reply with the single word OK."}], key)
+    if not (isinstance(probe, dict) and probe.get("type") == "message"):
+        return False
+    if (isinstance(probe.get("content"), list)
+            and any(b.get("type") == "text" and b.get("text") for b in probe["content"])):
+        return True
+    if (isinstance(probe.get("content"), list)
+            and any(b.get("type") == "thinking" for b in probe["content"])
+            and declared_budget > 512):
+        return True
+    body = anthropic_call(
+        port, model, [{"role": "user", "content": "Reply with the single word OK."}],
+        key, max_tokens=512, timeout=90)
+    return (isinstance(body, dict) and body.get("type") == "message"
+            and isinstance(body.get("content"), list)
+            and any(b.get("type") == "text" and b.get("text") for b in body["content"]))
+
+
+def serves_messages(port: int, model: str, key: str = "",
+                    declared_budget: int = 0) -> bool:
     """Whether the gateway should hand Claude Code's Anthropic /v1/messages to the
     engine's own endpoint instead of translating it. Both must hold:
-      - the engine is SGLang or vLLM, the two checked with the Claude Code CLI:
-        thinking blocks out, replayed thinking and a mid-array system message in,
-        tool calls, prefix reuse on follow-ups.
+      - the engine answers /v1/messages itself (serves_anthropic). NOT the engine's
+        name: the check was an allowlist of SGLang and vLLM — the two originally
+        checked with the Claude Code CLI — and it silently cost every other engine
+        its reasoning. QEngine and Strata both serve the endpoint and both were
+        excluded; Strata reports no `owned_by` at all, so no family rule could
+        have found it.
       - the endpoint keeps a mid-conversation `system` message where it is.
         Claude Code sends one every turn. An endpoint that moves it into the
         leading system block changes the front of the prompt each turn, and the
@@ -261,19 +341,64 @@ def serves_messages(port: int, owned_by: str, model: str, key: str = "") -> bool
         over three turns, against 2.9K). count_tokens tells the two apart without
         generating anything: moved, the message renders exactly like the same text
         appended to the top-level system prompt; kept in place, it adds its own
-        turn markers. A server without the endpoint (an older build) fails the
-        request and stays on LiteLLM's translation, which still works.
+        turn markers. An endpoint without count_tokens (Project Maya 404s it)
+        gets the same question answered by its prompt cache instead
+        (keeps_system_in_place). A server without the endpoint (an older build)
+        fails the request and stays on LiteLLM's translation, which still works.
     vLLM v0.30.0 keeps the message in place only when started with
     `--chat-template` — it tests the flag, not the template it loaded; our Qwen3.8
-    composes pass it. vllm#58754 fixes the check (docs/UPSTREAM.md)."""
-    if engine_kind_from_owned_by(owned_by) not in ("sglang", "vllm"):
+    composes pass it. vllm#58754 fixes the check (docs/UPSTREAM.md).
+    QEngine and Strata pass the count_tokens check as served here (measured
+    2026-11-15: inline 59 vs merged 55, and 71 vs 65), and hold up under the
+    Claude Code sequence on their own endpoint: thinking blocks out, a replayed
+    thinking block answered from, `tool_use` with `stop_reason: tool_use`, prefix
+    reuse reported (QEngine `cache_read_input_tokens: 1585` on the follow-up).
+    Project Maya passes the cache-based one (keeps_system_in_place).
+    End-to-end coverage under the Claude Code CLI, on the engine's OWN endpoint:
+    SGLang and vLLM (the two the old allowlist was built from), QEngine and
+    Strata (2026-11-15, the sequence above). Project Maya's gate is the
+    cache-based probe — it has not been through the CLI here. The probe is
+    behaviour-based, so llama.cpp (which serves both /v1/messages and
+    count_tokens), TabbyAPI and bucko can pass it too; none of the three has
+    been through the CLI on this rig — a pass means the endpoint answers and
+    keeps `system` in place, not a verified agentic session on that engine.
+    """
+    if not serves_anthropic(port, model, key, declared_budget):
         return False
     turns = [{"role": "user", "content": "a"}, {"role": "user", "content": "b"}]
     inline = count_tokens(port, model, {"system": "Be brief.", "messages": [
         turns[0], {"role": "system", "content": "Env: linux"}, turns[1]]}, key)
     merged = count_tokens(port, model, {"system": [
         {"type": "text", "text": "Be brief."}, {"type": "text", "text": "Env: linux"}], "messages": turns}, key)
-    return inline is not None and merged is not None and inline > merged + 1
+    if inline is not None and merged is not None:
+        return inline > merged + 1
+    return keeps_system_in_place(port, model, key)
+
+
+def keeps_system_in_place(port: int, model: str, key: str = "") -> bool:
+    """The placement half of serves_messages for an endpoint without
+    count_tokens: Project Maya answers /v1/messages for real and 404s
+    /v1/messages/count_tokens, so the cheap probe cannot run. The prompt cache
+    answers the same question: a follow-up that only APPENDS a mid-array system
+    message must hit the cache on the front it did not touch, while an endpoint
+    that merges the message into the leading system block rewrites the front and
+    misses. Measured on maya-s24 2026-11-15: the follow-up reports
+    cache_read_input_tokens 1561 against a 1562-token front. Two 20-token
+    generations, only on engines that lack count_tokens; an engine that reports
+    no cache accounting at all fails this and keeps LiteLLM's translation."""
+    long = "Background: " + ("The atmosphere scatters short wavelengths. " * 220)
+    base = [{"role": "system", "content": "Be brief."},
+            {"role": "user", "content": long + "\n\nReply OK."}]
+    follow = base + [{"role": "assistant", "content": "OK."},
+                     {"role": "system", "content": "Env: linux"},
+                     {"role": "user", "content": "Say DONE."}]
+    first = anthropic_call(port, model, base, key, max_tokens=20, timeout=60)
+    second = anthropic_call(port, model, follow, key, max_tokens=20, timeout=60)
+    if not isinstance(first, dict) or not isinstance(second, dict):
+        return False
+    front = (first.get("usage") or {}).get("input_tokens") or 0
+    cached = (second.get("usage") or {}).get("cache_read_input_tokens") or 0
+    return bool(front) and cached > front // 2
 
 
 def serves_responses(port: int, key: str = "") -> bool:
@@ -315,7 +440,8 @@ def llamacpp_ctx(port: int, key: str = "") -> "int | None":
     return None
 
 
-def live_routes(ports: list[int]) -> list[Live]:
+def live_routes(ports: list[int],
+                budgets: "dict[int, int] | None" = None) -> list[Live]:
     # TEST SEAM. Probing real sockets makes a gate depend on whatever the rig
     # happens to be serving, which is neither deterministic nor reproducible on
     # a contributor's machine. `C3_LITELLM_FAKE_LIVE="8182=a,8091=b"` substitutes
@@ -351,11 +477,11 @@ def live_routes(ports: list[int]) -> list[Live]:
                                     key, out_cap))
         return out
     found: list[Live] = []
+    budgets = budgets or {}
     with cf.ThreadPoolExecutor(max_workers=32) as ex:
-        for res in ex.map(probe, ports):
+        for res in ex.map(lambda p: probe(p, budgets.get(p, 0)), ports):
             found += res
     return found
-
 
 def add_booting_route(live: list[Live], variants: list[dict]) -> list[Live]:
     """Advertise the model that is mid-boot, before its port answers.
@@ -390,6 +516,70 @@ def add_booting_route(live: list[Live], variants: list[dict]) -> list[Live]:
                  responses=True, key="", out_cap=None)] + live
 
 
+def _port_effort(rows: list[dict]) -> "dict | None":
+    """Per port, the #1951 effort facts every slug on it agrees on. A port
+    hosting slugs whose ladders differ advertises NOTHING: an advertisement is
+    a promise routing must honor, and litellm intersects a group's levels
+    across its deployments anyway — so a partial fact here would advertise a
+    rung the served model raises on. Unknown stays unknown (principle 3)."""
+    blocks = [r["effort"] for r in rows if isinstance(r.get("effort"), dict)]
+    if not blocks:
+        return None
+    # The ladder is the ANCHOR: every other effort fact names a rung, so a port
+    # that cannot agree on the rungs advertises no effort facts at all — never a
+    # `default_reasoning_effort` or `supports_none` about a ladder it did not
+    # declare. Same for `status:` (a model has one or the other, never both).
+    # Returning None hands the caller back to the plain capability heuristic.
+    for key in ("levels", "status"):
+        vals = {json.dumps(b.get(key), sort_keys=True) for b in blocks}
+        v = blocks[0].get(key)
+        if len(vals) == 1 and v not in (None, "", [], {}):
+            out: dict = {key: v}
+            if key == "levels":
+                # The scalar pair facts (default, none claim) travel with the
+                # ladder: two slugs on one port can only agree on them by
+                # declaring the same values — agree-or-drop like every other
+                # fact here (#1951 review r5).
+                for k in ("supports_none", "compose_default", "default_when_unset"):
+                    other = {json.dumps(b.get(k)) for b in blocks}
+                    if len(other) == 1 and blocks[0].get(k) is not None:
+                        out[k] = blocks[0][k]
+                # Refusal is a NEGATIVE fact: the port can boot either engine,
+                # so a rung ANY row refuses is not safely nameable — union,
+                # never agree-or-drop (dropping would over-advertise the
+                # refused rung, #2055 review it5-5).
+                rf = set()
+                for b in blocks:
+                    rf |= set(b.get("refuses") or [])
+                if rf:
+                    out["refuses"] = sorted(rf)
+                # A fold source is nameable only if EVERY row accepts the same
+                # fold: intersect per source (exact src->dst), minus the
+                # refused names. A row with no fold table means UNKNOWN, so
+                # the port advertises no fold sources at all.
+                tables = [b.get("maps") for b in blocks]
+                if all(isinstance(t, dict) and t for t in tables):
+                    # Preserve the first row's key order — the render appends
+                    # fold sources in maps order and test-litellm-sync.sh's
+                    # it4-1 advertise assertion pins that rendered order.
+                    common = {s: d for s, d in tables[0].items()
+                              if all(t.get(s) == d for t in tables[1:])}
+                    common = {s: d for s, d in common.items() if s not in rf}
+                    if common:
+                        out["maps"] = common
+                # The pair default fills ONLY a port where no compose sets the
+                # knob. One slug's compose setting low beside a sibling's that
+                # leaves it unset is a disagreement about the DEFAULT itself:
+                # the route could boot either compose, and advertising the pair
+                # default would lie to the slug whose compose sets low (#1951
+                # review r6). Drop it and advertise nothing.
+                if any(b.get("compose_default") for b in blocks):
+                    out.pop("default_when_unset", None)
+            return out
+    return None
+
+
+
 def port_facts(variants: list[dict]) -> dict[int, dict]:
     """Per port, the registry facts every variant on that port agrees on. A port
     can host several slugs (:8020 is multi-slug); a fact they disagree on is
@@ -405,14 +595,22 @@ def port_facts(variants: list[dict]) -> dict[int, dict]:
             vals = {json.dumps(r.get(key), sort_keys=True) for r in rows}
             if len(vals) == 1 and rows[0].get(key) not in (None, "", []):
                 f[key] = rows[0].get(key)
-        # Reasoning: only from slugs that DECLARE sampler profiles (a "thinking"
-        # profile means a thinking model). No profiles is "unknown", not "no" —
-        # most slugs declare none, and a false `supports_reasoning` would make a
-        # client turn thinking off on a thinking model.
-        declared = [r["sampler_profiles"] for r in rows if isinstance(r.get("sampler_profiles"), dict) and r["sampler_profiles"]]
-        thinking = {any("think" in str(k).lower() for k in p) for p in declared}
-        if len(thinking) == 1:
-            f["thinking"] = thinking.pop()
+        # Reasoning: the #1951 effort block is the source when a slug has one;
+        # the sampler-profile heuristic is the fallback for models that predate
+        # it. Only from slugs that DECLARE something — no profiles is "unknown",
+        # not "no": a false `supports_reasoning: false` makes a client turn
+        # thinking off on a thinking model (measured on this rig 2026-11-15:
+        # /model_group/info reported false for a thinking model that declares
+        # no sampler profiles, because litellm's off-map default is false).
+        eff = _port_effort(rows)
+        if eff:
+            f["effort"] = eff
+        else:
+            declared = [r["sampler_profiles"] for r in rows
+                        if isinstance(r.get("sampler_profiles"), dict) and r["sampler_profiles"]]
+            thinking = {any("think" in str(k).lower() for k in p) for p in declared}
+            if len(thinking) == 1:
+                f["thinking"] = thinking.pop()
         facts[port] = f
     return facts
 
@@ -439,10 +637,12 @@ def port_facts(variants: list[dict]) -> dict[int, dict]:
 # answer but none of the model's reasoning, so it had nothing to replay. Its
 # chat-completions bridge maps reasoning both ways, but it re-routes a thinking
 # request to Responses unless the route says `supports_reasoning: false`, which
-# /model_group/info publishes (pi-setup.sh would turn thinking off). So a route on
-# an engine whose own /v1/messages holds up (SGLang, and vLLM started with
-# --chat-template — see serves_messages) lists it in `supported_endpoints`, and
-# LiteLLM forwards the Anthropic request to the engine untranslated.
+# /model_group/info publishes (pi-setup.sh would turn thinking off). So a route
+# on an engine whose own /v1/messages holds up lists it in `supported_endpoints`,
+# and LiteLLM forwards the Anthropic request to the engine untranslated. Which
+# engines hold up is PROBED per boot (serves_messages), never inferred from the
+# engine's name: the bridge drops a real thinking block, so Strata and QEngine —
+# both of which serve the endpoint themselves — lost their reasoning to it.
 MESSAGES_ENDPOINTS = '      supported_endpoints: ["/v1/chat/completions", "/v1/responses", "/v1/messages"]'
 ROUTE_PARAMS = ["      allowed_openai_params: [reasoning_effort]"]
 # An engine without /v1/responses (tabbyAPI — see serves_responses) gets LiteLLM's
@@ -481,7 +681,51 @@ def model_info(ctx: "int | None", facts: dict, native_messages: bool = False,
     lines = ["    model_info:", "      mode: chat", "      supports_function_calling: true"]
     if ctx:
         lines += [f"      max_input_tokens: {ctx}", f"      max_output_tokens: {output_ceiling(ctx, out_cap)}"]
-    if "thinking" in facts:
+    eff = facts.get("effort") or {}
+    levels = eff.get("levels")
+    if levels:
+        # litellm reads `reasoning_effort_levels` first and it wins whole
+        # (router_utils/reasoning_effort_capability.py), so the ladder is the
+        # advertisement and the per-level flags are not needed alongside it.
+        # The advertisement is the route's NAMEABLE set (#2055 review it4-1):
+        # the ladder minus the pair's refused rungs (a name the server 400s as
+        # a request), plus the fold sources — names the server accepts by
+        # mapping. A client may send either form and the server honors both.
+        refuses = set(eff.get("refuses") or [])
+        maps = eff.get("maps") or {}
+        nameable = [r for r in levels if r not in refuses]
+        nameable += [s for s in maps if s not in levels]
+        lines.append("      supports_reasoning: true")
+        lines.append("      reasoning_effort_levels: [" + ", ".join(nameable) + "]")
+        if eff.get("supports_none") is not None:
+            lines.append("      supports_none_reasoning_effort: "
+                         + ("true" if eff["supports_none"] else "false"))
+        # The compose's own REASONING_EFFORT default wins — it is the deployment's
+        # explicit choice. Where the compose leaves the knob unset (the strata and
+        # bucko routes), the PAIR fact says what the engine applies instead: the
+        # template's own default. litellm's `default_reasoning_effort` Literal
+        # EXCLUDES max (v1.100.3), so a max default is OMITTED — never downgraded
+        # to a rung the server does not actually apply. Which models may default to
+        # max is ratcheted by scripts/tests/test-effort-profiles.sh (MAX_DEFAULT_MODELS).
+        # The same rule binds a REFUSED default (#2055 review it5-1): a default the
+        # advertise does not name — strata's xhigh, which the server 400s as a
+        # request name — is omitted, never downgraded. litellm consumes
+        # model_info.default_reasoning_effort (utils.py, the gpt-5/responses
+        # transformations), so a refused default would be injected into unset
+        # requests and 400 on the route it describes.
+        dflt = eff.get("compose_default") or eff.get("default_when_unset")
+        if dflt and dflt != "max" and dflt in nameable:
+            lines.append(f"      default_reasoning_effort: {dflt}")
+    elif eff.get("status"):
+        # An honest `status:` instead of a ladder. Only `no-thinking` says the
+        # model cannot think: `unprobed` / `no-string-ladder` mean it DOES think
+        # and the string rungs are unknown, so the capability is advertised and
+        # the ladder is not — litellm leaves a group with no declared levels
+        # un-narrowed, and rendering nothing here would fall back to its off-map
+        # `supports_reasoning: false`, turning thinking off on a thinking model.
+        lines.append("      supports_reasoning: "
+                     + ("false" if eff["status"] == "no-thinking" else "true"))
+    elif "thinking" in facts:
         lines.append(f"      supports_reasoning: {'true' if facts['thinking'] else 'false'}")
     if facts.get("vision") not in (None, "", "no", False):
         lines.append("      supports_vision: true")
@@ -830,7 +1074,31 @@ def main() -> int:
 
     variants = registry_variants(a.root)
     ports = registry_ports(variants)
-    live = live_routes(ports)
+    # The compose's declared default thinking budget, per port: the probe's
+    # retry cannot cover a budget bigger than its own 512, so a route whose
+    # knob declares one gets the thinking-only envelope accepted as native
+    # (#2055 review it5-3). The rule it feeds is per ROUTE — the running
+    # boot's compose — but the probe is per port and the render cannot know
+    # which variant is booted: every flash-next slug shares the model id and
+    # none declares a served_name, so no per-variant match is possible. A
+    # port hosting a knob-less sibling beside a knob-bearing one therefore
+    # gets NO budget at all: the honest 512 retry runs and measures
+    # whichever boot is actually up (#2055 review it6-2) instead of
+    # inheriting the sibling's 16384 for a compose that declares nothing.
+    budgets: "dict[int, int]" = {}
+    knobless: "set[int]" = set()
+    for v in variants:
+        p = v.get("port")
+        if not p:
+            continue
+        eb = (v.get("effort") or {}).get("default_thinking_budget") or 0
+        if eb > 0:
+            budgets[p] = max(eb, budgets.get(p, 0))
+        else:
+            knobless.add(p)
+    for p in knobless:
+        budgets.pop(p, None)
+    live = live_routes(ports, budgets)
     live = add_booting_route(live, variants)
     for p in sorted(loopback_only_ports({r.port for r in live})):
         print(f"[litellm-sync] WARN: :{p} answers on 127.0.0.1 only, so the gateway container can't reach it "
