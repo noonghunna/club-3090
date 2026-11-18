@@ -733,10 +733,16 @@ def _effort_facts(model_id: str, engine_id: str, compose_path: str):
     ee = (getattr(e, "effort", None) or {}) if e else {}
     budget = _compose_thinking_budget(compose_path)
     if not me and not ee:
-        # Neither side declares an effort block, but the compose's thinking
-        # budget is still a live fact the budgets map reads (#2055 review
-        # it7-4) — return it alone rather than dropping it with the block.
-        return {"default_thinking_budget": budget} if budget else None
+        # Neither side declares an effort block, but the compose can still carry live
+        # facts: the thinking budget the budgets map reads (#2055 review it7-4), and the
+        # REASONING_EFFORT default the #1951 defaults fold reads (#1951 phase 3 — a
+        # family's default is the LOWEST of its routes' effective defaults, so dropping a
+        # known compose default here would silently round that family UP instead of
+        # down). Known facts only; no ladder is invented for an unprofiled pair.
+        cd = _compose_effort_default(compose_path)
+        known = {k: v for k, v in (("default_thinking_budget", budget),
+                                   ("compose_default", cd)) if v is not None}
+        return known or None
     # What an unset request gets, and how an out-of-ladder name folds, are
     # (model, engine) PAIR facts (#1951 review r5): the engine's `by_model` entry
     # for THIS model, never the engine block. A model the engine does not list

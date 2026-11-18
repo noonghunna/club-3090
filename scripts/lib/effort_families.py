@@ -14,15 +14,15 @@ default are derived, not written down:
   * its default is the LOWEST of the compose defaults across the routes serving the
     name, an empty REASONING_EFFORT falling back to that engine's pair default — the
     #1951 "club/<id> rounds down, per id" decision. A default that is a fold target
-    (e.g. strata's xhigh) is expressed by the fold source that reaches it.
+    (e.g. strata's xhigh) is expressed by the fold source that reaches it; a name whose
+    routes reach no nameable default at all gets NO family — see compute_families.
 
 The only thing still written down is the client-side wire knowledge that has no
 home in the profiles: which models the family covers, and each model's reply cap
 and compat pins (the chat_template_kwargs form, the summary-bridge hazard, the
 thinking budget). That is the `model_families` map this module takes.
 """
-
-import json
+import sys
 
 
 def _served_id(v):
@@ -41,8 +41,10 @@ def _id_facts(variants):
     blocks = [v["effort"] for v in variants if isinstance(v.get("effort"), dict)]
     if not blocks:
         return None
-    # The ladder anchors on the model's levels; every other effort fact names a rung,
-    # so a set of variants that cannot agree on the rungs advertises nothing.
+    # The ladder anchors on the model's levels. One served name is one model —
+    # compute_families refuses a name claimed by two — so every block here carries that
+    # model's levels and the first block with levels IS the model's ladder. A name whose
+    # blocks carry no levels at all (an unprofiled model) advertises nothing.
     levels = None
     for b in blocks:
         if b.get("levels"):
@@ -98,6 +100,10 @@ def compute_families(variants, model_families):
 
     Returns the FAMILIES list — one entry per served name whose model a family covers,
     each {name, ids: [name], ladder: {efforts, defaultLevel}, maxTokens, compat}.
+    A name whose routes reach NO nameable default gets no family: rendering the None
+    would put the literal string "None" on the wire as an effort name, and leaving the
+    default out makes omp fall back to the ladder TOP — a silent xhigh, the slowest rung.
+    Neither is honest, so the name is skipped with a warning naming the profile to fix.
     """
     model_to_fam = {}
     for fam in model_families:
@@ -113,8 +119,27 @@ def compute_families(variants, model_families):
         fam = model_to_fam.get(rows[0].get("model"))
         if fam is None:
             continue
+        # One served name is ONE model. The ladder, the compat pins and the guard's
+        # coverage set all key off rows[0], so a name claimed by two models would have
+        # its family decided by registry row order — refuse it loudly instead. The
+        # gateway names one model per route, so a collision is a catalog mistake, not a
+        # legitimately multi-model route.
+        models = {r.get("model") for r in rows}
+        if len(models) > 1:
+            raise ValueError(
+                f"served name {sid!r} is claimed by {len(models)} models "
+                f"({', '.join(sorted(str(m) for m in models))}): one served name must map "
+                "to one model, or its ladder, compat pins and coverage depend on registry "
+                "row order. Fix: give one of them its own served_name in the registry.")
         facts = _id_facts(rows)
         if facts is None:
+            continue
+        if facts["defaultLevel"] is None:
+            print(f"effort_families: {sid}: no route serving this name has a default that "
+                  f"reaches a nameable rung of {facts['efforts']} — no override generated, "
+                  "so omp will send no effort and the server default runs. Fix: set "
+                  "REASONING_EFFORT in the serving compose, or the pair's "
+                  "default_when_unset in the engine profile.", file=sys.stderr)
             continue
         out.append({
             "name": sid,
@@ -125,7 +150,3 @@ def compute_families(variants, model_families):
         })
     return out
 
-
-def families_json(families):
-    """The club-live.json `families` payload (the same list, JSON-serialisable)."""
-    return json.loads(json.dumps(families))

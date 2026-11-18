@@ -133,6 +133,21 @@ MODEL_FAMILIES = [
                 "supportsReasoningSummary": False}},
 ]
 
+# MODEL_FAMILIES is the one hand-maintained input left, and the renderer below INDEXES
+# it: a family missing a key the renderer reads would die mid-render on a KeyError with
+# no hint which entry. Name the entry and the field instead.
+for _fam in MODEL_FAMILIES:
+    _c = _fam.get("compat") or {}
+    _missing = [k for k in ("models", "maxTokens", "compat") if k not in _fam]
+    _missing += [k for k in ("supportsReasoningEffort", "qwenTemplateReasoningEffort")
+                 if k not in _c]
+    if "extraBody" in _c and "thinking_token_budget" not in (_c.get("extraBody") or {}):
+        _missing.append("compat.extraBody.thinking_token_budget")
+    if _missing:
+        raise SystemExit("omp-setup: the MODEL_FAMILIES entry for %s is missing %s — the "
+                         "override renderer indexes these keys. Fix: fill them in, or drop "
+                         "the entry." % (_fam.get("models"), ", ".join(_missing)))
+
 # The single source for both the modelOverrides written into models.yml and the
 # families list written into extensions/club-live.json (--auto-switching): one list,
 # two renderings, so the alias and the `club` provider cannot drift.

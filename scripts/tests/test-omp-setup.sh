@@ -278,5 +278,77 @@ sys.exit(0 if json.load(io.open(sys.argv[1], encoding="utf-8"))["renderedCfg"] =
 PY
 
 
-[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served names, per-family ladders and defaults, compat pins, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container)"
+# 11. the generator's edge shapes, on synthetic registry rows. The live catalog reaches
+#     none of these today — each is a state a future profile, a new served name, or a
+#     hand-edited MODEL_FAMILIES entry CAN reach, and the render must never emit a value
+#     omp would put on the wire. (a) a name whose routes reach no nameable default gets
+#     NO family plus a warning naming the profile to fix: a rendered None would go out as
+#     the effort name "None", and an omitted defaultLevel makes omp fall back to the
+#     ladder TOP, a silent xhigh — so the honest answer is no override at all. (b) a
+#     served name claimed by two models is refused, never resolved by row order. (c) the
+#     block shapes the emit legitimately produces for an unprofiled pair skip instead of
+#     crashing the setup.
+python3 - "$ROOT" <<'PY' || bad "effort_families edge shapes (see above)"
+import contextlib, io, os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "scripts", "lib"))
+from effort_families import compute_families
+
+MF = [{"models": ["m"], "maxTokens": 1024,
+       "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True}}]
+
+def gen(*rows):
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        fams = compute_families(list(rows), MF)
+    return fams, err.getvalue()
+
+def row(**eff):
+    return {"model": "m", "served_name": "x", "effort": eff}
+
+# (a) the only default is no rung and no fold reaches it -> no family, with a Fix: hint
+fams, err = gen(row(levels=["low", "medium"], compose_default="xhigh"))
+if fams:
+    print("  a name with no nameable default must generate no family, got:", fams)
+    sys.exit(1)
+if "no route serving this name" not in err or "Fix:" not in err:
+    print("  the skip must warn and name the fix, got:", err)
+    sys.exit(1)
+# a fold source that DOES reach it keeps the family, rendered as the SOURCE
+fams, _ = gen(row(levels=["low", "medium"], compose_default="xhigh", maps={"high": "xhigh"}))
+if [f["ladder"]["defaultLevel"] for f in fams] != ["high"]:
+    print("  a fold-target default must render as the source that reaches it:", fams)
+    sys.exit(1)
+
+# (b) two models under one served name -> refuse, never rows[0]
+try:
+    compute_families([{"model": "m", "served_name": "x",
+                       "effort": {"levels": ["low"], "compose_default": "low"}},
+                      {"model": "other", "served_name": "x",
+                       "effort": {"levels": ["low", "high"], "compose_default": "low"}}], MF)
+except ValueError as e:
+    if "one served name must map" not in str(e):
+        print("  the refusal must name the fix, got:", e)
+        sys.exit(1)
+else:
+    print("  a served name claimed by two models must raise, not pick rows[0]")
+    sys.exit(1)
+
+# (c) the shapes the emit really produces for an unprofiled pair: skip, never crash
+for label, v in (("no effort key at all", {"model": "m", "served_name": "x"}),
+                 ("budget-only block", row()),
+                 ("levels null with a compose default",
+                  row(levels=None, compose_default="low"))):
+    fams, _ = gen(v)
+    if fams:
+        print(f"  {label}: must generate no family, got:", fams)
+        sys.exit(1)
+# a maps that is not a dict is not a fold table: the base ladder survives, the fold does not
+fams, _ = gen(row(levels=["low"], maps="high:xhigh", compose_default="low"))
+if [f["ladder"] for f in fams] != [{"efforts": ["low"], "defaultLevel": "low"}]:
+    print("  a non-dict maps must be ignored, not crash or invent a fold:", fams)
+    sys.exit(1)
+PY
+
+
+[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served names, per-family ladders and defaults, compat pins, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container, generator edge shapes)"
 exit "$fail"

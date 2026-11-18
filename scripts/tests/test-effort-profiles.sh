@@ -291,6 +291,36 @@ if len(failures) == n0:
           "model's ladder, registry compose_paths included (max ratcheted to "
           "GLM-5.3-Flash)")
 
+# ---- 3b. the EMIT CARRIES every compose default the scan above reads ----------
+# Phase 3's defaults fold reads `compose_default` per variant: a variant whose compose
+# sets the knob but whose emitted effort block drops it — the `_effort_facts` early
+# return for a pair with no effort block on either side — silently rounds its family's
+# default UP instead of down, breaking "rounds down, per served name" with an ABSENT
+# fact rather than a wrong one, which no other check would notice. Zero instances today
+# (every compose that sets the knob belongs to a profiled pair); this fires the first
+# time one does not.
+n0 = len(failures)
+from litellm_sync import registry_variants
+by_cp = {}
+for v in registry_variants("."):
+    if v.get("compose_path"):
+        by_cp.setdefault(v["compose_path"], []).append(v)
+carried = 0
+for path, text, _levels, _mid in scan:
+    m = default_re.search(text)
+    if not m:
+        continue
+    for v in by_cp.get(path, ()):
+        carried += 1
+        got = (v.get("effort") or {}).get("compose_default")
+        if got != m.group(1):
+            bad(f"{v.get('slug')}: its compose sets REASONING_EFFORT {m.group(1)!r} but the "
+                f"emit carries compose_default {got!r} — the family default for that served "
+                "name would round up; _effort_facts must emit the fact it read")
+if len(failures) == n0:
+    print(f"  ✓ the emit carries the compose default for all {carried} variants whose "
+          "compose sets REASONING_EFFORT")
+
 # ---- 4. every declared rung is litellm vocabulary ---------------------------
 n0 = len(failures)
 runks = set()
