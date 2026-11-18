@@ -223,6 +223,28 @@ command grep -qE 'clean_fit = .*admitted_ok' "$LIB" \
 completed must not fail on when the metrics sample landed"
 echo "  ✓ wiring: peak list, vram_ok, and admission kept out of clean_fit"
 
+# --- a queued rung is not an N-stream rung (#2096) --------------------------------
+# Measured on the reference rig 2026-11-18: vllm/qwen38-27b-dual-max (2 seats) at N=4, and
+# qengine/qwen38-27b-dual at N=16 x 16K (prompts prefilled one at a time) both printed
+# "the rest QUEUED" next to "PASS — sustained clean" and an envelope row offering max_num_seqs N.
+command grep -qE 'queued = None if run_peak is None else \(not admitted_ok\)' "$LIB" \
+  || fail "queued must come from admitted_ok (the peaks), and be None when no engine gauges were read"
+command grep -qE 'PASS = clean_fit and floor_ok and \(retention_ok if VALIDATE else True\)' "$LIB" \
+  || fail "pass must keep its meaning: queueing is reported, not folded into PASS (#1211)"
+command grep -qE '^    if PASS and queued:' "$LIB" \
+  || fail "a queued PASS must not offer the envelope row"
+command grep -qE '^    elif PASS:' "$LIB" \
+  || fail "the envelope row must be offered only for an unqueued PASS"
+command grep -q '"queued": "-" if queued is None else int(queued),' "$LIB" \
+  || fail "RESULT must carry queued= (the sweep's knee reads it)"
+command grep -qE 'BUT QUEUED|, but QUEUED: the engine ran at most' "$LIB" \
+  || fail "the verdict line must say the rung QUEUED"
+command grep -q "queued=\\\\(\[0-9-\]\*\\\\)" "$PROBE" \
+  || fail "the sweep must parse queued= from the RESULT line"
+command grep -qE '"\$clean" == "1" && "\$above" == "1" && "\$queued" != "1"' "$PROBE" \
+  || fail "the sweep's knee must skip a queued rung"
+echo "  ✓ a queued rung: verdict says so, no envelope row, queued= in RESULT, skipped by the knee"
+
 # --- the sweep early-stop keys off the peak --------------------------------------
 command grep -qE 'running_max.*-lt.*"\$n"' "$PROBE" \
   || fail "sweep early-stop must compare the PEAK running against n"

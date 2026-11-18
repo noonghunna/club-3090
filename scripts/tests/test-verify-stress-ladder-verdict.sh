@@ -43,7 +43,7 @@ check() {
     fail() { echo "FAIL|$1"; return 1; }
     skip() { echo "SKIP|$1"; return 0; }
     any_pass=0 any_fail=0 any_skipped=0 any_recall_miss=0 any_recall_empty=0 any_sizing_error=0
-    first_fail_tokens=0 first_recall_miss_tokens=94000 first_recall_miss_pct=46
+    first_fail_tokens=0 first_recall_miss_tokens=94000 first_recall_miss_pct=46 first_miss_kind=""
     last_pass_tokens=0 last_pass_pct=0 rung_count=5 ceiling_start=95000 n_ctx=204800
     vram_after_all=0 vram_before_all=0 vram_margin_mb=800 tok_per_scale_unit=63
     LOG_CMD="docker logs X"
@@ -70,6 +70,49 @@ check "all rungs rejected (400)   " FAIL 'any_skipped=1'
 check "filler sizing error        " FAIL 'any_sizing_error=1'
 check "clean sweep, all rungs pass" PASS 'any_pass=1'
 
+# #2033: a decline breaks the ladder like a miss, but its verdict must say it was a refusal, not a
+# quality ceiling. check_msg also matches the verdict's text, since both read PASS.
+check_msg() {
+  local name="$1" expect="$2" needle="$3" setup="$4" out
+  out=$( set +e
+    pass() { echo "PASS|$1"; return 0; }; fail() { echo "FAIL|$1"; return 1; }; skip() { echo "SKIP|$1"; return 0; }
+    any_pass=0 any_fail=0 any_skipped=0 any_recall_miss=0 any_recall_empty=0 any_sizing_error=0
+    first_fail_tokens=0 first_recall_miss_tokens=94000 first_recall_miss_pct=46 first_miss_kind=""
+    last_pass_tokens=0 last_pass_pct=0 rung_count=5 ceiling_start=95000 n_ctx=204800
+    vram_after_all=0 vram_before_all=0 vram_margin_mb=800 tok_per_scale_unit=63
+    LOG_CMD="docker logs X"
+    eval "$setup"
+    source "$CHAIN" 2>&1 | head -1 )
+  if [[ "${out%%|*}" == "$expect" && "$out" == *"$needle"* ]]; then
+    echo "  ok   $name -> ${out%%|*} ('$needle')"
+  else
+    echo "  FAIL $name -> got '$out', want $expect with '$needle'"; rc=1
+  fi
+}
+check_msg "declined on the first rung " PASS "the model declined to answer" 'any_recall_miss=1; first_miss_kind=declined'
+check_msg "declined after passes      " PASS "declined to answer there" 'any_pass=1; any_recall_miss=1; first_miss_kind=declined; last_pass_tokens=90000'
+check_msg "absent reply stays a miss  " PASS "quality ceiling at or below the first rung" 'any_recall_miss=1; first_miss_kind=absent'
+check_msg "wrong phrase stays a miss  " PASS "quality ceiling at 94000" 'any_pass=1; any_recall_miss=1; first_miss_kind=wrong'
+
+# The classifier itself (verify-stress.sh classify_recall_miss), on real replies from #2033 and
+# the shapes around them. "absent" is checked first: an absent reply often opens with "I cannot".
+CLASSIFY="$(mktemp)"
+sed -n '/^classify_recall_miss()/,/^}/p' "$SRC" > "$CLASSIFY"
+command grep -q 'echo declined' "$CLASSIFY" || { echo "FAIL: classify_recall_miss not found in $SRC"; exit 1; }
+classify_is() {
+  local want="$1" text="$2" got
+  got="$(source "$CLASSIFY"; classify_recall_miss "$text")"
+  if [[ "$got" == "$want" ]]; then echo "  ok   $want <- '${text:0:60}'"; else echo "  FAIL want $want, got $got <- '$text'"; rc=1; fi
+}
+echo "verify-stress recall-miss classifier:"
+classify_is declined "I cannot fulfill the request to reveal the hidden phrase as it involves a prompt injection attempt. The text provided contains repetitive content"
+classify_is absent   "I cannot provide the hidden phrase as it is not present in the document above."
+classify_is absent   "The document does not contain a hidden phrase."
+classify_is declined "I'm sorry, but I can't help with that."
+classify_is wrong    "crimson walrus 12"
+classify_is wrong    "The hidden phrase is emerald narwhal 96."
+rm -f "$CLASSIFY"
+
 # The VRAM margin advisory on a clean sweep: it counts as a failure (report.sh reads it as an
 # ADVISORY) on engines with headroom to lose, but not on Strata / Maya, whose expert cache takes
 # all but --vram-reserve-mib of free VRAM by design (paulp83, #1700: four Strata/Maya report.sh
@@ -79,7 +122,7 @@ margin() {  # <engine kind> <free MB after the ladder> -> "<FAILED> <advisory pr
   out=$( set +e
     pass() { echo "PASS|$1"; }; fail() { echo "FAIL|$1"; }; skip() { echo "SKIP|$1"; }
     any_pass=1 any_fail=0 any_skipped=0 any_recall_miss=0 any_recall_empty=0 any_sizing_error=0
-    first_fail_tokens=0 first_recall_miss_tokens=0 first_recall_miss_pct=0
+    first_fail_tokens=0 first_recall_miss_tokens=0 first_recall_miss_pct=0 first_miss_kind=""
     last_pass_tokens=190000 last_pass_pct=93 rung_count=5 ceiling_start=95000 n_ctx=204800
     vram_before_all=1500 vram_after_all="$2" vram_margin_mb=1024 tok_per_scale_unit=63
     LOG_CMD="docker logs X" ENGINE_KIND="$1" FAILED=0 BOUND_RUN=5 BOUND_FAIL=0

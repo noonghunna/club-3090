@@ -1108,6 +1108,12 @@ def run_probe():
     # Genuine under-admission still shows as done < N (which feeds `bad`), as
     # requests WAITING, and in the peak reported below.
     clean_fit = (bad == 0) and vram_ok(leak, GROWTH)
+    # #2096: did the engine run fewer than N at once while something WAITED? Same
+    # evidence as admitted_ok (peaks, not last samples). None = no engine gauges,
+    # so a queue would not show. It stays out of `pass` for the reason above, but a
+    # queued rung measured fewer streams than N: the verdict says so, the envelope
+    # row isn't offered, and RESULT carries queued=1 so the sweep's knee skips it.
+    queued = None if run_peak is None else (not admitted_ok)
     floor_ok = (report_tps >= TPS_FLOOR) if TPS_FLOOR > 0 else True
     retention_ok = (retention >= RETENTION_MIN) if ROUNDS >= 3 else True
     PASS = clean_fit and floor_ok and (retention_ok if VALIDATE else True)
@@ -1177,11 +1183,27 @@ def run_probe():
         flags.append("tps-floor")
     if VALIDATE and not retention_ok:
         flags.append("retention")
+    queued_note = (
+        f", but QUEUED: the engine ran at most {run_peak} of {N} at once, so this rung measured "
+        f"{run_peak} streams, not {N}"
+        if queued
+        else ""
+    )
     print(
         f"  concurrency {N} @ ~{PTOK} tok: "
-        f"{'PASS — sustained clean' if PASS else 'FAIL — ' + ','.join(flags)}"
+        f"{'PASS — sustained clean' + queued_note if PASS else 'FAIL — ' + ','.join(flags) + queued_note}"
     )
-    if PASS:
+    if queued is None:
+        print(
+            "  queueing: not measured — no engine gauges were readable (vLLM / SGLang / QEngine "
+            "metrics), so requests that waited would not show here"
+        )
+    if PASS and queued:
+        print(
+            f"  envelope row: not offered — requests queued; size max_num_seqs from a rung where "
+            f"all N ran at once"
+        )
+    elif PASS:
         print(
             f"  envelope row: max_num_seqs: {N}  validated: {{ concurrency_soak: "
             f"'{N} @ ~{PTOK // 1000}K, {report_tps:.0f} tok/s/stream, {leak} MB post-warm', "
@@ -1209,6 +1231,7 @@ def run_probe():
         "waiting": "-" if s_wait is None else s_wait,
         "running_max": "-" if run_peak is None else run_peak,
         "waiting_max": "-" if wait_peak is None else wait_peak,
+        "queued": "-" if queued is None else int(queued),
         "prefix_hit": "-" if s_hit is None else f"{s_hit:.1f}",
         "cache": CACHE,
         "cached_toks": f"{steady_cached:.0f}",
