@@ -11,10 +11,13 @@
 # c3 showed 16bit for five days while the slugs served int8 activations. This guard derives the
 # expected format from the compose itself, in the same four shapes the catalog uses:
 #   1. a W4A8 gate — `{W4A8:-1}` / `{W4A8:-0}` (vLLM env line or SGLang entrypoint): 1 -> int8, 0 -> 16bit;
-#   2. a hardcoded `- VLLM_MARLIN_INPUT_DTYPE=int8` env line: int8;
-#   3. a bare `- VLLM_MARLIN_INPUT_DTYPE` passthrough with no gate (opt-in, unset by default): 16bit;
+#   2. a hardcoded humming int8 input config (`- 'VLLM_HUMMING_INPUT_QUANT_CONFIG={"dtype":"int8"}'`): int8;
+#   3. a bare `- VLLM_HUMMING_INPUT_QUANT_CONFIG` passthrough with no gate (opt-in, unset by default): 16bit;
 #   4. no activation knob at all: 16bit.
 # and, for a gate that defaults ON, refuses the retired "OPT-IN / OFF by default" header wording.
+# It also fails any vllm-stable compose that still FORWARDS VLLM_MARLIN_INPUT_DTYPE: vLLM v0.34.0
+# removed Marlin's 8-bit activations (#65542) and refuses to start if that variable is set at all,
+# so a forwarded host value would stop the boot. (Until v0.33.0 shapes 2 and 3 were spelled with it.)
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
@@ -31,6 +34,12 @@ STALE = ("W4A8 (int8 activations) — OPT-IN",
 GATE = re.compile(r"\{W4A8:[-=]([01])\}")
 assert GATE.findall("$${W4A8:-1}") == ["1"] and GATE.findall(": $${W4A8:=1} $${SPEC_N:=0}") == ["1"], "gate regex lost a form"
 assert GATE.findall("$${W4A8:=0}") == ["0"] and not GATE.findall("$${W4A8}"), "gate regex reads a default that is not there"
+HUM_INT8 = re.compile(r"(?m)^\s*-\s*\x27?VLLM_HUMMING_INPUT_QUANT_CONFIG=\{\"dtype\":\s*\"int8\"\}\x27?\s*$")
+HUM_BARE = re.compile(r"(?m)^\s*-\s*VLLM_HUMMING_INPUT_QUANT_CONFIG\s*$")
+MARLIN = re.compile(r"(?m)^\s*-\s*VLLM_MARLIN_INPUT_DTYPE\b")
+assert HUM_INT8.search("      - \x27VLLM_HUMMING_INPUT_QUANT_CONFIG={\"dtype\":\"int8\"}\x27"), "humming int8 regex lost its shape"
+assert HUM_BARE.search("      - VLLM_HUMMING_INPUT_QUANT_CONFIG") and not HUM_BARE.search("      - VLLM_HUMMING_INPUT_QUANT_CONFIG=x"), "bare regex"
+assert MARLIN.search("      - VLLM_MARLIN_INPUT_DTYPE") and MARLIN.search("      - VLLM_MARLIN_INPUT_DTYPE=int8"), "marlin regex lost a form"
 fails, n_gate, n = [], 0, 0
 for v in json.load(sys.stdin)["variants"]:
     p, slug, act = v["compose_path"], v["slug"], v.get("act_format")
@@ -39,6 +48,8 @@ for v in json.load(sys.stdin)["variants"]:
     n += 1
     s = open(p, encoding="utf-8").read()
     code = "\n".join(l for l in s.splitlines() if not l.lstrip().startswith("#"))
+    if v.get("engine") == "vllm-stable" and v.get("status") != "deprecated" and MARLIN.search(code):
+        fails.append(f"{slug}: {p} forwards VLLM_MARLIN_INPUT_DTYPE, which vLLM v0.34.0 refuses at startup")
     gate = set(GATE.findall(code))
     if len(gate) > 1:
         fails.append(f"{slug}: W4A8 default disagrees with itself inside {p} ({sorted(gate)})"); continue
@@ -50,10 +61,10 @@ for v in json.load(sys.stdin)["variants"]:
             for phrase in STALE:
                 if phrase in s:
                     fails.append(f"{slug}: {p} defaults W4A8 ON but still says {phrase!r}")
-    elif re.search(r"(?m)^\s*-\s*VLLM_MARLIN_INPUT_DTYPE=int8\s*$", code):
-        want, why = "int8", "hardcoded VLLM_MARLIN_INPUT_DTYPE=int8"
-    elif re.search(r"(?m)^\s*-\s*VLLM_MARLIN_INPUT_DTYPE\s*$", code):
-        want, why = "16bit", "bare VLLM_MARLIN_INPUT_DTYPE passthrough (opt-in, unset by default)"
+    elif HUM_INT8.search(code):
+        want, why = "int8", "hardcoded humming int8 input config"
+    elif HUM_BARE.search(code):
+        want, why = "16bit", "bare VLLM_HUMMING_INPUT_QUANT_CONFIG passthrough (opt-in, unset by default)"
     else:
         want, why = "16bit", "no activation knob"
     if act != want:

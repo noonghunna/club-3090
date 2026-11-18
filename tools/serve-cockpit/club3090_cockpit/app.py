@@ -3731,18 +3731,18 @@ class ConfirmActionScreen(ModalScreen):
 
     def _act8_ships_int8(self) -> bool:
         """True iff this slug SHIPS int8 activations (registry act_format ==
-        "int8", #1010) — the serve-default already carries VLLM_MARLIN_INPUT_DTYPE,
-        so an 'enable' opt-in would be a no-op labelled backwards."""
+        "int8", #1010) — the serve-default already turns them on, so an 'enable'
+        opt-in would be a no-op labelled backwards."""
         row = getattr(getattr(self._serve_ctx, "entry", None), "row", None)
         return str(getattr(row, "act_format", "") or "") == "int8"
 
     def _act8_gate_capable(self) -> bool:
         """True iff the slug's compose wires the #1008 `W4A8=${W4A8:-…}` gate,
-        i.e. OFF is expressible as an env var. Absence of VLLM_MARLIN_INPUT_DTYPE
-        is the only 'off' (vLLM validates it against {int8, fp8}, empty string
-        included), so a ship-int8 slug whose compose hardcodes the dtype instead
-        renders int8 as a FIXED property. Sniffs the compose once off the repo
-        tree; unreadable/unknown → False."""
+        i.e. OFF is expressible as an env var. A ship-int8 slug whose compose
+        hardcodes int8 activations instead (vllm/thinkingcap-dual-w4a8 sets
+        --quantization humming and its int8 input config outright) renders int8
+        as a FIXED property. Sniffs the compose once off the repo tree;
+        unreadable/unknown → False."""
         if self._act8_gate is None:
             self._act8_gate = False
             rel = str(
@@ -4351,7 +4351,7 @@ class ConfirmActionScreen(ModalScreen):
                 if self._act8_on:
                     lines.append(
                         "  [bold]int8 acts[/bold] [green]ON[/green] "
-                        "([green]VLLM_MARLIN_INPUT_DTYPE=int8[/green] — W4A8 prefill "
+                        "([green]W4A8=1[/green] — W4A8 prefill "
                         f"win, quality-tied ⚑{learn}) · \\[a] toggle"
                     )
                 else:
@@ -4375,7 +4375,7 @@ class ConfirmActionScreen(ModalScreen):
             elif mode == "fixed":
                 lines.append(
                     "  [bold]int8 acts[/bold] [green]ON[/green] (shipped — compose "
-                    "hardcodes [green]VLLM_MARLIN_INPUT_DTYPE=int8[/green], no launch "
+                    "hardcodes [green]int8 activations[/green], no launch "
                     f"knob ⚑{learn})"
                 )
             # Tri-state thinking toggle (#1014 L3) — rendered ONLY for slugs
@@ -4802,21 +4802,21 @@ class ConfirmActionScreen(ModalScreen):
     def _with_act8_env(cmd: list[str], pairs: list[str]) -> list[str]:
         """Prepend `env K=V …` to a serve cmd (#609/#1010). switch.sh runs
         `docker compose`, which reads the env for the compose's passthrough
-        variables (`- VLLM_MARLIN_INPUT_DTYPE`, `- W4A8=${W4A8:-1}`) → the
-        container boots with them. Idempotent per pair."""
+        variables (`- W4A8=${W4A8:-1}`) → the container boots with them.
+        Idempotent per pair."""
         if all(p in cmd for p in pairs):
             return cmd
         return ["env", *pairs, *cmd]
 
     def _act8_env_prefix(self) -> list[str]:
         """Env pairs to inject per the toggle state (#609/#1010): opt-in ON →
-        VLLM_MARLIN_INPUT_DTYPE=int8; ship-int8 OFF → W4A8=0 (the #1008 gate —
-        absence of the dtype var can't turn int8 OFF on a slug that defaults it,
-        and vLLM rejects any explicit non-{int8,fp8} value). [] → launch with
-        the slug's own shipped defaults."""
+        W4A8=1; ship-int8 OFF → W4A8=0. Both ride the #1008 gate. Never
+        VLLM_MARLIN_INPUT_DTYPE: vLLM v0.34.0 removed that path and refuses to
+        start if the variable is set at all. [] → launch with the slug's own
+        shipped defaults."""
         mode = self._act8_mode()
         if mode == "optin" and self._act8_on:
-            return ["VLLM_MARLIN_INPUT_DTYPE=int8"]
+            return ["W4A8=1"]
         if mode == "inverted" and not self._act8_on:
             return ["W4A8=0"]
         return []

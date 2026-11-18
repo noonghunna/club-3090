@@ -421,6 +421,10 @@ if got.get("refuses") != ["xhigh"] or got.get("maps") != {"high": "xhigh"}:
 if "[low, medium, high]" not in "\n".join(m.model_info(262144, {"effort": got})):
     print("  FAIL — the consolidated port did not advertise the intersection",
           file=sys.stderr); sys.exit(1)
+got3 = (m.port_facts([vllm_row, strata_row]).get(9, {}).get("effort") or {})
+if got3 != got:
+    print(f"  FAIL — the fold intersection must be order-independent: {got3}",
+          file=sys.stderr); sys.exit(1)
 no_map = {"port": 9, "effort": {"levels": ["low", "medium", "xhigh"]}}
 got2 = (m.port_facts([strata_row, no_map]).get(9, {}).get("effort") or {})
 if got2.get("maps") or got2.get("refuses") != ["xhigh"]:

@@ -295,7 +295,7 @@ FIXTURES = {
         [{
             "Name": "/vllm-qwen38-dual",
             "Config": {
-                "Image": "vllm/vllm-openai:v0.33.0",
+                "Image": "vllm/vllm-openai:v0.34.0",
                 "Labels": {"com.docker.compose.project.config_files": QWEN38_DUAL},
                 "Cmd": cmd("qwen3.8-27b", 2, "fp8_e5m2", 262144,
                            {"method": "mtp", "num_speculative_tokens": 3}),

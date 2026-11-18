@@ -39,9 +39,11 @@
 #                (MTP eats ~1.2 GB headroom; no-MTP ladder had 1245 MB). NIAH
 #                recall is CLEAN to 240K — but sustained agents at MAX ctx should
 #                size below 262K or lower util. Same class as Nemotron.
-#              • 8-bit activations (VLLM_MARLIN_INPUT_DTYPE=int8) on this AUTO-ROUND
-#                ckpt need 2 vendored patches (INC input_dtype + negative-scale
-#                fold) — applied at boot via patches/w4a8/install.sh (see patches.yml).
+#              • 8-bit activations on this AUTO-ROUND ckpt. From vLLM v0.34.0 they run on
+#                --quantization humming, which needs 2 vendored fixes (vllm-humming-w4a8,
+#                see patches.yml). ⚠️ NOT BOOTED on v0.34.0 (no weights on the reference
+#                rig): ported like the booted Qwen3.8-27B W4A8 tiers, which share the path.
+#                Up to v0.33.0 it ran Marlin int8 (VLLM_MARLIN_INPUT_DTYPE), now removed.
 #              • dedicated compile cache (int8 flag AOT cache-key collision).
 #              • vision untested on this serve (text-only validated).
 #              • NO froggeric template mount — DELIBERATE: this is the
@@ -77,10 +79,10 @@
 # W4A8 tops out ~76K (18.5 GB weights+vision leave ~2.5 GB KV); TP=2 splits the
 # weights so the full 262K KV pool fits, like Tess dual.
 #
-# W4A8 delivery: stock vLLM image, unmodified; two pure-Python source-patches run
-# against the container's vLLM at boot (patches/w4a8/install.sh, registered in
-# patches.yml). Recipe + measured deltas (+108% prefill single-card, +52% dual):
-# see patches/w4a8/README.md.
+# W4A8 delivery: stock vLLM image, unmodified. Up to v0.33.0 two pure-Python
+# source-patches enabled Marlin int8 (models/qwen3.6-27b/vllm/patches/w4a8-int8-act;
+# measured +108% prefill single-card, +52% dual). From v0.34.0 the path is humming,
+# with the fixes in models/qwen3.8-27b/vllm/patches/vllm-humming-w4a8 (README there).
 #
 # Run:
 #   cd <repo>/models/thinkingcap-27b/vllm/compose
@@ -93,7 +95,7 @@
 # Tensor-parallel: 2
 services:
   vllm-thinkingcap-27b-dual-w4a8:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.33.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.34.0}
     container_name: "${ESTATE_CONTAINER:-vllm-thinkingcap-27b-dual-w4a8}"
     user: "0:${DOCKER_GID:-1000}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
@@ -101,10 +103,10 @@ services:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8099}}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
-      # W4A8 int8-activation patches (Bug A INC input_dtype + Bug B negscale fold) —
-      # SHARED from the qwen3.6-27b tree (single source of truth, like pr48375);
-      # run at boot via install.sh. Registered in patches.yml (qwen-w4a8-int8-act).
-      - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
+      # W4A8 on humming (vLLM v0.34.0+): two fixes for AutoRound checkpoints + an int8
+      # log line. SHARED from the qwen3.8-27b tree; registered in patches.yml
+      # (vllm-humming-w4a8).
+      - ../../../../../qwen3.8-27b/vllm/patches/vllm-humming-w4a8:/etc/club3090/humming-w4a8:ro
       # Vendored vllm#48375 (MambaManager drop_eagle_block) — SHARED from the
       # qwen3.6-27b tree (same hybrid family). Makes MTP x prefix-caching safe;
       # inert if PREFIX_CACHE_ARG opts back out. See patches.yml + #736/#790.
@@ -117,7 +119,9 @@ services:
       # lives in the entrypoint, not in these lines, so it cannot drift.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
-      - VLLM_MARLIN_INPUT_DTYPE=int8
+      # int8 activations on humming. vLLM v0.34.0 refuses to start if the old
+      # VLLM_MARLIN_INPUT_DTYPE is set at all, so it is not forwarded.
+      - VLLM_HUMMING_INPUT_QUANT_CONFIG={"dtype":"int8"}
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - CUDA_VISIBLE_DEVICES
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
@@ -156,9 +160,9 @@ services:
         umask 0002
         set -e
         source /etc/club3090/detect_nvlink.sh
-        bash /etc/club3090/w4a8/install.sh
+        bash /etc/club3090/humming-w4a8/install.sh || exit 1
         bash /etc/club3090/pr48375/install.sh || exit 1
-        echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE}"
+        echo "[w4a8] --quantization humming, VLLM_HUMMING_INPUT_QUANT_CONFIG=$${VLLM_HUMMING_INPUT_QUANT_CONFIG}"
         AR=""
         # Gate on _CUSTOM_AR_ENABLED, not _NVLINK_ENABLED: the transport being up
         # and the custom kernel running are two decisions, and DISABLE_CUSTOM_ALL_REDUCE=1
@@ -193,8 +197,9 @@ services:
       - /root/.cache/huggingface/thinkingcap-qwen3.6-27b-w4a16
       - --served-model-name
       - thinkingcap-27b
+      # humming, not auto_round: W4A8 is this slug's purpose (vLLM v0.34.0+).
       - --quantization
-      - auto_round
+      - humming
       - --dtype
       - bfloat16
       - --tensor-parallel-size
@@ -203,6 +208,9 @@ services:
       - "${MAX_MODEL_LEN:-262144}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.90}"
+      # vLLM v0.34.0's extensible KV cache holds a >=1 GiB margin on top of this
+      # fraction, so 262K no longer fits on 24 GB cards (vllm#68184, docs/UPSTREAM.md).
+      - --no-enable-extensible-kv-cache
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-8}"
       - --max-num-batched-tokens

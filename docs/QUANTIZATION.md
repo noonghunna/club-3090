@@ -132,6 +132,15 @@ Each tier maximizes one axis and accepts the cost on the others:
 
 ### W4A8 — int8 activations ON the fast tier (shipped as a serve-time knob, 2026-07-16)
 
+> **Update 2026-11-17 (vLLM v0.34.0).** Marlin's 8-bit activations were removed upstream (#65542),
+> and with them `VLLM_MARLIN_INPUT_DTYPE`, which v0.34.0 refuses at startup if it is set at all.
+> W4A8 moved to `--quantization humming` with `VLLM_HUMMING_INPUT_QUANT_CONFIG='{"dtype":"int8"}'`,
+> wired by `W4A8=1` (the default) on the Qwen3.8-27B and ThinkingCap-Qwen3.8 tiers. Humming needs two
+> fixes on AutoRound checkpoints, vendored as `vllm-humming-w4a8` (vllm#68194 / #68195 in
+> [UPSTREAM.md](UPSTREAM.md)). On `vllm/qwen38-27b-dual-fast` it prefills +26% / +15% at 10K / 90K over
+> v0.33.0's Marlin W4A8. The `vllm/dual` / `vllm/minimal` opt-in described below no longer exists:
+> it was removed with that pin. The rest of this section is the v0.22–v0.33 history.
+
 The fast tier's int4 weights can now run **int8 activations** — the "W4A8" combination — via a
 one-env knob on the shipped composes (`vllm/dual` + `vllm/minimal`):
 

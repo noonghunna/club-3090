@@ -82,7 +82,6 @@ detected at boot, so you don't choose a compose for it.
 |  | `vllm/qwen38-27b-dual-ultramax` | 🧪 experimental | 262144 | [dual/fp8/dflash2.yml](../models/qwen3.8-27b/vllm/compose/dual/fp8/dflash2.yml) | [#1076](https://github.com/noonghunna/club-3090/discussions/1076) |  |
 | **Qwen-AgentWorld 35B-A3B (language world model)** | `vllm/qwen-agentworld-35b-a3b-dual-awq-int4` | ✅ production | 262144 | [dual/cyankiwi-awq-int4/fp8.yml](../models/qwen-agentworld-35b-a3b/vllm/compose/dual/cyankiwi-awq-int4/fp8.yml) | — |  |
 | **Qwen3.8-Flash-Next (MoE, Qwen)** | `llamacpp-club3090/qwen38-flash-next-dual-q4kxl-moecache` | 🧪 experimental | 204800 | [dual/unsloth-ud-q4kxl/moecache.yml](../models/qwen3.8-flash-next/llamacpp-club3090/compose/dual/unsloth-ud-q4kxl/moecache.yml) | [#1117](https://github.com/noonghunna/club-3090/discussions/1117) | host RAM ≥ 110 GB |
-|  | `vllm/qwen38-flash-next-dual` | 🧪 experimental | 262144 | [dual/albucino-autoround-int4-fp8ple/mtp.yml](../models/qwen3.8-flash-next/vllm/compose/dual/albucino-autoround-int4-fp8ple/mtp.yml) | — | host RAM ≥ 19 GB |
 |  | `bucko-vllm/qwen3.8-flash-next-ple-dual` | 🐣 incubating | 262144 | [dual/albucino-autoround-int4-fp8ple/base.yml](../models/qwen3.8-flash-next/bucko-vllm/compose/dual/albucino-autoround-int4-fp8ple/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 135 GB |
 |  | `bucko-vllm/qwen3.8-flash-next-swift15-dual` | 🐣 incubating | 262144 | [dual/ukisai-swift15-autoround-int4/base.yml](../models/qwen3.8-flash-next/bucko-vllm/compose/dual/ukisai-swift15-autoround-int4/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 170 GB |
 |  | `exllamav3/qwen38-flash-next-dual-exl3-305-cpumoe` | 🐣 incubating | 204800 | [dual/exl3-3.05bpw/cpumoe.yml](../models/qwen3.8-flash-next/exllamav3/compose/dual/exl3-3.05bpw/cpumoe.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 96 GB |
@@ -103,7 +102,7 @@ detected at boot, so you don't choose a compose for it.
 |  | `vllm/thinkingcap38-27b-dual-ultrafast` | 🧪 experimental | 262144 | [dual/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/dual/autoround-int4/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 |  | `vllm/thinkingcap38-27b-dual-ultramax` | 🧪 experimental | 262144 | [dual/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/dual/fp8/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 
-70 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+69 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table dual -->
 
 ## Launch

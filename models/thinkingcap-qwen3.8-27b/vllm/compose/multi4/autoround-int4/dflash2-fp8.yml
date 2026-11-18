@@ -38,7 +38,7 @@
 # ===========================================================================
 services:
   vllm-thinkingcap38-27b-multi4-superfast:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.33.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.34.0}
     container_name: "${ESTATE_CONTAINER:-vllm-thinkingcap38-27b-multi4-superfast}"
     user: "0:${DOCKER_GID:-1000}"
     # Repo contract (test-compose-restart-policy): every shipped vLLM compose uses
@@ -62,8 +62,8 @@ services:
               capabilities: [gpu]
     volumes:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
-      # W4A8 int8-activation patches — NO-OP unless VLLM_MARLIN_INPUT_DTYPE=int8.
-      - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
+      # W4A8 on humming (vLLM v0.34.0+): two fixes for AutoRound checkpoints + an int8 log line.
+      - ../../../../../qwen3.8-27b/vllm/patches/vllm-humming-w4a8:/etc/club3090/humming-w4a8:ro
       # Lets a spec-decode drafter attach on this hybrid (mamba/eagle block drop).
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
       - ../../../../../qwen3.8-27b/vllm/patches/vllm-flashinfer-decode-pin:/etc/club3090/flashinfer-decode-pin:ro
@@ -144,18 +144,12 @@ services:
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
       # ⭐ W4A8 (int8 activations) SHIPS ON — set W4A8=0 for the W4A16 path.
       - W4A8=${W4A8:-1}
-      # ⚠️⚠️ WHY A SEPARATE BOOLEAN INSTEAD OF `${VLLM_MARLIN_INPUT_DTYPE:-int8}`:
-      # vLLM VALIDATES this variable against a closed set and raises on anything
-      # else — INCLUDING THE EMPTY STRING:
-      #   ValueError: Invalid value '' for VLLM_MARLIN_INPUT_DTYPE.
-      #                Valid options: ['int8', 'fp8'].
-      # (verified against the pinned image, 2026-08-16). So there is NO value that
-      # means "off" — only ABSENCE means off. A `${VAR:-int8}` default would make
-      # W4A16 unreachable: every attempt to disable it would either re-substitute
-      # int8 or kill every worker at load_model. Hence W4A8=0/1 gates whether the
-      # var is exported at all, and this stays a BARE pass-through so an explicit
-      # host value still wins.
-      - VLLM_MARLIN_INPUT_DTYPE
+      # W4A8 runs on humming since vLLM v0.34.0, which removed Marlin's int8 path
+      # (#65542) and refuses to start if VLLM_MARLIN_INPUT_DTYPE is set at all, so
+      # that variable is no longer forwarded. The entrypoint sets this one to
+      # {"dtype":"int8"} when W4A8 is on and it is unset. Bare, so an explicit host
+      # value still wins.
+      - VLLM_HUMMING_INPUT_QUANT_CONFIG
     entrypoint:
       - bash
       - -c
@@ -175,19 +169,31 @@ services:
         _eb="$$(python3 /etc/club3090/effort_budget.py shell-env --engine vllm --default-effort "${REASONING_EFFORT:-low}" --low 4096 --medium 16384 --xhigh 32768)" || exit 1; eval "$$_eb"
         bash /etc/club3090/effort-budget/install.sh || exit 1
         bash /etc/club3090/default-thinking-budget/install.sh || exit 1
-        # ⚠️ THIS MUST RUN BEFORE install.sh, NOT AFTER. install.sh only hard-FAILS
-        # on a patch-apply error when VLLM_MARLIN_INPUT_DTYPE is already set; if we
-        # exported it afterwards, a failed patch would downgrade to a WARNING and we
-        # would serve a HALF-WIRED int8 config — the exact thing that guard exists
-        # to prevent.
-        if [ -z "$${VLLM_MARLIN_INPUT_DTYPE:-}" ] && [ "$${W4A8:-1}" != "0" ]; then
-          export VLLM_MARLIN_INPUT_DTYPE=int8
+        # -- W4A8: int4 weights, int8 activations, on humming ---------------------
+        # W4A8 on: --quantization humming with int8 activations. The command line
+        # keeps `--quantization auto_round` (the checkpoint's format) and this block
+        # rewrites it. W4A8=0: Marlin W4A16 under auto_round, without the humming
+        # fixes. The install refuses the boot if they do not apply
+        # (models/qwen3.8-27b/vllm/patches/vllm-humming-w4a8/README.md).
+        if [ "$${W4A8:-1}" != "0" ]; then
+          if [ -z "$${VLLM_HUMMING_INPUT_QUANT_CONFIG:-}" ]; then
+            export VLLM_HUMMING_INPUT_QUANT_CONFIG='{"dtype":"int8"}'
+          fi
+          bash /etc/club3090/humming-w4a8/install.sh || exit 1
+          _qa=(); _qn=0
+          for _a in "$$@"; do
+            if [ "$$_qn" = 1 ]; then _a=humming; _qn=0; fi
+            if [ "$$_a" = "--quantization" ]; then _qn=1; fi
+            _qa+=("$$_a")
+          done
+          set -- "$${_qa[@]}"
+          echo "[w4a8] W4A8=$${W4A8:-1}: --quantization humming, VLLM_HUMMING_INPUT_QUANT_CONFIG=$${VLLM_HUMMING_INPUT_QUANT_CONFIG}"
+        else
+          echo "[w4a8] W4A8=0: --quantization auto_round (Marlin W4A16)"
         fi
-        bash /etc/club3090/w4a8/install.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
         bash /etc/club3090/dflash-dense-kv/install.sh || exit 1
         FI_PINQ_LIB_ALL="${FI_PINQ_LIB_ALL:-0}" bash /etc/club3090/flashinfer-decode-pin/install.sh || exit 1
-        echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
         AR=""
         # Gate on _CUSTOM_AR_ENABLED, not _NVLINK_ENABLED: the transport being up
         # and the custom kernel running are two decisions, and DISABLE_CUSTOM_ALL_REDUCE=1
@@ -292,6 +298,9 @@ services:
       - "${MAX_MODEL_LEN:-262144}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      # vLLM v0.34.0's extensible KV cache holds a >=1 GiB margin on top of this
+      # fraction, so 262K no longer fits on 24 GB cards (vllm#68184, docs/UPSTREAM.md).
+      - --no-enable-extensible-kv-cache
       - --max-num-seqs
       # ⚠️ 2 here (dual is 1): at TP=4 freed weights SHOULD leave room for the
       # drafter + 2 streams — UNTESTED on 2 GPUs. OOM -> lower this or SPEC_N=0.

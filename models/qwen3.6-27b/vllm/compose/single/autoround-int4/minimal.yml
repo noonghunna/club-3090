@@ -42,7 +42,7 @@
 # Tensor-parallel: 1
 services:
   vllm-qwen36-27b-minimal:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.33.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.34.0}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-minimal}"
     user: "0:${DOCKER_GID:-1000}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
@@ -65,9 +65,6 @@ services:
       # See docs/UPSTREAM.md "Community templates / model assets" + the row at
       # https://huggingface.co/froggeric/Qwen-Fixed-Chat-Templates
       - ../../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
-      # W4A8 int8-activation enablement (#609) — NO-OP until VLLM_MARLIN_INPUT_DTYPE=int8
-      # is set (see the patch README). Applied by the entrypoint before vllm serve.
-      - ../../../patches/w4a8-int8-act:/etc/club3090/w4a8:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection
@@ -76,9 +73,10 @@ services:
       # actually pins cards there; on the classic runtime the UUID form is
       # renumbering-proof. Unset → absent (no masking).
       - CUDA_VISIBLE_DEVICES
-      # W4A8 knob (#609): VLLM_MARLIN_INPUT_DTYPE=int8 → int8 activations (see the
-      # w4a8 patch mount). Bare passthrough — unset → absent → stock W4A16.
-      - VLLM_MARLIN_INPUT_DTYPE
+      # No W4A8 (int8 activations) here since vLLM v0.34.0: Marlin's int8 path is
+      # gone (#65542), and the humming route that replaced it is unvalidated on these
+      # weights. VLLM_MARLIN_INPUT_DTYPE is no longer forwarded: v0.34.0 refuses to
+      # start if it is set at all.
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
       - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
@@ -105,8 +103,6 @@ services:
       - -c
       - |
         umask 0002
-        # W4A8 patches (#609) — no-op unless VLLM_MARLIN_INPUT_DTYPE=int8 (see mount).
-        bash /etc/club3090/w4a8/install.sh || exit 1
         # VLLM_ENFORCE_EAGER=1 in .env disables CUDA graphs — use on
         # hardware where graph capture causes OOM or instability (e.g. WSL2).
         exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
@@ -129,6 +125,9 @@ services:
       - "${MAX_MODEL_LEN:-32768}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      # vLLM v0.34.0's extensible KV cache holds a >=1 GiB margin on top of this
+      # fraction, so 262K no longer fits on 24 GB cards (vllm#68184, docs/UPSTREAM.md).
+      - --no-enable-extensible-kv-cache
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-1}"
       - --kv-cache-dtype
