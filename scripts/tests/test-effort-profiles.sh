@@ -709,16 +709,16 @@ else:
     if not ovr:
         bad("omp-setup --print rendered no modelOverrides")
     # The FAMILIES are generated from the registry (the same source the gateway's
-    # model_info renders), not written down: one family per registry served name, each
-    # carrying every alias its routes also answer to. Check 9 in test-omp-setup.sh pins
-    # each rendered ladder/default against a hardcoded table, and its check 8 pins the
-    # rendered NAME SET against an independent scan of the composes — those are the golden
-    # tripwires, independent of the generator's own logic. This check adds what neither
-    # can see: a rendered name that is a registry name must be one of its model's names
-    # ALL (a family silently missing for one served name of a model is a silent
-    # no-effort), at least one alias must render (the gateway names routes from the
-    # engine's /v1/models, so a compose's --alias route with no override is #1690), and a
-    # rendered default must be a rung of its own ladder (omp's fallback for a missing
+    # model_info renders), not written down: one family per ROUTE ID, the registry names
+    # plus every alias a compose boots under, each with the ladder and default its own
+    # routes give it. Check 9 in test-omp-setup.sh pins every route's ladder/default
+    # against a golden table and its check 8 pins the rendered NAME SET against an
+    # independent scan of the composes — those are the golden tripwires, independent of the
+    # generator's own logic. This check adds what neither can see: every registry served
+    # name of a model that renders at all must render (one silently missing served name is
+    # a silent no-effort), at least one alias must render (the gateway names routes from
+    # the engine's /v1/models, so a compose's --alias route with no override is #1690), and
+    # a rendered default must be a rung of its own ladder (omp's fallback for a missing
     # default is the ladder TOP, so an off-ladder default is a silent xhigh). It
     # deliberately does NOT re-derive the ladder: a copy of the generator's logic here
     # would pass a bug present in both copies.

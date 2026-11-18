@@ -2,28 +2,33 @@
 registry's per-variant effort facts — the single source #1951 established.
 
 The hand-written FAMILIES list goes away. Instead, one family is generated per
-SERVED NAME the gateway actually serves (the registry's served_name, else the model
-id — the same name litellm_sync puts on the route), and each family's ladder and
+ROUTE ID — every name a route actually answers to — and each family's ladder and
 default are derived, not written down:
 
-  * its ladder is the set of rungs EVERY route serving that name accepts — the model's
+  * its ladder is the set of rungs EVERY route serving that id accepts — the model's
     levels minus any rung a serving engine refuses, plus the fold sources only when
     every one of them folds the same src->dst (an engine with no fold table means the
-    name advertises no fold sources). A rung is offered only if no route 400s it, so
-    the family and the routes it names cannot drift;
-  * its default is the LOWEST of the compose defaults across the routes serving the
-    name, an empty REASONING_EFFORT falling back to that engine's pair default — the
-    #1951 "club/<id> rounds down, per id" decision. A default that is a fold target
-    (e.g. strata's xhigh) is expressed by the fold source that reaches it; a name whose
-    routes reach no nameable default at all gets NO family — see compute_families.
+    id advertises no fold sources). A rung is offered only if no route 400s it, so the
+    family and the route it names cannot drift;
+  * its default is the LOWEST of the compose defaults across the routes serving the id,
+    an empty REASONING_EFFORT falling back to that engine's pair default — the #1951
+    "rounds down, per id" decision. A default that is a fold target (e.g. strata's
+    xhigh) is expressed by the fold source that reaches it; an id whose routes reach no
+    nameable default falls back to its model's own default, and if that is unreachable
+    too it gets NO family — see compute_families.
 
-Each family's `ids` are every name its routes answer to: the registry name plus the
-aliases the serving composes boot under (--served-model-name / --alias / --served-name /
-SERVED_MODEL_NAME, Strata's "<family>-<quant>" name, Project Maya's launcher
-model_name). The gateway names its routes from the engine's own /v1/models
-(litellm_sync.probe), NOT from the registry, so an alias is a route of its own — and a
-route with no override is treated as a non-reasoning model, sent no effort, and runs the
-engine's own (slowest) default: the #1690 regression this generation must not re-open.
+Why per route ID and not per registry served name: the gateway names its routes from the
+engine's own /v1/models (litellm_sync.probe), NOT from the registry, so a compose's
+--served-model-name / --alias (one-line or YAML list), Strata's "<family>-<quant>" name
+and Project Maya's model_name are each a route of their own. omp matches modelOverrides
+by that route name, so an alias with no override reads as a non-reasoning model, is sent
+no effort, and runs the engine's own (slowest) default — the #1690 regression. But two
+names of one model are also served by DIFFERENT engines: Strata's own id accepts high/max
+and defaults to xhigh, while the shared qwen3.8-flash-next id is served by engines that
+refuse those rungs and default to low. Grouping by the registry name would hand every
+alias the shared id's ladder and default, which is the per-id rule #1951 settled. So the
+route id IS the family, `ids` is [that id], and only maxTokens and compat are keyed by
+model.
 
 The only thing still written down is the client-side wire knowledge that has no
 home in the profiles: which models the family covers, and each model's reply cap
@@ -179,12 +184,14 @@ def compose_served_names(root, compose_path):
             tok = _served_token(m.group(1))
             if tok:
                 names.add(tok)
-        m = re.search(_SERVED_FLAGS + r"\b['\"]?(.*)$", line)
+        m = re.search(_SERVED_FLAGS + r"\b(?:=['\"]?)?(.*)$", line)
         if not m:
             continue
         rest = m.group(1).strip().rstrip("\\").strip().strip("\"'")
-        if rest and not rest.startswith("-"):            # one-line: --alias a b
+        if rest and not rest.startswith("-"):            # one-line: --alias a b / --alias=a
             for tok in rest.split():
+                if tok.startswith("-"):                  # the next flag ends the values
+                    break
                 name = _served_token(tok)
                 if name:
                     names.add(name)
@@ -226,99 +233,118 @@ def compose_served_names(root, compose_path):
     return names
 
 
-def family_ids(root, rows, served_name, claimed):
-    """Every name this family's routes answer to: the registry name plus every alias the
-    serving composes boot under, minus any name ANOTHER family owns canonically — a name
-    that is some family's served_name belongs to that family, not to whoever aliases it."""
-    names = {served_name}
-    unreadable = []
-    for r in rows:
-        cp = r.get("compose_path")
-        if not cp:
-            continue
-        full = cp if os.path.isabs(cp) else os.path.join(root, cp)
-        if not os.path.exists(full):
-            unreadable.append(cp)
-            continue
-        names |= compose_served_names(root, cp)
-    if unreadable:
-        print(f"effort_families: {served_name}: {len(unreadable)} of {len(rows)} route "
-                "compose(s) unreadable, so the aliases they declare are missing from the "
-                "override keys and those routes will get no effort. Fix: run this from "
-                f"the checkout the registry points at (root {root!r}); first missing: "
-                f"{unreadable[0]}.", file=sys.stderr)
-    return sorted(names - (claimed - {served_name}))
+def route_names(root, row):
+    """(every name this registry row's route answers to, its compose unreadable?).
+
+    The name the registry declares plus every alias the serving compose boots under.
+    Each of those is a route the gateway names on its own (see the module docstring), so
+    each needs its own override — and its own ladder, because the engines behind two
+    names of one model are not the same set.
+    """
+    sid = served_id(row)
+    names = {sid} if sid else set()
+    cp = row.get("compose_path")
+    if not cp or root is None:
+        return names, False
+    if not os.path.exists(cp if os.path.isabs(cp) else os.path.join(root, cp)):
+        return names, True
+    return names | compose_served_names(root, cp), False
 
 
 def compute_families(variants, model_families, root=None):
     """model_families: [{models: [...], maxTokens: int, compat: {...}}, ...] — the
     client-side wire knowledge (which models, their reply cap and compat pins).
 
-    Returns the FAMILIES list — one entry per served name whose model a family covers,
-    each {name, ids, ladder: {efforts, defaultLevel}, maxTokens, compat}. `ids` is
-    [name] unless a `root` is given, in which case it is every name that family's routes
-    answer to (family_ids) — the aliases the gateway serves as routes of their own.
-    A name whose routes reach NO nameable default gets no family: rendering the None
-    would put the literal string "None" on the wire as an effort name, and leaving the
-    default out makes omp fall back to the ladder TOP — a silent xhigh, the slowest rung.
-    Neither is honest, so the name is skipped with a warning naming the profile to fix.
+    Returns the FAMILIES list — one entry per ROUTE ID (see the module docstring), each
+    {name, ids: [name], ladder: {efforts, defaultLevel}, maxTokens, compat}, the last two
+    from the model_families entry covering the model behind that route. `root` is the
+    checkout the composes are read from; without it a route is only the name the registry
+    declares, which is what the unit tests exercise.
+
+    An id whose routes reach NO nameable default falls back to its model's own (the
+    default its canonical id renders) when that is a rung this route accepts. If neither
+    is reachable the id gets no family: rendering the None would put the literal string
+    "None" on the wire as an effort name, and leaving the default out makes omp fall back
+    to the ladder TOP — a silent xhigh, the slowest rung. Neither is honest, so the id is
+    skipped with a warning naming the profile to fix.
     """
     model_to_fam = {}
-    for fam in model_families:
+    fam_index = {}
+    for i, fam in enumerate(model_families):
+        fam_index[id(fam)] = i
         for m in fam["models"]:
             model_to_fam[m] = fam
-    by_id = {}
+    by_route = {}
+    unreadable = []
     for v in variants:
-        sid = served_id(v)
-        if sid:
-            by_id.setdefault(sid, []).append(v)
+        names, missing = route_names(root, v)
+        if missing:
+            unreadable.append(v.get("compose_path"))
+        for n in names:
+            by_route.setdefault(n, []).append(v)
+    if unreadable:
+        print(f"effort_families: {len(unreadable)} route compose(s) unreadable from root "
+              f"{root!r}, so the aliases they declare are missing from the family list and "
+              "those routes get no effort. Fix: run this from the checkout the registry "
+              f"points at; first missing: {unreadable[0]}.", file=sys.stderr)
+    facts = {rid: _id_facts(rows) for rid, rows in by_route.items()}
+    model_rows = {}
+    for v in variants:
+        if v.get("model") is not None:
+            model_rows.setdefault(v["model"], []).append(v)
+    model_facts = {m: _id_facts(rows) for m, rows in model_rows.items()}
     out = []
-    claimed = set(by_id)
-    for sid, rows in by_id.items():
-        # One served name is ONE model. Check that BEFORE the coverage skip: a name
-        # claimed by two models whose first registry row is an uncovered model would
-        # otherwise be dropped silently instead of refused, making the guard depend on
-        # registry row order. The ladder, compat pins and coverage set all key off
-        # rows[0], so a collision is a catalog mistake, not a multi-model route.
+    for rid in sorted(by_route):
+        rows = by_route[rid]
+        # One route id is ONE model — but only for a route this client actually serves:
+        # the catalog has uncovered models that share a route name, and refusing those
+        # would make an unrelated catalog entry break the render. Both sets are computed
+        # from ALL the rows, so neither decision depends on registry row order (a name
+        # claimed by two models whose first row is an uncovered model must still be
+        # refused, not dropped silently). The ladder, the compat pins and the coverage set
+        # all key off the rows, so a collision is a catalog mistake, not a multi-model
+        # route.
         models = {r.get("model") for r in rows}
+        entries = {fam_index[id(model_to_fam[m])] for m in models if m in model_to_fam}
+        if not entries:
+            continue                       # a route no client family covers
         if len(models) > 1:
             raise ValueError(
-                f"served name {sid!r} is claimed by {len(models)} models "
-                f"({', '.join(sorted(str(m) for m in models))}): one served name must map "
+                f"route {rid!r} is served by {len(models)} models "
+                f"({', '.join(sorted(str(m) for m in models))}): one route name must map "
                 "to one model, or its ladder, compat pins and coverage depend on registry "
-                "row order. Fix: give one of them its own served_name in the registry.")
-        fam = model_to_fam.get(rows[0].get("model"))
-        if fam is None:
+                "row order. Fix: give one of them its own --served-model-name / alias.")
+        if len(entries) > 1:
+            raise ValueError(
+                f"route {rid!r} resolves to {len(entries)} MODEL_FAMILIES entries: one "
+                "route cannot carry two overrides. Fix: one entry per model in "
+                "MODEL_FAMILIES.")
+        fam = model_families[next(iter(entries))]
+        f = facts[rid]
+        if f is None:
             continue
-        facts = _id_facts(rows)
-        if facts is None:
-            continue
-        if facts["defaultLevel"] is None:
-            print(f"effort_families: {sid}: no route serving this name has a default that "
-                  f"reaches a nameable rung of {facts['efforts']} — no override generated, "
-                  "so omp will send no effort and the server default runs. Fix: set "
-                  "REASONING_EFFORT in the serving compose, or the pair's "
-                  "default_when_unset in the engine profile.", file=sys.stderr)
-            continue
-        ids = [sid] if root is None else family_ids(root, rows, sid, claimed)
+        dflt = f["defaultLevel"]
+        if dflt is None:
+            # No route serving this id records a default that reaches a nameable rung
+            # (ExLlamaV3 recorded none at all before #2101). The MODEL's own default is
+            # the honest fallback — but only if this route's ladder carries it.
+            fb = (model_facts.get(rows[0].get("model")) or {}).get("defaultLevel")
+            if fb in f["efforts"]:
+                dflt = fb
+            else:
+                print(f"effort_families: {rid}: no route serving this name has a default "
+                      f"that reaches a nameable rung of {f['efforts']} — no override "
+                      "generated, so omp will send no effort and the server default runs. "
+                      "Fix: set REASONING_EFFORT in the serving compose, or the pair's "
+                      "default_when_unset in the engine profile.", file=sys.stderr)
+                continue
         out.append({
-            "name": sid,
-            "ids": ids,
-            "ladder": {"efforts": facts["efforts"], "defaultLevel": facts["defaultLevel"]},
+            "name": rid,
+            "ids": [rid],
+            "ladder": {"efforts": f["efforts"], "defaultLevel": dflt},
             "maxTokens": fam["maxTokens"],
             "compat": fam["compat"],
         })
-    # One name, one family: an alias two models' composes both boot under would render
-    # two override blocks for the same route, and the YAML loader keeps the last.
-    owner = {}
-    for f in out:
-        for n in f["ids"]:
-            if n in owner:
-                raise ValueError(
-                    f"name {n!r} is served by two families ({owner[n]!r} and "
-                    f"{f['name']!r}): one route cannot carry two overrides. Fix: drop the "
-                    "colliding --alias/--served-model-name, or give one model its own name.")
-            owner[n] = f["name"]
     return out
 
 

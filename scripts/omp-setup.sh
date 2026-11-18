@@ -111,16 +111,17 @@ END = "  # <<< club-3090 local models <<<"
 # the registry's per-variant effort facts, the same source the gateway's model_info
 # renders, so the override and the routes it names cannot drift.
 #
-# One family per served name the registry declares (its served_name, else the model id):
-# the Qwen3.8 line serves qwen3.8-27b and the ThinkingCap replicas their own name
-# (thinkingcap38-27b), Flash-Next serves qwen3.8-flash-next, GLM-5.3-Flash serves
-# glm-5.3-flash. Each family's `ids` then carry EVERY name its routes answer to, aliases
-# included: the gateway names its routes from the engine's own /v1/models, not from the
-# registry (litellm_sync.probe), so a compose's --served-model-name / --alias (one-line or
-# YAML list), Strata's "<family>-<quant>" name and Project Maya's model_name are each a
-# route of their own. A route with no override reads as a non-reasoning model, gets no
-# effort, and runs the engine's own slowest default — #1690. The hand-kept id lists this
-# replaces had already drifted from them: two llama-cpp-prism aliases had no override.
+# One family per ROUTE ID — every name a route actually answers to. The gateway names its
+# routes from the engine's own /v1/models, not from the registry (litellm_sync.probe), so a
+# compose's --served-model-name / --alias (one-line or YAML list), --served-name,
+# SERVED_MODEL_NAME, Strata's "<family>-<quant>" name and Project Maya's model_name are
+# each a route of their own: a route with no override reads as a non-reasoning model, gets
+# no effort, and runs the engine's own slowest default — #1690. And each route answers to a
+# DIFFERENT set of engines, so each gets its own ladder and its own default: Strata's id
+# accepts high/max and defaults to xhigh, while the shared qwen3.8-flash-next id is served
+# by engines that refuse those rungs and default to low. That per-id split is the #1951
+# decision; grouping by the registry name would hand every alias the shared id's ladder and
+# default. Only maxTokens and the compat pins below are keyed by model.
 MODEL_FAMILIES = [
     {"models": ["qwen3.8-27b", "thinkingcap-qwen3.8-27b"],
      "maxTokens": 32768,
