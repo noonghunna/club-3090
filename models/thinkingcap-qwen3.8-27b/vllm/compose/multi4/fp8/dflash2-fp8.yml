@@ -45,7 +45,7 @@ services:
     # nightlies; the #407 pin-drift fix). The launchers resolve the real image
     # from the `vllm-stable` engine profile and inject it over this default,
     # so this literal only bites a raw `docker compose` invocation (#254).
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.33.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.34.0}
     container_name: "${ESTATE_CONTAINER:-vllm-thinkingcap38-27b-multi4-supermax}"
     user: "0:${DOCKER_GID:-1000}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
@@ -315,6 +315,9 @@ services:
       - "${MAX_MODEL_LEN:-262144}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      # vLLM v0.34.0's extensible KV cache holds a >=1 GiB margin on top of this
+      # fraction, so 262K no longer fits on 24 GB cards (vllm#68184, docs/UPSTREAM.md).
+      - --no-enable-extensible-kv-cache
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-2}"
       - --max-num-batched-tokens

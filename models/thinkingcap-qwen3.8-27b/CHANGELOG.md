@@ -2,6 +2,13 @@
 
 Dated history for ThinkingCap-Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-11-17 — vLLM v0.34.0: W4A8 moves to humming, KV sized the v0.33.0 way
+
+Same change as the Qwen3.8-27B tiers (see that model's CHANGELOG): `W4A8=1`, the default, now serves
+`--quantization humming` with the `vllm-humming-w4a8` fixes, because v0.34.0 removed Marlin's 8-bit
+activations; `W4A8=0` still serves W4A16. The composes pass `--no-enable-extensible-kv-cache` so
+262K keeps its fit on 24 GB cards.
+
 ## 2026-10-19 — SGLang slugs move to v0.5.22
 
 Same bump as Qwen3.8-27B (see its CHANGELOG): the `sgl/thinkingcap38-*` slugs now run

@@ -2,6 +2,16 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-11-17 — vLLM v0.34.0: the W4A8 opt-in is removed
+
+`vllm/dual` (≡ `vllm/qwen-27b-dual-fast`), `vllm/qwen-27b-multi-fast` and `vllm/minimal` no longer
+offer W4A8 (`VLLM_MARLIN_INPUT_DTYPE=int8`). v0.34.0 removed Marlin's 8-bit activations (#65542) and
+refuses to start if that variable is set, and the humming route that replaced it was not validated
+on these weights (they are no longer on the reference rig). The `w4a8-int8-act` install and the
+variable's pass-through are gone; W4A16, the default all along, is unchanged. The composes pass
+`--no-enable-extensible-kv-cache`, back to v0.33.0's KV sizing. These slugs were not booted on
+v0.34.0.
+
 ## 2026-09-27 — parked SGLang EAGLE3 composes carry `--sleep-on-idle`
 
 Both parked `sglang/compose/*/autoround-int4/eagle3-experimental.yml` composes now pass

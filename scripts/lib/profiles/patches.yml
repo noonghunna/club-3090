@@ -962,18 +962,17 @@ patches:
       drop_when: "the pinned bucko image ships a server-default thinking budget, or bucko's base gains what vllm-default-thinking-budget needs (then switch these composes to that patch and retire this entry)."
     status: verified
   - id: qwen-w4a8-int8-act
-    model: [qwen3.6-27b, thinkingcap-27b, qwen3.8-flash-next]
+    # Since the v0.34.0 pin only the retired vllm/qwen38-flash-next-dual mounts this: it stays on
+    # vLLM v0.33.0 (a literal image line), where Marlin int8 still exists. Every other compose moved
+    # to vllm-humming-w4a8 (Qwen3.8 + ThinkingCap tiers) or dropped W4A8 (Qwen3.6-27B).
+    model: [qwen3.8-flash-next]
     files:
       - models/qwen3.6-27b/vllm/patches/w4a8-int8-act/install.sh
       - models/qwen3.6-27b/vllm/patches/w4a8-int8-act/patch-inc-w4a8.py
       - models/qwen3.6-27b/vllm/patches/w4a8-int8-act/patch-negscale-fold.py
     load_bearing_when:
       - composes:
-          - vllm/dual
-          - vllm/minimal
-          - vllm/qwen-27b-multi-fast
-          - vllm/thinkingcap-dual-w4a8
-          - vllm/qwen38-flash-next-dual   # opt-in W4A8=1, with w4a8-inc-moe for the MoE experts
+          - vllm/qwen38-flash-next-dual   # opt-in W4A8=1, with w4a8-inc-moe for the MoE experts (v0.33.0 only)
         reason: "Enables the STOCK serve-time W4A8 toggle (VLLM_MARLIN_INPUT_DTYPE=int8 — int8 activations on the int4 weights, +50% prefill / decode ~neutral dual (env-only A/B), 8-pack-tied 110/111 vs 109) on auto-round checkpoints: vLLM's inc route silently drops the toggle (bug A), and the int8 kernel reads group scales UNSIGNED while AutoRound emits ~50% negative scales → garbage (bug B; load-time sign-fold, exact except 0.61% of weights). BOTH patches are NO-OPS while the env is unset, so they ship applied-always with zero default-path behavior change. Forensics + measurements: club-3090#609."
         evidence: "models/qwen3.6-27b/vllm/patches/w4a8-int8-act/README.md; club-3090#609 (c-17664346 + c-17666873); docs/UPSTREAM.md W4A8 rows"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
@@ -999,6 +998,65 @@ patches:
       ref: "two vLLM bugs FILED 2026-07-17: inc drops input_dtype = vllm#48904; Marlin unsigned int16 group-scale read = vllm#48905. Forensics club-3090#609."
       status: local-vendored
       drop_when: "both fixes merge upstream and land in the pinned release (re-run the drift_guard on the new pin, then delete the mount + this entry)"
+    status: verified
+
+  - id: vllm-humming-w4a8
+    # W4A8 (int4 weights, int8 activations) from vLLM v0.34.0, which removed Marlin's
+    # 8-bit activations (#65542; replaces qwen-w4a8-int8-act). Two fixes for humming
+    # on AutoRound checkpoints plus a one-line int8 log (README in the patch dir).
+    model: [qwen3.8-27b, thinkingcap-qwen3.8-27b, thinkingcap-27b]
+    files:
+      - models/qwen3.8-27b/vllm/patches/vllm-humming-w4a8/install.sh
+      - models/qwen3.8-27b/vllm/patches/vllm-humming-w4a8/apply.py
+      - models/qwen3.8-27b/vllm/patches/vllm-humming-w4a8/README.md
+    load_bearing_when:
+      - composes:
+          - vllm/qwen38-27b-dual-fast
+          - vllm/qwen38-27b-dual-superfast
+          - vllm/qwen38-27b-dual-ultrafast
+          - vllm/qwen38-27b-multi4-fast
+          - vllm/qwen38-27b-multi4-superfast
+          - vllm/qwen38-27b-multi4-ultrafast
+          - vllm/qwen38-27b-multi8-fast
+          - vllm/qwen38-27b-multi8-superfast
+          - vllm/qwen38-27b-multi8-ultrafast
+          - vllm/qwen38-27b-single-fast
+          - vllm/thinkingcap-dual-w4a8
+          - vllm/thinkingcap38-27b-dual-fast
+          - vllm/thinkingcap38-27b-dual-superfast
+          - vllm/thinkingcap38-27b-dual-ultrafast
+          - vllm/thinkingcap38-27b-multi4-fast
+          - vllm/thinkingcap38-27b-multi4-superfast
+          - vllm/thinkingcap38-27b-multi4-ultrafast
+          - vllm/thinkingcap38-27b-multi8-fast
+          - vllm/thinkingcap38-27b-multi8-superfast
+          - vllm/thinkingcap38-27b-multi8-ultrafast
+        reason: "W4A8 (the default on these tiers, W4A8=1; always on for thinkingcap-dual-w4a8) runs --quantization humming with VLLM_HUMMING_INPUT_QUANT_CONFIG={\"dtype\":\"int8\"} on vLLM v0.34.0. On AutoRound checkpoints stock humming fails to load (vllm#68194: the unquantized fallback skips __init__, so _gemm_impl is missing) and keeps every layer's checkpoint qweight beside the converted weight (vllm#68195: 15.17 vs 9.19 GiB a card; 262,144 no longer fits on 24 GB cards). With both fixes, Qwen3.8-27B dual-fast loads 9.17 GiB a card, pools 602,678 tokens at 262,144 and prefills 2,555 / 1,626 tok/s at 10K / 90K, against 1,476 / 1,114 for Marlin W4A16 on the same image (2026-11-17, 2x RTX 3090, 230 W)."
+        evidence: "models/qwen3.8-27b/vllm/patches/vllm-humming-w4a8/README.md; docs/UPSTREAM.md vllm#68194 and #68195 rows"
+    delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/vllm/patches/vllm-humming-w4a8/install.sh
+      mounted_at: /etc/club3090/humming-w4a8
+      invoke: "bash /etc/club3090/humming-w4a8/install.sh"
+      invoked_before: vllm-serve
+      wired_at: [volumes, entrypoint]
+      note: "Called only when W4A8 selects humming: W4A8=0 serves Marlin W4A16 under --quantization auto_round and skips it. The command line keeps --quantization auto_round and the entrypoint rewrites it to humming. Idempotent and marker-gated (# club3090 humming-w4a8). A fix already present upstream is detected and skipped. A missing anchor for either fix refuses the boot; a missing anchor for the log line only warns."
+    drift_guard:
+      kind: behavioral
+      check: "Offline in the pinned image: install.sh applies all three changes, a second run reports 'already applied' for each, and a drifted fallback anchor exits 1 without writing. On a W4A8=1 boot: every worker prints '[humming-w4a8] effective activations a_dtype=int8', 'Model loading took' stays at the W4A16 size (about 9.2 GiB a card on dual-fast, not about 15), and verify-full passes."
+      on_fail: boot-refused
+    capability: w4a8-int8-activations
+    foundational: false
+    upstream:
+      ref: "vllm-project/vllm#68194 (fallback init; fix = open upstream PR vllm-project/vllm#68202, vendored line for line) + vllm-project/vllm#68195 (placeholder weight; filed by us, no upstream PR)"
+      status: open
+      criticality: "EXCEPTION CLASS for the #68195 part (AGENTS.md upstream-first; maintainer decision 2026-11-17): a measured memory defect with a repro and no upstream fix. Without it each humming layer keeps its checkpoint qweight (15.17 vs 9.19 GiB a card on Qwen3.8-27B) and 262,144 context no longer fits on 24 GB cards. The #68194 part is the standard path: open upstream PR #68202."
+      drop_when: "Per fix. #68202 merged and in the pinned release: delete fix 1 from apply.py. An upstream fix for #68195 in the pinned release: delete fix 2. With the last fix, remove the mount, the entrypoint call and this entry (the activation log goes with them)."
     status: verified
 
   - id: qwen-carnice-chat-template

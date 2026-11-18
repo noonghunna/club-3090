@@ -123,20 +123,22 @@ running each entrypoint and inspecting the argv the engine would actually receiv
 
 ### What is the W4A8 knob and should I turn it on?
 
-`VLLM_MARLIN_INPUT_DTYPE=int8` on the Qwen vLLM composes (`vllm/dual`, `vllm/minimal`) runs
-**int8 activations on the int4 weights** — measured on the reference dual-3090 (single-variable
-A/B, env-only): **prefill +50%, decode neutral, quality tied with the default on both reasoning
-legs** (8-pack 110/111 vs 109).
-Turn it on if your workload is prefill-heavy (big agent prompts, RAG):
+W4A8 runs **int8 activations on the int4 weights**. It is **on by default** on the Qwen3.8-27B and
+ThinkingCap-Qwen3.8 AutoRound vLLM tiers (`vllm/qwen38-27b-*-fast`, `-superfast`, `-ultrafast` and
+the `thinkingcap38-27b-*` twins). Set `W4A8=0` for 16-bit activations:
 
 ```bash
-VLLM_MARLIN_INPUT_DTYPE=int8 bash scripts/switch.sh vllm/dual
+W4A8=0 bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast   # --force: the tier is experimental
 ```
 
-Requirements: bf16 serving dtype (the composes' default path handles it) and positive-symmetric
-int4 weights — the shipped autoround checkpoint qualifies; an asymmetric AWQ checkpoint refuses
-with an actionable error instead of producing garbage. Off by default; unset = exactly the stock
-behavior. Full story: [QUANTIZATION.md](QUANTIZATION.md) "W4A8" + discussion #609.
+Measured on the reference dual-3090 on vLLM v0.34.0 (`dual-fast`, one boot per arm, 2026-11-17):
+prefill **2,555 / 1,626 tok/s** at 10K / 90K with W4A8, against 1,476 / 1,114 without; decode about
+level. Leave it on unless you are chasing a quality difference.
+
+From vLLM v0.34.0 W4A8 runs on `--quantization humming`, because that release removed Marlin's
+8-bit activations. `VLLM_MARLIN_INPUT_DTYPE` is no longer used, and v0.34.0 refuses to start if it
+is set at all. The Qwen3.6-27B composes (`vllm/dual`, `vllm/minimal`) dropped their W4A8 opt-in
+with that pin. History: [QUANTIZATION.md](QUANTIZATION.md) "W4A8" and discussion #609.
 
 ### My AWQ / FP8 model errors on `--kv-cache-dtype fp8` — why, and what do I use?
 

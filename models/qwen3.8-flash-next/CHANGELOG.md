@@ -160,3 +160,22 @@ Quality (`quality-test.sh --full`, benchlocal-cli v0.11.0, on v0.31.0, thinking 
   `ROPE_SCALING`/`ROPE_SCALE` overriding setup's own auto-resolution in place (the flag in
   `args` AND in `args_written`, different value) — removing the settings now restores
   setup's value instead of leaving the override forever. Test covers it.
+
+## 2026-11-17 — `vllm/qwen38-flash-next-dual` retired, held on vLLM v0.33.0 (🗑️)
+
+Retired with the `vllm-stable` move to vLLM v0.34.0 (maintainer decision). Nobody in the community
+runs Flash-Next on vLLM, and on 2× RTX 3090 QEngine (`qengine/qwen38-flash-next-dual`) and Strata
+(`strata/qwen3.8-flash-next-*`) serve the model better. The slug needs two 64 GB cards, so it was
+never bootable on the reference rig.
+
+Why it could not simply follow the pin: its overlays refuse v0.34.0 (checked offline on the image,
+2026-11-17). `qwen4exp-pp-ple-rank0` and `qwen4exp-mtp-pp` fail their anchors, `qwen4exp-mtp-draft-head`
+lost its `utils.py` anchor, and `qwen4exp-ple-mmap` has no v0.34.0 port. v0.34.0 itself now carries
+part of what they did (PP with a PLE layer, the MTP drafter branching on its inputs instead of the PP
+rank, and PLE rows read from the checkpoint with `--engram-config '{"disk_offload": true}'`), but a
+port could not be validated without the cards. Its W4A8 opt-in (Marlin int8 plus `w4a8-inc-moe`) has
+no v0.34.0 path either: Marlin's int8 code is gone (#65542).
+
+So the compose keeps its v0.33.0 form and pins `image: vllm/vllm-openai:v0.33.0` as a literal, which
+the launchers' `VLLM_IMAGE` injection does not reach. It still boots with `switch.sh --force` on the
+image it was last checked against, overlays and W4A8 opt-in included.
