@@ -709,14 +709,19 @@ else:
     if not ovr:
         bad("omp-setup --print rendered no modelOverrides")
     # The FAMILIES are generated from the registry (the same source the gateway's
-    # model_info renders), not written down: one family per served name. Check 9 in
-    # test-omp-setup.sh pins each rendered ladder/default against a hardcoded table —
-    # the golden tripwire, independent of the generator's own logic. This check adds
-    # what that table cannot: every rendered name must be a name the registry actually
-    # serves (no invented family), and a rendered default must be a rung of its own
-    # ladder (omp's fallback for a missing default is the ladder TOP, so an off-ladder
-    # default is a silent xhigh). It deliberately does NOT re-derive the ladder: a copy
-    # of the generator's logic here would pass a bug present in both copies.
+    # model_info renders), not written down: one family per registry served name, each
+    # carrying every alias its routes also answer to. Check 9 in test-omp-setup.sh pins
+    # each rendered ladder/default against a hardcoded table, and its check 8 pins the
+    # rendered NAME SET against an independent scan of the composes — those are the golden
+    # tripwires, independent of the generator's own logic. This check adds what neither
+    # can see: a rendered name that is a registry name must be one of its model's names
+    # ALL (a family silently missing for one served name of a model is a silent
+    # no-effort), at least one alias must render (the gateway names routes from the
+    # engine's /v1/models, so a compose's --alias route with no override is #1690), and a
+    # rendered default must be a rung of its own ladder (omp's fallback for a missing
+    # default is the ladder TOP, so an off-ladder default is a silent xhigh). It
+    # deliberately does NOT re-derive the ladder: a copy of the generator's logic here
+    # would pass a bug present in both copies.
     from litellm_sync import registry_variants
     variants = registry_variants(os.getcwd())
     served: "dict[str, list]" = {}
@@ -733,20 +738,25 @@ else:
                          "dflt": t.get("defaultLevel"),
                          "model": rows[0].get("model") if rows else None}
 
+    rendered_models = {f["model"] for f in families.values() if f["model"]}
     for fam, f in sorted(families.items()):
-        if not served.get(fam):
-            bad(f"family {fam}: rendered with a ladder but no registry variant serves "
-                f"that name — the render invented one the profiles don't back")
-            continue
         if f["dflt"] is not None and f["dflt"] not in f["ladder"]:
             bad(f"family {fam}: defaultLevel {f['dflt']!r} is not a rung of its "
                 f"ladder {f['ladder']} (omp's fallback for a missing default is the "
                 f"ladder TOP — an off-ladder default is a silent xhigh)")
+    for name, rows in sorted(served.items()):
+        if rows[0].get("model") in rendered_models and name not in ovr:
+            bad(f"{name}: its model has overrides rendered but this served name has none "
+                f"— the gateway serves it as its own route, so omp sends it no effort")
+    if not [n for n in ovr if n not in served]:
+        bad("no alias override rendered at all: the gateway names routes from the "
+            "engine's /v1/models, so every compose --alias / --served-model-name route "
+            "would get no effort (#1690)")
     # The inverse (r7): a probed ladder no family covers renders nowhere on the omp
     # surface, and every check above still passes. The covered set is the models the
     # generated FAMILIES bind to; every catalog model with a probed ladder must be in
     # it (a model you want on the omp surface but no live route serves is a gap).
-    covered = {f["model"] for f in families.values() if f["model"]}
+    covered = rendered_models
     for model_dir in sorted(os.listdir("models")):
         levels, _status = model_levels(model_dir)
         if levels and model_dir not in covered:
@@ -754,8 +764,9 @@ else:
                 f"it — the omp surface never renders its ladder; add it to a "
                 f"MODEL_FAMILIES entry in omp-setup.sh")
     if len(failures) == n0:
-        print(f"  ✓ omp-setup renders {len(ovr)} overrides: every rendered name is "
-              f"served, every default is a rung of its ladder, every probed model covered")
+        print(f"  ✓ omp-setup renders {len(ovr)} overrides: every served name of a "
+              f"covered model, aliases included, every default on its own ladder, every "
+              f"probed model covered")
 
 
 sys.exit(1 if failures else 0)

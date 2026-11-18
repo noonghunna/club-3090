@@ -98,74 +98,197 @@ need = [d["provider"]["appendOnlyContext"] == "on", d["compaction"]["thresholdPe
 sys.exit(0 if all(need) else 1)
 PY
 
-# 8. the override keys are EXACTLY the served names the gateway serves for the models
-#    the `club` provider covers. They are generated from the registry (the same source
-#    the gateway's model_info renders), not written down: the registry's served_name
-#    (else the model id) is what the engine's own /v1/models — and so the gateway —
-#    reports, so a key nothing serves is impossible and a served name with no key can't
-#    slip through. The hand-maintained id lists this used to pin are gone.
-bash "$ROOT/scripts/omp-setup.sh" --print | python3 -c '
-import sys, yaml
-mo = yaml.safe_load(sys.stdin.read())["providers"]["club"]["modelOverrides"]
-expected = {"qwen3.8-27b", "thinkingcap38-27b", "qwen3.8-flash-next", "glm-5.3-flash"}
-if set(mo) != expected:
-    print("  modelOverrides keys %s != expected %s" % (sorted(mo), sorted(expected)), file=sys.stderr)
+# The expected render, written down on purpose. Check 8 derives the NAME SET from the
+# composes independently (a YAML walk of command/entrypoint, not the generator's regex
+# scan); this table pins what each name must RENDER and which alias belongs to which
+# family. A new alias in the catalog fails check 8 first — add it here when you add one.
+cat > "$T/omp_expected.py" <<'PY'
+CANON = {
+    "qwen3.8-27b": (["low", "medium", "xhigh"], "low"),
+    "thinkingcap38-27b": (["low", "medium", "xhigh", "high", "max", "minimal"], "low"),
+    "qwen3.8-flash-next": (["low", "medium", "xhigh"], "low"),
+    "glm-5.3-flash": (["low", "high", "max"], "max"),
+}
+ALIASES = {
+    "qwen3.8-27b-fp8": "qwen3.8-27b",
+    "qwen3.8-27b-prism-ternary": "qwen3.8-27b",
+    "qwen3.8-27b-prism-ternary-mtp": "qwen3.8-27b",
+    "qwen3.8-27b-swift15": "qwen3.8-27b",
+    "thinkingcap38-27b-fp8": "thinkingcap38-27b",
+    "qwen3.8-flash-next-exl3-3.05bpw": "qwen3.8-flash-next",
+    "qwen3.8-flash-next-exl3-4.05bpw": "qwen3.8-flash-next",
+    "qwen3.8-flash-next-iq3_s": "qwen3.8-flash-next",
+    "qwen3.8-flash-next-ple": "qwen3.8-flash-next",
+    "qwen3.8-flash-next-swift15": "qwen3.8-flash-next",
+    "qwen3.8-flash-next-unsloth-ud-iq3_xxs": "qwen3.8-flash-next",
+    "qwen3.8-flash-next-unsloth-ud-iq4_xs-v31": "qwen3.8-flash-next",
+    "swift-1.5-iq3_s": "qwen3.8-flash-next",
+}
+# The families whose engines serve /v1/responses themselves; the others sit behind
+# LiteLLM's Responses -> chat bridge, which forwards the whole {effort, summary} object
+# as reasoning_effort, so those must pin the summary off.
+SUMMARY_FALSE = {"qwen3.8-flash-next", "glm-5.3-flash"}
+BUDGET = {"qwen3.8-27b", "thinkingcap38-27b", "qwen3.8-flash-next"}
+
+def group(name):
+    return ALIASES.get(name, name)
+
+def ladder(name):
+    return CANON[group(name)]
+PY
+
+# 8. the override keys are EXACTLY the names the covered models' routes answer to. The
+#    gateway names its routes from the engine's own /v1/models (litellm_sync.probe), NOT
+#    from the registry, so every alias a compose boots under — --served-model-name,
+#    --alias (one-line or YAML list), --served-name, SERVED_MODEL_NAME, Strata's
+#    "<family>-<quant>" name, Project Maya's model_name — is a route that needs its own
+#    override. A route without one reads as a non-reasoning model: omp sends no effort and
+#    the engine runs its own slowest default (#1690). Derived here INDEPENDENTLY of the
+#    generator: this walks the compose YAML and reads command/entrypoint tokens, where
+#    effort_families scans the same files as text with regexes.
+PRINTED="$T/omp-print.yml"
+bash "$ROOT/scripts/omp-setup.sh" --print > "$PRINTED" || bad "omp-setup --print failed"
+python3 - "$ROOT" "$PRINTED" <<'PY' || bad "omp-setup.sh modelOverrides keys must be exactly the names the covered models' routes serve"
+import glob, os, re, sys, yaml
+root, printed = sys.argv[1], sys.argv[2]
+FLAGS = {"--served-model-name", "--served-name", "--alias", "--model-name"}
+STRATA = {"qwen": "qwen3.8-flash-next", "swift": "swift-1.5",
+          "unsloth": "qwen3.8-flash-next-unsloth"}
+NAME = re.compile(r"[A-Za-z0-9][\w.\-]*")
+def resolved(tok):
+    m = re.fullmatch(r"\$\{\w+:-([^}]+)\}", tok)      # ${SERVED_NAME:-x} -> its default
+    return m.group(1) if m else tok
+def seq(v):
+    if v is None:
+        return []
+    return v.split() if isinstance(v, str) else [str(x) for x in v]
+def after_flags(tokens):
+    out, i = set(), 0
+    while i < len(tokens):
+        if tokens[i] in FLAGS:
+            i += 1
+            while i < len(tokens) and not tokens[i].startswith("-"):
+                n = resolved(tokens[i]).strip().strip("\"'")
+                if NAME.fullmatch(n):
+                    out.add(n)
+                i += 1
+            continue
+        i += 1
+    return out
+served = set()
+for model_dir in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next",
+                  "glm-5.3-flash"):
+    for f in sorted(glob.glob(os.path.join(root, "models", model_dir, "*", "compose",
+                                           "*", "*", "*.yml"))):
+        doc = yaml.safe_load(open(f, encoding="utf-8")) or {}
+        services = doc.get("services") or {}
+        got = set()
+        for svc in services.values():
+            got |= after_flags(seq(svc.get("entrypoint")) + seq(svc.get("command")))
+            env = svc.get("environment") or {}
+            items = (env.items() if isinstance(env, dict) else
+                     [(str(e).split("=", 1)[0], str(e).split("=", 1)[-1]) for e in env])
+            for k, v in items:
+                if v is None or "SERVED" not in str(k).upper():
+                    continue
+                n = resolved(str(v)).strip().strip("\"'")
+                if NAME.fullmatch(n):
+                    got.add(n)
+        engine = f.split("/compose/")[0].split("/")[-1]
+        args = seq(next(iter(services.values()), {}).get("entrypoint"))
+        if engine == "strata":
+            at = next((j for j, a in enumerate(args) if a.endswith("strata-entrypoint.sh")),
+                      None)
+            fam = args[at + 1] if at is not None and len(args) > at + 1 else "qwen"
+            quant = args[at + 2].lower() if at is not None and len(args) > at + 2 else None
+            if quant is None:
+                p = os.path.join(f.split("/compose/")[0], "launcher",
+                                 "strata-entrypoint.sh")
+                m = re.search(r'^SET="\$\{2:-([^}"]+)\}"',
+                              open(p, encoding="utf-8").read(), re.M) if os.path.exists(p) \
+                    else None
+                quant = m.group(1).lower() if m else None
+            if fam in STRATA and quant:
+                got.add("%s-%s" % (STRATA[fam], quant))
+        elif engine == "strata-maya":
+            p = os.path.join(f.split("/compose/")[0], "launcher", "maya_prepare.py")
+            m = re.search(r'"model_name":\s*"([^"]+)"',
+                          open(p, encoding="utf-8").read()) if os.path.exists(p) else None
+            if m:
+                got.add(m.group(1))
+        served |= got
+if not served:
+    sys.exit("the compose scan found no served names — the scan itself is broken")
+mo = yaml.safe_load(open(printed, encoding="utf-8"))["providers"]["club"]["modelOverrides"]
+if set(mo) != served:
+    print("  served but no override: %s\n  override nothing serves: %s"
+          % (sorted(served - set(mo)), sorted(set(mo) - served)), file=sys.stderr)
     sys.exit(1)
-' || bad "omp-setup.sh modelOverrides keys must be exactly the served names the gateway serves"
+PY
 
 
 # 9. each family's ladder and default are the ones the registry's per-variant effort
 #    facts derive, not written down: the rungs every route serving the name accepts
 #    (the model's levels minus any rung a route refuses, plus the fold sources only when
 #    every route folds the same src->dst), and the LOWEST of the routes' compose defaults
-#    (an empty REASONING_EFFORT falling back to that engine's pair default). This is the
-#    rendering test the #1951 drift tripwire becomes: the override and the routes it
-#    names share one source, so they cannot drift.
-bash "$ROOT/scripts/omp-setup.sh" --print | python3 -c '
+#    (an empty REASONING_EFFORT falling back to that engine's pair default). And every
+#    alias renders the SAME block as its canonical name — an alias is the same model on
+#    another route. This is the rendering test the #1951 drift tripwire becomes.
+PYTHONPATH="$T" python3 - "$PRINTED" <<'PY' || bad "omp-setup.sh overrides: a family's ladder or default drifted from the registry (see above)"
 import sys, yaml
-mo = yaml.safe_load(sys.stdin.read())["providers"]["club"]["modelOverrides"]
-expected = {
-    "qwen3.8-27b": (["low", "medium", "xhigh"], "low"),
-    "thinkingcap38-27b": (["low", "medium", "xhigh", "high", "max", "minimal"], "low"),
-    "qwen3.8-flash-next": (["low", "medium", "xhigh"], "low"),
-    "glm-5.3-flash": (["low", "high", "max"], "max"),
-}
+from omp_expected import ALIASES, CANON, ladder
+mo = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["providers"]["club"]["modelOverrides"]
 bad = []
-for mid, v in mo.items():
+for mid, v in sorted(mo.items()):
     t = v.get("thinking") or {}
-    if mid not in expected:
-        bad.append("%s: unexpected family" % mid); continue
-    ladder, default = expected[mid]
-    if t.get("efforts") != ladder: bad.append("%s: ladder %r != %r" % (mid, t.get("efforts"), ladder))
-    if t.get("defaultLevel") != default: bad.append("%s: default %r != %r" % (mid, t.get("defaultLevel"), default))
+    exp_ladder, exp_default = ladder(mid)
+    if t.get("efforts") != exp_ladder:
+        bad.append("%s: ladder %r != %r" % (mid, t.get("efforts"), exp_ladder))
+    if t.get("defaultLevel") != exp_default:
+        bad.append("%s: default %r != %r" % (mid, t.get("defaultLevel"), exp_default))
+    if v.get("maxTokens") != 32768:
+        bad.append("%s: maxTokens %r != 32768" % (mid, v.get("maxTokens")))
+for name in sorted(CANON):
+    if name not in mo:
+        bad.append("%s: the canonical family is missing from the render" % name)
+for alias, canon in sorted(ALIASES.items()):
+    if alias not in mo or canon not in mo:
+        bad.append("%s: the alias or its canonical %s is missing" % (alias, canon))
+    elif mo[alias] != mo[canon]:
+        bad.append("%s: renders differently from its canonical %s" % (alias, canon))
 if bad:
     print("  " + "\n  ".join(bad), file=sys.stderr); sys.exit(1)
-' || bad "omp-setup.sh overrides: a family's ladder or default drifted from the registry (see above)"
+PY
 
 
-# 10. the compat pins ride the right families: supportsReasoningSummary: false on
-#     Flash-Next and GLM (omp adds `summary: "auto"` to the Responses reasoning object,
-#     and LiteLLM's Responses -> chat-completions bridge — tabbyAPI, Project Maya —
-#     would otherwise forward the whole {effort, summary} object as reasoning_effort,
-#     which both reject), and the 8192 thinking budget on the Qwen line (vLLM enforces
-#     it on the THINKING field, not the reply; SGLang ignores it).
-bash "$ROOT/scripts/omp-setup.sh" --print | python3 -c '
+# 10. the compat pins ride the right families — aliases included, since an alias is the
+#     same model on another route: supportsReasoningSummary: false on Flash-Next and GLM
+#     (omp adds `summary: "auto"` to the Responses reasoning object, and LiteLLM's
+#     Responses -> chat-completions bridge — tabbyAPI, Project Maya — would otherwise
+#     forward the whole {effort, summary} object as reasoning_effort, which both reject),
+#     and the 8192 thinking budget on the Qwen line (vLLM enforces it on the THINKING
+#     field, not the reply; SGLang ignores it).
+PYTHONPATH="$T" python3 - "$PRINTED" <<'PY' || bad "omp-setup.sh overrides: wrong compat pins (see above)"
 import sys, yaml
-mo = yaml.safe_load(sys.stdin.read())["providers"]["club"]["modelOverrides"]
+from omp_expected import BUDGET, SUMMARY_FALSE, group
+mo = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["providers"]["club"]["modelOverrides"]
 bad = []
-for mid, v in mo.items():
+for mid, v in sorted(mo.items()):
     c = v.get("compat") or {}
-    if mid in ("qwen3.8-flash-next", "glm-5.3-flash"):
-        if c.get("supportsReasoningSummary") is not False: bad.append("%s: must set supportsReasoningSummary: false" % mid)
+    g = group(mid)
+    if g in SUMMARY_FALSE:
+        if c.get("supportsReasoningSummary") is not False:
+            bad.append("%s: must set supportsReasoningSummary: false" % mid)
     elif "supportsReasoningSummary" in c:
         bad.append("%s: the Qwen line keeps its measured shape (no summary pin)" % mid)
-    if mid in ("qwen3.8-27b", "thinkingcap38-27b", "qwen3.8-flash-next"):
-        if c.get("extraBody", {}).get("thinking_token_budget") != 8192: bad.append("%s: must pin the 8192 thinking budget" % mid)
+    if g in BUDGET:
+        if c.get("extraBody", {}).get("thinking_token_budget") != 8192:
+            bad.append("%s: must pin the 8192 thinking budget" % mid)
     elif "extraBody" in c:
         bad.append("%s: no thinking budget on this family" % mid)
 if bad:
     print("  " + "\n  ".join(bad), file=sys.stderr); sys.exit(1)
-' || bad "omp-setup.sh overrides: wrong compat pins (see above)"
+PY
 
 
 # 7. the config.yml block the doc tells readers to paste == the overlay we ship
@@ -403,6 +526,22 @@ if seen != {"high"}:
     print("  two fold sources to one target must resolve deterministically to the "
           "earliest ladder source (high), got:", sorted(seen))
     sys.exit(1)
+# (h) a route whose default is a fold SOURCE its own family does not carry still counts,
+#     resolved through that route's own fold table: the route RUNS the target, so the
+#     family must not round up past it. And a fold source the ladder DOES carry is sent as
+#     the compose wrote it — rewriting it through maps would move the default UP.
+fams, _ = gen(row(levels=["low", "medium", "xhigh"], maps={"minimal": "low"},
+                  compose_default="minimal"),
+              row(levels=["low", "medium", "xhigh"], compose_default="xhigh"))
+if [f["ladder"]["defaultLevel"] for f in fams] != ["low"]:
+    print("  a fold-source default must resolve through that route's own maps (the route "
+          "runs low), not round up to the other route's xhigh:", fams)
+    sys.exit(1)
+fams, _ = gen(row(levels=["low", "high", "xhigh"], maps={"high": "xhigh"},
+                  compose_default="high"))
+if [f["ladder"]["defaultLevel"] for f in fams] != ["high"]:
+    print("  a fold source the ladder carries is sent as the compose wrote it:", fams)
+    sys.exit(1)
 # (e) a MODEL_FAMILIES entry the renderer would index into a crash or a silent drop is
 #     refused with the entry and the field named
 from effort_families import validate_model_families
@@ -434,8 +573,66 @@ except ValueError:
 else:
     print("  a model listed in two entries must be refused (the last one silently wins)")
     sys.exit(1)
+
+# (f) an alias two models' composes both boot under is REFUSED, not rendered twice: one
+#     route cannot carry two overrides, and a duplicated YAML key silently keeps the last.
+# (g) a compose's --alias entry becomes an id of its family, and a name another family
+#     owns canonically belongs to that family, not to whoever aliases it.
+alias_root = os.path.join(sys.argv[1], "aliascase")
+MF2 = [dict(MF[0], models=["ma"]), dict(MF[0], models=["mb"])]
+def write_compose(model, *aliases):
+    d = os.path.join(alias_root, "models", model, "engine", "compose", "single", "q")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "c.yml"), "w", encoding="utf-8") as fh:
+        fh.write("services:\n  s:\n    command:\n")
+        for a in aliases:
+            fh.write("      - '--alias'\n      - '%s'\n" % a)
+def arow(model, name):
+    return {"model": model, "served_name": name,
+            "effort": {"levels": ["low"], "compose_default": "low"},
+            "compose_path": "models/%s/engine/compose/single/q/c.yml" % model}
+def gen2(mf, *rows):
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        fams = compute_families(list(rows), mf, root=alias_root)
+    return fams, err.getvalue()
+write_compose("ma", "sb", "shared-extra")
+write_compose("mb", "sb")
+fams, _ = gen2(MF2, arow("ma", "sa"), arow("mb", "sb"))
+if [f["ids"] for f in fams] != [["sa", "shared-extra"], ["sb"]]:
+    print("  a name another family owns belongs to that family, a free alias becomes an id "
+          "of its own:", [f["ids"] for f in fams])
+    sys.exit(1)
+write_compose("ma", "shared-name")
+write_compose("mb", "shared-name")
+try:
+    gen2(MF2, arow("ma", "sa"), arow("mb", "sb"))
+except ValueError as e:
+    if "two families" not in str(e):
+        print("  the alias-collision refusal must name the fix, got:", e)
+        sys.exit(1)
+else:
+    print("  an alias two models' composes both boot under must raise, not render twice")
+    sys.exit(1)
 PY
 
 
-[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served names, per-family ladders and defaults, compat pins, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container, generator edge shapes: refusals, fold sources, lowest default, deterministic fold, MODEL_FAMILIES types)"
+# 12. an unreadable registry FAILS CLOSED. registry_variants() turns any failure into [],
+#     and an empty family list would otherwise write a `club` provider with no
+#     modelOverrides — every model then reads as non-reasoning, omp sends no effort, and
+#     the engine runs its own slowest default: #1690, silently. A bare community VM with no
+#     PyYAML is the real case; a PYTHONPATH shim reproduces it without uninstalling
+#     anything from this rig.
+mkdir -p "$T/noyaml"
+printf 'raise ImportError("no PyYAML on this VM")\n' > "$T/noyaml/yaml.py"
+if PYTHONPATH="$T/noyaml" bash "$ROOT/scripts/omp-setup.sh" --print > "$T/fc.out" 2> "$T/fc.err"; then
+    bad "an empty registry must fail, not render a provider with no modelOverrides"
+elif ! grep -q "registry-emit:" "$T/fc.err"; then
+    bad "the empty-registry failure must carry the emit's own diagnostic, so the operator "
+        "sees WHY (no PyYAML? a broken emit?) and not just that it failed"
+    sed 's/^/  /' "$T/fc.err" >&2
+fi
+
+
+[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == every served alias, per-family ladders and defaults, aliases render as their canonical, compat pins, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container, generator edge shapes: refusals, fold sources, lowest default, deterministic fold, MODEL_FAMILIES types, alias ownership and collisions, empty registry fails closed)"
 exit "$fail"

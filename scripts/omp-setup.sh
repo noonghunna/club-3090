@@ -59,7 +59,7 @@ KEY="$(club_config_get LITELLM_MASTER_KEY "$ROOT_DIR" || true)"
 KEY="${KEY:-sk-litellm-master-key}"   # the compose's default, when nothing is stored
 
 python3 - "$MODELS_YML" "$GATEWAY" "$KEY" "$PRINT" "$AUTO" "$AGENT_DIR/extensions" "$ROOT_DIR" <<'PY'
-import datetime, io, json, os, re, sys
+import datetime, io, json, os, re, subprocess, sys
 
 path, gateway, key, print_only = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1"
 auto, ext_dir, root = sys.argv[5] == "1", sys.argv[6], sys.argv[7]
@@ -68,7 +68,7 @@ auto, ext_dir, root = sys.argv[5] == "1", sys.argv[6], sys.argv[7]
 # source the gateway's model_info renders), not written down: load the generator and
 # the registry reader before the block below that needs them.
 sys.path.insert(0, os.path.join(root, "scripts", "lib"))
-from effort_families import compute_families, validate_model_families
+from effort_families import compute_families, served_id, validate_model_families
 from litellm_sync import registry_variants
 
 # --auto-switching needs the gateway on THIS machine. The club-live extension
@@ -111,12 +111,16 @@ END = "  # <<< club-3090 local models <<<"
 # the registry's per-variant effort facts, the same source the gateway's model_info
 # renders, so the override and the routes it names cannot drift.
 #
-# One family per served name the gateway actually serves (the registry's served_name,
-# else the model id): the Qwen3.8 line serves qwen3.8-27b and the ThinkingCap
-# replicas their own name (thinkingcap38-27b), Flash-Next serves qwen3.8-flash-next,
-# and GLM-5.3-Flash serves glm-5.3-flash. A compose's finer --served-model-name
-# aliases are not separate routes the gateway names, so they are not separate
-# families — the #1949 drift this generation removes.
+# One family per served name the registry declares (its served_name, else the model id):
+# the Qwen3.8 line serves qwen3.8-27b and the ThinkingCap replicas their own name
+# (thinkingcap38-27b), Flash-Next serves qwen3.8-flash-next, GLM-5.3-Flash serves
+# glm-5.3-flash. Each family's `ids` then carry EVERY name its routes answer to, aliases
+# included: the gateway names its routes from the engine's own /v1/models, not from the
+# registry (litellm_sync.probe), so a compose's --served-model-name / --alias (one-line or
+# YAML list), Strata's "<family>-<quant>" name and Project Maya's model_name are each a
+# route of their own. A route with no override reads as a non-reasoning model, gets no
+# effort, and runs the engine's own slowest default — #1690. The hand-kept id lists this
+# replaces had already drifted from them: two llama-cpp-prism aliases had no override.
 MODEL_FAMILIES = [
     {"models": ["qwen3.8-27b", "thinkingcap-qwen3.8-27b"],
      "maxTokens": 32768,
@@ -146,7 +150,54 @@ except ValueError as exc:
 # The single source for both the modelOverrides written into models.yml and the
 # families list written into extensions/club-live.json (--auto-switching): one list,
 # two renderings, so the alias and the `club` provider cannot drift.
-FAMILIES = compute_families(registry_variants(root), MODEL_FAMILIES)
+#
+# Fail CLOSED on an empty catalog. registry_variants() turns ANY failure — a bare
+# community VM without PyYAML, a checkout whose registry-emit cannot run — into [], and an
+# empty family list renders a provider with no modelOverrides: every model then reads as
+# non-reasoning, omp sends no effort, and the engine runs its own slowest default. That is
+# #1690 arriving silently, so refuse, and surface the emit's own diagnostic instead of
+# guessing at the cause.
+variants = registry_variants(root)
+if not variants:
+    why = ""
+    try:
+        p = subprocess.run(["bash", os.path.join(root, "scripts", "lib", "registry-emit.sh"),
+                            "--json"], capture_output=True, text=True, encoding="utf-8",
+                           timeout=60)
+        why = (p.stderr or p.stdout or "").strip()[-300:]
+    except Exception as exc:
+        why = str(exc)
+    raise SystemExit(
+        "omp-setup: the registry produced no variants, so the club provider would carry no "
+        "modelOverrides and every model would run at the server's default effort (the "
+        "silent xhigh, #1690). Fix: run this from a club-3090 checkout whose python3 can "
+        "import yaml (PyYAML); `bash scripts/lib/registry-emit.sh --json` says why."
+        + ("\n  registry-emit: " + why if why else ""))
+FAMILIES = compute_families(variants, MODEL_FAMILIES, root=root)
+
+# A covered model that produces no family is the same silent-no-effort by a quieter path:
+# the name is covered here but nothing was rendered for it. Refuse with the reason instead
+# of writing a provider that quietly omits a model.
+_registry_models = {v.get("model") for v in variants}
+_rendered = {f["name"] for f in FAMILIES}
+for _fam in MODEL_FAMILIES:
+    _models = [m for m in _fam["models"] if m in _registry_models]
+    if not _models:
+        raise SystemExit(
+            "omp-setup: MODEL_FAMILIES covers %s but the registry lists no variant for any "
+            "of them, so the club provider would carry no override for that model and omp "
+            "would send it no effort (#1690). Fix: restore the model's registry entry, or "
+            "drop the entry from MODEL_FAMILIES in scripts/omp-setup.sh."
+            % ", ".join(_fam["models"]))
+    _missing = sorted({served_id(v) for v in variants if v.get("model") in _models}
+                      - _rendered)
+    if _missing:
+        raise SystemExit(
+            "omp-setup: %s is covered by MODEL_FAMILIES but no family was generated for "
+            "%s (the warning above says why), so omp would send it no effort (#1690). "
+            "Fix: give one of its routes a default that reaches a nameable rung — "
+            "REASONING_EFFORT in the compose, or the pair's default_when_unset in the "
+            "engine profile." % (", ".join(_models), ", ".join(_missing)))
 
 def override(mid: str, fam: dict) -> str:
     c = fam["compat"]
