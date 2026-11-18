@@ -137,6 +137,12 @@ services:
       # which a chat without tools needs beside it (a request with tools keeps it already). Unset = off for both
       MAYA_DS4_SLOT_KEEP:
       MAYA_DS4_KEEP_THINKING:
+      # DeepSeek's idle sleeps (v1.1.66, mw00/project-maya#951; read by maya-ds4): an idle engine's service thread
+      # naps MAYA_DS4_SERVICE_NAP_US microseconds between looks for work (1..10000), then MAYA_DS4_SERVICE_SLEEP_MS
+      # milliseconds after a longer quiet (1..1000). Longer sleeps lower a waiting server's CPU use; the first token
+      # after a pause can wait up to one sleep. Unset = Maya's 100 us / 2 ms
+      MAYA_DS4_SERVICE_NAP_US:
+      MAYA_DS4_SERVICE_SLEEP_MS:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/deepseek-v4.1-flash-1017-gsq-rco-gguf:/gguf:ro"
