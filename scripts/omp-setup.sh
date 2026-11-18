@@ -68,7 +68,7 @@ auto, ext_dir, root = sys.argv[5] == "1", sys.argv[6], sys.argv[7]
 # source the gateway's model_info renders), not written down: load the generator and
 # the registry reader before the block below that needs them.
 sys.path.insert(0, os.path.join(root, "scripts", "lib"))
-from effort_families import compute_families
+from effort_families import compute_families, validate_model_families
 from litellm_sync import registry_variants
 
 # --auto-switching needs the gateway on THIS machine. The club-live extension
@@ -134,19 +134,14 @@ MODEL_FAMILIES = [
 ]
 
 # MODEL_FAMILIES is the one hand-maintained input left, and the renderer below INDEXES
-# it: a family missing a key the renderer reads would die mid-render on a KeyError with
-# no hint which entry. Name the entry and the field instead.
-for _fam in MODEL_FAMILIES:
-    _c = _fam.get("compat") or {}
-    _missing = [k for k in ("models", "maxTokens", "compat") if k not in _fam]
-    _missing += [k for k in ("supportsReasoningEffort", "qwenTemplateReasoningEffort")
-                 if k not in _c]
-    if "extraBody" in _c and "thinking_token_budget" not in (_c.get("extraBody") or {}):
-        _missing.append("compat.extraBody.thinking_token_budget")
-    if _missing:
-        raise SystemExit("omp-setup: the MODEL_FAMILIES entry for %s is missing %s — the "
-                         "override renderer indexes these keys. Fix: fill them in, or drop "
-                         "the entry." % (_fam.get("models"), ", ".join(_missing)))
+# it: a family missing a key, or carrying a value of the wrong type, would die mid-render
+# (a KeyError/TypeError with no hint which entry) or silently register a model with no
+# thinking config (club-live.ts drops a family whose maxTokens is not a number). Name the
+# entry and the field instead.
+try:
+    validate_model_families(MODEL_FAMILIES)
+except ValueError as exc:
+    raise SystemExit("omp-setup: " + str(exc))
 
 # The single source for both the modelOverrides written into models.yml and the
 # families list written into extensions/club-live.json (--auto-switching): one list,

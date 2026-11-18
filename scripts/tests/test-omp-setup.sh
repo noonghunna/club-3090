@@ -332,6 +332,20 @@ except ValueError as e:
 else:
     print("  a served name claimed by two models must raise, not pick rows[0]")
     sys.exit(1)
+# the same refusal when rows[0] is the UNCOVERED model: the check must not sit behind
+# the coverage skip, or the guard depends on registry row order
+try:
+    compute_families([{"model": "other", "served_name": "x",
+                       "effort": {"levels": ["low"], "compose_default": "low"}},
+                      {"model": "m", "served_name": "x",
+                       "effort": {"levels": ["low"], "compose_default": "low"}}], MF)
+except ValueError as e:
+    if "one served name must map" not in str(e):
+        print("  the reversed-order refusal must name the fix, got:", e)
+        sys.exit(1)
+else:
+    print("  a collision whose first row is an uncovered model must still raise")
+    sys.exit(1)
 
 # (c) the shapes the emit really produces for an unprofiled pair: skip, never crash
 for label, v in (("no effort key at all", {"model": "m", "served_name": "x"}),
@@ -347,8 +361,81 @@ fams, _ = gen(row(levels=["low"], maps="high:xhigh", compose_default="low"))
 if [f["ladder"] for f in fams] != [{"efforts": ["low"], "defaultLevel": "low"}]:
     print("  a non-dict maps must be ignored, not crash or invent a fold:", fams)
     sys.exit(1)
+# (d) the rules the live catalog's fold tables exercise, on synthetic rows: a refusal by
+#     ANY route drops the rung for all; a route with no fold table means NO fold sources;
+#     the default is the lowest of the routes' compose defaults; and two fold sources
+#     reaching one target resolve deterministically (ladder order), not by set iteration.
+fams, _ = gen(row(levels=["low", "medium"], compose_default="low"),
+              row(levels=["low", "medium"], refuses=["medium"], compose_default="low"))
+if [f["ladder"] for f in fams] != [{"efforts": ["low"], "defaultLevel": "low"}]:
+    print("  a refusal by any route must drop the rung for all:", fams)
+    sys.exit(1)
+fams, _ = gen(row(levels=["low", "medium", "xhigh"], maps={"high": "xhigh"},
+                  compose_default="low"),
+              row(levels=["low", "medium", "xhigh"], compose_default="low"))
+if [f["ladder"]["efforts"] for f in fams] != [["low", "medium", "xhigh"]]:
+    print("  a route with no fold table means no fold sources:", fams)
+    sys.exit(1)
+fams, _ = gen(row(levels=["low", "high"], compose_default="high"),
+              row(levels=["low", "high"], compose_default="low"))
+if [f["ladder"]["defaultLevel"] for f in fams] != ["low"]:
+    print("  the default must be the lowest of the routes' compose defaults:", fams)
+    sys.exit(1)
+# two fold sources reach one target: the earliest in ladder order wins, in every process
+import subprocess
+snippet = ("import sys; sys.path.insert(0, %r);"
+           "from effort_families import compute_families;"
+           "MF = [{'models': ['m'], 'maxTokens': 1024,"
+           " 'compat': {'supportsReasoningEffort': True,"
+           "            'qwenTemplateReasoningEffort': True}}];"
+           "case = [{'model': 'm', 'served_name': 'x', 'effort':"
+           " {'levels': ['low', 'high'], 'refuses': ['xhigh'],"
+           "  'maps': {'high': 'xhigh', 'max': 'xhigh'},"
+           "  'compose_default': 'xhigh'}}];"
+           "print(compute_families(case, MF)[0]['ladder']['defaultLevel'])"
+           % os.path.join(sys.argv[1], "scripts", "lib"))
+seen = set()
+for seed in ("0", "1", "2", "3"):
+    r = subprocess.run([sys.executable, "-c", snippet], capture_output=True, text=True,
+                       env=dict(os.environ, PYTHONHASHSEED=seed))
+    seen.add(r.stdout.strip())
+if seen != {"high"}:
+    print("  two fold sources to one target must resolve deterministically to the "
+          "earliest ladder source (high), got:", sorted(seen))
+    sys.exit(1)
+# (e) a MODEL_FAMILIES entry the renderer would index into a crash or a silent drop is
+#     refused with the entry and the field named
+from effort_families import validate_model_families
+good = {"models": ["m"], "maxTokens": 1024,
+        "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True}}
+for label, bad_fam in (
+        ("missing compat key", {"models": ["m"], "maxTokens": 1024, "compat": {}}),
+        ("maxTokens not an int", {"models": ["m"], "maxTokens": "1024",
+                                  "compat": {"supportsReasoningEffort": True,
+                                             "qwenTemplateReasoningEffort": True}}),
+        ("compat not a dict", {"models": ["m"], "maxTokens": 1024, "compat": []}),
+        ("extraBody budget not an int",
+         {"models": ["m"], "maxTokens": 1024,
+          "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True,
+                     "extraBody": {"thinking_token_budget": "8192"}}}),
+        ("models not a list", {"models": "m", "maxTokens": 1024,
+                               "compat": {"supportsReasoningEffort": True,
+                                          "qwenTemplateReasoningEffort": True}})):
+    try:
+        validate_model_families([bad_fam])
+    except ValueError:
+        continue
+    print(f"  {label}: validate_model_families must refuse it")
+    sys.exit(1)
+try:
+    validate_model_families([good, dict(good)])
+except ValueError:
+    pass
+else:
+    print("  a model listed in two entries must be refused (the last one silently wins)")
+    sys.exit(1)
 PY
 
 
-[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served names, per-family ladders and defaults, compat pins, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container, generator edge shapes)"
+[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served names, per-family ladders and defaults, compat pins, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container, generator edge shapes: refusals, fold sources, lowest default, deterministic fold, MODEL_FAMILIES types)"
 exit "$fail"

@@ -709,79 +709,39 @@ else:
     if not ovr:
         bad("omp-setup --print rendered no modelOverrides")
     # The FAMILIES are generated from the registry (the same source the gateway's
-    # model_info renders), not written down: one family per served name, each with the
-    # rungs every route serving that name accepts and the lowest of the routes' compose
-    # defaults. Check 6 re-derives each family's ladder and default from the registry's
-    # per-variant effort facts and requires the render to agree — the #1951 drift
-    # tripwire, now a rendering test.
+    # model_info renders), not written down: one family per served name. Check 9 in
+    # test-omp-setup.sh pins each rendered ladder/default against a hardcoded table —
+    # the golden tripwire, independent of the generator's own logic. This check adds
+    # what that table cannot: every rendered name must be a name the registry actually
+    # serves (no invented family), and a rendered default must be a rung of its own
+    # ladder (omp's fallback for a missing default is the ladder TOP, so an off-ladder
+    # default is a silent xhigh). It deliberately does NOT re-derive the ladder: a copy
+    # of the generator's logic here would pass a bug present in both copies.
     from litellm_sync import registry_variants
     variants = registry_variants(os.getcwd())
-    by_name: "dict[str, list]" = {}
+    served: "dict[str, list]" = {}
     for v in variants:
         sid = v.get("served_name") or v.get("model")
         if sid:
-            by_name.setdefault(sid, []).append(v)
-
-    def nameable(rows):
-        """(ladder, default) a set of routes serving one name advertises: the model's
-        levels minus any rung a route refuses, plus the fold sources only when every
-        route folds the same src->dst, and the lowest of the routes' compose defaults."""
-        blocks = [v["effort"] for v in rows if isinstance(v.get("effort"), dict)]
-        levels = next((list(b["levels"]) for b in blocks if b.get("levels")), None)
-        if not levels:
-            return None, None
-        refused = set()
-        for b in blocks:
-            refused |= set(b.get("refuses") or [])
-        common = None
-        for b in blocks:
-            m = b.get("maps")
-            pairs = {(s, d) for s, d in m.items()} if isinstance(m, dict) and m else set()
-            common = pairs if common is None else (common & pairs)
-            if not common:
-                break
-        ladder = [l for l in levels if l not in refused]
-        for b in blocks:
-            m = b.get("maps")
-            if isinstance(m, dict) and m:
-                for s, d in m.items():
-                    if (s, d) in (common or set()) and s not in refused and s not in ladder:
-                        ladder.append(s)
-                break
-        rung = {l: l for l in ladder}
-        for s, d in (common or set()):
-            if s in rung and d not in rung:
-                rung[d] = s
-        dflts = [rung[b.get("compose_default") or b.get("default_when_unset")]
-                for b in blocks if (b.get("compose_default") or b.get("default_when_unset")) in rung]
-        return ladder, (min(dflts, key=ladder.index) if dflts else None)
+            served.setdefault(sid, []).append(v)
 
     families = {}
     for mid, o in ovr.items():
         t = o.get("thinking") or {}
-        rows = by_name.get(mid, [])
-        exp_ladder, exp_dflt = nameable(rows) if rows else (None, None)
+        rows = served.get(mid, [])
         families[mid] = {"ids": [mid], "ladder": list(t.get("efforts") or []),
-                          "dflt": t.get("defaultLevel"),
-                          "model": rows[0].get("model") if rows else None,
-                          "exp_ladder": exp_ladder, "exp_dflt": exp_dflt}
+                         "dflt": t.get("defaultLevel"),
+                         "model": rows[0].get("model") if rows else None}
 
     for fam, f in sorted(families.items()):
-        if f["exp_ladder"] is None:
+        if not served.get(fam):
             bad(f"family {fam}: rendered with a ladder but no registry variant serves "
                 f"that name — the render invented one the profiles don't back")
             continue
-        if f["ladder"] != f["exp_ladder"]:
-            bad(f"family {fam}: rendered ladder {f['ladder']} != the registry's "
-                f"nameable rungs {f['exp_ladder']} — drifted from the profiles (#1951)")
         if f["dflt"] is not None and f["dflt"] not in f["ladder"]:
             bad(f"family {fam}: defaultLevel {f['dflt']!r} is not a rung of its "
                 f"ladder {f['ladder']} (omp's fallback for a missing default is the "
                 f"ladder TOP — an off-ladder default is a silent xhigh)")
-        if f["dflt"] is not None and f["exp_dflt"] is not None and f["dflt"] != f["exp_dflt"]:
-            bad(f"family {fam}: defaultLevel {f['dflt']!r} != the lowest of the "
-                f"routes' compose defaults {f['exp_dflt']!r} (noonghunna: rounds "
-                f"down, per name)")
     # The inverse (r7): a probed ladder no family covers renders nowhere on the omp
     # surface, and every check above still passes. The covered set is the models the
     # generated FAMILIES bind to; every catalog model with a probed ladder must be in
@@ -794,8 +754,8 @@ else:
                 f"it — the omp surface never renders its ladder; add it to a "
                 f"MODEL_FAMILIES entry in omp-setup.sh")
     if len(failures) == n0:
-        print(f"  ✓ omp-setup renders {len(ovr)} overrides: every family's ladder and "
-              f"default are the registry's, every probed model covered")
+        print(f"  ✓ omp-setup renders {len(ovr)} overrides: every rendered name is "
+              f"served, every default is a rung of its ladder, every probed model covered")
 
 
 sys.exit(1 if failures else 0)

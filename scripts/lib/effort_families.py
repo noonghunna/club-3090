@@ -81,7 +81,14 @@ def _id_facts(variants):
     # that reaches it. A default no rung reaches (refused, no fold) is not expressible
     # and is skipped, not guessed.
     rung = {l: l for l in efforts}
-    for s, d in (common or set()):
+    # Two fold sources can reach the same target (vLLM, SGLang, QEngine and Strata fold
+    # both high and max onto xhigh), so which source expresses a fold-target default is
+    # decided here, not by a set's hash-randomized iteration order: the earliest source
+    # in ladder order wins — the "rounds down" rule — and the render is deterministic
+    # across processes.
+    order = {l: i for i, l in enumerate(efforts)}
+    for s, d in sorted(common or set(),
+                       key=lambda p: (order.get(p[0], len(order)), p[0], p[1])):
         if s in rung and d not in rung:
             rung[d] = s
     defaults = []
@@ -116,14 +123,11 @@ def compute_families(variants, model_families):
             by_id.setdefault(sid, []).append(v)
     out = []
     for sid, rows in by_id.items():
-        fam = model_to_fam.get(rows[0].get("model"))
-        if fam is None:
-            continue
-        # One served name is ONE model. The ladder, the compat pins and the guard's
-        # coverage set all key off rows[0], so a name claimed by two models would have
-        # its family decided by registry row order — refuse it loudly instead. The
-        # gateway names one model per route, so a collision is a catalog mistake, not a
-        # legitimately multi-model route.
+        # One served name is ONE model. Check that BEFORE the coverage skip: a name
+        # claimed by two models whose first registry row is an uncovered model would
+        # otherwise be dropped silently instead of refused, making the guard depend on
+        # registry row order. The ladder, compat pins and coverage set all key off
+        # rows[0], so a collision is a catalog mistake, not a multi-model route.
         models = {r.get("model") for r in rows}
         if len(models) > 1:
             raise ValueError(
@@ -131,6 +135,9 @@ def compute_families(variants, model_families):
                 f"({', '.join(sorted(str(m) for m in models))}): one served name must map "
                 "to one model, or its ladder, compat pins and coverage depend on registry "
                 "row order. Fix: give one of them its own served_name in the registry.")
+        fam = model_to_fam.get(rows[0].get("model"))
+        if fam is None:
+            continue
         facts = _id_facts(rows)
         if facts is None:
             continue
@@ -149,4 +156,48 @@ def compute_families(variants, model_families):
             "compat": fam["compat"],
         })
     return out
+
+
+def validate_model_families(model_families):
+    """Refuse a MODEL_FAMILIES entry the renderer would index into a crash or a silent
+    drop. The renderer reads models/maxTokens/compat and the compat pins; club-live.ts
+    re-reads maxTokens and drops a family whose value is not a number, so a wrong type
+    here registers a model with NO thinking config. Raise ValueError naming the entry
+    and the field — the caller turns it into an actionable SystemExit.
+    """
+    seen = {}
+    for fam in model_families:
+        models = fam.get("models")
+        if not isinstance(models, list) or not models or not all(
+                isinstance(m, str) and m for m in models):
+            raise ValueError(f"the entry {fam!r} needs models: a non-empty list of model ids")
+        for m in models:
+            if m in seen:
+                raise ValueError(
+                    f"model {m!r} is listed in two entries ({seen[m]!r} and {models!r}): "
+                    "the last one silently wins, so its compat pins depend on list order. "
+                    "Fix: list each model in exactly one entry.")
+            seen[m] = models
+        mt = fam.get("maxTokens")
+        if not isinstance(mt, int) or isinstance(mt, bool):
+            raise ValueError(f"the entry for {models!r} needs maxTokens: an int (got {mt!r}); "
+                             "club-live.ts drops a family whose maxTokens is not a number, "
+                             "so the model would register with no thinking config")
+        c = fam.get("compat")
+        if not isinstance(c, dict):
+            raise ValueError(f"the entry for {models!r} needs compat: a dict (got {c!r})")
+        for k in ("supportsReasoningEffort", "qwenTemplateReasoningEffort"):
+            if k not in c:
+                raise ValueError(f"the entry for {models!r} is missing compat.{k} — the "
+                                 "override renderer indexes it. Fix: fill it in, or drop the entry.")
+        if "extraBody" in c:
+            eb = c["extraBody"]
+            if not isinstance(eb, dict):
+                raise ValueError(f"the entry for {models!r} needs compat.extraBody: a dict "
+                                 f"(got {eb!r})")
+            tb = eb.get("thinking_token_budget")
+            if not isinstance(tb, int) or isinstance(tb, bool):
+                raise ValueError(f"the entry for {models!r} needs "
+                                 "compat.extraBody.thinking_token_budget: an int "
+                                 f"(got {tb!r}); the renderer formats it with %d")
 
