@@ -148,6 +148,37 @@ vendored_overlays: []
   # a source path on disk or diagnose-profile [6/6] fails.
 required_genesis: false
 
+# #1951 — what this engine changes about effort. The exl3 composes pass no
+# template variables, so a request that names no effort runs at the quant's
+# own chat template default, and default_when_unset is load-bearing for the
+# render. Read from source, not measured on the wire: the exl3 weights were
+# not on the reference rig when this was written. The off switch is UNPROBED
+# here, so off_switch/supports_none stay absent.
+effort:
+  by_model:
+    qwen3.8-flash-next:
+      default_when_unset: xhigh
+      evidence: >-
+        Read 2026-11-18 from source, not wire-measured. (1) The pinned
+        TabbyAPI image (tabbyapi@sha256:4d5484ee…, this profile's spec):
+        resolve_template_vars (endpoints/OAI/utils/chat_completion.py:560)
+        takes reasoning_effort only from the request (the flat field, the
+        reasoning object, template_vars or its chat_template_kwargs alias) or
+        from the model's template_vars_default / template_vars_force. Neither
+        exl3 compose sets any template variable, so a request with no effort
+        reaches the template with none. (2) find_prompt_template
+        (common/templating.py:221) loads the model dir's chat_template.jinja
+        first. Both HF branches of turboderp/Qwen3.8-Flash-Next-exl3
+        (3.05bpw_h5_ng5 and 4.05bpw_h6_ng6) ship the same template, sha256
+        c3cf9e34abf4… (the stock Qwen3.8 template; tokenizer_config.json
+        carries the same text). With thinking on it resolves
+        reasoning_effort|default('xhigh'), and raises on any name outside
+        xhigh, medium and low.
+  evidence: >-
+    qwen3.8-flash-next is the only model this engine serves, so every effort
+    fact here is that pair's and is cited in its entry. The off switch is
+    UNPROBED on this engine, so off_switch/supports_none stay absent.
+
 notes: >
   🧪 EXPERIMENTAL — catalogued 2026-09-17. ⛔⛔ RETRACTED 2026-09-18 — the container-vs-venv gap was a COMPOSE BUG of ours: no
   `environment:` block, so $THREADS never reached the container and it ran at nproc/2
