@@ -618,6 +618,7 @@ row = {
     "ttft_s": (fnum("ttft_ms") / 1000.0) if fnum("ttft_ms") is not None else None,
     "vram_gb": (fnum("vram_peak") / 1024.0) if fnum("vram_peak") not in (None, -1.0) else None,
     "running": fields.get("running", "-"),
+    "queued": fields.get("queued", "-"),
     "waiting": fields.get("waiting", "-"),
     "result": line,
 }
@@ -795,11 +796,13 @@ if [[ -n "$SWEEP" ]]; then
     clean="$(sed -n 's/.* clean=\([0-9]*\).*/\1/p' <<<"$line")"
     mps="$(sed -n 's/.* mps_tps=\([0-9.]*\).*/\1/p' <<<"$line")"
     agg="$(sed -n 's/.* agg_tps=\([0-9.]*\).*/\1/p' <<<"$line")"
+    queued="$(sed -n 's/.* queued=\([0-9-]*\).*/\1/p' <<<"$line")"
     sweep_rows="${sweep_rows:-}
-  N=$N  per-stream=${mps:-?} tok/s  aggregate=${agg:-?} tok/s  clean=${clean:-?}"
-    # knee = largest N that is fit-clean AND (floor off OR per-stream TPS >= floor)
+  N=$N  per-stream=${mps:-?} tok/s  aggregate=${agg:-?} tok/s  clean=${clean:-?}$([[ "$queued" == "1" ]] && echo "  QUEUED")"
+    # knee = largest N that is fit-clean AND (floor off OR per-stream TPS >= floor) AND
+    # not queued (#2096: a rung where requests waited measured fewer streams than N)
     above="$(awk -v t="$mps" -v f="$TPS_FLOOR" 'BEGIN{print (f<=0 || t>=f)?1:0}')"
-    if [[ "$clean" == "1" && "$above" == "1" ]]; then knee="$N"; knee_tps="$mps"; knee_agg="$agg"; fi
+    if [[ "$clean" == "1" && "$above" == "1" && "$queued" != "1" ]]; then knee="$N"; knee_tps="$mps"; knee_agg="$agg"; fi
   done
   echo ""
   echo "=== sweep summary (per-stream vs aggregate) ==="
@@ -807,7 +810,7 @@ if [[ -n "$SWEEP" ]]; then
   echo ""
   echo "=== sweep knee ==="
   if [[ -n "$knee" ]]; then
-    echo "  largest clean N at/above floor: N=$knee (${knee_tps} tok/s/stream · ${knee_agg:-?} tok/s aggregate)"
+    echo "  largest clean, unqueued N at/above floor: N=$knee (${knee_tps} tok/s/stream · ${knee_agg:-?} tok/s aggregate)"
     echo "  -> validate the envelope row at max_num_seqs: $knee"
   else
     echo "  no N met the bar — lower the sweep range or the target_ctx, or check the floor."
