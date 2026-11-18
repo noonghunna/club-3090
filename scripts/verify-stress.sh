@@ -240,11 +240,32 @@ fi
 # end-of-run report naming exactly which prefill numbers are inflated.
 CACHE_CONTAMINATED_LIST=""
 
+# classify_recall_miss <content>: why a reply that lacks the secret missed (#2033).
+#   absent   — the model says the phrase isn't in the document. Still a recall miss:
+#              it looked and didn't find it ("I cannot provide the hidden phrase as it
+#              is not present…" is this, though it opens like a refusal).
+#   declined — the model declined to answer at all ("…as it involves a prompt injection
+#              attempt"). Not a recall result: on QEngine Flash-Next with a 4-bit KV
+#              cache, one such decline at 910K followed the question's wording, not the
+#              depth or the phrase's position (#2033).
+#   wrong    — anything else: a wrong phrase.
+# The "absent" patterns are tried first, because an absent reply often opens with "I cannot".
+classify_recall_miss() {
+  local c="$1"
+  if printf '%s' "$c" | command grep -qiE "not (present|found|mentioned|included|contained|there)|(isn't|is not|wasn't|was not) (in|present|mentioned|included|there)|(does not|doesn't|did not|didn't) (contain|include|mention|appear)|no (hidden|such|mention)|(couldn't|could not|can't|cannot|unable to) (find|locate|see)|there is no"; then
+    echo absent
+  elif printf '%s' "$c" | command grep -qiE "prompt injection|(cannot|can't|can not|won't|will not|unable to|not able to) (fulfill|fulfil|comply|help|assist|reveal|share|provide|disclose|do that)|I('m| am) sorry|I (must|have to|will) (decline|refuse)|(refuse|decline) to"; then
+    echo declined
+  else
+    echo wrong
+  fi
+}
+
 record_rung() {
   # record_rung <probe> <rung_id> <target_tokens> <http_code> <outcome>
   #             <prompt_tokens> <prefill_tps> <prefill_ms>
   #             <cache_hit_delta> <cache_contaminated>
-  # outcome: recalled | recall_miss | skipped | failed
+  # outcome: recalled | recall_miss | recall_declined | recall_empty | skipped | failed
   [[ -n "${_VS_JSONL}" ]] || return 0
   VS_PROBE="$1" VS_RUNG="$2" VS_TARGET="$3" VS_HTTP="$4" VS_OUTCOME="$5" \
   VS_DEPTH="$6" VS_TPS="$7" VS_MS="$8" VS_CDELTA="$9" VS_CDIRTY="${10}" \
@@ -747,6 +768,7 @@ check_longctx() {
   local any_pass=0
   local any_skipped=0
   local any_recall_miss=0
+  local any_recall_declined=0
 
   local deployed_max
   deployed_max="$(curl -sf -m 5 "${URL}/v1/models" 2>/dev/null \
@@ -821,8 +843,11 @@ check_longctx() {
     for tok in $secret; do
       echo "$content_raw" | command grep -qiF "$tok" || all_match=0
     done
-    local outcome="recalled"
-    [[ "$all_match" == "1" ]] || outcome="recall_miss"
+    local outcome="recalled" miss_kind=""
+    if [[ "$all_match" != "1" ]]; then
+      miss_kind="$(classify_recall_miss "$content_raw")"
+      outcome="recall_miss"; [[ "$miss_kind" == "declined" ]] && outcome="recall_declined"
+    fi
     record_rung "longctx" "scale-${filler_scale}" "" "200" "$outcome" \
       "$prompt_tok" "$prefill_tps" "$prefill_ms" "$hit_delta" "$cache_dirty"
     if [[ "$all_match" == "1" ]]; then
@@ -833,7 +858,14 @@ check_longctx() {
       # failure. Log it as informational (yellow △), break out of the ladder
       # — deeper rungs will only be worse — and pass the probe so the
       # pipeline moves to the next stage.
-      printf "    \033[33m△\033[0m %6s tokens: recall MISS (expected '%s', got '%s') — system OK, quality ceiling reached%s\n" "$prompt_tok" "$secret" "$(echo "$content_raw" | head -c 80 | tr '\n' ' ')" "$prefill_str"
+      if [[ "$miss_kind" == "declined" ]]; then
+        printf "    \033[33m△\033[0m %6s tokens: DECLINED to answer (expected '%s', got '%s') — a refusal, not a recall result: the question's wording can set it off (#2033)%s\n" "$prompt_tok" "$secret" "$(echo "$content_raw" | head -c 80 | tr '\n' ' ')" "$prefill_str"
+        any_recall_declined=1
+      else
+        local absent_note=""
+        [[ "$miss_kind" == "absent" ]] && absent_note=" (says the phrase isn't there)"
+        printf "    \033[33m△\033[0m %6s tokens: recall MISS%s (expected '%s', got '%s') — system OK, quality ceiling reached%s\n" "$prompt_tok" "$absent_note" "$secret" "$(echo "$content_raw" | head -c 80 | tr '\n' ' ')" "$prefill_str"
+      fi
       any_recall_miss=1
       break
     fi
@@ -842,6 +874,8 @@ check_longctx() {
   if [[ "$any_fail" == "0" ]] && [[ "$any_pass" == "1" ]]; then
     if [[ "$any_skipped" == "1" ]]; then
       pass "all in-budget long-ctx depths recalled secret (above-budget depths cleanly rejected by engine pre-check)"
+    elif [[ "$any_recall_declined" == "1" ]]; then
+      pass "all system requests succeeded (the model declined to answer at depth — a refusal, not a recall miss; deeper depths not tried)"
     elif [[ "$any_recall_miss" == "1" ]]; then
       pass "all system requests succeeded (some recall misses at depth — attention quality, not system health)"
     else
@@ -849,7 +883,11 @@ check_longctx() {
     fi
   elif [[ "$any_fail" == "0" ]] && [[ "$any_pass" == "0" ]]; then
     if [[ "$any_recall_miss" == "1" ]]; then
-      pass "all system requests succeeded (all recall missed — attention quality degraded, but system filled every depth)"
+      if [[ "$any_recall_declined" == "1" ]]; then
+        pass "all system requests succeeded (the model declined to answer — a refusal, not a recall miss; deeper depths not tried)"
+      else
+        pass "all system requests succeeded (all recall missed — attention quality degraded, but system filled every depth)"
+      fi
     else
       skip "all depths above --max-model-len (deployed=${deployed_max:-unknown}); shrink ladder or raise ctx"
     fi
@@ -1722,6 +1760,8 @@ with open('${cal_req}', 'w') as f:
   # nothing to score (thinking models can spend the whole budget on reasoning).
   # Tracked separately so it is never reported as an attention-quality ceiling.
   local any_recall_empty=0
+  # A decline (#2033) breaks the ladder like a miss, but its verdict says what it was.
+  local first_miss_kind=""
   local last_pass_tokens=0 last_pass_pct=0
   local first_fail_tokens=0 first_recall_miss_tokens=0 first_recall_miss_pct=0
   local vram_before_all vram_after_all
@@ -1806,9 +1846,16 @@ with open('${cal_req}', 'w') as f:
         done
         local pct=0
         [[ "$prompt_tok" -gt 0 && "$n_ctx" -gt 0 ]] && pct=$(( prompt_tok * 100 / n_ctx ))
-        local outcome="recalled" recall_empty=0 miss_label="quality ceiling reached"
+        local outcome="recalled" recall_empty=0 miss_label="quality ceiling reached" miss_kind="" miss_what="recall MISS"
         if [[ "$all_match" != "1" ]]; then
           outcome="recall_miss"
+          miss_kind="$(classify_recall_miss "$content_raw")"
+          if [[ "$miss_kind" == "declined" ]]; then
+            outcome="recall_declined"; miss_what="DECLINED to answer"
+            miss_label="a refusal, not a recall result: the question's wording can set it off (#2033)"
+          elif [[ "$miss_kind" == "absent" ]]; then
+            miss_what="recall MISS, says the phrase isn't there"
+          fi
           # Whitespace-only content = the model produced no answer at all. That is
           # NOT an attention-quality ceiling (it shows up even at trivial depth) —
           # classify it INCONCLUSIVE and say so.
@@ -1831,14 +1878,15 @@ with open('${cal_req}', 'w') as f:
           # Log it, break out of the ladder, and pass the probe so the
           # pipeline moves to the next stage without wasting time on
           # unreliable depths.
-          printf "    \033[33m△\033[0m rung %d/%d: target=%dK  actual=%dK tok (%d%%)  recall MISS (got: '%s') — %s%s%s\n" \
-            "$rung_idx" "$rung_count" "$((target_tokens / 1000))" "$((prompt_tok / 1000))" "$pct" \
+          printf "    \033[33m△\033[0m rung %d/%d: target=%dK  actual=%dK tok (%d%%)  %s (got: '%s') — %s%s%s\n" \
+            "$rung_idx" "$rung_count" "$((target_tokens / 1000))" "$((prompt_tok / 1000))" "$pct" "$miss_what" \
             "$(echo "$content_raw" | head -c 60 | tr '\n' ' ')" "$miss_label" "$prefill_str" "$vram_str"
           any_recall_miss=1
           [[ "$recall_empty" == "1" ]] && any_recall_empty=1
           if [[ "$first_recall_miss_tokens" -eq 0 ]]; then
             first_recall_miss_tokens="$prompt_tok"
             first_recall_miss_pct="$pct"
+            [[ "$recall_empty" == "1" ]] || first_miss_kind="$miss_kind"
           fi
           break
         fi
@@ -1918,6 +1966,8 @@ with open('${cal_req}', 'w') as f:
   if [[ "$any_fail" == "0" && "$any_pass" == "1" ]]; then
     if [[ "$any_skipped" == "1" ]]; then
       pass "ceiling ladder: all rungs recalled (engine rejected above ${last_pass_tokens} tok — ${last_pass_pct}% of n_ctx=${n_ctx})"
+    elif [[ "$any_recall_miss" == "1" && "${first_miss_kind:-}" == "declined" ]]; then
+      pass "ceiling ladder: stopped at ${first_recall_miss_tokens} tok (${first_recall_miss_pct:-?}% of n_ctx=${n_ctx}) — the model declined to answer there (a refusal, not a recall miss), passed up to ${last_pass_tokens} tok; no ceiling measured above it"
     elif [[ "$any_recall_miss" == "1" ]]; then
       pass "ceiling ladder: quality ceiling at ${first_recall_miss_tokens} tok (${first_recall_miss_pct:-?}% of n_ctx=${n_ctx}) — recall miss, passed up to ${last_pass_tokens} tok"
     else
@@ -1978,7 +2028,11 @@ with open('${cal_req}', 'w') as f:
     # ladder body: "break out of the ladder, and pass the probe"). Without this
     # branch that intent was lost and the run fell through to the catch-all below,
     # reporting a crash that never happened.
-    pass "ceiling ladder: quality ceiling at or below the first rung (${first_recall_miss_tokens} tok, ${first_recall_miss_pct:-?}% of n_ctx=${n_ctx}) — system filled it, recall missed"
+    if [[ "${first_miss_kind:-}" == "declined" ]]; then
+      pass "ceiling ladder: stopped at the first rung (${first_recall_miss_tokens} tok, ${first_recall_miss_pct:-?}% of n_ctx=${n_ctx}) — system filled it, the model declined to answer (a refusal, not a recall miss); no ceiling measured"
+    else
+      pass "ceiling ladder: quality ceiling at or below the first rung (${first_recall_miss_tokens} tok, ${first_recall_miss_pct:-?}% of n_ctx=${n_ctx}) — system filled it, recall missed"
+    fi
   elif [[ "$any_pass" == "0" && "$any_skipped" == "1" ]]; then
     # All rungs got legitimate HTTP 400 (target > n_ctx) — ladder measured nothing.
     # This is NOT a pass. A ladder that tested nothing must warn.
