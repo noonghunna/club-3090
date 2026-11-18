@@ -96,7 +96,13 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 # ... and these, each found in the v1.1.65 image (build/maya-ds4; the last two in
                 # serve/ too): the PCIe lane rule (#956), the TP prompt flow, TP groups of 3, kept conversations
                 "DS4_STREAM_TIE", "DS4_FLOW_TP", "DS4_TP_UNEVEN_HEADS", "MAYA_DS4_SLOT_KEEP",
-                "MAYA_DS4_KEEP_THINKING"}
+                "MAYA_DS4_KEEP_THINKING",
+                # ... and these, read at the v1.1.67 tag (56b5216a): the idle sleeps (v1.1.66, #951;
+                # src/core/glm_fast_path.cu, src/ds4/ds4_model.cu via ds4_env) and two GLM diagnostics
+                # (src/core/glm_prefill.cu, src/core/glm_fast_path.cu)
+                "MAYA_GLM_SERVICE_NAP_US", "MAYA_GLM_SERVICE_SLEEP_MS",
+                "MAYA_DS4_SERVICE_NAP_US", "MAYA_DS4_SERVICE_SLEEP_MS",
+                "MAYA_GLM_PREFILL_CHECK", "MAYA_GLM_TIER_VERIFY"}
 
 # DEBT REGISTER — each entry must name WHY the dead knob is deliberate.
 # Shrink it; never grow it silently. An entry here means a documented knob is

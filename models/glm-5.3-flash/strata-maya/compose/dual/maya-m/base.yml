@@ -90,6 +90,17 @@ services:
       # v1.1.56, opt-in: =1 sends the layer split's token states GPU to GPU over PCIe on a pair the driver
       # grants peer access (else through host memory, as unset); the same answers upstream (mw00/project-maya#853)
       MAYA_GLM_P2P:
+      # GLM's idle sleeps (v1.1.66, mw00/project-maya#951; read by the engine, src/core/glm_fast_path.cu): an idle
+      # engine's service thread naps MAYA_GLM_SERVICE_NAP_US microseconds between looks for work (1..10000), then
+      # MAYA_GLM_SERVICE_SLEEP_MS milliseconds after a longer quiet (1..1000). Longer sleeps lower a waiting server's
+      # CPU use; the first token after a pause can wait up to one sleep. Unset = Maya's 100 us / 2 ms
+      MAYA_GLM_SERVICE_NAP_US:
+      MAYA_GLM_SERVICE_SLEEP_MS:
+      # diagnostics, off by default (read by the engine): MAYA_GLM_PREFILL_CHECK=1 checks every stage of a prompt
+      # layer and names the one that faulted (v1.1.66, slower prompts; it only reports); MAYA_GLM_TIER_VERIFY=1 reads
+      # the expert tables back from the GPU after every token and checks them against the host's (v1.1.67; it only reports)
+      MAYA_GLM_PREFILL_CHECK:
+      MAYA_GLM_TIER_VERIFY:
       # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}/glm-5.3-flash-maya-gguf/Maya-M:/gguf:ro"
