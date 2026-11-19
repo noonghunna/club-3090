@@ -1587,7 +1587,10 @@ if [[ -z "$RESUME" && -n "${CONTAINER:-}" && "${CONTAINER}" != "none" ]] \
       if [[ "$SAMPLING_FROM_SERVER" == "1" ]]; then
         if [[ "$_rc_has_defaults" == "1" ]]; then
           echo "[quality-test] sampling: server defaults resolved from the ${_rc_kind} boot log (recorded with the results)"
-        elif [[ "$_rc_kind" != "llamacpp" ]]; then
+        elif [[ "$_rc_kind" != "llamacpp" && "$_rc_kind" != "unknown" ]]; then
+          # Not for an unknown engine: nothing read its boot log, and the [run-context] note above
+          # has already said no engine was recognised. "Could not resolve … from the boot log" there
+          # read as "looked and found nothing" when nothing was looked for (#2084).
           echo "[quality-test] sampling: could not resolve the server's defaults from the boot log — the report will say 'not exposed'" >&2
         fi
       fi
