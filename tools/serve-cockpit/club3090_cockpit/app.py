@@ -2817,7 +2817,7 @@ def _weights_plan_lines(p: dict) -> list[str]:
     for lk in p.get("links") or []:
         lines.append(f"  [red]unlink[/red]  {_markup_escape(str(lk.get('path') or ''))}  "
                      f"[dim](→ {_markup_escape(str(lk.get('target') or ''))}, empty once the files go)[/dim]")
-    if not p.get("targets") and not p.get("links"):
+    if not p.get("targets") and not p.get("links") and not p.get("dirs"):
         lines.append("  [dim]nothing to delete[/dim]")
     n = sum(1 for t in p.get("targets") or [] if not t.get("bookkeeping"))
     lines += ["", f"  [bold]total[/bold]  {n} weight file(s), {_gib_label(p.get('total_bytes'))} — "
@@ -2927,7 +2927,10 @@ class WeightsScreen(_CopyableModal, ModalScreen):
 
     def _removable(self) -> bool:
         p = self._plan or {}
-        return p.get("exit") == 0 and bool(p.get("targets") or p.get("links")) and bool(p.get("digest"))
+        # dirs too: a folder left with nothing in it (weights already gone) is still
+        # removable, or its slug stays a "partial download" with nothing to remove.
+        return (p.get("exit") == 0 and bool(p.get("targets") or p.get("links") or p.get("dirs"))
+                and bool(p.get("digest")))
 
     # ── worker callbacks ─────────────────────────────────────────────────────────
 
@@ -2979,9 +2982,14 @@ class WeightsScreen(_CopyableModal, ModalScreen):
             return
         p = self._plan or {}
         n = sum(1 for t in p.get("targets") or [] if not t.get("bookkeeping"))
-        summary = (f"remove {n} weight file(s) of {self._slug} — frees "
-                   f"{_gib_label(p.get('freed_bytes'))}"
-                   + (" (INCLUDING files other slugs need)" if self._allow_shared else ""))
+        if n:
+            summary = (f"remove {n} weight file(s) of {self._slug} — frees "
+                       f"{_gib_label(p.get('freed_bytes'))}"
+                       + (" (INCLUDING files other slugs need)" if self._allow_shared else ""))
+        else:   # the weights are already gone: only bookkeeping / empty folders are left
+            bk = len(p.get("targets") or [])
+            summary = (f"clear what is left of {self._slug}'s weights folder — {bk} bookkeeping "
+                       f"file(s), {len(p.get('dirs') or [])} empty folder(s); no weights left to free")
         plan = self.app._data.weights_remove(  # type: ignore[attr-defined]
             self._slug, digest=str(p.get("digest") or ""), allow_shared=self._allow_shared,
             summary=summary)

@@ -15835,6 +15835,35 @@ class TestCatalogWeights:
             assert wr.started == []
 
     @pytest.mark.asyncio
+    async def test_leftover_folder_with_the_weights_gone_is_still_removable(self):
+        """The weights already gone (an older remove, a hand delete) and only empty
+        folders left: the folder still exists, so the slug reads as a partial download
+        and its card offers [x] — which must clear it, not say nothing can be removed."""
+        plan = json.loads(_weights_plan(0))
+        plan.update({"targets": [], "total_bytes": 0, "freed_bytes": 0,
+                     "dirs": ["/models-fx/qwen-awq/.cache/huggingface", "/models-fx/qwen-awq/.cache",
+                              "/models-fx/qwen-awq"],
+                     "notes": ["the weights are already gone; only the download's bookkeeping and empty "
+                               "folders are left, which keep the folder on disk"]})
+        app, _, wr = make_app(responses=self._responses(json.dumps(plan)))
+        async with app.run_test(size=(140, 50)) as pilot:
+            await self._open(app, pilot)
+            await pilot.press("x")
+            await _settle(pilot)
+            screen = app.screen
+            body = str(screen.query_one("#weights-body", Static).render())
+            assert "rmdir" in body and "already gone" in body
+            assert "nothing to delete" not in body and "Nothing can be removed" not in body
+            assert screen.check_action("remove", ()) is True
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            assert app.screen._plan.cmd[6] == "abc123def4567890"
+            assert "3 empty folder(s)" in app.screen._plan.description
+            assert "no weights left to free" in app.screen._plan.description
+            assert wr.started == []
+
+    @pytest.mark.asyncio
     async def test_hard_refusal_leaves_no_way_to_remove(self):
         app, _, wr = make_app(responses=self._responses(_weights_plan(4, refusals=HARD_REFUSAL)))
         async with app.run_test(size=(140, 50)) as pilot:

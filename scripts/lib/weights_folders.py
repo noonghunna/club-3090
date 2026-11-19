@@ -75,7 +75,20 @@ HF_STAGE = Path(".cache") / "huggingface" / "download"
 # recipe's own local_subdir — otherwise the emptied folder lingers, and c3 reads a
 # folder with no weights in it as an interrupted (PARTIAL) download, not an absent one.
 FOLDER_BOOKKEEPING = (".setup-verified.tsv", ".cache/huggingface/CACHEDIR.TAG", ".cache/huggingface/.gitignore")
+# hf --local-dir also keeps the repo's file listing per revision here (newer huggingface_hub:
+# .cache/huggingface/trees/<revision>.json). Missing from the list above, it alone kept a
+# removed recipe's folder on disk, so c3 went on showing its slugs as a partial download.
+HF_TREES = Path(".cache") / "huggingface" / "trees"
 GIB = 1024 ** 3
+
+
+def _folder_bookkeeping(subdir: str, f: str) -> bool:
+    """Is ``f`` (a path under the recipe folder ``subdir``) bookkeeping of the folder itself?"""
+    rel = os.path.relpath(f, subdir)
+    if rel in FOLDER_BOOKKEEPING:
+        return True
+    p = Path(rel)
+    return p.parent == HF_TREES and p.suffix == ".json"
 
 
 class WeightsError(Exception):
@@ -568,29 +581,41 @@ def plan_remove(idx: Index, slug: str, *, docker: str = "docker") -> Plan:
                     f"{len(sb['users'])} other slug(s)", folder=folder,
                     slugs=[{"slug": u, "status": _status(idx, u)} for u in sorted(sb["users"])])
     plan.folders = sorted(set(touched.values()))
-    if not plan.targets and not plan.refusals:
-        plan.notes.append("nothing of this slug's recipes is on disk")
 
+    # A recipe folder left with nothing but bookkeeping once the planned files go is
+    # cleared whole: its bookkeeping files and its emptied dirs. This also runs when the
+    # weights are ALREADY gone (an earlier remove, or a hand delete) — such a folder
+    # still exists, so c3 shows its slugs as a partial download and offers this very
+    # remove, which must then clear it rather than find nothing to do.
     going = {t["resolved"] for t in plan.targets}
-    if plan.targets:
-        for sd, (folder, key) in sorted(subdirs.items()):
-            if not any(_under(sd, r) for r in roots) or sd in roots:
-                continue        # never MODEL_DIR / a model root itself, never outside one
-            left = [f for f in _regular_and_links_under(sd) if f not in going]
-            marks = {os.path.join(sd, b) for b in FOLDER_BOOKKEEPING}
-            if not left or not all(f in marks for f in left):
+    cleared: set[str] = set()
+    for sd, (folder, key) in sorted(subdirs.items()):
+        if not any(_under(sd, r) for r in roots) or sd in roots:
+            continue        # never MODEL_DIR / a model root itself, never outside one
+        if not os.path.isdir(sd) or os.path.islink(sd):
+            continue
+        left = [f for f in _regular_and_links_under(sd) if f not in going]
+        if not all(_folder_bookkeeping(sd, f) for f in left):
+            continue
+        cleared.add(sd)
+        for f in sorted(left):
+            st = os.lstat(f)
+            if not stat.S_ISREG(st.st_mode):
                 continue
-            for f in sorted(left):
-                st = os.lstat(f)
-                if not stat.S_ISREG(st.st_mode):
-                    continue
-                plan.targets.append({
-                    "path": f, "resolved": f, "folder": folder, "recipe": key,
-                    "bytes": st.st_blocks * 512, "freed_bytes": st.st_blocks * 512 if st.st_nlink == 1 else 0,
-                    "ino": st.st_ino, "bookkeeping": True,
-                })
-        going = {t["resolved"] for t in plan.targets}
-    plan.dirs = _emptied_dirs(going, set(subdirs), set(roots))
+            plan.targets.append({
+                "path": f, "resolved": f, "folder": folder, "recipe": key,
+                "bytes": st.st_blocks * 512, "freed_bytes": st.st_blocks * 512 if st.st_nlink == 1 else 0,
+                "ino": st.st_ino, "bookkeeping": True,
+            })
+    going = {t["resolved"] for t in plan.targets}
+    plan.dirs = _emptied_dirs(going, set(subdirs), set(roots), cleared)
+    if not plan.refusals and not any(not t["bookkeeping"] for t in plan.targets):
+        if plan.targets or plan.dirs:
+            plan.notes.append("the weights are already gone; only the download's bookkeeping and empty "
+                              "folders are left, which keep the folder on disk (c3 shows such a folder "
+                              "as a partial download)")
+        else:
+            plan.notes.append("nothing of this slug's recipes is on disk")
     # A folder link goes only when nothing is left behind it (hf bookkeeping aside).
     for top in top_links.values():
         tgt = _real(top)
@@ -604,13 +629,18 @@ def plan_remove(idx: Index, slug: str, *, docker: str = "docker") -> Plan:
     return plan
 
 
-def _emptied_dirs(going: set[str], subdirs: set[str], roots: set[str]) -> list[str]:
+def _emptied_dirs(going: set[str], subdirs: set[str], roots: set[str],
+                  cleared: set[str] = frozenset()) -> list[str]:
     """Dirs that hold nothing once ``going`` is gone, deepest first — inside a recipe's
     own subdir only (never the subdir's parent, MODEL_DIR or a model root).
 
     Left in place, an emptied quant dir reads to c3 as a PARTIAL download ("subdir
     exists but no verify_glob match") instead of absent. rmdir only ever removes an
     empty dir, so this can't take a file with it.
+
+    ``cleared`` are recipe folders being emptied whole: every dir under one is a
+    candidate too, so dirs that were already empty (hf's ``download/`` once its records
+    went, a quant dir emptied by hand) go with it, not only the ones a planned file sits in.
     """
     cands: set[str] = set()
     for t in going:
@@ -618,6 +648,15 @@ def _emptied_dirs(going: set[str], subdirs: set[str], roots: set[str]) -> list[s
         while any(_under(d, s) for s in subdirs) and d not in roots:
             cands.add(d)
             d = os.path.dirname(d)
+    for sd in cleared:
+        for dirpath, dirnames, _files in os.walk(sd, followlinks=False):
+            cands.add(dirpath)
+            for n in dirnames:
+                p = os.path.join(dirpath, n)
+                if os.path.islink(p):      # a link is an entry, never a dir to remove
+                    continue
+                cands.add(p)
+    cands = {d for d in cands if d not in roots and not os.path.islink(d)}
     empty: list[str] = []
     for d in sorted(cands, key=lambda x: -x.count("/")):
         try:
@@ -814,7 +853,7 @@ def print_plan(d: dict) -> None:
         print(f"  rmdir   {dd}  (empty once the files go)")
     for lk in d["links"]:
         print(f"  unlink  {lk['path']}  (→ {lk['target']}, empty once the files go)")
-    if not d["targets"] and not d["links"]:
+    if not d["targets"] and not d["links"] and not d.get("dirs"):
         print("  nothing to delete")
     n = sum(1 for t in d["targets"] if not t["bookkeeping"])
     print(f"\n  total   {n} weight file(s), {_gib(d['total_bytes'])} — frees {_gib(d['freed_bytes'])}")
@@ -879,7 +918,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         d["refusals"].append({"code": "changed", "overridable": False,
                               "message": f"the plan changed since the dry run (digest {args.digest} → {d['digest']})"})
         d["exit"] = rc = EXIT_REFUSED
-    if args.dry_run or rc != EXIT_OK or not (plan.targets or plan.links):
+    if args.dry_run or rc != EXIT_OK or not (plan.targets or plan.links or plan.dirs):
         print(json.dumps(d, indent=1)) if args.json else print_plan(d)
         return rc
     if args.yes and not args.digest:
@@ -897,7 +936,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             msg = "not confirmed: pass --yes (after reading the dry run), or run it in a terminal"
             print(json.dumps({**d, "exit": EXIT_UNCONFIRMED, "error": msg}) if args.json else f"[weights] {msg}")
             return EXIT_UNCONFIRMED
-        ans = input(f"Delete these {len(plan.targets)} file(s), {_gib(d['total_bytes'])}? Type 'yes': ")
+        what = f"{len(plan.targets)} file(s), {_gib(d['total_bytes'])}" + (
+            f", and {len(plan.dirs)} folder(s) once empty" if plan.dirs else "")
+        ans = input(f"Delete these {what}? Type 'yes': ")
         if ans.strip() != "yes":
             print("[weights] not confirmed — nothing deleted")
             return EXIT_UNCONFIRMED
@@ -906,7 +947,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.json:
         print(json.dumps(result, indent=1))
     else:
+        gone_dirs = sum(1 for dd in plan.dirs if not os.path.lexists(dd))
         print(f"[weights] removed {removed} file(s), freed {_gib(freed)}"
+              + (f", {gone_dirs} empty folder(s)" if gone_dirs else "")
               + (f", {len(plan.links)} link(s)" if plan.links else ""))
         for e in errors:
             print(f"[weights] WARN: {e}", file=sys.stderr)
