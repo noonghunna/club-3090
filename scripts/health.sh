@@ -67,6 +67,10 @@ source "${ROOT_DIR}/scripts/lib/llamacpp-spec.sh"
 # _slots_qengine_log: QEngine states its slot count only in its boot log (#1850)
 # shellcheck source=lib/served-slots.sh
 source "${ROOT_DIR}/scripts/lib/served-slots.sh"
+# qengine_spec_lines / qengine_spec_al / qengine_spec_split / qengine_expert_cache / qengine_request_lines: QEngine's runtime
+# lines, read in the one place report.sh reads them too (#2103)
+# shellcheck source=lib/qengine-log.sh
+source "${ROOT_DIR}/scripts/lib/qengine-log.sh"
 URL="${URL:-http://localhost:${_DEFAULT_ENDPOINT_PORT:-8020}}"
 CONTAINER="${CONTAINER:-}"
 LOG_LINES="${LOG_LINES:-200}"
@@ -292,7 +296,7 @@ else: print(f'{s//3600}h{(s%3600)//60:02d}m')
       else
         dim "Slots / context: no boot line in the log"
       fi
-      qe_chat=$(echo "$logs" | command grep -E '^\[chat\] slot' | tail -3 || true)
+      qe_chat=$(echo "$logs" | qengine_request_lines 3)
       if [[ -n "$qe_chat" ]]; then
         ok "Recent requests:"
         echo "$qe_chat" | sed 's/^/      /'
@@ -308,16 +312,16 @@ else: print(f'{s//3600}h{(s%3600)//60:02d}m')
       # Draft acceptance counts MTP and lookup drafts together (Flash-Next drafts mostly by lookup), so the
       # latest line's split is shown beside it. One-step lines (a 1-token request: AL 1.00) are left out
       # of the average: they are warm-ups, not a rate.
-      qe_spec=$(echo "$logs" | command grep -E '\[stats\] SpecDecoding metrics:' | command grep -vE ', 1 steps\)' | tail -5 || true)
+      qe_spec=$(echo "$logs" | qengine_spec_lines)
       if [[ -n "$qe_spec" ]]; then
-        qe_al=$(echo "$qe_spec" | command grep -oE 'Mean acceptance length: [0-9.]+' | awk '{ s += $4; n++ } END { if (n) printf "%.2f", s/n }')
-        qe_last=$(echo "$qe_spec" | tail -1 | command grep -oE 'MTP [0-9]+/[0-9]+, lookup [0-9]+/[0-9]+' || true)
+        qe_al=$(echo "$qe_spec" | qengine_spec_al)
+        qe_last=$(echo "$qe_spec" | qengine_spec_split)
         ok "Spec-decode (MTP + lookup): AL last $(echo "$qe_spec" | wc -l) = ${qe_al}${qe_last:+  (latest: ${qe_last})}"
       else
         dim "Spec-decode: no recent acceptance line in logs (server idle, or SPEC_N=0)"
       fi
       # Flash-Next's expert cache (the 27B has none)
-      qe_ec=$(echo "$logs" | command grep -oE 'cold-group hit rate [0-9.]+% decode \([0-9/]+\) [0-9.]+% prefill' | tail -1 || true)
+      qe_ec=$(echo "$logs" | qengine_expert_cache)
       [[ -n "$qe_ec" ]] && ok "Expert cache: ${qe_ec}"
     elif [[ "$engine" == "ExLlamaV3" || "$engine" == "unknown" ]]; then
       echo "${engine} runtime:"

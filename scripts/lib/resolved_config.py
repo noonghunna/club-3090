@@ -112,12 +112,14 @@ _ALLOW_EXACT = frozenset(
 # appear constantly and enumerating them would rot; _NAME_VETO covers the
 # credential-shaped members that live inside them.
 _ALLOW_PREFIX = (
+    "FLASH_",       # QEngine's Flash-Next engine (FLASH_MAX_SEQS, FLASH_KV, FLASH_PAR, …)
     "GENESIS_",
     "GGML_",
     "LLAMA_ARG_",
     "LLAMA_GRAPH_",
     "LMCACHE_",
     "NCCL_",
+    "QE_",          # QEngine's own (QE_MAX_SEQS, QE_REASONING_EFFORT, …); QE_API_KEY stays vetoed
     "SGLANG_",
     "TORCHDYNAMO_",
     "TORCHINDUCTOR_",
@@ -613,6 +615,18 @@ _DUMP_PATTERNS = {
              r"GPU KV cache size:", r"Maximum concurrency for"),
     "llamacpp": (r"^system_info:", r"^build:", r"^main: ", r"llama_context:",
                  r"llama_kv_cache", r"^srv .*params"),
+    # QEngine (#2103) states what it resolved at boot, in the same words on both of its engines:
+    # the pool, the host-RAM split, the parallel mode and the per-effort thinking budget. The 27B
+    # and Flash-Next word the per-card and slot lines differently (`KV pool:` / `GPU0: weights …`
+    # against `[qflash] N sequence slots` / `[qflash] GPU0: … weights+state`); each is anchored,
+    # so the 27B's `GPU0: attn q[…]` layout lines stay out. Its `env:` line is NOT read here: it
+    # prints the container's whole engine env verbatim, past the allowlist above, which shows
+    # the FLASH_ / QE_ knobs instead.
+    "qengine": (r"^==== qengine server start: ", r"^argv: ", r"^model \S+ \(",
+                r"^sampling defaults, ", r"^KV pool: ", r"^GPU[0-9]+: weights [0-9.]+ GB",
+                r"^\[qflash\] [0-9]+ sequence slots", r"^\[qflash\] GPU[0-9]+: [0-9.]+ GB weights\+state",
+                r"^(\[qflash\] )?host RAM plan: ", r"^context: requested ",
+                r"^engine parallel mode: ", r"^thinking budget by effort: "),
 }
 # The keys worth surfacing from SGLang's one-line `server_args=` dump (~8 KB on
 # one line — see the size argument in #1265). The dump has two shapes:
