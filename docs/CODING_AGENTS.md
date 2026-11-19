@@ -503,12 +503,14 @@ modelRoles:
 - If your `config.yml` sets `enabledModels`, it must list `club-live/*` too —
   an allow-list that omits the alias makes every `club-live/live` role fall
   back to another provider with only a startup warning.
-- Effort suffixes clamp to the SERVING family's ladder: the extension
-  registers the serving slug's own levels (GLM: `low/high/max`; the Qwen3.8
-  family: `low/medium/xhigh`), and omp sends the nearest lower rung when a
-  role's suffix isn't one of them — a `club-live/live:medium` role runs at
-  `low` while GLM serves, `:xhigh` at `high`. Never an error, and an effort
-  the serving engine has never heard of never reaches it.
+- Effort is decided per request against the SERVING route, not the family you started
+  on: the extension registers the live route's own rungs and its default, and rewrites
+  an effort the route would only alias. A `club-live/live:medium` role runs at `medium`
+  where the route implements it and at the route default where it does not; GLM's `max`
+  reaching a Qwen route lands on that route's default, not on the `max → xhigh` fold.
+  `none` passes only on a route that turns thinking off that way; elsewhere it becomes
+  the route's lowest rung. The whole table is in
+  [How effort is decided on the wire](#how-effort-is-decided-on-the-wire).
 - `scripts/omp-setup.sh --auto-switching` does the install for you: it copies
   the extension into the agent dir, writes `club-live.json` beside it (mode
   600 — the gateway key is in it), and prints the `modelRoles` block above to
@@ -517,6 +519,50 @@ modelRoles:
 
 Always write `club-live/live`, like `club/<id>` — a bare `live` is
 fuzzy-matching territory.
+
+### How effort is decided on the wire
+
+One source per fact, everything downstream derived — nothing below the first two rows is
+hand-copied.
+
+| Layer | File | Set by | Carries |
+|---|---|---|---|
+| Model profile | `scripts/lib/profiles/models/<model>.yml` | humans (curated) | the effort ladder, the worst rung, the thinking budget |
+| Engine profile | `scripts/lib/profiles/engines/<engine>.yml` | probe + source reading | the engine's own default when a compose leaves `REASONING_EFFORT` unset, whether it turns thinking off with `none`, and any name it runs as another rung (`medium` as `high` on Maya) |
+| Compose | `models/**/compose/**/*.yml` | operator | `REASONING_EFFORT` for that one deployment |
+| Rendered gateway view | `services/litellm/config.runtime.yaml` (generated block) | `scripts/lib/litellm_sync.py` | per route: `reasoning_effort_levels`, `default_reasoning_effort`, `supports_none_reasoning_effort` — LiteLLM's own `model_info` fields, no custom keys |
+| Rendered omp overrides | `~/.omp/agent/models.yml` | `scripts/omp-setup.sh` | each `club/<id>` ladder + `defaultLevel` (always rendered) |
+| Runtime | `services/omp/extensions/club-live.ts` | the extension, per tick and per request | the live route's ladder and default for `club-live/live`, plus the clamp below |
+
+Humans set the first three rows; scripts derive the rest. The rendered
+`reasoning_effort_levels` is what a route **accepts** — the rungs it implements minus the
+ones it refuses, then the names its fold map aliases — so both `club/<id>` and
+`club-live/live` advertise the intersection with the model profile's ladder: a menu never
+offers a rung the clamp would then rewrite. The same levels are what LiteLLM resolves
+`/v1/messages` effort names through, so Claude Code benefits from the render without
+reading any of it.
+
+Every `club-live/live` request passes one table (`clampEffort` in the extension):
+
+| Incoming effort | On the wire |
+|---|---|
+| in the route's ladder | unchanged — a valid request for this route |
+| outside it: a stale rung from another route, or a name this route only aliases | the route's own default |
+| `null` (omp's "no thinking config") | the key is dropped, so the engine default applies |
+| absent (a raw client) | never injected |
+| `none` | passed where the route takes it; otherwise its **lowest** rung, never the default |
+
+A `thinking_token_budget` goes only to a family that declares one. Side channels
+(compaction, skill compression) bypass the hook entirely and keep the engine default, the
+same as any client that names no effort. `test-omp-club-live.sh` pins every row, and pins
+the parser against `litellm_sync.render_block`'s real output.
+
+⚠️ **Stale installs.** `models.yml` and `club-live.json` are written once, by
+`bash scripts/omp-setup.sh --auto-switching`. A profile edit or an engine pin bump changes
+nothing until you run it again. The extension re-reads the rendered route facts on every
+refresh, so a route's default follows a switch immediately — but a ladder, reply cap or
+compat pin that only lives in the installed family entry stays exactly as installed.
+Re-running the setup script is cheap and idempotent; do it after editing a profile.
 
 ### Cloud fallback to OpenRouter's free models — how it's set up
 
