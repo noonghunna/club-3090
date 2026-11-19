@@ -163,8 +163,8 @@ def compose_served_names(root, compose_path):
 
     The compose is read as text: these are launch arguments, not settings the loader
     resolves, and the point is the alias a compose DECLARES even where the loader would
-    default it away. A compose that cannot be read contributes nothing — family_ids
-    warns once per family rather than per row.
+    default it away. A compose that cannot be read contributes nothing; the unreadable-
+    compose warning in compute_families prints once per run, not once per row.
     """
     text = _read(root, *compose_path.split("/")) if not os.path.isabs(compose_path) \
         else None
@@ -179,7 +179,8 @@ def compose_served_names(root, compose_path):
     lines = [l for l in text.splitlines() if not l.lstrip().startswith("#")]
     names = set()
     for i, line in enumerate(lines):
-        m = re.search(r'SERVED_MODEL_NAME:\s*"?(\$\{SERVED_MODEL_NAME:-[^}]+\})', line)
+        m = re.search(r'SERVED_MODEL_NAME\s*[:=]\s*["\']?'
+                      r'(\$\{SERVED_MODEL_NAME:-[^}]+\}|[A-Za-z0-9][\w.\-]*)', line)
         if m:
             tok = _served_token(m.group(1))
             if tok:
@@ -190,7 +191,11 @@ def compose_served_names(root, compose_path):
         rest = m.group(1).strip().rstrip("\\").strip().strip("\"'")
         if rest and not rest.startswith("-"):            # one-line: --alias a b / --alias=a
             for tok in rest.split():
-                if tok.startswith("-"):                  # the next flag ends the values
+                # the next flag, or an inline comment, ends the values: `--alias x --port
+                # 8080` must not make 8080 a route, and `--alias x # the alias` must not
+                # make `the` and `alias` routes. A bogus alias collides with another
+                # compose's name and refuses the whole render.
+                if tok.startswith(("-", "#")):
                     break
                 name = _served_token(tok)
                 if name:
@@ -199,7 +204,7 @@ def compose_served_names(root, compose_path):
         for nxt in lines[i + 1:]:                        # YAML list: - name
             v = nxt.strip()
             val = v[2:].strip().strip("\"'") if v.startswith("- ") else ""
-            if not val or val.startswith("-"):           # the next flag ends the list
+            if not val or val.startswith(("-", "#")):    # the next flag or comment ends it
                 break
             name = _served_token(val)
             if name:
@@ -261,8 +266,9 @@ def compute_families(variants, model_families, root=None):
     checkout the composes are read from; without it a route is only the name the registry
     declares, which is what the unit tests exercise.
 
-    An id whose routes reach NO nameable default falls back to its model's own (the
-    default its canonical id renders) when that is a rung this route accepts. If neither
+    An id whose routes reach NO nameable default falls back to its model's own (the lowest
+    default reachable across all that model's routes) when that is a rung this route
+    accepts. If neither
     is reachable the id gets no family: rendering the None would put the literal string
     "None" on the wire as an effort name, and leaving the default out makes omp fall back
     to the ladder TOP — a silent xhigh, the slowest rung. Neither is honest, so the id is
@@ -304,7 +310,7 @@ def compute_families(variants, model_families, root=None):
         # refused, not dropped silently). The ladder, the compat pins and the coverage set
         # all key off the rows, so a collision is a catalog mistake, not a multi-model
         # route.
-        models = {r.get("model") for r in rows}
+        models = {r.get("model") for r in rows} - {None}
         entries = {fam_index[id(model_to_fam[m])] for m in models if m in model_to_fam}
         if not entries:
             continue                       # a route no client family covers
@@ -314,14 +320,14 @@ def compute_families(variants, model_families, root=None):
                 f"({', '.join(sorted(str(m) for m in models))}): one route name must map "
                 "to one model, or its ladder, compat pins and coverage depend on registry "
                 "row order. Fix: give one of them its own --served-model-name / alias.")
-        if len(entries) > 1:
-            raise ValueError(
-                f"route {rid!r} resolves to {len(entries)} MODEL_FAMILIES entries: one "
-                "route cannot carry two overrides. Fix: one entry per model in "
-                "MODEL_FAMILIES.")
         fam = model_families[next(iter(entries))]
         f = facts[rid]
         if f is None:
+            print(f"effort_families: {rid}: no route serving this name declares an effort "
+                  "ladder, so its model/engine pair has no effort block in the profiles — "
+                  "no override generated, and omp will send it no effort. Fix: add the "
+                  "effort block to scripts/lib/profiles/models/<model>.yml (levels) or the "
+                  "engine's profile in scripts/lib/profiles/engines/.", file=sys.stderr)
             continue
         dflt = f["defaultLevel"]
         if dflt is None:

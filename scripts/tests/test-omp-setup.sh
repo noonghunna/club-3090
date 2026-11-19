@@ -102,9 +102,10 @@ PY
 # the default that route's own engines give it. Check 8 derives the NAME SET from the
 # composes independently (a YAML walk of command/entrypoint, not the generator's regex
 # scan); this table pins what each name must RENDER. A new alias in the catalog fails
-# check 8 first — add it here when you add one. The third field is the client family
-# (the MODEL_FAMILIES entry) that supplies maxTokens and the compat pins: those ARE keyed
-# by model, unlike the ladder.
+# check 8 first — add it here when you add one. The third field is the CLIENT family (the
+# MODEL_FAMILIES entry) that supplies maxTokens and the compat pins: those ARE keyed by
+# model, unlike the ladder. ("family" in effort_families.STRATA_FAMILY_NAMES is a different
+# thing — Strata's own weights family, which names a served id.)
 cat > "$T/omp_expected.py" <<'PY'
 QWEN = ["low", "medium", "xhigh"]
 WIDE = ["low", "medium", "xhigh", "high", "max", "minimal"]
@@ -114,7 +115,12 @@ PER_ID = {
     # each carries what its own engine accepts and what its own compose defaults to.
     "qwen3.8-27b": (QWEN, "low", "qwen38"),
     "qwen3.8-27b-fp8": (WIDE, "low", "qwen38"),               # vLLM only
-    "qwen3.8-27b-prism-ternary": (QWEN, "medium", "qwen38"),  # llama-cpp-prism
+    # llama-cpp-prism: the profile records only the evidenced `unknown_name: xhigh` fact,
+    # no `low` refusal, so the ladder keeps low — while docs/engines/LLAMA_CPP_PRISM.md
+    # reports upstream treats low as xhigh. That evidence question belongs to the engine
+    # profile (phase 1/2); this row pins what the EMIT says, and test-pi-setup /
+    # test-dsh-setup name the same aliases as a KNOWN GAP for their own hand-written map.
+    "qwen3.8-27b-prism-ternary": (QWEN, "medium", "qwen38"),
     "qwen3.8-27b-prism-ternary-mtp": (QWEN, "medium", "qwen38"),
     "qwen3.8-27b-swift15": (QWEN, "medium", "qwen38"),        # llama.cpp
     "thinkingcap38-27b": (WIDE, "low", "qwen38"),
@@ -681,6 +687,41 @@ if sorted(f["name"] for f in fams) != ["a-shared", "ma"]:
     sys.exit(1)
 if "no route serving this name" not in err or "Fix:" not in err:
     print("  the skipped fallback must warn and name the fix, got:", err)
+    sys.exit(1)
+
+# (k) an inline comment ends the one-line value list, and SERVED_MODEL_NAME is read in the
+#     `KEY: value` and `KEY=value` forms as well as the `${…:-…}` one. A word absorbed from
+#     a comment is a bogus route that can collide with another compose and refuse the whole
+#     render; a missed env form is a route with no override (#1690).
+write_compose("ma", "cmt.yml",
+              "services:\n  s:\n    command: llama-server --alias cmt-alias # the alias\n")
+fams, _ = gen2(MF2, arow("ma", "cmt.yml"))
+if sorted(f["name"] for f in fams) != ["cmt-alias", "ma"]:
+    print("  an inline comment must not become an alias:", sorted(f["name"] for f in fams))
+    sys.exit(1)
+write_compose("ma", "env1.yml", "services:\n  s:\n    environment:\n"
+              "      - SERVED_MODEL_NAME=env-eq\n")
+write_compose("ma", "env2.yml", "services:\n  s:\n    environment:\n"
+              "      SERVED_MODEL_NAME: env-colon\n")
+fams, _ = gen2(MF2, arow("ma", "env1.yml"), arow("ma", "env2.yml"))
+if sorted(f["name"] for f in fams) != ["env-colon", "env-eq", "ma"]:
+    print("  SERVED_MODEL_NAME must be read as `KEY: value` and `KEY=value` too:",
+          sorted(f["name"] for f in fams))
+    sys.exit(1)
+
+# (l) a covered route whose engines declare no ladder at all is skipped WITH a warning.
+#     omp-setup's completeness refusal tells the operator to read the warning above it and
+#     names a default fix, so a silent skip here would send them looking for a problem that
+#     is not theirs — the fix is the profile's effort block.
+write_compose("ml", "nol.yml", alias_list("a-nol"))
+fams, err = gen2([dict(MF[0], models=["ml"])],
+                 {"model": "ml", "effort": {"compose_default": "low"},
+                  "compose_path": Q % ("ml", "nol.yml")})
+if fams:
+    print("  a route with no ladder must generate nothing, got:", fams)
+    sys.exit(1)
+if "declares an effort ladder" not in err or "Fix:" not in err:
+    print("  the no-ladder skip must warn and name the profile to fix, got:", err)
     sys.exit(1)
 PY
 

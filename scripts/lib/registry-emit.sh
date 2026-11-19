@@ -760,11 +760,12 @@ def _effort_facts(model_id: str, engine_id: str, compose_path: str):
         "supports_none": (pair["supports_none"] if "supports_none" in pair
                           else (False if ee.get("supports_none") is False
                                 else None)),
-        # off_switch stays OUT of the payload: neither _port_effort nor
-        # model_info reads it, and neither do the omp overrides — their
-        # ladders are the guard-pinned FAMILIES copy in omp-setup.sh, which
-        # carries no off_switch at all — so carrying it here only invited
-        # silent drift with no consumer (#2055 review it6-7a, it9-5).
+        # off_switch stays OUT of the payload: neither _port_effort nor model_info reads
+        # it, and the omp generator that builds the overrides from THIS emit
+        # (effort_families.compute_families) reads no off_switch either — so carrying it
+        # here only invites silent drift with no consumer (#2055 review it6-7a, it9-5).
+        # The rationale is unchanged by #1951 phase 3; only its wording was, because the
+        # hand-written FAMILIES copy it pointed at is now generated from these facts.
         "default_when_unset": pair.get("default_when_unset"),
         "maps": dict(pair["maps"]) if pair.get("maps") else None,
         "refuses": list(pair["refuses"]) if pair.get("refuses") else None,

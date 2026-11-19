@@ -195,10 +195,11 @@ for _fam in MODEL_FAMILIES:
     if _missing:
         raise SystemExit(
             "omp-setup: %s is covered by MODEL_FAMILIES but no family was generated for "
-            "%s (the warning above says why), so omp would send it no effort (#1690). "
-            "Fix: give one of its routes a default that reaches a nameable rung — "
-            "REASONING_EFFORT in the compose, or the pair's default_when_unset in the "
-            "engine profile." % (", ".join(_models), ", ".join(_missing)))
+            "%s, so omp would send it no effort (#1690). The effort_families warning above "
+            "names the fix per name: a route with no ladder needs its model/engine pair's "
+            "effort block in the profiles; a route whose default reaches no nameable rung "
+            "needs REASONING_EFFORT in the serving compose, or the pair's default_when_unset."
+            % (", ".join(_models), ", ".join(_missing)))
 
 def override(mid: str, fam: dict) -> str:
     c = fam["compat"]

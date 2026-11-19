@@ -305,6 +305,17 @@ by_cp = {}
 for v in registry_variants("."):
     if v.get("compose_path"):
         by_cp.setdefault(v["compose_path"], []).append(v)
+
+# The lookup below keys the emit's compose_path against the scan's path strings. If the
+# two ever disagree in FORM (a ./ prefix, a trailing slash), every variant of that compose
+# is skipped and `carried` under-counts with no signal — the same ABSENT-fact failure this
+# check exists to catch. A compose the registry does not list may legitimately be
+# scan-only; the reverse direction is the breakage.
+_scan_paths = {s[0] for s in scan}
+_invisible = sorted(p for p in by_cp if p not in _scan_paths)
+if _invisible:
+    bad(f"the emit reports {len(_invisible)} compose path(s) the scan above cannot see, so "
+        f"the carry check silently skips their variants: {_invisible[:5]}")
 carried = 0
 for path, text, _levels, _mid in scan:
     m = default_re.search(text)
@@ -723,10 +734,13 @@ else:
     # deliberately does NOT re-derive the ladder: a copy of the generator's logic here
     # would pass a bug present in both copies.
     from litellm_sync import registry_variants
+    # the served-id rule is the GENERATOR's, not a copy of it: a third fallback added
+    # there must change this check too, not silently desync it
+    from effort_families import served_id
     variants = registry_variants(os.getcwd())
     served: "dict[str, list]" = {}
     for v in variants:
-        sid = v.get("served_name") or v.get("model")
+        sid = served_id(v)
         if sid:
             served.setdefault(sid, []).append(v)
 
