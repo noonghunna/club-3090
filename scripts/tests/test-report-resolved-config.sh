@@ -102,7 +102,11 @@ ENV_IN="$(printf '%s\n' \
   "MEM_FRACTION=0.82" \
   "CHUNKED_PREFILL_SIZE=2048" \
   "VLLM_USE_DEEP_GEMM=1" \
-  "GENESIS_ENABLE_P100=1")"
+  "GENESIS_ENABLE_P100=1" \
+  "FLASH_MAX_SEQS=8" \
+  "QE_REASONING_EFFORT=low" \
+  "QE_API_KEY=${PLANT_PREFIX}" \
+  "FLASH_SECRET_TOKEN=${PLANT_BARE}")"
 
 if [[ -f "$RENDER" ]]; then
   ENV_OUT="$(printf '%s\n' "$ENV_IN" | python3 "$RENDER" env-filter 2>&1)"
@@ -117,6 +121,10 @@ has   "allowlist passes a tuning knob"                "$ENV_OUT" "MEM_FRACTION=0
 has   "allowlist passes a second tuning knob"         "$ENV_OUT" "CHUNKED_PREFILL_SIZE=2048"
 has   "allowlist passes an allowed VLLM_ prefix var"  "$ENV_OUT" "VLLM_USE_DEEP_GEMM=1"
 has   "allowlist passes an allowed GENESIS_ var"      "$ENV_OUT" "GENESIS_ENABLE_P100=1"
+# QEngine's settings are env-only, FLASH_ (Flash-Next) and QE_ (both engines) (#2103): a
+# docker-run QEngine otherwise showed no configuration at all, every knob withheld.
+has   "allowlist passes QEngine's FLASH_ knobs"       "$ENV_OUT" "FLASH_MAX_SEQS=8"
+has   "allowlist passes QEngine's QE_ knobs"          "$ENV_OUT" "QE_REASONING_EFFORT=low"
 # ...and withhold every secret shape.
 hasnt "HUGGING_FACE_HUB_TOKEN value withheld"         "$ENV_OUT" "$PLANT_HF"
 hasnt "HUGGING_FACE_HUB_TOKEN name withheld"          "$ENV_OUT" "HUGGING_FACE_HUB_TOKEN"
@@ -127,6 +135,8 @@ hasnt "a company secret is withheld"                  "$ENV_OUT" "$PLANT_BARE"
 # wholesale, and BOTH contain a real credential var upstream.
 hasnt "VLLM_API_KEY withheld despite the allowed VLLM_ prefix"       "$ENV_OUT" "VLLM_API_KEY"
 hasnt "LLAMA_ARG_API_KEY withheld despite the allowed LLAMA_ARG_ prefix" "$ENV_OUT" "LLAMA_ARG_API_KEY"
+hasnt "QE_API_KEY withheld despite the allowed QE_ prefix"        "$ENV_OUT" "QE_API_KEY"
+hasnt "FLASH_SECRET_TOKEN withheld despite the allowed FLASH_ prefix" "$ENV_OUT" "FLASH_SECRET_TOKEN"
 hasnt "no planted prefix-family secret value leaks"   "$ENV_OUT" "$PLANT_PREFIX"
 has   "withheld vars are counted, not silently dropped" "$ENV_OUT" "# withheld:"
 

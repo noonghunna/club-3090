@@ -120,6 +120,9 @@ source "$REPO_ROOT/scripts/lib/gpu-select.sh"
 source "$REPO_ROOT/scripts/lib/report_calib.sh"
 # strata_maya_log_path: Project Maya's engine log, which is not where Strata's is (#1706, #1752)
 source "$REPO_ROOT/scripts/lib/strata-log.sh"
+# qengine_*: QEngine's runtime lines and boot block, the reader health.sh shares (#2103)
+# shellcheck source=lib/qengine-log.sh
+source "$REPO_ROOT/scripts/lib/qengine-log.sh"
 # shellcheck source=lib/results-dir.sh
 source "$REPO_ROOT/scripts/lib/results-dir.sh"
 # shellcheck source=lib/p2p-state.sh
@@ -1266,7 +1269,9 @@ else
     fi
 
   else
-  # ---- vLLM probe set (default for engine=vllm or unknown) ----
+  # ---- vLLM probe set (engine=vllm, sglang, qengine or unknown) ----
+  # QEngine runs it for the interconnect line below and adds its own blocks at the end (#2103); its
+  # vLLM- and SGLang-specific greps find nothing in a QEngine log and print nothing.
   subsection "Container Python / CUDA versions"
   {
     # vLLM version + Torch CUDA build vs host driver mismatch is one of the
@@ -1480,8 +1485,54 @@ else
     fi
   } | redact
 
+  if [[ "$ENGINE_KIND" == "qengine" ]]; then
+    # ---- QEngine (#2103): what it is doing now, from the last 200 log lines, read by
+    # lib/qengine-log.sh (health.sh's reader). Its boot facts (pool, host-RAM split, parallel mode,
+    # thinking budget) are under "Engine configuration (resolved)".
+    subsection "Container engine state (QEngine)"
+    {
+      _qe_logs="$(docker logs --tail 200 "$CONTAINER" 2>&1 || true)"
+      _qe_spec="$(printf '%s\n' "$_qe_logs" | qengine_spec_lines)"
+      if [[ -n "$_qe_spec" ]]; then
+        _qe_al="$(printf '%s\n' "$_qe_spec" | qengine_spec_al)"
+        _qe_split="$(printf '%s\n' "$_qe_spec" | qengine_spec_split)"
+        echo "- **Spec-decode (MTP + lookup):** mean acceptance length ${_qe_al} over the last $(printf '%s\n' "$_qe_spec" | wc -l | tr -d ' ') multi-step line(s)${_qe_split:+; latest split ${_qe_split}}"
+      else
+        echo "- **Spec-decode:** no acceptance line in the last 200 log lines (no request since boot, or drafting off)"
+      fi
+      _qe_ec="$(printf '%s\n' "$_qe_logs" | qengine_expert_cache)"
+      if [[ -n "$_qe_ec" ]]; then
+        echo "- **Expert cache:** ${_qe_ec}"
+      else
+        echo "- **Expert cache:** no hit-rate line in the last 200 log lines (the 27B has no expert cache)"
+      fi
+      _qe_chat="$(printf '%s\n' "$_qe_logs" | qengine_request_lines 3)"
+      if [[ -n "$_qe_chat" ]]; then
+        echo "- **Recent requests (last 3):**"
+        echo '```'
+        echo "$_qe_chat"
+        echo '```'
+      else
+        echo "- **Recent requests:** none in the last 200 log lines"
+      fi
+    } | redact
+
+    # A QEngine boot is 55-65 lines, so "the first 200" was mostly per-request lines: the bulk
+    # #2103's reporter had to trim to fit GitHub's issue size limit. The boot block stops at the
+    # graph warm-up; what came after is the runtime tail, without the per-request lines above.
+    subsection "Boot log (up to QEngine's graph warm-up)"
+    docker logs "$CONTAINER" 2>&1 | qengine_boot_block 200 | redact | details "Boot log, up to the graph warm-up line (at most 200 lines)"
+    subsection "Engine log since boot (last 40 lines, per-request and [stats] lines left out)"
+    _qe_tail="$(docker logs "$CONTAINER" 2>&1 | qengine_runtime_tail 40)"
+    if [[ -n "$_qe_tail" ]]; then
+      printf '%s\n' "$_qe_tail" | redact | details "Last 40 lines since boot, without the per-request and [stats] lines"
+    else
+      echo "_Nothing logged after the boot besides per-request lines (or the boot never reached its graph warm-up, and the boot log above holds everything)._"
+    fi
+  else
   subsection "Full boot log (first 200 lines)"
   docker logs "$CONTAINER" 2>&1 | head -200 | redact | details "First 200 lines of docker logs"
+  fi
   fi  # end of vLLM/llamacpp engine branch
 fi  # end of "if no container running"
 
