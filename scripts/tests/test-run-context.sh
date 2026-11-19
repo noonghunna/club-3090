@@ -358,6 +358,9 @@ printf '%s' 'MysteryServing 9.9' > "$tmp/owned_by"
 out="$(PATH="${bin}:$PATH" MOCK_ARGV="$tmp/argv" PREFLIGHT_NO_AUTODETECT=1 \
   URL=http://mock MODEL=mock-model CONTAINER=id-mock bash "$WRAPPER" --quick --enable-thinking 2>&1)"
 assert_contains "$out" "[run-context] no engine recognised"
+# ...and only the note: the "could not resolve the server's defaults from the boot log" line would
+# say a boot log was read when none was.
+assert_not_contains "$out" "from the boot log"
 assert_not_contains "$out" "rig (qengine)"
 # (c) precedence: a run whose NAME types the engine never consults owned_by —
 #     the same vllm-mock leg as §8 with a qengine owned_by planted to contradict it.
