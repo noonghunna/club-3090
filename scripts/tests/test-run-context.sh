@@ -213,13 +213,20 @@ case "\$1" in
           case "\$*" in *Config.Image*) echo "ghcr.io/bpx03/qengine:1.3.5.9" ;; *RestartCount*) echo 0 ;; esac
         else cat "$tmp/qe-inspect.json"; fi
         exit 0 ;;
+      *id-mock*)
+        # #2084: started by bare image ID under a name with no engine prefix —
+        # both the container name and Config.Image are silent on the engine.
+        if [[ -n "\${fmt:-}" ]]; then
+          case "\$*" in *Config.Image*) echo "sha256:feedfacedeadbeef00112233445566778899aabbccddeeff0011223344556677" ;; *RestartCount*) echo 0 ;; esac
+        else cat "$tmp/id-inspect.json"; fi
+        exit 0 ;;
     esac
     [[ "\$2" == "vllm-mock" || "\$3" == "vllm-mock" ]] || exit 1
     if [[ -n "\${fmt:-}" ]]; then
       case "\$*" in *Config.Image*) echo "vllm/vllm-openai:v0.30.0" ;; *RestartCount*) echo 0 ;; esac
     else cat "$tmp/inspect.json"; fi ;;
   logs)
-    [[ "\$2" == "qengine-mock" ]] && cat "$tmp/qe-boot.log" || cat "$tmp/boot.log" ;;
+    case "\$2" in qengine-mock|id-mock) cat "$tmp/qe-boot.log" ;; *) cat "$tmp/boot.log" ;; esac ;;
   *) exit 1 ;;
 esac
 MOCK
@@ -227,9 +234,15 @@ cat > "$bin/nvidia-smi" <<MOCK
 #!/usr/bin/env bash
 case "\$*" in *nvlink*) cat "$tmp/nvlink-off.txt" ;; *query-gpu*) cat "$tmp/smi.csv" ;; esac
 MOCK
-cat > "$bin/curl" <<'MOCK'
+cat > "$bin/curl" <<MOCK
 #!/usr/bin/env bash
-for a in "$@"; do case "$a" in */v1/models) printf '{"data":[{"id":"mock-model"}]}'; exit 0 ;; esac; done
+for a in "\$@"; do case "\$a" in */v1/models)
+  if [[ -f "$tmp/owned_by" ]]; then
+    printf '{"data":[{"id":"mock-model","owned_by":"%s"}]}' "\$(cat "$tmp/owned_by")"
+  else
+    printf '{"data":[{"id":"mock-model"}]}'
+  fi
+  exit 0 ;; esac; done
 exit 0
 MOCK
 cat > "$bin/benchlocal-cli" <<'MOCK'
@@ -324,6 +337,35 @@ out="$(PATH="${bin}:$PATH" MOCK_ARGV="$tmp/argv" PREFLIGHT_NO_AUTODETECT=1 \
 argv="$(cat "$tmp/argv")"
 assert_contains "$argv" $'--server-defaults\n{"temperature":0.7,'
 assert_contains "$argv" '"presence_penalty":1.5'
+
+# ---------------------------------------------------------------- 10. owned_by types what name and image cannot (#2084)
+echo "--- 10. #2084: container silent, image silent — /v1/models owned_by types the run ---"
+printf '[{"Config":{"Image":"sha256:feedfacedeadbeef00112233445566778899aabbccddeeff0011223344556677","Env":["PATH=/usr/bin"]},"HostConfig":{"DeviceRequests":[{"Driver":"nvidia","Count":0,"DeviceIDs":["0","1"]}]}}]' > "$tmp/id-inspect.json"
+# (a) positive: the endpoint declares QEngine; the run must be TYPED, not a guess.
+printf '%s' 'QEngine 1.3.6 (build 444b2e4)' > "$tmp/owned_by"
+: > "$tmp/argv"
+out="$(PATH="${bin}:$PATH" MOCK_ARGV="$tmp/argv" PREFLIGHT_NO_AUTODETECT=1 \
+  URL=http://mock MODEL=mock-model CONTAINER=id-mock bash "$WRAPPER" --quick --enable-thinking 2>&1)"
+argv="$(cat "$tmp/argv")"
+[[ -n "$argv" ]] || fail "the id-mock leg never reached benchlocal-cli — its assertion would be vacuous"
+assert_contains "$out" "[quality-test] rig (qengine):"
+assert_contains "$argv" $'--server-defaults\n{"temperature":1.0,'
+assert_not_contains "$out" "no engine recognised"
+# (b) negative: an owned_by the resolver does not know stays unknown — with the note,
+#     never silence (today a log reads as "looked and found nothing" when nothing was looked for).
+printf '%s' 'MysteryServing 9.9' > "$tmp/owned_by"
+: > "$tmp/argv"
+out="$(PATH="${bin}:$PATH" MOCK_ARGV="$tmp/argv" PREFLIGHT_NO_AUTODETECT=1 \
+  URL=http://mock MODEL=mock-model CONTAINER=id-mock bash "$WRAPPER" --quick --enable-thinking 2>&1)"
+assert_contains "$out" "[run-context] no engine recognised"
+assert_not_contains "$out" "rig (qengine)"
+# (c) precedence: a run whose NAME types the engine never consults owned_by —
+#     the same vllm-mock leg as §8 with a qengine owned_by planted to contradict it.
+printf '%s' 'QEngine 1.3.6 (build 444b2e4)' > "$tmp/owned_by"
+: > "$tmp/argv"; out="$(qrun --sampling-from-server)"; argv="$(cat "$tmp/argv")"
+assert_contains "$out" "[quality-test] rig (vllm):"
+assert_contains "$argv" $'--server-defaults\n{"temperature":0.7,'
+rm -f "$tmp/owned_by"
 
 if [[ "$fails" -gt 0 ]]; then
   echo "test-run-context: $fails failure(s)" >&2
