@@ -46,6 +46,7 @@
 # ---------------------------------------------------------------------------
 # Project Maya (github.com/mw00/project-maya) runs MiniMax-M3.1-Flash on its own maya-mm3 engine: see
 # docs/engines/STRATA_MAYA.md.
+# Siblings: ../../single/maya-s/dspark.yml (single), ../../multi4/maya-s/dspark.yml (multi4).
 #   bash scripts/switch.sh --force strata-maya/minimax31-flash-dual-maya-s
 # The launcher (../../../launcher/) checks the files' SHA-256 once, builds Maya's pack on the data volume, writes
 # the config and starts Maya's server. By hand: SETUP_ONLY=1 docker compose -f dspark.yml run --rm strata-maya,

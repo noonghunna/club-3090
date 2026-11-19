@@ -9,10 +9,12 @@
 #                       benched is not the one that did the one-time work)
 #   REPACK=1            build the pack again (the learned expert profile is kept)
 #   VERIFY=0            skip the one-time SHA-256 check of the files
-#   MAYA_GPUS           the cards to start on, as the container sees them: "0,1" (dual); the compose sets it
+#   MAYA_GPUS           the cards to start on, as the container sees them: "0,1" (dual), "0,1,2,3" (multi4); the compose sets it
 #   MAYA_TP             --tp: 1 (the compose default) on two GPUs is a layer split, each GPU its own layers with
 #                       whole experts; 2 is tensor parallel (each expert split between the cards: on two 3090s,
 #                       in a hand-run test at 8K context, 2026-10-25: decode +9% / +5%, a 6K prompt -35%)
+#                       On four cards, 4 forms a group with a GGUF whose experts use 256-value blocks (UD-IQ3_S)
+#                       only with MAYA_DS4_TP_GGUF_UNEVEN=1; otherwise the engine logs "tensor parallel 4 -> 1"
 #   CONTEXT             --max-context (default 65536: Maya's own DeepSeek default until v1.1.30, which picks 256K
 #                       where the PC's VRAM and RAM hold the model); ds4_settings.py validates it (>= 4096)
 #   REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, TEMP, TOP_P, TOP_K, MIN_P, PRESENCE_PENALTY,

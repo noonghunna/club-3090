@@ -49,6 +49,7 @@ or not yet at all. If you have the hardware, your run is the validation:
 | **DeepSeek-V4-Flash-0731 (284B MoE)** | `llamacpp-club3090/deepseek-flash-multi4-q8-moecache` | 🧪 experimental | 204800 | [multi4/unsloth-q8-kxl/moecache.yml](../models/deepseek-v4-flash-0731/llamacpp-club3090/compose/multi4/unsloth-q8-kxl/moecache.yml) | [#951](https://github.com/noonghunna/club-3090/discussions/951) | host RAM ≥ 156 GB |
 |  | `llamacpp/deepseek-flash-multi4-q8` | 🧪 experimental | 204800 | [multi4/unsloth-q8-kxl/offload.yml](../models/deepseek-v4-flash-0731/llama-cpp/compose/multi4/unsloth-q8-kxl/offload.yml) | [#909](https://github.com/noonghunna/club-3090/discussions/909) | host RAM ≥ 120 GB |
 | **DeepSeek-V4-Flash-Vision-Exp (deepseek4 MoE)** | `llamacpp-club3090/deepseek-flash-vision-multi4-q8-moecache` | 🧪 experimental | 204800 | [multi4/unsloth-ud-q8kxl/moecache.yml](../models/deepseek-v4-flash-vision-exp/llamacpp-club3090/compose/multi4/unsloth-ud-q8kxl/moecache.yml) | — | host RAM ≥ 156 GB |
+| **DeepSeek-V4.1-Flash-1017 (MoE with Engram tables)** | `strata-maya/deepseek41-flash-multi4-ud-iq3-s` | 🐣 incubating | 65536 | [multi4/ud-iq3-s/base.yml](../models/deepseek-v4.1-flash-1017/strata-maya/compose/multi4/ud-iq3-s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 229 GB |
 | **Gemma 4 31B** | `vllm/gemma-31b-multi-google-qat-w4a16` | ⚠️ caveats | 262144 | [multi4/google-qat-w4a16/base.yml](../models/gemma-4-31b/vllm/compose/multi4/google-qat-w4a16/base.yml) | — |  |
 | **GLM-5.3-Flash (320.76B MoE, Z.ai)** | `llamacpp-club3090/glm53-flash-multi4-iq3xxs-moecache` | 🧪 experimental | 204800 | [multi4/unsloth-ud-iq3xxs/moecache.yml](../models/glm-5.3-flash/llamacpp-club3090/compose/multi4/unsloth-ud-iq3xxs/moecache.yml) | [#1117](https://github.com/noonghunna/club-3090/discussions/1117) | host RAM ≥ 110 GB |
 |  | `llamacpp-club3090/glm53-flash-multi4-iq4xs-moecache` | 🧪 experimental | 204800 | [multi4/unsloth-ud-iq4xs/moecache.yml](../models/glm-5.3-flash/llamacpp-club3090/compose/multi4/unsloth-ud-iq4xs/moecache.yml) | [#1117](https://github.com/noonghunna/club-3090/discussions/1117) | host RAM ≥ 142 GB |
@@ -61,6 +62,7 @@ or not yet at all. If you have the hardware, your run is the validation:
 |  | `strata-maya/glm53-flash-multi4-maya-s` | 🐣 incubating | 131072 | [multi4/maya-s/base.yml](../models/glm-5.3-flash/strata-maya/compose/multi4/maya-s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 66 GB |
 |  | `strata-maya/glm53-flash-multi4-maya-s24` | 🐣 incubating | 131072 | [multi4/maya-s24/base.yml](../models/glm-5.3-flash/strata-maya/compose/multi4/maya-s24/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 68 GB |
 | **Inkling-Small (263B MoE, Thinking Machines)** | `llamacpp-club3090/inkling-small-multi4-iq4xs-moecache` | 🧪 experimental | 262144 | [multi4/unsloth-ud-iq4xs/moecache.yml](../models/inkling-small/llamacpp-club3090/compose/multi4/unsloth-ud-iq4xs/moecache.yml) | [#959](https://github.com/noonghunna/club-3090/discussions/959) | host RAM ≥ 121 GB |
+| **MiniMax-M3.1-Flash (428B MoE, MiniMax)** | `strata-maya/minimax31-flash-multi4-maya-s` | 🐣 incubating | 204800 | [multi4/maya-s/dspark.yml](../models/minimax-m3.1-flash/strata-maya/compose/multi4/maya-s/dspark.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 102 GB |
 | **Nemotron-3 Puzzle 75B-A9B (hybrid Mamba2+attn MoE)** | `vllm/nemotron-75b-multi-mtp` | ⚠️ caveats | 200000 | [multi4/nvfp4/mtp.yml](../models/nemotron-3-puzzle-75b/vllm/compose/multi4/nvfp4/mtp.yml) | [#706](https://github.com/noonghunna/club-3090/discussions/706) | needs sm 9.0+ (not a 3090) |
 | **Qwen 3.6 27B** | `vllm/qwen-27b-multi-fast` | ⚠️ caveats | 262144 | [multi4/autoround-int4/mtp.yml](../models/qwen3.6-27b/vllm/compose/multi4/autoround-int4/mtp.yml) | [#733](https://github.com/noonghunna/club-3090/discussions/733) |  |
 |  | `vllm/qwen-27b-multi-max` | ⚠️ caveats | 262144 | [multi4/fp8/mtp.yml](../models/qwen3.6-27b/vllm/compose/multi4/fp8/mtp.yml) | — |  |
@@ -89,7 +91,7 @@ or not yet at all. If you have the hardware, your run is the validation:
 |  | `vllm/thinkingcap38-27b-multi4-ultrafast` | 🧪 experimental | 262144 | [multi4/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/autoround-int4/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 |  | `vllm/thinkingcap38-27b-multi4-ultramax` | 🧪 experimental | 262144 | [multi4/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/fp8/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 
-42 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+44 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table multi4 -->
 
 ### 8 cards
