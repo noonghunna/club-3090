@@ -57,6 +57,7 @@
 # Project Maya (github.com/mw00/project-maya) runs DeepSeek-V4.1-Flash-1017 on its own maya-ds4 engine: see
 # docs/engines/STRATA_MAYA.md. UD-IQ3_S is in Maya's own setup list (--ds4-quant gguf-iq3_s); this compose uses
 # the same files and SHA-256s.
+# Siblings: ../../multi4/ud-iq3-s/base.yml (multi4); the other quants sit beside this folder.
 #   bash scripts/switch.sh --force strata-maya/deepseek41-flash-dual-ud-iq3-s
 # The launcher (../../../launcher/) checks the files' SHA-256 once, builds Maya's pack on the data volume, writes
 # the config and starts Maya's server. By hand: SETUP_ONLY=1 docker compose -f base.yml run --rm strata-maya,
