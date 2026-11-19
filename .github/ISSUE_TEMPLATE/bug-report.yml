@@ -71,7 +71,9 @@ body:
       label: Rig report — paste contents of `bash scripts/report.sh [--verify | --soak | --bench | --studio | --full]`
       description: |
         Pick the flag that matches your bug type (see table above). Run from the
-        repo root, then paste the contents here.
+        repo root, then paste the contents here. If `report.sh` says the file is
+        over GitHub's 65,536-character limit (`--full` often is), attach the file
+        as well (drag it into the box) and paste the parts that matter.
 
         If you can't run the script (no shell access on the rig, etc.), note that
         in "Anything else?" below and share whatever you have.

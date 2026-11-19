@@ -20,7 +20,9 @@ body:
         version (commit, Genesis pin, vLLM image SHA), boot log highlights (engine
         config, KV pool sizing, patches applied), runs **verify-full + verify-stress +
         SOAK_MODE=continuous + canonical bench** — all in one ~35-min pass.
-        Paste the file contents below.
+        Paste the file contents below, and **attach `my-rig.md` as well** (drag it
+        into the box): GitHub takes at most 65,536 characters in an issue, and a
+        `--full` report can run past that. `report.sh` says how long the file is.
 
         Soak-continuous is the only test that catches Cliff 2b (multi-turn
         accumulating-context cliff at ~25K tokens). Until upstream lands a fix,
