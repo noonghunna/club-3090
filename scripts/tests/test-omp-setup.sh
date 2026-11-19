@@ -146,6 +146,32 @@ PER_ID = {
 SUMMARY_FALSE = {"flashnext", "glm"}
 BUDGET = {"qwen38", "flashnext"}
 
+# Which engines' rows answer to each route id. The ladder and the default can stay equal
+# while the SET behind them changes — that is exactly what the union rule did (Prism's rows
+# counted under qwen3.8-27b, Strata's, bucko's and ExLlamaV3's under qwen3.8-flash-next),
+# and one profile fact (a refusal) would then move a shared id no such engine serves. Row
+# COUNTS are not pinned: a new slug on an existing engine is not a fact change.
+PER_ID_ENGINES = {
+    "qwen3.8-27b": {"llama-cpp-local", "qengine", "sglang-stable", "vllm-hyperqwen",
+                    "vllm-stable"},
+    "qwen3.8-27b-fp8": {"vllm-stable"},
+    "qwen3.8-27b-prism-ternary": {"llama-cpp-prism"},
+    "qwen3.8-27b-prism-ternary-mtp": {"llama-cpp-prism"},
+    "qwen3.8-27b-swift15": {"llama-cpp-local"},
+    "thinkingcap38-27b": {"sglang-stable", "vllm-stable"},
+    "thinkingcap38-27b-fp8": {"vllm-stable"},
+    "qwen3.8-flash-next": {"llamacpp-club3090-v1.6", "qengine", "vllm-stable"},
+    "qwen3.8-flash-next-exl3-3.05bpw": {"exllamav3"},
+    "qwen3.8-flash-next-exl3-4.05bpw": {"exllamav3"},
+    "qwen3.8-flash-next-iq3_s": {"strata"},
+    "qwen3.8-flash-next-unsloth-ud-iq3_xxs": {"strata"},
+    "qwen3.8-flash-next-unsloth-ud-iq4_xs-v31": {"strata"},
+    "qwen3.8-flash-next-ple": {"bucko-vllm"},
+    "qwen3.8-flash-next-swift15": {"bucko-vllm"},
+    "swift-1.5-iq3_s": {"strata"},
+    "glm-5.3-flash": {"llamacpp-club3090-v1.6", "strata-maya"},
+}
+
 def group(name):
     return PER_ID[name][2]
 
@@ -192,6 +218,7 @@ def after_flags(tokens):
         i += 1
     return out
 served = set()
+by_file = {}
 for model_dir in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next",
                   "glm-5.3-flash"):
     for f in sorted(glob.glob(os.path.join(root, "models", model_dir, "*", "compose",
@@ -232,7 +259,24 @@ for model_dir in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next"
                           open(p, encoding="utf-8").read()) if os.path.exists(p) else None
             if m:
                 got.add(m.group(1))
+        by_file[f] = got
         served |= got
+# A compose that declares NO name is served under the name the registry declares for it —
+# the one place a route takes its name from the registry (HyperQwen today; the gateway's
+# booting placeholder is the only other user, and the ready render renames it). The
+# generator's rule is "the compose's names, or the registry name when it declares none",
+# so the expected set here needs the same fallback.
+COVERED = {"qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next", "glm-5.3-flash"}
+sys.path.insert(0, os.path.join(root, "scripts", "lib"))     # the registry reader only
+from litellm_sync import registry_variants
+for _v in registry_variants(root):
+    if _v.get("model") not in COVERED or not _v.get("compose_path"):
+        continue
+    _cp = os.path.join(root, _v["compose_path"])
+    if _cp in by_file and not by_file[_cp]:
+        _sid = _v.get("served_name") or _v.get("model")
+        if _sid:
+            served.add(_sid)
 if not served:
     sys.exit("the compose scan found no served names — the scan itself is broken")
 mo = yaml.safe_load(open(printed, encoding="utf-8"))["providers"]["club"]["modelOverrides"]
@@ -252,10 +296,21 @@ PY
 #    routes together shows up here as a wrong ladder or a wrong default, not as a passing
 #    "alias == canonical" assertion. This is the rendering test the #1949 drift tripwire
 #    becomes.
-PYTHONPATH="$T" python3 - "$PRINTED" <<'PY' || bad "omp-setup.sh overrides: a route's ladder or default drifted from the registry (see above)"
+PYTHONPATH="$T:$ROOT/scripts/lib" python3 - "$ROOT" "$PRINTED" <<'PY' || bad "omp-setup.sh overrides: a route's ladder, engine set or default drifted from the registry (see above)"
 import sys, yaml
-from omp_expected import PER_ID
-mo = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["providers"]["club"]["modelOverrides"]
+from omp_expected import PER_ID, PER_ID_ENGINES
+from litellm_sync import registry_variants
+from effort_families import route_names
+root, printed = sys.argv[1], sys.argv[2]
+# Which engines answer to each route, from the registry rows through the SAME route_names
+# the generator uses. The independent guard for the NAME set is check 8's own YAML walk;
+# this one pins the SET behind a name, which is the column that moved while every ladder
+# and default stayed equal.
+engines = {}
+for _v in registry_variants(root):
+    for _n in route_names(root, _v)[0]:
+        engines.setdefault(_n, set()).add(_v.get("engine"))
+mo = yaml.safe_load(open(printed, encoding="utf-8"))["providers"]["club"]["modelOverrides"]
 bad = []
 for name in sorted(set(PER_ID) | set(mo)):
     if name not in PER_ID:
@@ -273,6 +328,12 @@ for name in sorted(set(PER_ID) | set(mo)):
         bad.append("%s: default %r != %r" % (name, t.get("defaultLevel"), exp_default))
     if v.get("maxTokens") != 32768:
         bad.append("%s: maxTokens %r != 32768" % (name, v.get("maxTokens")))
+    exp_engines = PER_ID_ENGINES.get(name)
+    if exp_engines is not None and engines.get(name) != exp_engines:
+        bad.append("%s: served by %s, expected %s — the ladder can stay equal while the "
+                   "engines behind it change, and one refusal fact would then move this id "
+                   "for engines that never serve it"
+                   % (name, sorted(engines.get(name) or []), sorted(exp_engines)))
 if bad:
     print("  " + "\n  ".join(bad), file=sys.stderr); sys.exit(1)
 PY
@@ -595,9 +656,11 @@ else:
 #     overrides, and its ladder and compat would depend on which row was read first. A
 #     route NO client family covers must not trip it — an unrelated catalog entry must not
 #     break the render.
-# (g) an alias is its OWN family: the engines behind it are not the engines behind the
-#     shared id, so its ladder and its default are its own. The per-id rule #1951 settled,
-#     which a per-registry-name grouping breaks.
+# (g) a row counts under the names its OWN compose boots under: the alias route gets its
+#     own ladder and default, and the shared route is built only from the rows that answer
+#     to it. The per-id rule #1951 settled, which grouping by the registry name breaks —
+#     and the registry-name-AND-alias union breaks it the other way, letting an engine that
+#     serves only its own alias move the shared id.
 alias_root = os.path.join(sys.argv[2], "aliascase")
 MF2 = [dict(MF[0], models=["ma"]), dict(MF[0], models=["mb"])]
 Q = "models/%s/engine/compose/single/q/%s"
@@ -630,9 +693,28 @@ got = {f["name"]: (f["ids"], f["ladder"]) for f in fams}
 if got.get("a-only") != (["a-only"], {"efforts": ["low", "high"], "defaultLevel": "high"}):
     print("  an alias is its own family, with its own ladder and its own default:", got)
     sys.exit(1)
-if got.get("ma") != (["ma"], {"efforts": ["low"], "defaultLevel": "low"}):
-    print("  the shared id keeps the shared ladder — the alias must not widen it or steal "
-          "its default:", got)
+if got.get("a-shared") != (["a-shared"], {"efforts": ["low"], "defaultLevel": "low"}):
+    print("  the shared route keeps the ladder of the rows that answer to it — the alias "
+          "must not widen it or steal its default:", got)
+    sys.exit(1)
+if "ma" in got:
+    print("  a compose that declares its own name is not a route for the registry name — "
+          "nothing here answers to `ma`:", sorted(got))
+    sys.exit(1)
+
+# (g2) the refusal half, which is what the union actually broke. The catalog shape exactly:
+#     the shared route is the registry served_name, one compose declares it, the other
+#     declares ONLY its own alias — and under the union its row still counts under the
+#     registry name. A Prism `refuses: [low]` then rounded the main qwen3.8-27b id up, and a
+#     Strata `refuses: [xhigh]` took xhigh away from llama.cpp, QEngine and vLLM, which
+#     never refuse it.
+write_compose("ma", "main.yml", alias_list("ma"))
+write_compose("ma", "ref.yml", alias_list("a-ref"))
+fams, _ = gen2(MF2, arow("ma", "main.yml"), arow("ma", "ref.yml", refuses=["high"]))
+got = {f["name"]: f["ladder"]["efforts"] for f in fams}
+if got.get("ma") != ["low", "high"] or got.get("a-ref") != ["low"]:
+    print("  a row whose compose declares only an alias must not drop a rung from the "
+          "shared route:", got)
     sys.exit(1)
 
 write_compose("ma", "c1.yml", alias_list("shared-name"))
@@ -663,7 +745,7 @@ write_compose("mb", "eq.yml",
               "services:\n  s:\n    command: tabby --served-model-name=eq-alias "
               "--port 8080\n")
 fams, _ = gen2(MF2, arow("ma", "flags.yml"), arow("mb", "eq.yml"))
-if sorted(f["name"] for f in fams) != ["eq-alias", "ma", "mb", "my-alias"]:
+if sorted(f["name"] for f in fams) != ["eq-alias", "my-alias"]:
     print("  the one-line form must stop at the next flag and read --flag=value:",
           sorted(f["name"] for f in fams))
     sys.exit(1)
@@ -681,9 +763,9 @@ write_compose("ma", "nd2.yml", alias_list("a-nd2"))
 fams, err = gen2(MF2, arow("ma", "shared.yml"),
                  arow("ma", "nd2.yml", served="a-nd2", refuses=["low"],
                       compose_default=None))
-if sorted(f["name"] for f in fams) != ["a-shared", "ma"]:
+if sorted(f["name"] for f in fams) != ["a-shared"]:
     print("  a fallback the route's own ladder does not carry must skip that id, not the "
-          "model's route:", sorted(f["name"] for f in fams))
+          "rest of its model:", sorted(f["name"] for f in fams))
     sys.exit(1)
 if "no route serving this name" not in err or "Fix:" not in err:
     print("  the skipped fallback must warn and name the fix, got:", err)
@@ -696,7 +778,7 @@ if "no route serving this name" not in err or "Fix:" not in err:
 write_compose("ma", "cmt.yml",
               "services:\n  s:\n    command: llama-server --alias cmt-alias # the alias\n")
 fams, _ = gen2(MF2, arow("ma", "cmt.yml"))
-if sorted(f["name"] for f in fams) != ["cmt-alias", "ma"]:
+if sorted(f["name"] for f in fams) != ["cmt-alias"]:
     print("  an inline comment must not become an alias:", sorted(f["name"] for f in fams))
     sys.exit(1)
 write_compose("ma", "env1.yml", "services:\n  s:\n    environment:\n"
@@ -704,7 +786,7 @@ write_compose("ma", "env1.yml", "services:\n  s:\n    environment:\n"
 write_compose("ma", "env2.yml", "services:\n  s:\n    environment:\n"
               "      SERVED_MODEL_NAME: env-colon\n")
 fams, _ = gen2(MF2, arow("ma", "env1.yml"), arow("ma", "env2.yml"))
-if sorted(f["name"] for f in fams) != ["env-colon", "env-eq", "ma"]:
+if sorted(f["name"] for f in fams) != ["env-colon", "env-eq"]:
     print("  SERVED_MODEL_NAME must be read as `KEY: value` and `KEY=value` too:",
           sorted(f["name"] for f in fams))
     sys.exit(1)

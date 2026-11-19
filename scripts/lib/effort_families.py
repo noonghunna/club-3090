@@ -17,18 +17,21 @@ default are derived, not written down:
     nameable default falls back to its model's own default, and if that is unreachable
     too it gets NO family — see compute_families.
 
-Why per route ID and not per registry served name: the gateway names its routes from the
-engine's own /v1/models (litellm_sync.probe), NOT from the registry, so a compose's
---served-model-name / --alias (one-line or YAML list), Strata's "<family>-<quant>" name
-and Project Maya's model_name are each a route of their own. omp matches modelOverrides
-by that route name, so an alias with no override reads as a non-reasoning model, is sent
-no effort, and runs the engine's own (slowest) default — the #1690 regression. But two
-names of one model are also served by DIFFERENT engines: Strata's own id accepts high/max
-and defaults to xhigh, while the shared qwen3.8-flash-next id is served by engines that
-refuse those rungs and default to low. Grouping by the registry name would hand every
-alias the shared id's ladder and default, which is the per-id rule #1951 settled. So the
-route id IS the family, `ids` is [that id], and only maxTokens and compat are keyed by
-model.
+Why per route ID, and only the names the COMPOSE declares: the gateway names its routes
+from the engine's own /v1/models (litellm_sync.probe), NOT from the registry, so a
+compose's --served-model-name / --alias (one-line or YAML list), Strata's
+"<family>-<quant>" name and Project Maya's model_name are each a route of their own. omp
+matches modelOverrides by that route name, so an alias with no override reads as a
+non-reasoning model, is sent no effort, and runs the engine's own (slowest) default — the
+#1690 regression. But two names of one model are also served by DIFFERENT engines: Strata's
+own id accepts high/max and defaults to xhigh, while the shared qwen3.8-flash-next id is
+served by engines that refuse those rungs and default to low. Grouping by the registry name
+would hand every alias the shared id's ladder and default, which is the per-id rule #1951
+settled — and the union (registry name AND the compose's names) is wrong the other way: a
+compose that boots only under its own alias never answers to the registry name (only the
+booting placeholder does, and the ready render renames it), so counting its row under both
+lets one engine move a shared id it does not serve. So the route id IS the family, `ids` is
+[that id], and only maxTokens and compat are keyed by model.
 
 The only thing still written down is the client-side wire knowledge that has no
 home in the profiles: which models the family covers, and each model's reply cap
@@ -241,10 +244,10 @@ def compose_served_names(root, compose_path):
 def route_names(root, row):
     """(every name this registry row's route answers to, its compose unreadable?).
 
-    The name the registry declares plus every alias the serving compose boots under.
-    Each of those is a route the gateway names on its own (see the module docstring), so
-    each needs its own override — and its own ladder, because the engines behind two
-    names of one model are not the same set.
+    The names the SERVING COMPOSE boots under, and the registry name only when the compose
+    declares none — see the module docstring for why the union is wrong. Each of those is a
+    route the gateway names on its own, so each needs its own override and its own ladder:
+    the engines behind two names of one model are not the same set.
     """
     sid = served_id(row)
     names = {sid} if sid else set()
@@ -253,7 +256,7 @@ def route_names(root, row):
         return names, False
     if not os.path.exists(cp if os.path.isabs(cp) else os.path.join(root, cp)):
         return names, True
-    return names | compose_served_names(root, cp), False
+    return compose_served_names(root, cp) or names, False
 
 
 def compute_families(variants, model_families, root=None):

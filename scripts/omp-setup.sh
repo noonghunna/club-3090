@@ -68,7 +68,7 @@ auto, ext_dir, root = sys.argv[5] == "1", sys.argv[6], sys.argv[7]
 # source the gateway's model_info renders), not written down: load the generator and
 # the registry reader before the block below that needs them.
 sys.path.insert(0, os.path.join(root, "scripts", "lib"))
-from effort_families import compute_families, served_id, validate_model_families
+from effort_families import compute_families, route_names, validate_model_families
 from litellm_sync import registry_variants
 
 # --auto-switching needs the gateway on THIS machine. The club-live extension
@@ -190,8 +190,13 @@ for _fam in MODEL_FAMILIES:
             "would send it no effort (#1690). Fix: restore the model's registry entry, or "
             "drop the entry from MODEL_FAMILIES in scripts/omp-setup.sh."
             % ", ".join(_fam["models"]))
-    _missing = sorted({served_id(v) for v in variants if v.get("model") in _models}
-                      - _rendered)
+    # The expected set is the ROUTES the model's rows answer to, not their registry
+    # served_names: under the declared-names rule a compose that boots under its own alias
+    # is not a route for the registry name, so served_id here would demand an override for
+    # a name nothing serves — and a skipped alias route would only warn where a registry
+    # name refuses.
+    _missing = sorted({n for v in variants if v.get("model") in _models
+                       for n in route_names(root, v)[0]} - _rendered)
     if _missing:
         raise SystemExit(
             "omp-setup: %s is covered by MODEL_FAMILIES but no family was generated for "

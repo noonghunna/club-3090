@@ -720,34 +720,38 @@ else:
     if not ovr:
         bad("omp-setup --print rendered no modelOverrides")
     # The FAMILIES are generated from the registry (the same source the gateway's
-    # model_info renders), not written down: one family per ROUTE ID, the registry names
-    # plus every alias a compose boots under, each with the ladder and default its own
-    # routes give it. Check 9 in test-omp-setup.sh pins every route's ladder/default
-    # against a golden table and its check 8 pins the rendered NAME SET against an
-    # independent scan of the composes — those are the golden tripwires, independent of the
-    # generator's own logic. This check adds what neither can see: every registry served
-    # name of a model that renders at all must render (one silently missing served name is
-    # a silent no-effort), at least one alias must render (the gateway names routes from
-    # the engine's /v1/models, so a compose's --alias route with no override is #1690), and
-    # a rendered default must be a rung of its own ladder (omp's fallback for a missing
-    # default is the ladder TOP, so an off-ladder default is a silent xhigh). It
+    # model_info renders), not written down: one family per ROUTE ID — the names each
+    # compose boots under, or the registry name where a compose declares none — each with
+    # the ladder and default its own routes give it. Check 9 in test-omp-setup.sh pins
+    # every route's ladder/default and its engine set against a golden table, and its
+    # check 8 pins the rendered NAME SET against an independent scan of the composes —
+    # those are the golden tripwires, independent of the generator's own logic. This check
+    # adds what neither can see: every route of a model that renders at all must render
+    # (one silently missing route is a silent no-effort), at least one alias must render
+    # (the gateway names routes from the engine's /v1/models, so a compose's --alias route
+    # with no override is #1690), and a rendered default must be a rung of its own ladder
+    # (omp's fallback for a missing default is the ladder TOP, so an off-ladder default is
+    # a silent xhigh). It
     # deliberately does NOT re-derive the ladder: a copy of the generator's logic here
     # would pass a bug present in both copies.
     from litellm_sync import registry_variants
-    # the served-id rule is the GENERATOR's, not a copy of it: a third fallback added
-    # there must change this check too, not silently desync it
-    from effort_families import served_id
+    # the ROUTE rule is the GENERATOR's, not a copy of it: a change to which names count
+    # as a route must change this check too, not silently desync it
+    from effort_families import route_names, served_id
     variants = registry_variants(os.getcwd())
-    served: "dict[str, list]" = {}
+    routes: "dict[str, list]" = {}
+    registry_names = set()
     for v in variants:
         sid = served_id(v)
         if sid:
-            served.setdefault(sid, []).append(v)
+            registry_names.add(sid)
+        for n in route_names(os.getcwd(), v)[0]:
+            routes.setdefault(n, []).append(v)
 
     families = {}
     for mid, o in ovr.items():
         t = o.get("thinking") or {}
-        rows = served.get(mid, [])
+        rows = routes.get(mid, [])
         families[mid] = {"ids": [mid], "ladder": list(t.get("efforts") or []),
                          "dflt": t.get("defaultLevel"),
                          "model": rows[0].get("model") if rows else None}
@@ -758,11 +762,11 @@ else:
             bad(f"family {fam}: defaultLevel {f['dflt']!r} is not a rung of its "
                 f"ladder {f['ladder']} (omp's fallback for a missing default is the "
                 f"ladder TOP — an off-ladder default is a silent xhigh)")
-    for name, rows in sorted(served.items()):
+    for name, rows in sorted(routes.items()):
         if rows[0].get("model") in rendered_models and name not in ovr:
-            bad(f"{name}: its model has overrides rendered but this served name has none "
+            bad(f"{name}: its model has overrides rendered but this route has none "
                 f"— the gateway serves it as its own route, so omp sends it no effort")
-    if not [n for n in ovr if n not in served]:
+    if not [n for n in ovr if n not in registry_names]:
         bad("no alias override rendered at all: the gateway names routes from the "
             "engine's /v1/models, so every compose --alias / --served-model-name route "
             "would get no effort (#1690)")
@@ -778,9 +782,9 @@ else:
                 f"it — the omp surface never renders its ladder; add it to a "
                 f"MODEL_FAMILIES entry in omp-setup.sh")
     if len(failures) == n0:
-        print(f"  ✓ omp-setup renders {len(ovr)} overrides: every served name of a "
-              f"covered model, aliases included, every default on its own ladder, every "
-              f"probed model covered")
+        print(f"  ✓ omp-setup renders {len(ovr)} overrides: every route of a covered "
+              f"model, the compose-declared aliases included, every default on its own "
+              f"ladder, every probed model covered")
 
 
 sys.exit(1 if failures else 0)
