@@ -14,7 +14,9 @@
 # unrelated slug / by an unknown container, docker failing), paths that escape the
 # model dir (a symlink below the folder, `..` in a recipe, a recipe file that is a
 # symlink, a top-level link to a parent of MODEL_DIR), a recipe with no `files:`,
-# a stale dry-run digest, no confirmation, a per-slug saved GGUF_FILE override.
+# a stale dry-run digest, no confirmation, a per-slug saved GGUF_FILE override, and a
+# recipe folder emptied whole — hf's trees/ listing with it, also when the weights were
+# already gone (the folder c3 would otherwise show as a partial download forever).
 # Plus ONE read-only assertion on the real catalog: the shared DFlash2 drafter.
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
@@ -101,6 +103,12 @@ weights:
     path: fx-lf
     files: [fx-lf.gguf]
     verify_glob: "*.gguf"
+  swift:
+    hf_repo: fixture/fx-swift
+    local_subdir: fx-swift-gguf/IQ3_S
+    path: fx-swift-gguf/IQ3_S
+    files: [fx-swift-00001-of-00002.gguf, fx-swift-00002-of-00002.gguf]
+    verify_glob: "*.gguf"
   up:
     hf_repo: fixture/fx-up
     local_subdir: fx-up
@@ -156,6 +164,7 @@ llama_compose() {   # <path under models/> <model file> [drafter file]
   entry llamacpp/fx-dotdot        dotdot   "$(llama_compose dotdot/base.yml fx-dd/x.gguf)"
   entry llamacpp/fx-linkfile      linkfile "$(llama_compose linkfile/base.yml fx-lf/fx-lf.gguf)"
   entry llamacpp/fx-up            up       "$(llama_compose up/base.yml fx-up/outside-up/victim.gguf)"
+  entry llamacpp/fx-swift         swift    "$(llama_compose swift/base.yml fx-swift-gguf/IQ3_S/fx-swift-00001-of-00002.gguf)"
   mkdir -p "$R/models/fx/vllm/compose/single/awq"
   printf 'services:\n  fx:\n    image: vllm/vllm-openai:v0.34.0\n    command: >\n      --model /root/.cache/huggingface/fx-awq\n' \
     > "$R/models/fx/vllm/compose/single/awq/base.yml"
@@ -182,11 +191,20 @@ build_model_dir() {
   mk "$MD/fx-gguf/.cache/huggingface/download/Q4/fx-Q4-00001-of-00002.gguf.metadata" meta
   mk "$MD/fx-gguf/notes.txt" "a user's own file beside the quants"
   mk "$MD/fx-gguf/.setup-verified.tsv" "sha	1	1	main	Q8/fx-Q8.gguf"
+  mk "$MD/fx-gguf/.cache/huggingface/trees/1111111111111111111111111111111111111111.json" "[]"
   mk "$MD/fx-drafter-gguf/fx-drafter.gguf"
   # folder bookkeeping: goes only once nothing else is left in the recipe's folder
   mk "$MD/fx-drafter-gguf/.setup-verified.tsv" "sha	1	1	main	fx-drafter.gguf"
   mk "$MD/fx-drafter-gguf/.cache/huggingface/CACHEDIR.TAG" tag
   mk "$MD/fx-drafter-gguf/.cache/huggingface/.gitignore" "*"
+  # newer huggingface_hub also keeps the repo's file listing per revision
+  mk "$MD/fx-drafter-gguf/.cache/huggingface/trees/2222222222222222222222222222222222222222.json" "[]"
+  # a recipe folder two levels down, as hf --local-dir leaves it (the Swift-1.5 layout)
+  mk "$MD/fx-swift-gguf/IQ3_S/fx-swift-00001-of-00002.gguf"; mk "$MD/fx-swift-gguf/IQ3_S/fx-swift-00002-of-00002.gguf"
+  mk "$MD/fx-swift-gguf/IQ3_S/.cache/huggingface/CACHEDIR.TAG" tag
+  mk "$MD/fx-swift-gguf/IQ3_S/.cache/huggingface/.gitignore" "*"
+  mk "$MD/fx-swift-gguf/IQ3_S/.cache/huggingface/trees/3333333333333333333333333333333333333333.json" "[]"
+  mk "$MD/fx-swift-gguf/IQ3_S/.cache/huggingface/download/fx-swift-00001-of-00002.gguf.metadata" meta
   mk "$MD/fx-other-gguf/fx-other.gguf"
   # symlinked folder: MODEL_DIR/fx-linked-gguf → another disk
   mk "$DISK2/fx-linked-gguf/A/fx-a.gguf"; mk "$DISK2/fx-linked-gguf/B/fx-b.gguf"
@@ -276,6 +294,8 @@ check "Q8 file and its hf record are gone, the emptied Q8 dir too" \
   '[[ ! -e "$MD/fx-gguf/Q8/fx-Q8.gguf" && ! -e "$MD/fx-gguf/.cache/huggingface/download/Q8/fx-Q8.gguf.metadata" && ! -d "$MD/fx-gguf/Q8" ]]'
 check "Q4 beside it, its hf record, a user's own file and the folder's verify marker all survive" \
   '[[ -f "$MD/fx-gguf/Q4/fx-Q4-00001-of-00002.gguf" && -f "$MD/fx-gguf/Q4/fx-Q4-00002-of-00002.gguf" && -f "$MD/fx-gguf/.cache/huggingface/download/Q4/fx-Q4-00001-of-00002.gguf.metadata" && -f "$MD/fx-gguf/notes.txt" && -f "$MD/fx-gguf/.setup-verified.tsv" ]]'
+check "  …and so does the folder's hf repo listing (trees/), since the folder is not emptied" \
+  '[[ -f "$MD/fx-gguf/.cache/huggingface/trees/1111111111111111111111111111111111111111.json" ]]'
 
 echo "== shared folder: refused while another slug needs the files (deprecated counts)"
 build_model_dir
@@ -366,6 +386,49 @@ check "a stale digest: rc 4, nothing deleted" '[[ $rc == 4 && -f "$MD/fx-gguf/Q8
 dig="$(W remove llamacpp/fx-q8 --dry-run --json | J 'd["digest"]')"
 W remove llamacpp/fx-q8 --yes --digest "$dig" >/dev/null; rc=$?
 check "positive control — the current digest: rc 0, deleted" '[[ $rc == 0 && ! -e "$MD/fx-gguf/Q8/fx-Q8.gguf" ]]'
+
+echo "== a recipe folder emptied whole: hf's trees/ listing goes with it"
+build_model_dir
+SW="$MD/fx-swift-gguf/IQ3_S"
+SWT="$SW/.cache/huggingface/trees/3333333333333333333333333333333333333333.json"
+RMY llamacpp/fx-swift >/dev/null; rc=$?
+check "remove: rc 0, the shards, their hf record, the tags and the trees/ listing are gone with the folder" \
+  '[[ $rc == 0 && ! -e "$SW" ]]'
+check "  the recipe folder's parent is left (never above local_subdir)" '[[ -d "$MD/fx-swift-gguf" ]]'
+
+echo "== the weights already gone, only bookkeeping left (what an older remove left): cleared"
+build_model_dir
+rm -f "$SW"/fx-swift-0000*.gguf "$SW/.cache/huggingface/download/fx-swift-00001-of-00002.gguf.metadata"
+rmdir "$SW/.cache/huggingface/download"
+out="$(W remove llamacpp/fx-swift --dry-run --json)"; rc=$?
+check "dry run: rc 0, the 3 bookkeeping files only, the folder would be rmdir'd" \
+  '[[ $rc == 0 && "$(J "len(d[\"targets\"]), all(t[\"bookkeeping\"] for t in d[\"targets\"]), \"$SW\" in d[\"dirs\"]" <<<"$out")" == "(3, True, True)" ]]'
+check "  its note says the weights are already gone (not 'nothing on disk')" \
+  '[[ "$(J "\" \".join(d[\"notes\"])" <<<"$out")" == *"already gone"* ]]'
+check "  dry run deleted nothing" '[[ -f "$SWT" ]]'
+RMY llamacpp/fx-swift >/dev/null; rc=$?
+check "remove: rc 0, the folder is gone" '[[ $rc == 0 && ! -e "$SW" ]]'
+
+echo "== the weights already gone, only empty folders left: still removable"
+build_model_dir
+rm -rf "$SW"; mkdir -p "$SW/.cache/huggingface/download"
+out="$(W remove llamacpp/fx-swift --dry-run --json)"; rc=$?
+check "dry run: rc 0, no files, the empty folders would be rmdir'd" \
+  '[[ $rc == 0 && "$(J "len(d[\"targets\"]), \"$SW\" in d[\"dirs\"], \"$SW/.cache/huggingface/download\" in d[\"dirs\"]" <<<"$out")" == "(0, True, True)" ]]'
+out="$(RMY llamacpp/fx-swift)"; rc=$?
+check "remove: rc 0, the folder is gone, and it says so" \
+  '[[ $rc == 0 && ! -e "$SW" && "$out" == *"empty folder(s)"* ]]'
+
+echo "== the weights gone, but a file of the user's own beside the bookkeeping: nothing goes"
+build_model_dir
+rm -f "$SW"/fx-swift-0000*.gguf
+mk "$SW/my-notes.txt" "a user's own file"
+out="$(W remove llamacpp/fx-swift --dry-run --json)"; rc=$?
+check "dry run: rc 0, only the gone shard's own hf record (and the dir it empties) — no folder bookkeeping" \
+  '[[ $rc == 0 && "$(J "\" \".join([t[\"path\"][len(\"$SW/\"):] for t in d[\"targets\"]] + [x[len(\"$SW/\"):] for x in d[\"dirs\"]])" <<<"$out")" == ".cache/huggingface/download/fx-swift-00001-of-00002.gguf.metadata .cache/huggingface/download" ]]'
+RMY llamacpp/fx-swift >/dev/null; rc=$?
+check "remove: the user's file, the tags and the trees/ listing all survive" \
+  '[[ $rc == 0 && -f "$SW/my-notes.txt" && -f "$SWT" && -f "$SW/.cache/huggingface/CACHEDIR.TAG" ]]'
 
 echo "== real catalog, read-only: a drafter shared across two models"
 mkdir -p "$T/empty-md"
