@@ -98,137 +98,276 @@ need = [d["provider"]["appendOnlyContext"] == "on", d["compaction"]["thresholdPe
 sys.exit(0 if all(need) else 1)
 PY
 
-# 8. the override keys are EXACTLY the ids the Qwen3.8-family composes serve —
-#    the registry's model name is not what omp sees; the engine's /v1/models (and
-#    so the gateway) says --served-model-name / --alias. A key nothing serves is
-#    dead; a served id with no key gets no effort (#1444: ThinkingCap's key was
-#    `thinkingcap-qwen3.8-27b` while every ThinkingCap compose served thinkingcap38-27b).
-python3 - "$ROOT" <<'PY' || bad "omp-setup.sh QWEN38_IDS must equal the ids the Qwen3.8-family composes serve"
-import ast, glob, io, re, sys
-root = sys.argv[1]
-src = io.open(f"{root}/scripts/omp-setup.sh", encoding="utf-8").read()
-keys = set(ast.literal_eval(re.search(r"^QWEN38_IDS = (\[.*\])$", src, re.M).group(1)))
+# The expected render, written down on purpose: one row per ROUTE ID, with the ladder and
+# the default that route's own engines give it. Check 8 derives the NAME SET from the
+# composes independently (a YAML walk of command/entrypoint, not the generator's regex
+# scan); this table pins what each name must RENDER. A new alias in the catalog fails
+# check 8 first — add it here when you add one. The third field is the CLIENT family (the
+# MODEL_FAMILIES entry) that supplies maxTokens and the compat pins: those ARE keyed by
+# model, unlike the ladder. ("family" in effort_families.STRATA_FAMILY_NAMES is a different
+# thing — Strata's own weights family, which names a served id.)
+cat > "$T/omp_expected.py" <<'PY'
+QWEN = ["low", "medium", "xhigh"]
+WIDE = ["low", "medium", "xhigh", "high", "max", "minimal"]
+STRATA = ["low", "medium", "xhigh", "high", "max"]
+PER_ID = {
+    # qwen3.8-27b: 42 routes over 6 engines; the aliases are single-engine routes, so
+    # each carries what its own engine accepts and what its own compose defaults to.
+    "qwen3.8-27b": (QWEN, "low", "qwen38"),
+    "qwen3.8-27b-fp8": (WIDE, "low", "qwen38"),               # vLLM only
+    # llama-cpp-prism: the profile records only the evidenced `unknown_name: xhigh` fact,
+    # no `low` refusal, so the ladder keeps low — while docs/engines/LLAMA_CPP_PRISM.md
+    # reports upstream treats low as xhigh. That evidence question belongs to the engine
+    # profile (phase 1/2); this row pins what the EMIT says, and test-pi-setup /
+    # test-dsh-setup name the same aliases as a KNOWN GAP for their own hand-written map.
+    "qwen3.8-27b-prism-ternary": (QWEN, "medium", "qwen38"),
+    "qwen3.8-27b-prism-ternary-mtp": (QWEN, "medium", "qwen38"),
+    "qwen3.8-27b-swift15": (QWEN, "medium", "qwen38"),        # llama.cpp
+    "thinkingcap38-27b": (WIDE, "low", "qwen38"),
+    "thinkingcap38-27b-fp8": (WIDE, "low", "qwen38"),
+    # qwen3.8-flash-next: the shared id is served by engines that refuse high/max and
+    # default low; Strata's and bucko's own ids keep high/max and their xhigh default,
+    # which is the #1951 per-id decision this table exists to hold.
+    "qwen3.8-flash-next": (QWEN, "low", "flashnext"),
+    "qwen3.8-flash-next-exl3-3.05bpw": (QWEN, "xhigh", "flashnext"),   # ExLlamaV3
+    "qwen3.8-flash-next-exl3-4.05bpw": (QWEN, "xhigh", "flashnext"),
+    "qwen3.8-flash-next-iq3_s": (STRATA, "xhigh", "flashnext"),        # Strata
+    "qwen3.8-flash-next-unsloth-ud-iq3_xxs": (STRATA, "xhigh", "flashnext"),
+    "qwen3.8-flash-next-unsloth-ud-iq4_xs-v31": (STRATA, "xhigh", "flashnext"),
+    "qwen3.8-flash-next-ple": (QWEN, "xhigh", "flashnext"),            # bucko-vllm
+    "qwen3.8-flash-next-swift15": (QWEN, "xhigh", "flashnext"),
+    "swift-1.5-iq3_s": (STRATA, "xhigh", "flashnext"),                 # Strata, swift
+    "glm-5.3-flash": (["low", "high", "max"], "max", "glm"),
+}
+# The client families, not the routes: which sit behind LiteLLM's Responses -> chat
+# bridge (omp adds `summary: "auto"` to the reasoning object and the bridge forwards the
+# whole {effort, summary} as reasoning_effort, which those engines reject), and which
+# take the chat-completions thinking budget.
+SUMMARY_FALSE = {"flashnext", "glm"}
+BUDGET = {"qwen38", "flashnext"}
+
+# Which engines' rows answer to each route id. The ladder and the default can stay equal
+# while the SET behind them changes — that is exactly what the union rule did (Prism's rows
+# counted under qwen3.8-27b, Strata's, bucko's and ExLlamaV3's under qwen3.8-flash-next),
+# and one profile fact (a refusal) would then move a shared id no such engine serves. Row
+# COUNTS are not pinned: a new slug on an existing engine is not a fact change.
+PER_ID_ENGINES = {
+    "qwen3.8-27b": {"llama-cpp-local", "qengine", "sglang-stable", "vllm-hyperqwen",
+                    "vllm-stable"},
+    "qwen3.8-27b-fp8": {"vllm-stable"},
+    "qwen3.8-27b-prism-ternary": {"llama-cpp-prism"},
+    "qwen3.8-27b-prism-ternary-mtp": {"llama-cpp-prism"},
+    "qwen3.8-27b-swift15": {"llama-cpp-local"},
+    "thinkingcap38-27b": {"sglang-stable", "vllm-stable"},
+    "thinkingcap38-27b-fp8": {"vllm-stable"},
+    "qwen3.8-flash-next": {"llamacpp-club3090-v1.6", "qengine", "vllm-stable"},
+    "qwen3.8-flash-next-exl3-3.05bpw": {"exllamav3"},
+    "qwen3.8-flash-next-exl3-4.05bpw": {"exllamav3"},
+    "qwen3.8-flash-next-iq3_s": {"strata"},
+    "qwen3.8-flash-next-unsloth-ud-iq3_xxs": {"strata"},
+    "qwen3.8-flash-next-unsloth-ud-iq4_xs-v31": {"strata"},
+    "qwen3.8-flash-next-ple": {"bucko-vllm"},
+    "qwen3.8-flash-next-swift15": {"bucko-vllm"},
+    "swift-1.5-iq3_s": {"strata"},
+    "glm-5.3-flash": {"llamacpp-club3090-v1.6", "strata-maya"},
+}
+
+def group(name):
+    return PER_ID[name][2]
+
+def ladder(name):
+    return PER_ID[name][:2]
+PY
+
+# 8. the override keys are EXACTLY the names the covered models' routes answer to. The
+#    gateway names its routes from the engine's own /v1/models (litellm_sync.probe), NOT
+#    from the registry, so every alias a compose boots under — --served-model-name,
+#    --alias (one-line or YAML list), --served-name, SERVED_MODEL_NAME, Strata's
+#    "<family>-<quant>" name, Project Maya's model_name — is a route that needs its own
+#    override. A route without one reads as a non-reasoning model: omp sends no effort and
+#    the engine runs its own slowest default (#1690). Derived here INDEPENDENTLY of the
+#    generator: this walks the compose YAML and reads command/entrypoint tokens, where
+#    effort_families scans the same files as text with regexes.
+PRINTED="$T/omp-print.yml"
+bash "$ROOT/scripts/omp-setup.sh" --print > "$PRINTED" || bad "omp-setup --print failed"
+python3 - "$ROOT" "$PRINTED" <<'PY' || bad "omp-setup.sh modelOverrides keys must be exactly the names the covered models' routes serve"
+import glob, os, re, sys, yaml
+root, printed = sys.argv[1], sys.argv[2]
+FLAGS = {"--served-model-name", "--served-name", "--alias", "--model-name"}
+STRATA = {"qwen": "qwen3.8-flash-next", "swift": "swift-1.5",
+          "unsloth": "qwen3.8-flash-next-unsloth"}
+NAME = re.compile(r"[A-Za-z0-9][\w.\-]*")
+def resolved(tok):
+    m = re.fullmatch(r"\$\{\w+:-([^}]+)\}", tok)      # ${SERVED_NAME:-x} -> its default
+    return m.group(1) if m else tok
+def seq(v):
+    if v is None:
+        return []
+    return v.split() if isinstance(v, str) else [str(x) for x in v]
+def after_flags(tokens):
+    out, i = set(), 0
+    while i < len(tokens):
+        if tokens[i] in FLAGS:
+            i += 1
+            while i < len(tokens) and not tokens[i].startswith("-"):
+                n = resolved(tokens[i]).strip().strip("\"'")
+                if NAME.fullmatch(n):
+                    out.add(n)
+                i += 1
+            continue
+        i += 1
+    return out
 served = set()
-def add(tok):
-    m = re.fullmatch(r"\$\{\w+:-([^}]+)\}", tok)          # ${SERVED_NAME:-qwen3.8-27b} -> its default
-    if m: tok = m.group(1)
-    if re.fullmatch(r"[A-Za-z0-9][\w.\-]*", tok): served.add(tok)
-for d in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b"):
-    for f in glob.glob(f"{root}/models/{d}/*/compose/*/*/*.yml"):
-        lines = [l for l in io.open(f, encoding="utf-8").read().splitlines() if not l.lstrip().startswith("#")]
-        for i, l in enumerate(lines):
-            m = re.search(r"--(?:served-model-name|served-name|alias)\b(.*)$", l)   # served-name: QEngine's
-            if not m: continue
-            rest = m.group(1).strip().rstrip("\\").strip().strip('"')
-            if rest and not rest.startswith("-"):                    # one-line form
-                for tok in rest.split():
-                    add(tok.strip('"'))
-                continue
-            for nxt in lines[i + 1:]:                                # YAML list form
-                v = nxt.strip()
-                if not v.startswith("- ") or v[2:].lstrip().startswith("-"): break
-                add(v[2:].strip().strip("\"'"))
+by_file = {}
+for model_dir in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next",
+                  "glm-5.3-flash"):
+    for f in sorted(glob.glob(os.path.join(root, "models", model_dir, "*", "compose",
+                                           "*", "*", "*.yml"))):
+        doc = yaml.safe_load(open(f, encoding="utf-8")) or {}
+        services = doc.get("services") or {}
+        got = set()
+        for svc in services.values():
+            got |= after_flags(seq(svc.get("entrypoint")) + seq(svc.get("command")))
+            env = svc.get("environment") or {}
+            items = (env.items() if isinstance(env, dict) else
+                     [(str(e).split("=", 1)[0], str(e).split("=", 1)[-1]) for e in env])
+            for k, v in items:
+                if v is None or "SERVED" not in str(k).upper():
+                    continue
+                n = resolved(str(v)).strip().strip("\"'")
+                if NAME.fullmatch(n):
+                    got.add(n)
+        engine = f.split("/compose/")[0].split("/")[-1]
+        args = seq(next(iter(services.values()), {}).get("entrypoint"))
+        if engine == "strata":
+            at = next((j for j, a in enumerate(args) if a.endswith("strata-entrypoint.sh")),
+                      None)
+            fam = args[at + 1] if at is not None and len(args) > at + 1 else "qwen"
+            quant = args[at + 2].lower() if at is not None and len(args) > at + 2 else None
+            if quant is None:
+                p = os.path.join(f.split("/compose/")[0], "launcher",
+                                 "strata-entrypoint.sh")
+                m = re.search(r'^SET="\$\{2:-([^}"]+)\}"',
+                              open(p, encoding="utf-8").read(), re.M) if os.path.exists(p) \
+                    else None
+                quant = m.group(1).lower() if m else None
+            if fam in STRATA and quant:
+                got.add("%s-%s" % (STRATA[fam], quant))
+        elif engine == "strata-maya":
+            p = os.path.join(f.split("/compose/")[0], "launcher", "maya_prepare.py")
+            m = re.search(r'"model_name":\s*"([^"]+)"',
+                          open(p, encoding="utf-8").read()) if os.path.exists(p) else None
+            if m:
+                got.add(m.group(1))
+        by_file[f] = got
+        served |= got
+# A compose that declares NO name is served under the name the registry declares for it —
+# the one place a route takes its name from the registry (HyperQwen today; the gateway's
+# booting placeholder is the only other user, and the ready render renames it). The
+# generator's rule is "the compose's names, or the registry name when it declares none",
+# so the expected set here needs the same fallback.
+COVERED = {"qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next", "glm-5.3-flash"}
+sys.path.insert(0, os.path.join(root, "scripts", "lib"))     # the registry reader only
+from litellm_sync import registry_variants
+for _v in registry_variants(root):
+    if _v.get("model") not in COVERED or not _v.get("compose_path"):
+        continue
+    _cp = os.path.join(root, _v["compose_path"])
+    if _cp in by_file and not by_file[_cp]:
+        _sid = _v.get("served_name") or _v.get("model")
+        if _sid:
+            served.add(_sid)
 if not served:
-    sys.exit("found no served names — the scan itself is broken")
-if keys != served:
-    print(f"  served but no override: {sorted(served - keys)}   override nothing serves: {sorted(keys - served)}", file=sys.stderr)
+    sys.exit("the compose scan found no served names — the scan itself is broken")
+mo = yaml.safe_load(open(printed, encoding="utf-8"))["providers"]["club"]["modelOverrides"]
+if set(mo) != served:
+    print("  served but no override: %s\n  override nothing serves: %s"
+          % (sorted(served - set(mo)), sorted(set(mo) - served)), file=sys.stderr)
     sys.exit(1)
 PY
 
-# 9. the same for Qwen3.8-Flash-Next and GLM-5.3-Flash (Discussion #1690): without a
-#    key omp treated them as non-reasoning, sent NO effort, and every request ran at
-#    the server's slowest default. Two engines name the model themselves, so their ids
-#    are derived the way they derive them: Strata as "<family name>-<quant>" (its
-#    setup; the family is the argument after strata-entrypoint.sh in the compose's
-#    entrypoint, the quant the one after it, else the launcher's default set), Project Maya from its launcher's model_name. A compose whose
-#    id this can't tell fails, rather than going unchecked.
-python3 - "$ROOT" <<'PY' || bad "omp-setup.sh FLASH_NEXT_IDS / GLM53_IDS must equal the ids the Flash-Next / GLM composes serve"
-import ast, glob, io, os, re, sys
-root = sys.argv[1]
-src = io.open(f"{root}/scripts/omp-setup.sh", encoding="utf-8").read()
-def listed(name):
-    return set(ast.literal_eval(re.search(rf"^{name} = (\[.*?\])$", src, re.M | re.S).group(1)))
-STRATA_FAMILY = {"qwen": "qwen3.8-flash-next", "swift": "swift-1.5",
-                 "unsloth": "qwen3.8-flash-next-unsloth"}   # Strata setup.py FAMILIES[...]["name"]
-def read(p): return io.open(p, encoding="utf-8").read()
-def strata_quant(engine_dir):
-    # the launcher's default set: SET="${2:-IQ3_S}" (the compose's second argument overrides it)
-    m = re.search(r'^SET="\$\{2:-([^}"]+)\}"', read(f"{engine_dir}/launcher/strata-entrypoint.sh"), re.M)
-    return m.group(1).lower() if m else None
-def maya_name(engine_dir):
-    m = re.search(r'"model_name":\s*"([^"]+)"', read(f"{engine_dir}/launcher/maya_prepare.py"))
-    return m.group(1) if m else None
-def compose_ids(f):
-    out = set()
-    def add(tok):
-        tok = tok.strip().strip("\"'")
-        m = re.fullmatch(r"\$\{\w+:-([^}]+)\}", tok)
-        if m: tok = m.group(1)
-        if re.fullmatch(r"[A-Za-z0-9][\w.\-]*", tok): out.add(tok)
-    lines = [l for l in read(f).splitlines() if not l.lstrip().startswith("#")]
-    for i, l in enumerate(lines):
-        m = re.search(r"SERVED_MODEL_NAME:\s*\"?(\$\{SERVED_MODEL_NAME:-[^}]+\})", l)
-        if m: add(m.group(1))
-        m = re.search(r"--(?:served-model-name|served-name|alias|model-name)\b['\"]?(.*)$", l)   # served-name: QEngine's
-        if not m: continue
-        rest = m.group(1).strip().rstrip("\\").strip().strip("\"'")
-        if rest and not rest.startswith("-"):
-            for tok in rest.split(): add(tok)
-            continue
-        for nxt in lines[i + 1:]:                                    # YAML list form
-            v = nxt.strip()
-            val = v[2:].strip().strip("\"'") if v.startswith("- ") else ""
-            if not val or val.startswith("-"): break                 # the next flag ('--x' quoted too)
-            add(val)
-    engine_dir = f.split("/compose/")[0]
-    engine = os.path.basename(engine_dir)
-    if engine == "strata":
-        m = re.search(r"entrypoint:\s*\[([^\]]*)\]", read(f))
-        args = re.findall(r'"([^"]+)"', m.group(1)) if m else []
-        at = next((i for i, a in enumerate(args) if a.endswith("strata-entrypoint.sh")), None)   # the family follows it
-        fam = args[at + 1] if at is not None and len(args) > at + 1 else "qwen"
-        q = args[at + 2].lower() if at is not None and len(args) > at + 2 else strata_quant(engine_dir)
-        if fam in STRATA_FAMILY and q: out.add(f"{STRATA_FAMILY[fam]}-{q}")
-    elif engine == "strata-maya":
-        n = maya_name(engine_dir)
-        if n: out.add(n)
-    return out
-ok = True
-for model_dir, name in (("qwen3.8-flash-next", "FLASH_NEXT_IDS"), ("glm-5.3-flash", "GLM53_IDS")):
-    keys, served, unknown = listed(name), set(), []
-    for f in sorted(glob.glob(f"{root}/models/{model_dir}/*/compose/*/*/*.yml")):
-        got = compose_ids(f)
-        if not got: unknown.append(os.path.relpath(f, root))
-        served |= got
-    if unknown:
-        print(f"  {name}: can't tell what these serve — teach test-omp-setup: {unknown}", file=sys.stderr); ok = False
-    if keys != served:
-        print(f"  {name}: served but no override: {sorted(served - keys)}   override nothing serves: {sorted(keys - served)}", file=sys.stderr); ok = False
-sys.exit(0 if ok else 1)
-PY
 
-# 10. each family's ladder: Flash-Next takes the Qwen3.8 template's levels, GLM its
-#     own (it has no `medium`, and Project Maya 400s an effort it doesn't know). The
-#     new overrides send no reasoning summary — LiteLLM's Responses -> chat bridge
-#     (tabbyAPI and Maya routes) otherwise forwards the whole {effort, summary} object
-#     as reasoning_effort — while the Qwen3.8-27B ones stay as they were measured.
-bash "$ROOT/scripts/omp-setup.sh" --print | python3 -c '
+# 9. each route id's ladder and default are the ones the registry's per-variant effort
+#    facts derive for THAT ROUTE, not written down: the rungs every route serving the id
+#    accepts (its engines' levels minus any rung one refuses, plus the fold sources only
+#    when every route folds the same src->dst), and the LOWEST of those routes' compose
+#    defaults (an empty REASONING_EFFORT falling back to that engine's pair default).
+#    This is the per-id rule #1951 settled, and the shape guard: a family that lumps two
+#    routes together shows up here as a wrong ladder or a wrong default, not as a passing
+#    "alias == canonical" assertion. This is the rendering test the #1949 drift tripwire
+#    becomes.
+PYTHONPATH="$T:$ROOT/scripts/lib" python3 - "$ROOT" "$PRINTED" <<'PY' || bad "omp-setup.sh overrides: a route's ladder, engine set or default drifted from the registry (see above)"
 import sys, yaml
-mo = yaml.safe_load(sys.stdin.read())["providers"]["club"]["modelOverrides"]
+from omp_expected import PER_ID, PER_ID_ENGINES
+from litellm_sync import registry_variants
+from effort_families import route_names
+root, printed = sys.argv[1], sys.argv[2]
+# Which engines answer to each route, from the registry rows through the SAME route_names
+# the generator uses. The independent guard for the NAME set is check 8's own YAML walk;
+# this one pins the SET behind a name, which is the column that moved while every ladder
+# and default stayed equal.
+engines = {}
+for _v in registry_variants(root):
+    for _n in route_names(root, _v)[0]:
+        engines.setdefault(_n, set()).add(_v.get("engine"))
+mo = yaml.safe_load(open(printed, encoding="utf-8"))["providers"]["club"]["modelOverrides"]
 bad = []
-for mid, v in mo.items():
-    t, c = v.get("thinking") or {}, v.get("compat") or {}
-    if mid == "glm-5.3-flash":
-        if t.get("efforts") != ["low", "high", "max"] or t.get("defaultLevel") != "max": bad.append(f"{mid}: ladder {t}")
-        if c.get("supportsReasoningSummary") is not False: bad.append(f"{mid}: must set supportsReasoningSummary: false")
-    else:
-        if t.get("efforts") != ["low", "medium", "xhigh"]: bad.append(f"{mid}: ladder {t}")
-        flash = mid.startswith("qwen3.8-flash-next") or mid.startswith("swift-1.5")
-        if flash and c.get("supportsReasoningSummary") is not False: bad.append(f"{mid}: must set supportsReasoningSummary: false")
-        if not flash and "supportsReasoningSummary" in c: bad.append(f"{mid}: the 27B overrides keep their measured shape")
+for name in sorted(set(PER_ID) | set(mo)):
+    if name not in PER_ID:
+        bad.append("%s: rendered but not in the expected per-id table" % name)
+        continue
+    if name not in mo:
+        bad.append("%s: expected from the table but not rendered" % name)
+        continue
+    exp_ladder, exp_default = PER_ID[name][:2]
+    v = mo[name]
+    t = v.get("thinking") or {}
+    if t.get("efforts") != exp_ladder:
+        bad.append("%s: ladder %r != %r" % (name, t.get("efforts"), exp_ladder))
+    if t.get("defaultLevel") != exp_default:
+        bad.append("%s: default %r != %r" % (name, t.get("defaultLevel"), exp_default))
+    if v.get("maxTokens") != 32768:
+        bad.append("%s: maxTokens %r != 32768" % (name, v.get("maxTokens")))
+    exp_engines = PER_ID_ENGINES.get(name)
+    if exp_engines is not None and engines.get(name) != exp_engines:
+        bad.append("%s: served by %s, expected %s — the ladder can stay equal while the "
+                   "engines behind it change, and one refusal fact would then move this id "
+                   "for engines that never serve it"
+                   % (name, sorted(engines.get(name) or []), sorted(exp_engines)))
 if bad:
     print("  " + "\n  ".join(bad), file=sys.stderr); sys.exit(1)
-' || bad "omp-setup.sh overrides: wrong effort ladder or summary setting (see above)"
+PY
+
+
+# 10. the compat pins ride the right client family — keyed by MODEL, so the aliases of a
+#     model carry its pins too: supportsReasoningSummary: false on Flash-Next and GLM
+#     (omp adds `summary: "auto"` to the Responses reasoning object, and LiteLLM's
+#     Responses -> chat-completions bridge — tabbyAPI, Project Maya — would otherwise
+#     forward the whole {effort, summary} object as reasoning_effort, which both reject),
+#     and the 8192 thinking budget on the Qwen line (vLLM enforces it on the THINKING
+#     field, not the reply; SGLang ignores it).
+PYTHONPATH="$T" python3 - "$PRINTED" <<'PY' || bad "omp-setup.sh overrides: wrong compat pins (see above)"
+import sys, yaml
+from omp_expected import BUDGET, PER_ID, SUMMARY_FALSE, group
+mo = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["providers"]["club"]["modelOverrides"]
+bad = []
+for mid, v in sorted(mo.items()):
+    c = v.get("compat") or {}
+    g = group(mid) if mid in PER_ID else "?"
+    if g in SUMMARY_FALSE:
+        if c.get("supportsReasoningSummary") is not False:
+            bad.append("%s: must set supportsReasoningSummary: false" % mid)
+    elif "supportsReasoningSummary" in c:
+        bad.append("%s: the Qwen line keeps its measured shape (no summary pin)" % mid)
+    if g in BUDGET:
+        if c.get("extraBody", {}).get("thinking_token_budget") != 8192:
+            bad.append("%s: must pin the 8192 thinking budget" % mid)
+    elif "extraBody" in c:
+        bad.append("%s: no thinking budget on this family" % mid)
+if bad:
+    print("  " + "\n  ".join(bad), file=sys.stderr); sys.exit(1)
+PY
+
 
 # 7. the config.yml block the doc tells readers to paste == the overlay we ship
 python3 - "$ROOT/docs/CODING_AGENTS.md" "$ROOT/services/omp/omp-club.yml" <<'PY' || bad "docs/CODING_AGENTS.md's config.yml block and services/omp/omp-club.yml have drifted apart"
@@ -340,5 +479,351 @@ sys.exit(0 if json.load(io.open(sys.argv[1], encoding="utf-8"))["renderedCfg"] =
 PY
 
 
-[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == served ids, Flash-Next + GLM keys and ladders, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container)"
+# 11. the generator's edge shapes, on synthetic registry rows. The live catalog reaches
+#     none of these today — each is a state a future profile, a new served name, or a
+#     hand-edited MODEL_FAMILIES entry CAN reach, and the render must never emit a value
+#     omp would put on the wire. (a) a name whose routes reach no nameable default gets
+#     NO family plus a warning naming the profile to fix: a rendered None would go out as
+#     the effort name "None", and an omitted defaultLevel makes omp fall back to the
+#     ladder TOP, a silent xhigh — so the honest answer is no override at all. (b) a
+#     served name claimed by two models is refused, never resolved by row order. (c) the
+#     block shapes the emit legitimately produces for an unprofiled pair skip instead of
+#     crashing the setup.
+python3 - "$ROOT" "$T" <<'PY' || bad "effort_families edge shapes (see above)"
+import contextlib, io, os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "scripts", "lib"))
+from effort_families import compute_families
+
+MF = [{"models": ["m"], "maxTokens": 1024,
+       "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True}}]
+
+def gen(*rows):
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        fams = compute_families(list(rows), MF)
+    return fams, err.getvalue()
+
+def row(**eff):
+    return {"model": "m", "served_name": "x", "effort": eff}
+
+# (a) the only default is no rung and no fold reaches it -> no family, with a Fix: hint
+fams, err = gen(row(levels=["low", "medium"], compose_default="xhigh"))
+if fams:
+    print("  a name with no nameable default must generate no family, got:", fams)
+    sys.exit(1)
+if "no route serving this name" not in err or "Fix:" not in err:
+    print("  the skip must warn and name the fix, got:", err)
+    sys.exit(1)
+# a fold source that DOES reach it keeps the family, rendered as the SOURCE
+fams, _ = gen(row(levels=["low", "medium"], compose_default="xhigh", maps={"high": "xhigh"}))
+if [f["ladder"]["defaultLevel"] for f in fams] != ["high"]:
+    print("  a fold-target default must render as the source that reaches it:", fams)
+    sys.exit(1)
+
+# (b) two models under one served name -> refuse, never rows[0]
+try:
+    compute_families([{"model": "m", "served_name": "x",
+                       "effort": {"levels": ["low"], "compose_default": "low"}},
+                      {"model": "other", "served_name": "x",
+                       "effort": {"levels": ["low", "high"], "compose_default": "low"}}], MF)
+except ValueError as e:
+    if "one route name must map" not in str(e):
+        print("  the refusal must name the fix, got:", e)
+        sys.exit(1)
+else:
+    print("  a served name claimed by two models must raise, not pick rows[0]")
+    sys.exit(1)
+# the same refusal when rows[0] is the UNCOVERED model: the check must not sit behind
+# the coverage skip, or the guard depends on registry row order
+try:
+    compute_families([{"model": "other", "served_name": "x",
+                       "effort": {"levels": ["low"], "compose_default": "low"}},
+                      {"model": "m", "served_name": "x",
+                       "effort": {"levels": ["low"], "compose_default": "low"}}], MF)
+except ValueError as e:
+    if "one route name must map" not in str(e):
+        print("  the reversed-order refusal must name the fix, got:", e)
+        sys.exit(1)
+else:
+    print("  a collision whose first row is an uncovered model must still raise")
+    sys.exit(1)
+
+# (c) the shapes the emit really produces for an unprofiled pair: skip, never crash
+for label, v in (("no effort key at all", {"model": "m", "served_name": "x"}),
+                 ("budget-only block", row()),
+                 ("levels null with a compose default",
+                  row(levels=None, compose_default="low"))):
+    fams, _ = gen(v)
+    if fams:
+        print(f"  {label}: must generate no family, got:", fams)
+        sys.exit(1)
+# a maps that is not a dict is not a fold table: the base ladder survives, the fold does not
+fams, _ = gen(row(levels=["low"], maps="high:xhigh", compose_default="low"))
+if [f["ladder"] for f in fams] != [{"efforts": ["low"], "defaultLevel": "low"}]:
+    print("  a non-dict maps must be ignored, not crash or invent a fold:", fams)
+    sys.exit(1)
+# (d) the rules the live catalog's fold tables exercise, on synthetic rows: a refusal by
+#     ANY route drops the rung for all; a route with no fold table means NO fold sources;
+#     the default is the lowest of the routes' compose defaults; and two fold sources
+#     reaching one target resolve deterministically (ladder order), not by set iteration.
+fams, _ = gen(row(levels=["low", "medium"], compose_default="low"),
+              row(levels=["low", "medium"], refuses=["medium"], compose_default="low"))
+if [f["ladder"] for f in fams] != [{"efforts": ["low"], "defaultLevel": "low"}]:
+    print("  a refusal by any route must drop the rung for all:", fams)
+    sys.exit(1)
+fams, _ = gen(row(levels=["low", "medium", "xhigh"], maps={"high": "xhigh"},
+                  compose_default="low"),
+              row(levels=["low", "medium", "xhigh"], compose_default="low"))
+if [f["ladder"]["efforts"] for f in fams] != [["low", "medium", "xhigh"]]:
+    print("  a route with no fold table means no fold sources:", fams)
+    sys.exit(1)
+fams, _ = gen(row(levels=["low", "high"], compose_default="high"),
+              row(levels=["low", "high"], compose_default="low"))
+if [f["ladder"]["defaultLevel"] for f in fams] != ["low"]:
+    print("  the default must be the lowest of the routes' compose defaults:", fams)
+    sys.exit(1)
+# two fold sources reach one target: the earliest in ladder order wins, in every process
+import subprocess
+snippet = ("import sys; sys.path.insert(0, %r);"
+           "from effort_families import compute_families;"
+           "MF = [{'models': ['m'], 'maxTokens': 1024,"
+           " 'compat': {'supportsReasoningEffort': True,"
+           "            'qwenTemplateReasoningEffort': True}}];"
+           "case = [{'model': 'm', 'served_name': 'x', 'effort':"
+           " {'levels': ['low', 'high'], 'refuses': ['xhigh'],"
+           "  'maps': {'high': 'xhigh', 'max': 'xhigh'},"
+           "  'compose_default': 'xhigh'}}];"
+           "print(compute_families(case, MF)[0]['ladder']['defaultLevel'])"
+           % os.path.join(sys.argv[1], "scripts", "lib"))
+seen = set()
+for seed in ("0", "1", "2", "3"):
+    r = subprocess.run([sys.executable, "-c", snippet], capture_output=True, text=True,
+                       env=dict(os.environ, PYTHONHASHSEED=seed))
+    seen.add(r.stdout.strip())
+if seen != {"high"}:
+    print("  two fold sources to one target must resolve deterministically to the "
+          "earliest ladder source (high), got:", sorted(seen))
+    sys.exit(1)
+# (h) a route whose default is a fold SOURCE its own family does not carry still counts,
+#     resolved through that route's own fold table: the route RUNS the target, so the
+#     family must not round up past it. And a fold source the ladder DOES carry is sent as
+#     the compose wrote it — rewriting it through maps would move the default UP.
+fams, _ = gen(row(levels=["low", "medium", "xhigh"], maps={"minimal": "low"},
+                  compose_default="minimal"),
+              row(levels=["low", "medium", "xhigh"], compose_default="xhigh"))
+if [f["ladder"]["defaultLevel"] for f in fams] != ["low"]:
+    print("  a fold-source default must resolve through that route's own maps (the route "
+          "runs low), not round up to the other route's xhigh:", fams)
+    sys.exit(1)
+fams, _ = gen(row(levels=["low", "high", "xhigh"], maps={"high": "xhigh"},
+                  compose_default="high"))
+if [f["ladder"]["defaultLevel"] for f in fams] != ["high"]:
+    print("  a fold source the ladder carries is sent as the compose wrote it:", fams)
+    sys.exit(1)
+# (e) a MODEL_FAMILIES entry the renderer would index into a crash or a silent drop is
+#     refused with the entry and the field named
+from effort_families import validate_model_families
+good = {"models": ["m"], "maxTokens": 1024,
+        "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True}}
+for label, bad_fam in (
+        ("missing compat key", {"models": ["m"], "maxTokens": 1024, "compat": {}}),
+        ("maxTokens not an int", {"models": ["m"], "maxTokens": "1024",
+                                  "compat": {"supportsReasoningEffort": True,
+                                             "qwenTemplateReasoningEffort": True}}),
+        ("compat not a dict", {"models": ["m"], "maxTokens": 1024, "compat": []}),
+        ("extraBody budget not an int",
+         {"models": ["m"], "maxTokens": 1024,
+          "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True,
+                     "extraBody": {"thinking_token_budget": "8192"}}}),
+        ("models not a list", {"models": "m", "maxTokens": 1024,
+                               "compat": {"supportsReasoningEffort": True,
+                                          "qwenTemplateReasoningEffort": True}})):
+    try:
+        validate_model_families([bad_fam])
+    except ValueError:
+        continue
+    print(f"  {label}: validate_model_families must refuse it")
+    sys.exit(1)
+try:
+    validate_model_families([good, dict(good)])
+except ValueError:
+    pass
+else:
+    print("  a model listed in two entries must be refused (the last one silently wins)")
+    sys.exit(1)
+
+# (f) an alias two models' composes both boot under is REFUSED: one route cannot carry two
+#     overrides, and its ladder and compat would depend on which row was read first. A
+#     route NO client family covers must not trip it — an unrelated catalog entry must not
+#     break the render.
+# (g) a row counts under the names its OWN compose boots under: the alias route gets its
+#     own ladder and default, and the shared route is built only from the rows that answer
+#     to it. The per-id rule #1951 settled, which grouping by the registry name breaks —
+#     and the registry-name-AND-alias union breaks it the other way, letting an engine that
+#     serves only its own alias move the shared id.
+alias_root = os.path.join(sys.argv[2], "aliascase")
+MF2 = [dict(MF[0], models=["ma"]), dict(MF[0], models=["mb"])]
+Q = "models/%s/engine/compose/single/q/%s"
+def write_compose(model, name, text):
+    d = os.path.join(alias_root, "models", model, "engine", "compose", "single", "q")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+        fh.write(text)
+def alias_list(*names):
+    return "services:\n  s:\n    command:\n" + "".join(
+        "      - '--alias'\n      - '%s'\n" % n for n in names)
+def arow(model, compose, served=None, **eff):
+    r = {"model": model,
+         "effort": dict({"levels": ["low", "high"], "compose_default": "low"}, **eff),
+         "compose_path": Q % (model, compose)}
+    if served:
+        r["served_name"] = served
+    return r
+def gen2(mf, *rows):
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        fams = compute_families(list(rows), mf, root=alias_root)
+    return fams, err.getvalue()
+
+write_compose("ma", "shared.yml", alias_list("a-shared"))
+write_compose("ma", "alias.yml", alias_list("a-only"))
+fams, _ = gen2(MF2, arow("ma", "shared.yml", levels=["low"]),
+               arow("ma", "alias.yml", levels=["low", "high"], compose_default="high"))
+got = {f["name"]: (f["ids"], f["ladder"]) for f in fams}
+if got.get("a-only") != (["a-only"], {"efforts": ["low", "high"], "defaultLevel": "high"}):
+    print("  an alias is its own family, with its own ladder and its own default:", got)
+    sys.exit(1)
+if got.get("a-shared") != (["a-shared"], {"efforts": ["low"], "defaultLevel": "low"}):
+    print("  the shared route keeps the ladder of the rows that answer to it — the alias "
+          "must not widen it or steal its default:", got)
+    sys.exit(1)
+if "ma" in got:
+    print("  a compose that declares its own name is not a route for the registry name — "
+          "nothing here answers to `ma`:", sorted(got))
+    sys.exit(1)
+
+# (g2) the refusal half, which is what the union actually broke. The catalog shape exactly:
+#     the shared route is the registry served_name, one compose declares it, the other
+#     declares ONLY its own alias — and under the union its row still counts under the
+#     registry name. A Prism `refuses: [low]` then rounded the main qwen3.8-27b id up, and a
+#     Strata `refuses: [xhigh]` took xhigh away from llama.cpp, QEngine and vLLM, which
+#     never refuse it.
+write_compose("ma", "main.yml", alias_list("ma"))
+write_compose("ma", "ref.yml", alias_list("a-ref"))
+fams, _ = gen2(MF2, arow("ma", "main.yml"), arow("ma", "ref.yml", refuses=["high"]))
+got = {f["name"]: f["ladder"]["efforts"] for f in fams}
+if got.get("ma") != ["low", "high"] or got.get("a-ref") != ["low"]:
+    print("  a row whose compose declares only an alias must not drop a rung from the "
+          "shared route:", got)
+    sys.exit(1)
+
+write_compose("ma", "c1.yml", alias_list("shared-name"))
+write_compose("mb", "c2.yml", alias_list("shared-name"))
+try:
+    gen2(MF2, arow("ma", "c1.yml"), arow("mb", "c2.yml"))
+except ValueError as e:
+    if "served by 2 models" not in str(e):
+        print("  the alias-collision refusal must name the fix, got:", e)
+        sys.exit(1)
+else:
+    print("  an alias two models' composes both boot under must raise, not render twice")
+    sys.exit(1)
+write_compose("mc", "c3.yml", alias_list("shared2"))
+write_compose("md", "c4.yml", alias_list("shared2"))
+fams, _ = gen2(MF2, arow("mc", "c3.yml"), arow("md", "c4.yml"))
+if fams:
+    print("  a route no client family covers must generate nothing, got:", fams)
+    sys.exit(1)
+
+# (i) the one-line scan stops at the next flag and reads the `=` form. A value list that
+#     ran past the next option turns "8080" into an alias — and two such composes in two
+#     families would then collide and refuse the whole render.
+write_compose("ma", "flags.yml",
+              "services:\n  s:\n    command: llama-server --model /m.gguf --alias my-alias "
+              "--port 8080 -c 262144 --jinja\n")
+write_compose("mb", "eq.yml",
+              "services:\n  s:\n    command: tabby --served-model-name=eq-alias "
+              "--port 8080\n")
+fams, _ = gen2(MF2, arow("ma", "flags.yml"), arow("mb", "eq.yml"))
+if sorted(f["name"] for f in fams) != ["eq-alias", "my-alias"]:
+    print("  the one-line form must stop at the next flag and read --flag=value:",
+          sorted(f["name"] for f in fams))
+    sys.exit(1)
+
+# (j) a route that records no default of its own falls back to its MODEL's — but only when
+#     its OWN ladder carries it. An off-ladder fallback is omp's silent xhigh, so that id
+#     is skipped with the Fix: hint while its model's own route keeps rendering.
+write_compose("ma", "nd.yml", alias_list("a-nd"))
+fams, _ = gen2(MF2, arow("ma", "shared.yml"),
+               arow("ma", "nd.yml", served="a-nd", compose_default=None))
+if [f["ladder"]["defaultLevel"] for f in fams if f["name"] == "a-nd"] != ["low"]:
+    print("  a route with no default of its own must fall back to its model's:", fams)
+    sys.exit(1)
+write_compose("ma", "nd2.yml", alias_list("a-nd2"))
+fams, err = gen2(MF2, arow("ma", "shared.yml"),
+                 arow("ma", "nd2.yml", served="a-nd2", refuses=["low"],
+                      compose_default=None))
+if sorted(f["name"] for f in fams) != ["a-shared"]:
+    print("  a fallback the route's own ladder does not carry must skip that id, not the "
+          "rest of its model:", sorted(f["name"] for f in fams))
+    sys.exit(1)
+if "no route serving this name" not in err or "Fix:" not in err:
+    print("  the skipped fallback must warn and name the fix, got:", err)
+    sys.exit(1)
+
+# (k) an inline comment ends the one-line value list, and SERVED_MODEL_NAME is read in the
+#     `KEY: value` and `KEY=value` forms as well as the `${…:-…}` one. A word absorbed from
+#     a comment is a bogus route that can collide with another compose and refuse the whole
+#     render; a missed env form is a route with no override (#1690).
+write_compose("ma", "cmt.yml",
+              "services:\n  s:\n    command: llama-server --alias cmt-alias # the alias\n")
+fams, _ = gen2(MF2, arow("ma", "cmt.yml"))
+if sorted(f["name"] for f in fams) != ["cmt-alias"]:
+    print("  an inline comment must not become an alias:", sorted(f["name"] for f in fams))
+    sys.exit(1)
+write_compose("ma", "env1.yml", "services:\n  s:\n    environment:\n"
+              "      - SERVED_MODEL_NAME=env-eq\n")
+write_compose("ma", "env2.yml", "services:\n  s:\n    environment:\n"
+              "      SERVED_MODEL_NAME: env-colon\n")
+fams, _ = gen2(MF2, arow("ma", "env1.yml"), arow("ma", "env2.yml"))
+if sorted(f["name"] for f in fams) != ["env-colon", "env-eq"]:
+    print("  SERVED_MODEL_NAME must be read as `KEY: value` and `KEY=value` too:",
+          sorted(f["name"] for f in fams))
+    sys.exit(1)
+
+# (l) a covered route whose engines declare no ladder at all is skipped WITH a warning.
+#     omp-setup's completeness refusal tells the operator to read the warning above it and
+#     names a default fix, so a silent skip here would send them looking for a problem that
+#     is not theirs — the fix is the profile's effort block.
+write_compose("ml", "nol.yml", alias_list("a-nol"))
+fams, err = gen2([dict(MF[0], models=["ml"])],
+                 {"model": "ml", "effort": {"compose_default": "low"},
+                  "compose_path": Q % ("ml", "nol.yml")})
+if fams:
+    print("  a route with no ladder must generate nothing, got:", fams)
+    sys.exit(1)
+if "declares an effort ladder" not in err or "Fix:" not in err:
+    print("  the no-ladder skip must warn and name the profile to fix, got:", err)
+    sys.exit(1)
+PY
+
+
+# 12. an unreadable registry FAILS CLOSED. registry_variants() turns any failure into [],
+#     and an empty family list would otherwise write a `club` provider with no
+#     modelOverrides — every model then reads as non-reasoning, omp sends no effort, and
+#     the engine runs its own slowest default: #1690, silently. A bare community VM with no
+#     PyYAML is the real case; a PYTHONPATH shim reproduces it without uninstalling
+#     anything from this rig.
+mkdir -p "$T/noyaml"
+printf 'raise ImportError("no PyYAML on this VM")\n' > "$T/noyaml/yaml.py"
+if PYTHONPATH="$T/noyaml" bash "$ROOT/scripts/omp-setup.sh" --print > "$T/fc.out" 2> "$T/fc.err"; then
+    bad "an empty registry must fail, not render a provider with no modelOverrides"
+elif ! grep -q "registry-emit:" "$T/fc.err"; then
+    bad "the empty-registry failure must carry the emit's own diagnostic, so the operator "
+        "sees WHY (no PyYAML? a broken emit?) and not just that it failed"
+    sed 's/^/  /' "$T/fc.err" >&2
+fi
+
+
+[ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == every route the composes serve, per-route ladders and defaults, compat pins by model, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container, generator edge shapes: refusals, fold sources, lowest default, deterministic fold, MODEL_FAMILIES types, per-alias ladders, collisions, one-line scan, default fallback, empty registry fails closed)"
 exit "$fail"

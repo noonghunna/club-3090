@@ -30,16 +30,18 @@
 #      an engine serving a budget_map model folds only inside effort_budget.py's
 #      ALIASES. Also pins the off_switch round-trip: "none" survives the YAML
 #      load as a string, never null (#1951 review r1-1).
-#   6. OMP OVERRIDES — FAMILIES and the *_IDS constants are parsed from
-#      omp-setup.sh source (no hand-kept family->id map): every family
-#      renders, every rendered ladder equals its model profile's levels,
-#      every family id is present with that ladder, and every defaultLevel
-#      is a rung of its own ladder AND nameable on every engine serving the
-#      family's models — a pair's `refuses` are rungs the server 400s as
-#      request names, so a refused defaultLevel would 400 omp's default
-#      (#2055 review it6-4). ABSENT is NOT silently legal: fam_re requires
-#      the field, so an absent one fails the shape parse; omp's fallback
-#      there is the ladder TOP, exactly the rung the refuses check clears.
+#   6. OMP OVERRIDES — the FAMILIES are generated from the registry (one per served
+#      name), so check 6 is a rendering test: it re-derives each family's ladder
+#      (the model's levels minus any rung a route serving the name refuses, plus the
+#      fold sources only when every route folds the same src->dst) and its default
+#      (the lowest of the routes' compose defaults, mapped to a rung) from the
+#      registry's per-variant effort facts, and requires the render to agree. Every
+#      defaultLevel is a rung of its own ladder and not refused by any engine serving
+#      the model — a pair's `refuses` are rungs the server 400s as request names, so
+#      a refused default would 400 omp's default (#2055 review it6-4). A probed model
+#      no family covers renders nowhere on the omp surface, so every one with a
+#      ladder must be covered.
+
 #
 # Unknown stays unknown: a `status: unprobed` / `no-string-ladder` model
 # renders nothing, so checks 3/5 skip it rather than inventing a ladder.
@@ -72,15 +74,10 @@ from profiles.compat import load_profiles
 # tripwire in check 4 forces it).
 LITELLM_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
-# The family -> models mapping of omp-setup.sh's hand-written FAMILIES list —
-# the drift surface check 6 pins; it disappears when phase 2 generates the
-# list from the profiles. EVERY catalog model a family's omp ids serve is
-# listed, and every listed model's ladder must equal the family's — so a
-# newly probed model with no family fails loudly instead of silently missing
+# The family -> model binding is no longer hand-kept: check 6 derives it from the
+# registry (each family is a served name; its model is the name's variants' model),
+# so a newly probed model with no family fails loudly instead of silently missing
 # from the omp surface (#1951 review r7).
-FAMILY_MODELS = {"qwen38": ["qwen3.8-27b", "thinkingcap-qwen3.8-27b"],
-                 "flash-next": ["qwen3.8-flash-next"],
-                 "glm53": ["glm-5.3-flash"]}
 
 failures = []
 def bad(msg):
@@ -293,6 +290,47 @@ if len(failures) == n0:
     print(f"  ✓ {checked} compose REASONING_EFFORT defaults all inside their "
           "model's ladder, registry compose_paths included (max ratcheted to "
           "GLM-5.3-Flash)")
+
+# ---- 3b. the EMIT CARRIES every compose default the scan above reads ----------
+# Phase 3's defaults fold reads `compose_default` per variant: a variant whose compose
+# sets the knob but whose emitted effort block drops it — the `_effort_facts` early
+# return for a pair with no effort block on either side — silently rounds its family's
+# default UP instead of down, breaking "rounds down, per served name" with an ABSENT
+# fact rather than a wrong one, which no other check would notice. Zero instances today
+# (every compose that sets the knob belongs to a profiled pair); this fires the first
+# time one does not.
+n0 = len(failures)
+from litellm_sync import registry_variants
+by_cp = {}
+for v in registry_variants("."):
+    if v.get("compose_path"):
+        by_cp.setdefault(v["compose_path"], []).append(v)
+
+# The lookup below keys the emit's compose_path against the scan's path strings. If the
+# two ever disagree in FORM (a ./ prefix, a trailing slash), every variant of that compose
+# is skipped and `carried` under-counts with no signal — the same ABSENT-fact failure this
+# check exists to catch. A compose the registry does not list may legitimately be
+# scan-only; the reverse direction is the breakage.
+_scan_paths = {s[0] for s in scan}
+_invisible = sorted(p for p in by_cp if p not in _scan_paths)
+if _invisible:
+    bad(f"the emit reports {len(_invisible)} compose path(s) the scan above cannot see, so "
+        f"the carry check silently skips their variants: {_invisible[:5]}")
+carried = 0
+for path, text, _levels, _mid in scan:
+    m = default_re.search(text)
+    if not m:
+        continue
+    for v in by_cp.get(path, ()):
+        carried += 1
+        got = (v.get("effort") or {}).get("compose_default")
+        if got != m.group(1):
+            bad(f"{v.get('slug')}: its compose sets REASONING_EFFORT {m.group(1)!r} but the "
+                f"emit carries compose_default {got!r} — the family default for that served "
+                "name would round up; _effort_facts must emit the fact it read")
+if len(failures) == n0:
+    print(f"  ✓ the emit carries the compose default for all {carried} variants whose "
+          "compose sets REASONING_EFFORT")
 
 # ---- 4. every declared rung is litellm vocabulary ---------------------------
 n0 = len(failures)
@@ -681,185 +719,73 @@ else:
     ovr = (doc.get("providers") or {}).get("club", {}).get("modelOverrides") or {}
     if not ovr:
         bad("omp-setup --print rendered no modelOverrides")
-    # Parse FAMILIES and the *_IDS constants from omp-setup.sh SOURCE — the
-    # ids bind each family to its rendered overrides, so the check survives
-    # id-list edits without a hand-kept map (the family->MODEL binding below
-    # stays hand-kept until phase 2 generates the list from the profiles).
-    omp_src = io.open("scripts/omp-setup.sh", encoding="utf-8").read()
-    ids_bodies = {m2.group(1): m2.group(2)
-                  for m2 in re.finditer(r"^(\w+_IDS) = \[(.*?)\]", omp_src, re.M | re.S)}
-    ids_const = {k: re.findall(r'"([^"]+)"', b) for k, b in ids_bodies.items()}
-    # `[a-z0-9-]` not `w+`: the family name "flash-next" has a hyphen, and a
-    # word-only name group silently skips that whole entry (the completeness
-    # scan below is what makes that class of miss fail loudly).
-    fam_re = re.compile(r'\{"name": "([\w-]+)", "ids": (\w+),\s*'
-                        r'"ladder": \{"efforts": \[([^\]]*)\], "defaultLevel": "(\w+)"\}')
-    families = {m2.group(1): {"ids": ids_const.get(m2.group(2), []),
-                              "ids_const": m2.group(2),
-                              "ladder": [x.strip().strip("\"'") for x in m2.group(3).split(",") if x.strip()],
-                              "dflt": m2.group(4)}
-                for m2 in fam_re.finditer(omp_src)}
-    if not families:
-        bad("could not parse FAMILIES from omp-setup.sh — the literal changed "
-            "shape; fix check 6's fam_re")
-    # Completeness (r3-1): an entry fam_re silently SKIPS would under-check —
-    # two families share the [low,medium,xhigh] ladder, so the set-membership
-    # test below cannot see a missing one. Scan the region tolerantly (name and
-    # ids-constant only, any key order/shape) and require the strict parse to
-    # have found exactly that set. Same for ids: count quoted items in each
-    # constant's source body, so a partially parsed id list fails loudly.
-    fam_region = re.search(r"^FAMILIES = \[(.*?)^\]", omp_src, re.M | re.S)
-    if not fam_region:
-        bad("could not locate the FAMILIES literal in omp-setup.sh — check 6's "
-            "region regex needs the new shape")
-    else:
-        tol_names = re.findall(r'"name":\s*"([^"]+)"', fam_region.group(1))
-        tol_consts = re.findall(r'"ids":\s*(\w+)', fam_region.group(1))
-        if len(tol_names) != len(tol_consts):
-            bad("FAMILIES: name/ids fields do not pair up in the literal — "
-                "the entry shape drifted")
-        if sorted(tol_names) != sorted(families):
-            bad(f"FAMILIES: the tolerant scan sees {sorted(tol_names)} but "
-                f"fam_re parsed {sorted(families)} — an entry's shape drifted "
-                "or a name is duplicated, and check 6 would silently skip it; fix fam_re")
-        # A duplicate family name collapses into the dict below, so the two scans
-        # above would still agree while one entry goes unchecked.
-        if len(tol_names) != len(set(tol_names)):
-            bad(f"FAMILIES has a duplicate family name: {tol_names}")
+    # The FAMILIES are generated from the registry (the same source the gateway's
+    # model_info renders), not written down: one family per ROUTE ID — the names each
+    # compose boots under, or the registry name where a compose declares none — each with
+    # the ladder and default its own routes give it. Check 9 in test-omp-setup.sh pins
+    # every route's ladder/default and its engine set against a golden table, and its
+    # check 8 pins the rendered NAME SET against an independent scan of the composes —
+    # those are the golden tripwires, independent of the generator's own logic. This check
+    # adds what neither can see: every route of a model that renders at all must render
+    # (one silently missing route is a silent no-effort), at least one alias must render
+    # (the gateway names routes from the engine's /v1/models, so a compose's --alias route
+    # with no override is #1690), and a rendered default must be a rung of its own ladder
+    # (omp's fallback for a missing default is the ladder TOP, so an off-ladder default is
+    # a silent xhigh). It
+    # deliberately does NOT re-derive the ladder: a copy of the generator's logic here
+    # would pass a bug present in both copies.
+    from litellm_sync import registry_variants
+    # the ROUTE rule is the GENERATOR's, not a copy of it: a change to which names count
+    # as a route must change this check too, not silently desync it
+    from effort_families import route_names, served_id
+    variants = registry_variants(os.getcwd())
+    routes: "dict[str, list]" = {}
+    registry_names = set()
+    for v in variants:
+        sid = served_id(v)
+        if sid:
+            registry_names.add(sid)
+        for n in route_names(os.getcwd(), v)[0]:
+            routes.setdefault(n, []).append(v)
+
+    families = {}
+    for mid, o in ovr.items():
+        t = o.get("thinking") or {}
+        rows = routes.get(mid, [])
+        families[mid] = {"ids": [mid], "ladder": list(t.get("efforts") or []),
+                         "dflt": t.get("defaultLevel"),
+                         "model": rows[0].get("model") if rows else None}
+
+    rendered_models = {f["model"] for f in families.values() if f["model"]}
     for fam, f in sorted(families.items()):
-        body = ids_bodies.get(f["ids_const"])
-        if body is None:
-            bad(f"FAMILIES {fam}: ids constant {f['ids_const']} not found in "
-                "omp-setup.sh")
-        else:
-            # Count ITEMS (comma-separated, these lists are flat), not quoted
-            # items: a single-quoted id is an item the "..." regex would miss,
-            # and counting only quoted ones would then agree with itself.
-            n_items = len([x for x in body.split(",") if x.strip()])
-            if n_items != len(f["ids"]):
-                bad(f"{f['ids_const']} ({fam}): {n_items} ids in the source but "
-                    f"{len(f['ids'])} parsed — ids_const's regex missed one "
-                    "(a non-double-quoted id?)")
-    id_family = {mid: fam for fam, f in families.items() for mid in f["ids"]}
-    # An id in two families would silently bind to whichever came last, checking
-    # it against an arbitrary ladder — fail on the ambiguity instead.
-    owner: dict = {}
-    shared = []
-    for fam, f in sorted(families.items()):
-        for mid in f["ids"]:
-            if mid in owner:
-                shared.append(f"{mid} ({owner[mid]} and {fam})")
-            owner[mid] = fam
-    if shared:
-        bad("a model id in more than one FAMILIES entry, so its override is "
-            f"bound to an arbitrary ladder: {', '.join(shared)}")
-    for fam, f in sorted(families.items()):
-        mdls = FAMILY_MODELS.get(fam)
-        if not mdls:
-            bad(f"FAMILIES entry {fam!r} is not in FAMILY_MODELS — extend the map "
-                "(the family->models binding stays hand-kept until phase 2)")
-            continue
-        for mdl in mdls:
-            # The omp ladder is the rungs EVERY engine serving the family's
-            # models accepts as a request name — the model's levels minus the
-            # union of the engines' pair `refuses` (#2055 review it7-1: the omp
-            # override is rendered at setup time and cannot know which engine
-            # will boot, so a rung ANY engine refuses is offered by NONE).
-            # No pair records a refusal today — strata's flash-next pair once
-            # refused xhigh on a mis-read 400, corrected 2026-11-17 (see
-            # engines/strata.yml). An engine with no by_model entry records
-            # no refuses — unknown stays unknown there.
-            refused: set = set()
-            for eid, eng in sorted(profiles.engines.items()):
-                pair = ((eng.effort or {}).get("by_model") or {}).get(mdl) or {}
-                refused |= set(pair.get("refuses") or [])
-            expected = [r for r in model_levels(mdl)[0] if r not in refused]
-            if f["ladder"] != expected:
-                bad(f"FAMILIES {fam}: ladder {f['ladder']} != model {mdl}'s "
-                    f"nameable rungs {expected} (levels {model_levels(mdl)[0]} "
-                    f"minus refused {sorted(refused)}) — drifted from the "
-                    "profiles (#1951)")
-            # The defaultLevel is what omp requests when the agent names no
-            # effort, and the request lands on whichever slug of the family's
-            # models is booted — so it must be a name every engine serving
-            # those models accepts (#2055 review it6-4). The ladder pin above
-            # already drops refused rungs from the ladder itself; this sweep
-            # catches the defaultLevel, which is not a ladder rung. An engine
-            # with no by_model entry records no refuses — unknown stays
-            # unknown there.
-            for eid, eng in sorted(profiles.engines.items()):
-                pair = ((eng.effort or {}).get("by_model") or {}).get(mdl) or {}
-                if f["dflt"] in (pair.get("refuses") or []):
-                    bad(f"FAMILIES {fam}: defaultLevel {f['dflt']!r} is refused on "
-                        f"{eid}'s {mdl} pair — omp would default to a rung that "
-                        "engine 400s as a request name")
-        if not f["ids"]:
-            bad(f"FAMILIES {fam}: no ids parsed — check the {fam.upper()}_IDS "
-                "constant name in fam_re/ids_const")
-        for mid in f["ids"]:
-            o = ovr.get(mid) or {}
-            t = o.get("thinking") or {}
-            if not t.get("efforts"):
-                bad(f"models.yml {mid} (family {fam}): no thinking.efforts ladder rendered")
-            elif list(t["efforts"]) != f["ladder"]:
-                bad(f"models.yml {mid} (family {fam}): ladder {t['efforts']} != "
-                    f"family ladder {f['ladder']}")
-    # The inverse (r7): a probed ladder no family covers renders nowhere on the
-    # omp surface, and every check above still passes. Every catalog model with
-    # a ladder must be listed in some family's models.
-    covered = {m for ms in FAMILY_MODELS.values() for m in ms}
+        if f["dflt"] is not None and f["dflt"] not in f["ladder"]:
+            bad(f"family {fam}: defaultLevel {f['dflt']!r} is not a rung of its "
+                f"ladder {f['ladder']} (omp's fallback for a missing default is the "
+                f"ladder TOP — an off-ladder default is a silent xhigh)")
+    for name, rows in sorted(routes.items()):
+        if rows[0].get("model") in rendered_models and name not in ovr:
+            bad(f"{name}: its model has overrides rendered but this route has none "
+                f"— the gateway serves it as its own route, so omp sends it no effort")
+    if not [n for n in ovr if n not in registry_names]:
+        bad("no alias override rendered at all: the gateway names routes from the "
+            "engine's /v1/models, so every compose --alias / --served-model-name route "
+            "would get no effort (#1690)")
+    # The inverse (r7): a probed ladder no family covers renders nowhere on the omp
+    # surface, and every check above still passes. The covered set is the models the
+    # generated FAMILIES bind to; every catalog model with a probed ladder must be in
+    # it (a model you want on the omp surface but no live route serves is a gap).
+    covered = rendered_models
     for model_dir in sorted(os.listdir("models")):
         levels, _status = model_levels(model_dir)
         if levels and model_dir not in covered:
-            bad(f"{model_dir}: probed ladder {levels} but no FAMILIES family covers "
+            bad(f"{model_dir}: probed ladder {levels} but no generated family covers "
                 f"it — the omp surface never renders its ladder; add it to a "
-                f"family's models list (the family serving its omp ids)")
-    # A model listed under a family must also be REACHABLE from that family's
-    # ids constant (#2055 review it8-2): the overrides render only the ids in
-    # the *_IDS constants, so a FAMILY_MODELS entry whose omp names (the model
-    # id itself, or a non-deprecated slug's --served-model-name for it) appear
-    # in no constant is pinned, covered, and never offered. Quant-variant ids
-    # (qwen3.8-27b-fp8) are omp-side aliases, not catalog models — the check
-    # asks only that each listed model has SOME id in its family's constant.
-    served_names: "dict[str, set]" = {}
-    for path, text, _levels, mdl in scan:
-        for line in text.splitlines():
-            m2 = re.search(r"^\s*-?\s*--served-model-name[=:\s]+\"?([\w.-]+)", line)
-            if m2:
-                served_names.setdefault(mdl, set()).add(m2.group(1))
-    for fam, f in sorted(families.items()):
-        for mdl in FAMILY_MODELS.get(fam, []):
-            names = {mdl} | served_names.get(mdl, set())
-            if not (names & set(f["ids"])):
-                bad(f"FAMILY_MODELS {fam}: model {mdl} has no omp id in "
-                    f"{f['ids_const']} {f['ids']} (model id or a slug's "
-                    f"--served-model-name) — the omp surface never offers it")
-    for mid, o in ovr.items():
-        t = (o.get("thinking") or {})
-        ladder, dflt = list(t.get("efforts") or []), t.get("defaultLevel")
-        if not ladder:
-            continue
-        # Bind each override to ITS OWN family's ladder: two families share
-        # [low, medium, xhigh], so set membership cannot see one family's
-        # ladder drifting onto the other's ids.
-        fam = id_family.get(mid)
-        if fam is None:
-            bad(f"models.yml {mid}: rendered with a ladder but bound to no "
-                "FAMILIES ids list — the render and FAMILIES drifted (#1951)")
-            continue
-        if tuple(ladder) != tuple(families[fam]["ladder"]):
-            bad(f"models.yml {mid}: ladder {ladder} != its family {fam}'s "
-                f"ladder {families[fam]['ladder']} — drifted from omp-setup.sh")
-            continue
-        # ABSENT defaultLevel is legal (omp falls back to the ladder TOP);
-        # a PRESENT one must be a rung.
-        if dflt is not None and dflt not in ladder:
-            bad(f"models.yml {mid}: defaultLevel {dflt!r} is not a rung of its "
-                f"ladder {ladder} (omp's fallback for a missing defaultLevel is "
-                "the ladder TOP — an off-ladder default is a silent xhigh)")
+                f"MODEL_FAMILIES entry in omp-setup.sh")
     if len(failures) == n0:
-        print(f"  ✓ omp-setup renders {len(ovr)} overrides: every FAMILIES ladder "
-              "a profile's, every family id bound, every defaultLevel a rung")
+        print(f"  ✓ omp-setup renders {len(ovr)} overrides: every route of a covered "
+              f"model, the compose-declared aliases included, every default on its own "
+              f"ladder, every probed model covered")
+
 
 sys.exit(1 if failures else 0)
 PY

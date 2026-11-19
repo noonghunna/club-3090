@@ -46,10 +46,40 @@ REAL_CURL="$(command -v curl)"
 C="$T/club"; mkdir -p "$C/scripts/lib" "$C/services/litellm"
 cp "$ROOT/scripts/"{gpu-mode.sh,gateway-key.sh,omp-setup.sh,pi-setup.sh,hermes-setup.sh} "$C/scripts/"
 cp "$ROOT/scripts/lib/club-config.sh" "$ROOT/scripts/lib/club_config.py" "$C/scripts/lib/"
+# omp-setup imports the family generator and the registry reader from scripts/lib, so the
+# clone needs them: without them it dies on an ImportError and every omp assertion below
+# fails as "fixture: omp-setup failed".
+cp "$ROOT/scripts/lib/effort_families.py" "$ROOT/scripts/lib/litellm_sync.py" "$C/scripts/lib/"
 cp "$ROOT/services/litellm/docker-compose.yml" "$C/services/litellm/"
 # The real sync would re-render (and probe for) this checkout's routes: a stub that logs.
 printf '#!/usr/bin/env bash\necho "SYNC $*" >> "$ORDER_LOG"\n' > "$C/scripts/lib/litellm-sync.sh"
-chmod +x "$C/scripts/"*.sh "$C/scripts/lib/litellm-sync.sh"
+# The real emit would read a whole catalog this clone does not have. omp-setup fails
+# CLOSED on an empty variant list (a provider with no modelOverrides is the silent-xhigh
+# #1690), so the stub answers with one variant per model MODEL_FAMILIES covers — no
+# compose_path, because this clone has no models/ for the alias scan to read.
+cat > "$C/scripts/lib/registry-emit.sh" <<'STUB'
+#!/usr/bin/env bash
+cat <<'JSON'
+{"variants": [
+ {"model": "qwen3.8-27b", "served_name": "qwen3.8-27b", "port": 8101,
+  "effort": {"levels": ["low", "medium", "xhigh"], "refuses": null,
+             "maps": {"high": "xhigh", "max": "xhigh", "minimal": "low"},
+             "compose_default": "low", "default_when_unset": "xhigh"}},
+ {"model": "thinkingcap-qwen3.8-27b", "served_name": "thinkingcap38-27b", "port": 8102,
+  "effort": {"levels": ["low", "medium", "xhigh"], "refuses": null,
+             "maps": {"high": "xhigh", "max": "xhigh", "minimal": "low"},
+             "compose_default": "low", "default_when_unset": "xhigh"}},
+ {"model": "qwen3.8-flash-next", "served_name": "qwen3.8-flash-next", "port": 8103,
+  "effort": {"levels": ["low", "medium", "xhigh"], "refuses": null, "maps": {},
+             "compose_default": "low", "default_when_unset": "xhigh"}},
+ {"model": "glm-5.3-flash", "served_name": "glm-5.3-flash", "port": 8104,
+  "effort": {"levels": ["low", "high", "max"], "refuses": null,
+             "maps": {"medium": "high", "xhigh": "max"},
+             "compose_default": null, "default_when_unset": "max"}}
+]}
+JSON
+STUB
+chmod +x "$C/scripts/"*.sh "$C/scripts/lib/litellm-sync.sh" "$C/scripts/lib/registry-emit.sh"
 
 # ── a stub gateway: liveliness once "recreated", routes only for the key in $T/gw-key ──
 cat > "$T/gw.py" <<'PY'

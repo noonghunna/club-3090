@@ -733,10 +733,16 @@ def _effort_facts(model_id: str, engine_id: str, compose_path: str):
     ee = (getattr(e, "effort", None) or {}) if e else {}
     budget = _compose_thinking_budget(compose_path)
     if not me and not ee:
-        # Neither side declares an effort block, but the compose's thinking
-        # budget is still a live fact the budgets map reads (#2055 review
-        # it7-4) — return it alone rather than dropping it with the block.
-        return {"default_thinking_budget": budget} if budget else None
+        # Neither side declares an effort block, but the compose can still carry live
+        # facts: the thinking budget the budgets map reads (#2055 review it7-4), and the
+        # REASONING_EFFORT default the #1951 defaults fold reads (#1951 phase 3 — a
+        # family's default is the LOWEST of its routes' effective defaults, so dropping a
+        # known compose default here would silently round that family UP instead of
+        # down). Known facts only; no ladder is invented for an unprofiled pair.
+        cd = _compose_effort_default(compose_path)
+        known = {k: v for k, v in (("default_thinking_budget", budget),
+                                   ("compose_default", cd)) if v is not None}
+        return known or None
     # What an unset request gets, and how an out-of-ladder name folds, are
     # (model, engine) PAIR facts (#1951 review r5): the engine's `by_model` entry
     # for THIS model, never the engine block. A model the engine does not list
@@ -754,11 +760,12 @@ def _effort_facts(model_id: str, engine_id: str, compose_path: str):
         "supports_none": (pair["supports_none"] if "supports_none" in pair
                           else (False if ee.get("supports_none") is False
                                 else None)),
-        # off_switch stays OUT of the payload: neither _port_effort nor
-        # model_info reads it, and neither do the omp overrides — their
-        # ladders are the guard-pinned FAMILIES copy in omp-setup.sh, which
-        # carries no off_switch at all — so carrying it here only invited
-        # silent drift with no consumer (#2055 review it6-7a, it9-5).
+        # off_switch stays OUT of the payload: neither _port_effort nor model_info reads
+        # it, and the omp generator that builds the overrides from THIS emit
+        # (effort_families.compute_families) reads no off_switch either — so carrying it
+        # here only invites silent drift with no consumer (#2055 review it6-7a, it9-5).
+        # The rationale is unchanged by #1951 phase 3; only its wording was, because the
+        # hand-written FAMILIES copy it pointed at is now generated from these facts.
         "default_when_unset": pair.get("default_when_unset"),
         "maps": dict(pair["maps"]) if pair.get("maps") else None,
         "refuses": list(pair["refuses"]) if pair.get("refuses") else None,

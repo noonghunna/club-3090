@@ -168,12 +168,63 @@ out="$(run --gateway "$STUB" --profile web 2>&1)"
 # 11. a profile name is a name, not a path
 run --print --profile ../escape >/dev/null 2>&1 && bad "a profile name with a path in it must be rejected"
 
-# 12. the Qwen3.8 id list is omp-setup's (test-omp-setup checks that one against the composes)
-python3 - "$ROOT" <<'PY' || bad "dsh-setup.sh QWEN38_IDS must equal omp-setup.sh's"
-import ast, io, re, sys
-ids = lambda f: ast.literal_eval(re.search(r"^QWEN38_IDS = (\[.*\])$", io.open(f"{sys.argv[1]}/scripts/{f}", encoding="utf-8").read(), re.M).group(1))
-sys.exit(0 if ids("dsh-setup.sh") == ids("omp-setup.sh") else 1)
+# 12. the Qwen3.8 id list is the ids the Qwen3.8-family composes serve, minus a named known
+#     gap. (The omp FAMILIES are now generated per route id, so there is no omp QWEN38_IDS
+#     to stay equal to — dsh lists the fine-grained names the composes serve.)
+python3 - "$ROOT" <<'PY' || bad "dsh-setup.sh QWEN38_IDS must equal the ids the Qwen3.8-family composes serve (minus the named known gap)"
+import ast, glob, io, re, sys
+root = sys.argv[1]
+src = io.open(f"{root}/scripts/dsh-setup.sh", encoding="utf-8").read()
+keys = set(ast.literal_eval(re.search(r"^QWEN38_IDS = (\[.*\])$", src, re.M).group(1)))
+served = set()
+def add(tok):
+    m = re.fullmatch(r"\$\{\w+:-([^}]+)\}", tok)
+    if m: tok = m.group(1)
+    if re.fullmatch(r"[A-Za-z0-9][\w.\-]*", tok): served.add(tok)
+for d in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b"):
+    for f in glob.glob(f"{root}/models/{d}/*/compose/*/*/*.yml"):
+        lines = [l for l in io.open(f, encoding="utf-8").read().splitlines() if not l.lstrip().startswith("#")]
+        for i, l in enumerate(lines):
+            m = re.search(r"--(?:served-model-name|served-name|alias|model-name)\b(.*)$", l)
+            if not m: continue
+            # strip BOTH quote styles: on `- '--alias'` a strip('"') leaves the trailing '
+            # which is truthy, so the one-line branch runs on that one-token string and the
+            # alias is silently missed — this is how both Prism aliases went missing here.
+            rest = m.group(1).strip().rstrip("\\").strip().strip("\"'")
+            if rest and not rest.startswith("-"):
+                for tok in rest.split():
+                    if tok.startswith("-"): break        # the next flag ends the values
+                    add(tok.strip("\"'"))
+                continue
+            for nxt in lines[i + 1:]:
+                v = nxt.strip()
+                # unquote BEFORE the break test: a quoted next flag is still the next flag
+                val = v[2:].strip().strip("\"'") if v.startswith("- ") else ""
+                if not val or val.startswith("-"): break
+                add(val)
+if not served:
+    sys.exit("found no served names — the scan itself is broken")
+# KNOWN GAP, deliberate: these two ARE routes the gateway names (they are --alias entries
+# in models/qwen3.8-27b/llama-cpp-prism/compose/single/prism-ternary-{pq2,mtp}/), but
+# QWEN38_IDS carry the Qwen3.8 level map, whose `low` upstream says Prism does not support
+# and runs as xhigh (docs/engines/LLAMA_CPP_PRISM.md). They join the list when dsh moves
+# onto the generated per-route FAMILIES; that phase deletes this set.
+GAP = {"qwen3.8-27b-prism-ternary", "qwen3.8-27b-prism-ternary-mtp"}
+if not GAP <= served:
+    print("  the scan did not find the KNOWN GAP aliases — it is blind to the quoted-list "
+          "form again (strip both quote styles, unquote before the break test), so the "
+          "comparison below would pass on an incomplete set", file=sys.stderr)
+    sys.exit(1)
+if keys & GAP:
+    print(f"  {sorted(keys & GAP)} are in QWEN38_IDS while the level map does not cover "
+          f"them — delete the KNOWN GAP set here as well", file=sys.stderr)
+    sys.exit(1)
+if keys != served - GAP:
+    print(f"  served but no override: {sorted(served - keys)}   override nothing serves: "
+          f"{sorted(keys - served)}", file=sys.stderr)
+    sys.exit(1)
 PY
+
 
 # 13. the block docs/CODING_AGENTS.md shows is what the script writes (gateway down,
 #     default gateway URL → the 262,144 fallback, which is also the dual-fast window)
@@ -206,5 +257,5 @@ else
     || bad "dsh must compose the club provider from the generated file: $(echo "$dump" | tail -3)"
 fi
 
-[ "$fail" -eq 0 ] && echo "test-dsh-setup: ok (print-only, profiles created without a model run, block + 0600 key, Qwen3.8 wiring, gateway windows, idempotent, other entries + mode kept, user's default kept, foreign llm-pi-ai refused, .env merged, legacy settings warned, name not a path, ids == omp-setup's, doc block == script, dsh accepts it)"
+[ "$fail" -eq 0 ] && echo "test-dsh-setup: ok (print-only, profiles created without a model run, block + 0600 key, Qwen3.8 wiring, gateway windows, idempotent, other entries + mode kept, user's default kept, foreign llm-pi-ai refused, .env merged, legacy settings warned, name not a path, ids == the composes' served names minus the named Prism gap, doc block == script, dsh accepts it)"
 exit "$fail"
