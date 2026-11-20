@@ -8,8 +8,11 @@
 #   Engine:    Project Maya's maya-hy4 (Hy4-Flash's engine in Project Maya, a Strata fork; v1.1.68 on) —
 #              ghcr.io/noonghunna/strata-maya-club3090, built by club-3090 at the release commit
 #              (models/glm-5.3-flash/strata-maya/image/)
-#   Topology:  Four 3090s: maya-hy4 runs tensor parallel over the largest group of equal cards (its --tp auto) and splits the
-#              layers where no group fits; the experts VRAM doesn't hold are computed on the CPU from RAM
+#   Topology:  Four 3090s, maya-hy4's --tp auto (v1.1.70 on, read from its source; not booted here): tensor
+#              parallel over the 4 cards where every routed expert fits in VRAM, else over three or two; where none
+#              holds them, tensor parallel over the 4 with the CPU lane (each card keeps the experts its VRAM
+#              takes, the CPU computes the rest from RAM, the cache in 8-bit rows under KV=auto); each routed
+#              expert stays whole on one card; the layer split only where neither fits
 #   Drafter:   MTP (Tencent's MTP block from its own file, rounded to Q8_0 in VRAM: about 4 GB) — ON (Maya's setup
 #              turns it on on cards from about 16 GB); DRAFTING=off turns it off
 #   KV:        maya-hy4's latent cache (KV=auto: F16 rows, 8-bit rows where F16 doesn't fit), all of it in VRAM: the
@@ -48,7 +51,7 @@
 # then up -d.
 services:
   strata-maya:
-    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:08b8a471e3ffda0f47add2f8e26bf4ae148e2625f3a24d7d5d60a08291323e3f}
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:d129c0c123c5e6da9c995151ee3102f63515199ca237c480a91312af8651658d}
     container_name: ${ESTATE_CONTAINER:-strata-maya-hy4-flash-multi4-maya-xs}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
