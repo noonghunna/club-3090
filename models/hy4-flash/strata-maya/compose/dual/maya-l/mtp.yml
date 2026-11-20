@@ -20,10 +20,11 @@
 #              240,107 tokens on the dual Maya-XS slug, Maya v1.1.69; the model reaches 1M, and CONTEXT sets another)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   Not gate-passing: boot + verify-full only on the reference rig (2026-11-20, Maya v1.1.68, 230 W: 9
+#   Caveats:   Not gate-passing: boot, verify-full and bench on the reference rig, no more (2026-11-20, Maya v1.1.68, 230 W: 9
 #              passed, 0 failed, vision 4/4, at 32K: the layer split GPU0 0-16 / GPU1 17-41 with 28% of the routed experts
 #              in VRAM: tensor parallel would need 47.11 GB a card); at the 262144 default (Maya v1.1.69,
-#              2026-11-20) GPU0 0-16 / GPU1 17-41 with 24% (5,125 of 20,992). No bench, stress, soak or quality run yet.
+#              2026-11-20) GPU0 0-16 / GPU1 17-41 with 24% (5,125 of 20,992);
+#              bench.sh there (thinking off): 32.30 / 45.14 tok/s narrative / code, prefill 528 tok/s at 10K. No stress, soak or quality run yet.
 #              One request at a time (maya-hy4 has no --parallel yet). Quality per Maya's model card, against the
 #              full-precision model on held-out conversations (same top token / KL): 96.6% / 0.012; not measured here.
 #              ⚠️ The Tencent Hy License (LICENSE in the weights' repo, LICENSE.hy4-flash in Maya's). The n-gram
