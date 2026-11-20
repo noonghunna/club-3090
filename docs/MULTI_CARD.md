@@ -35,10 +35,14 @@ or not yet at all. If you have the hardware, your run is the validation:
 <!-- BEGIN GENERATED: slug-table multi3 -->
 | Model | Slug | Status | Max ctx | Compose | Announced in | Notes |
 |---|---|---|--:|---|---|---|
+| **Hy4-Flash (220B MoE, Tencent)** | `strata-maya/hy4-flash-multi3-maya-l` | 🐣 incubating | 32768 | [multi3/maya-l/mtp.yml](../models/hy4-flash/strata-maya/compose/multi3/maya-l/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 100 GB |
+|  | `strata-maya/hy4-flash-multi3-maya-m` | 🐣 incubating | 32768 | [multi3/maya-m/mtp.yml](../models/hy4-flash/strata-maya/compose/multi3/maya-m/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 76 GB |
+|  | `strata-maya/hy4-flash-multi3-maya-s` | 🐣 incubating | 32768 | [multi3/maya-s/mtp.yml](../models/hy4-flash/strata-maya/compose/multi3/maya-s/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 64 GB |
+|  | `strata-maya/hy4-flash-multi3-maya-xs` | 🐣 incubating | 32768 | [multi3/maya-xs/mtp.yml](../models/hy4-flash/strata-maya/compose/multi3/maya-xs/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 52 GB |
 | **Qwen 3.8 27B** | `qengine/qwen38-27b-multi3` | 🧪 experimental | 262144 | [multi3/redhat-int4/mtp.yml](../models/qwen3.8-27b/qengine/compose/multi3/redhat-int4/mtp.yml) | — |  |
 | **Qwen3.8-Flash-Next (MoE, Qwen)** | `qengine/qwen38-flash-next-multi3` | 🐣 incubating | 262144 | [multi3/qengine-int4/mtp.yml](../models/qwen3.8-flash-next/qengine/compose/multi3/qengine-int4/mtp.yml) | — | host RAM ≥ 75 GB |
 
-2 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+6 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table multi3 -->
 
 ### 4 cards
@@ -61,6 +65,10 @@ or not yet at all. If you have the hardware, your run is the validation:
 |  | `strata-maya/glm53-flash-multi4-maya-m` | 🐣 incubating | 131072 | [multi4/maya-m/base.yml](../models/glm-5.3-flash/strata-maya/compose/multi4/maya-m/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 86 GB |
 |  | `strata-maya/glm53-flash-multi4-maya-s` | 🐣 incubating | 131072 | [multi4/maya-s/base.yml](../models/glm-5.3-flash/strata-maya/compose/multi4/maya-s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 66 GB |
 |  | `strata-maya/glm53-flash-multi4-maya-s24` | 🐣 incubating | 131072 | [multi4/maya-s24/base.yml](../models/glm-5.3-flash/strata-maya/compose/multi4/maya-s24/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 68 GB |
+| **Hy4-Flash (220B MoE, Tencent)** | `strata-maya/hy4-flash-multi4-maya-l` | 🐣 incubating | 32768 | [multi4/maya-l/mtp.yml](../models/hy4-flash/strata-maya/compose/multi4/maya-l/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 100 GB |
+|  | `strata-maya/hy4-flash-multi4-maya-m` | 🐣 incubating | 32768 | [multi4/maya-m/mtp.yml](../models/hy4-flash/strata-maya/compose/multi4/maya-m/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 76 GB |
+|  | `strata-maya/hy4-flash-multi4-maya-s` | 🐣 incubating | 32768 | [multi4/maya-s/mtp.yml](../models/hy4-flash/strata-maya/compose/multi4/maya-s/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 64 GB |
+|  | `strata-maya/hy4-flash-multi4-maya-xs` | 🐣 incubating | 32768 | [multi4/maya-xs/mtp.yml](../models/hy4-flash/strata-maya/compose/multi4/maya-xs/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 52 GB |
 | **Inkling-Small (263B MoE, Thinking Machines)** | `llamacpp-club3090/inkling-small-multi4-iq4xs-moecache` | 🧪 experimental | 262144 | [multi4/unsloth-ud-iq4xs/moecache.yml](../models/inkling-small/llamacpp-club3090/compose/multi4/unsloth-ud-iq4xs/moecache.yml) | [#959](https://github.com/noonghunna/club-3090/discussions/959) | host RAM ≥ 121 GB |
 | **MiniMax-M3.1-Flash (428B MoE, MiniMax)** | `strata-maya/minimax31-flash-multi4-maya-s` | 🐣 incubating | 204800 | [multi4/maya-s/dspark.yml](../models/minimax-m3.1-flash/strata-maya/compose/multi4/maya-s/dspark.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 102 GB |
 | **Nemotron-3 Puzzle 75B-A9B (hybrid Mamba2+attn MoE)** | `vllm/nemotron-75b-multi-mtp` | ⚠️ caveats | 200000 | [multi4/nvfp4/mtp.yml](../models/nemotron-3-puzzle-75b/vllm/compose/multi4/nvfp4/mtp.yml) | [#706](https://github.com/noonghunna/club-3090/discussions/706) | needs sm 9.0+ (not a 3090) |
@@ -91,7 +99,7 @@ or not yet at all. If you have the hardware, your run is the validation:
 |  | `vllm/thinkingcap38-27b-multi4-ultrafast` | 🧪 experimental | 262144 | [multi4/autoround-int4/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/autoround-int4/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 |  | `vllm/thinkingcap38-27b-multi4-ultramax` | 🧪 experimental | 262144 | [multi4/fp8/dflash2.yml](../models/thinkingcap-qwen3.8-27b/vllm/compose/multi4/fp8/dflash2.yml) | [#1418](https://github.com/noonghunna/club-3090/discussions/1418) |  |
 
-44 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+48 slugs. Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table multi4 -->
 
 ### 8 cards

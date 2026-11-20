@@ -7464,6 +7464,550 @@ entries:
     serve_aliases: []
     category: frontier
     served_name: glm-5.3-flash
+  strata-maya/hy4-flash-single-maya-xs:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-xs
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 52
+    kv_offload: null
+    chat_template: native
+    tp: 1
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/single/maya-xs/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8210
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "One 3090, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-XS GGUF (IQ2_XXS experts (2 bits), 44.8 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: not booted on the reference rig yet. host_ram_gb 52 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-single-maya-s:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-s
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 64
+    kv_offload: null
+    chat_template: native
+    tp: 1
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/single/maya-s/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8211
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "One 3090, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-S GGUF (IQ2_XXS / IQ3_XXS experts (2-3 bits), 53.0 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: not booted on the reference rig yet. host_ram_gb 64 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-single-maya-m:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-m
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 76
+    kv_offload: null
+    chat_template: native
+    tp: 1
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/single/maya-m/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8212
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "One 3090, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-M GGUF (IQ3_XXS / IQ4_XS experts (3-4 bits), 68.4 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: not booted on the reference rig yet. host_ram_gb 76 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-single-maya-l:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-l
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 100
+    kv_offload: null
+    chat_template: native
+    tp: 1
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/single/maya-l/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8213
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "One 3090, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-L GGUF (IQ4_XS experts (4 bits), 89.5 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: not booted on the reference rig yet. host_ram_gb 100 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-dual-maya-xs:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-xs
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 52
+    kv_offload: null
+    chat_template: native
+    tp: 2
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/dual/maya-xs/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8214
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Two 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-XS GGUF (IQ2_XXS experts (2 bits), 44.8 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: not booted on the reference rig yet. host_ram_gb 52 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-dual-maya-s:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-s
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 64
+    kv_offload: null
+    chat_template: native
+    tp: 2
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/dual/maya-s/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8215
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Two 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-S GGUF (IQ2_XXS / IQ3_XXS experts (2-3 bits), 53.0 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: not booted on the reference rig yet. host_ram_gb 64 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-dual-maya-m:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-m
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 76
+    kv_offload: null
+    chat_template: native
+    tp: 2
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/dual/maya-m/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8216
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Two 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-M GGUF (IQ3_XXS / IQ4_XS experts (3-4 bits), 68.4 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: not booted on the reference rig yet. host_ram_gb 76 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-dual-maya-l:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-l
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 100
+    kv_offload: null
+    chat_template: native
+    tp: 2
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/dual/maya-l/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8217
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Two 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-L GGUF (IQ4_XS experts (4 bits), 89.5 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: not booted on the reference rig yet. host_ram_gb 100 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-multi3-maya-xs:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-xs
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 52
+    kv_offload: null
+    chat_template: native
+    tp: 3
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/multi3/maya-xs/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8218
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Three 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-XS GGUF (IQ2_XXS experts (2 bits), 44.8 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: never booted on the reference rig (two GPUs): multi-card slugs are community-validated by design. host_ram_gb 52 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-multi3-maya-s:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-s
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 64
+    kv_offload: null
+    chat_template: native
+    tp: 3
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/multi3/maya-s/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8219
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Three 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-S GGUF (IQ2_XXS / IQ3_XXS experts (2-3 bits), 53.0 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: never booted on the reference rig (two GPUs): multi-card slugs are community-validated by design. host_ram_gb 64 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-multi3-maya-m:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-m
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 76
+    kv_offload: null
+    chat_template: native
+    tp: 3
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/multi3/maya-m/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8220
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Three 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-M GGUF (IQ3_XXS / IQ4_XS experts (3-4 bits), 68.4 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: never booted on the reference rig (two GPUs): multi-card slugs are community-validated by design. host_ram_gb 76 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-multi3-maya-l:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-l
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 100
+    kv_offload: null
+    chat_template: native
+    tp: 3
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/multi3/maya-l/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8221
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Three 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-L GGUF (IQ4_XS experts (4 bits), 89.5 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: never booted on the reference rig (two GPUs): multi-card slugs are community-validated by design. host_ram_gb 100 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-multi4-maya-xs:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-xs
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 52
+    kv_offload: null
+    chat_template: native
+    tp: 4
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/multi4/maya-xs/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8222
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Four 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-XS GGUF (IQ2_XXS experts (2 bits), 44.8 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: never booted on the reference rig (two GPUs): multi-card slugs are community-validated by design. host_ram_gb 52 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-multi4-maya-s:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-s
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 64
+    kv_offload: null
+    chat_template: native
+    tp: 4
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/multi4/maya-s/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8223
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Four 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-S GGUF (IQ2_XXS / IQ3_XXS experts (2-3 bits), 53.0 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: never booted on the reference rig (two GPUs): multi-card slugs are community-validated by design. host_ram_gb 64 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-multi4-maya-m:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-m
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 76
+    kv_offload: null
+    chat_template: native
+    tp: 4
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/multi4/maya-m/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8224
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Four 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-M GGUF (IQ3_XXS / IQ4_XS experts (3-4 bits), 68.4 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: never booted on the reference rig (two GPUs): multi-card slugs are community-validated by design. host_ram_gb 76 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/hy4-flash-multi4-maya-l:
+    origin: core
+    model: hy4-flash
+    weights_variant: maya-l
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-hy4-mtp
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 100
+    kv_offload: null
+    chat_template: native
+    tp: 4
+    max_ctx: 32768
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/hy4-flash/strata-maya/compose/multi4/maya-l/mtp.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8225
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Four 3090s, Project Maya's maya-hy4 (tensor parallel over equal cards, a layer split where none fits). Project Maya's own Hy4-Flash-Maya-L GGUF (IQ4_XS experts (4 bits), 89.5 GB; peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d) plus the files every size shares: the n-gram table (63.4 GB, read from the disk), Tencent's MTP block (7.5 GB, drafting on) and the vision tower (0.8 GB). Engine strata-maya (club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/; maya-hy4 from Maya v1.1.68). Status: never booted on the reference rig (two GPUs): multi-card slugs are community-validated by design. host_ram_gb 100 is Maya's own memory figure for this size (the VRAM + RAM that hold the whole set), an UNMEASURED upper bound: the cards hold part of it. Field values: kv_format fp16 is maya-hy4's latent cache in F16 rows (KV=auto takes 8-bit rows where F16 doesn't fit), in VRAM only (no RAM path in this engine); offload 'engine' = the most-routed experts in VRAM, the rest computed by a CPU lane from the memory-mapped file. One request at a time. Context 32768: the longest Maya has run its quants end to end at."
+    weights_companions:
+      - hy4-ngram
+      - hy4-vision
+    gateway: false
+    serve_aliases: []
+    category: frontier
 
 defaults:
   qwen3.6-27b:

@@ -29,6 +29,10 @@ before you put an agent on it.
 | **GLM-5.3-Flash (320.76B MoE, Z.ai)** | `strata-maya/glm53-flash-single-maya-l` | 🐣 incubating | 131072 | [single/maya-l/base.yml](../models/glm-5.3-flash/strata-maya/compose/single/maya-l/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 148 GB |
 |  | `strata-maya/glm53-flash-single-maya-m` | 🐣 incubating | 131072 | [single/maya-m/base.yml](../models/glm-5.3-flash/strata-maya/compose/single/maya-m/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 105 GB |
 |  | `strata-maya/glm53-flash-single-maya-s` | 🐣 incubating | 131072 | [single/maya-s/base.yml](../models/glm-5.3-flash/strata-maya/compose/single/maya-s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 87 GB |
+| **Hy4-Flash (220B MoE, Tencent)** | `strata-maya/hy4-flash-single-maya-l` | 🐣 incubating | 32768 | [single/maya-l/mtp.yml](../models/hy4-flash/strata-maya/compose/single/maya-l/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 100 GB |
+|  | `strata-maya/hy4-flash-single-maya-m` | 🐣 incubating | 32768 | [single/maya-m/mtp.yml](../models/hy4-flash/strata-maya/compose/single/maya-m/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 76 GB |
+|  | `strata-maya/hy4-flash-single-maya-s` | 🐣 incubating | 32768 | [single/maya-s/mtp.yml](../models/hy4-flash/strata-maya/compose/single/maya-s/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 64 GB |
+|  | `strata-maya/hy4-flash-single-maya-xs` | 🐣 incubating | 32768 | [single/maya-xs/mtp.yml](../models/hy4-flash/strata-maya/compose/single/maya-xs/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 52 GB |
 | **MiMo V2.6 Distill Qwen 9B (Xiaomi)** | `llamacpp/mimo9b-single-vision` ⭐ | ⚠️ caveats | 262144 | [single/bartowski-q8/full-vision.yml](../models/mimo-v2.6-9b/llama-cpp/compose/single/bartowski-q8/full-vision.yml) | — |  |
 | **MiniMax-M3.1-Flash (428B MoE, MiniMax)** | `strata-maya/minimax31-flash-single-maya-s` | 🐣 incubating | 204800 | [single/maya-s/dspark.yml](../models/minimax-m3.1-flash/strata-maya/compose/single/maya-s/dspark.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 124 GB |
 | **Qwen 3.6 27B** | `vllm/minimal` ⭐ | ✅ production | 32768 | [single/autoround-int4/minimal.yml](../models/qwen3.6-27b/vllm/compose/single/autoround-int4/minimal.yml) | [#733](https://github.com/noonghunna/club-3090/discussions/733) |  |
@@ -46,7 +50,7 @@ before you put an agent on it.
 | **Qwen3.8-Flash-Next (MoE, Qwen)** | `strata/qwen3.8-flash-next-iq3s-single` | 🐣 incubating | 131072 | [single/ista-iq3s/base.yml](../models/qwen3.8-flash-next/strata/compose/single/ista-iq3s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 93 GB |
 |  | `strata/qwen3.8-flash-next-swift15-abliterated-iq3s-single` | 🐣 incubating | 131072 | [single/sc117-swift15-abliterated-iq3s/base.yml](../models/qwen3.8-flash-next/strata/compose/single/sc117-swift15-abliterated-iq3s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 93 GB |
 
-23 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+27 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table single -->
 
 ## Launch
