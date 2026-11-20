@@ -105,7 +105,7 @@
   },
   "strata-maya": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:08b8a471e3ffda0f47add2f8e26bf4ae148e2625f3a24d7d5d60a08291323e3f",
    "render": "maya_prepare",
    "programs": [
     "models/glm-5.3-flash/strata-maya/launcher/maya_settings.py",
@@ -158,7 +158,7 @@
   },
   "strata-maya:ds4": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:08b8a471e3ffda0f47add2f8e26bf4ae148e2625f3a24d7d5d60a08291323e3f",
    "render": "maya_ds4_prepare",
    "programs": [
     "models/deepseek-v4.1-flash-1017/strata-maya/launcher/ds4_settings.py",
@@ -213,7 +213,7 @@
   },
   "strata-maya:hy4": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:08b8a471e3ffda0f47add2f8e26bf4ae148e2625f3a24d7d5d60a08291323e3f",
    "render": "maya_hy4_prepare",
    "programs": [
     "models/hy4-flash/strata-maya/launcher/hy4_settings.py",
@@ -276,7 +276,7 @@
   },
   "strata-maya:mm3": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:08b8a471e3ffda0f47add2f8e26bf4ae148e2625f3a24d7d5d60a08291323e3f",
    "render": "maya_mm3_prepare",
    "programs": [
     "models/minimax-m3.1-flash/strata-maya/launcher/mm3_settings.py",
