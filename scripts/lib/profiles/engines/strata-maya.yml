@@ -62,6 +62,21 @@ effort:
         claim is wire-probed 2026-11-15 on maya-s24 (:8194): reasoning_effort
         none -> 0 chars of reasoning_content (low -> 60, max -> 1391 on a
         900-token cap).
+    hy4-flash:
+      default_when_unset: high
+      supports_none: true
+      maps: {low: high, medium: high, xhigh: high, max: high}
+      evidence: >-
+        hy4_settings.py — Hy4-Flash's own launcher on this engine:
+        DEFAULT_EFFORT = "high" (:57), EFFORTS (:60) with every level but none
+        written as high (:127). Maya's server does the same at the request:
+        serve/frontend.py's Hy4 render (v1.1.69) sends the template no_think for
+        none / no_think / enable_thinking false and high for every other level
+        ("the template would take them, the model is not made for them"), and
+        thinking_levels() reports none / high. Wire-probed 2026-11-20 on
+        hy4-flash-dual-maya-xs (:8214): none and minimal -> 0 chars of
+        reasoning_content; low / medium / xhigh / max reason like high
+        (178-314 chars on a 900-token cap, no growth with the rung).
   evidence: >-
     Engine-wide (off_switch / supports_none): all three launchers on this engine
     map a request's `none` to thinking off — maya_settings.py EFFORTS (:46),
@@ -69,7 +84,7 @@ effort:
     the tuple includes `none`). Only GLM's is measured on the wire: 2026-11-15 on
     maya-s24 (:8194), reasoning_effort none -> 0 chars of reasoning_content
     (low -> 60, max -> 1391 on a 900-token cap).
-    The engine's other two models are deliberately NOT listed under by_model:
+    The engine's DeepSeek and MiniMax models are deliberately NOT listed under by_model:
     their launchers disagree — ds4_settings.py defaults to "high" (:51) and
     mm3_settings.py to "auto" (:54) with seven pass-through levels (:57) — and
     both are `status: unprobed`, so there is no ladder to fold onto yet.

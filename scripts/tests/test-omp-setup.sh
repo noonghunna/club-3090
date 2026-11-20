@@ -138,6 +138,9 @@ PER_ID = {
     "qwen3.8-flash-next-swift15": (QWEN, "xhigh", "flashnext"),
     "swift-1.5-iq3_s": (STRATA, "xhigh", "flashnext"),                 # Strata, swift
     "glm-5.3-flash": (["low", "high", "max"], "max", "glm"),
+    # hy4-flash: one thinking level (Tencent's card: high or no_think); every other name
+    # folds to high on Maya, the only engine serving the id, so the fold sources are listed.
+    "hy4-flash": (["high", "low", "max", "medium", "xhigh"], "high", "hy4"),
 }
 # The client families, not the routes: which sit behind LiteLLM's Responses -> chat
 # bridge (omp adds `summary: "auto"` to the reasoning object and the bridge forwards the
@@ -170,6 +173,7 @@ PER_ID_ENGINES = {
     "qwen3.8-flash-next-swift15": {"bucko-vllm"},
     "swift-1.5-iq3_s": {"strata"},
     "glm-5.3-flash": {"llamacpp-club3090-v1.6", "strata-maya"},
+    "hy4-flash": {"strata-maya"},
 }
 
 def group(name):
@@ -220,7 +224,7 @@ def after_flags(tokens):
 served = set()
 by_file = {}
 for model_dir in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next",
-                  "glm-5.3-flash"):
+                  "glm-5.3-flash", "hy4-flash"):
     for f in sorted(glob.glob(os.path.join(root, "models", model_dir, "*", "compose",
                                            "*", "*", "*.yml"))):
         doc = yaml.safe_load(open(f, encoding="utf-8")) or {}
@@ -266,7 +270,8 @@ for model_dir in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next"
 # booting placeholder is the only other user, and the ready render renames it). The
 # generator's rule is "the compose's names, or the registry name when it declares none",
 # so the expected set here needs the same fallback.
-COVERED = {"qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next", "glm-5.3-flash"}
+COVERED = {"qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next", "glm-5.3-flash",
+           "hy4-flash"}
 sys.path.insert(0, os.path.join(root, "scripts", "lib"))     # the registry reader only
 from litellm_sync import registry_variants
 for _v in registry_variants(root):

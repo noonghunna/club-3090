@@ -28,18 +28,26 @@ compatible_drafters: [maya-hy4-mtp]
 kv_calc_supported: false
 requires_genesis: false
 
-# #1951 — honest placeholder: the strata-maya composes carry the
-# REASONING_EFFORT knob (the engine's SERVER-side effort), so the effort gate
-# fires, but the WIRE ladder for this model has never been probed. The render
-# emits NOTHING for it. Probe it like gate M10 and replace this block.
+# #1951 — the wire ladder, probed (gate M10 shape) on 2026-11-20. Hy4-Flash
+# thinks at ONE level or not at all, so the ladder is that one rung; thinking off
+# is the engine's off switch (strata-maya.yml), and the folds of every other
+# name onto high are the (hy4-flash, strata-maya) pair's facts there.
 effort:
-  status: unprobed
+  levels: [high]
+  template_kwarg: true    # Maya reads chat_template_kwargs.reasoning_effort for Hy4 as well (probed below)
+  budget_map: false       # effort_budget.py knows only the Qwen ladder
   evidence: >-
-    hy4_settings.py is this model's launcher: DEFAULT_EFFORT = "high" and
-    EFFORTS = (none, low, medium, high, xhigh, max), every level but none
-    folded to high, as Maya's server does for Hy4-Flash (frontend.py: the
-    model's two levels, none and high). This is the launcher's server-knob
-    vocabulary, not a measured request-surface promise; no wire probe exists.
+    Tencent's model card (tencent/Hy4-flash README): reasoning_effort supports
+    "high" (default, thinking enabled) and "no_think" (direct responses).
+    Wire probe 2026-11-20 on strata-maya/hy4-flash-dual-maya-xs (:8214, Maya
+    v1.1.69 08b8a471, a 900-token cap): reasoning_effort none and minimal ->
+    0 chars of reasoning_content; low / medium / high / xhigh / max and no
+    effort -> 178-314 chars, one level (no growth with the rung, HTTP 200 for
+    every name). chat_template_kwargs.reasoning_effort none -> 0, low / high /
+    max -> 179-345; chat_template_kwargs.enable_thinking false -> 0. Through
+    the LiteLLM gateway: chat reasoning_effort high -> 175, none -> 0;
+    Responses reasoning effort high -> 243, none -> 0, none with summary auto
+    -> 0, no reasoning field -> 283.
 
 weights:
   maya-xs:

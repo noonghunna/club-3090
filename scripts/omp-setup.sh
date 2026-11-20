@@ -136,6 +136,13 @@ MODEL_FAMILIES = [
      "maxTokens": 32768,
      "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True,
                 "supportsReasoningSummary": False}},
+    # Hy4-Flash on Project Maya (maya-hy4): no supportsReasoningSummary pin. GLM needs it
+    # because its server 400s the whole `reasoning` object the Responses bridge forwards;
+    # probed through the gateway 2026-11-20, Hy4's route answered effort high with
+    # summary auto (171 chars of reasoning) and effort none with summary auto (0).
+    {"models": ["hy4-flash"],
+     "maxTokens": 32768,
+     "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True}},
 ]
 
 # MODEL_FAMILIES is the one hand-maintained input left, and the renderer below INDEXES
