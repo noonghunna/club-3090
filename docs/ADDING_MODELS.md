@@ -367,6 +367,17 @@ Run the scoped triage via `bash scripts/preflight-add-model.sh <slug>` (it inclu
     `LLAMA_ARG_LOG_VERBOSITY=4` with slots summed per device (record it in the `status_note`)
 6. ☐ Run `bash scripts/setup.sh <id>` FOR REAL (hand-placed weights don't count)
 7. ☐ Boot via `launch.sh --variant` → `verify-full.sh` → capture boot log → compare vs prediction
+7b. ☐ **Gateway and agent clients.** The live gateway needs nothing: `litellm-sync.sh` renders a route for
+    whatever is serving on every `switch.sh` (`gateway=True` is only a promoted slug's catalog route, step 4).
+    For a **thinking model**:
+    - probe the effort ladder (the M10 shape: each rung plus `none`, reasoning presence and length, directly and
+      through the gateway) and record `levels:` in the model profile. `status: unprobed` renders nothing, so omp
+      sends the model no effort and the engine runs its own default;
+    - add the model to `MODEL_FAMILIES` in `scripts/omp-setup.sh`, and its route ids to `test-omp-setup.sh`'s
+      per-id table. `test-omp-setup.sh` fails on a probed model with no family, and lists the unprobed ones;
+    - once it's merged, re-run `omp-setup.sh`, `hermes-setup.sh`, `dsh-setup.sh` and `pi-setup.sh` on the rig.
+      Hermes, dsh and pi keep a snapshot of the gateway's routes, so run them with the model serving
+      ([CODING_AGENTS.md](CODING_AGENTS.md)).
 8. ☐ Calibration rows (vLLM) + `kv-calc.py --calibration` ≥80%
 9. ☐ FULL guard suite green (baseline pre-existing failures against last release tag)
 10. ☐ `rebench-full --with-8pack-thinking=both` → BENCHMARKS row + `learnings/<id>.md`
