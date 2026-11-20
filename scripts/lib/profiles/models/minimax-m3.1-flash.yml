@@ -21,7 +21,7 @@ moe_intermediate_size: 3072      # intermediate_size (each routed expert)
 shared_expert_intermediate_size: 3072   # shared_intermediate_size (n_shared_experts = 1)
 vision_capable: false            # the model has a vision tower, but the slugs don't fetch it (--vision off)
 default_weight_variant: maya-s
-valid_tp: [1, 2]                 # the registry's tp counts GPUs: one card, or two in a layer split (maya-mm3's
+valid_tp: [1, 2, 4]              # the registry's tp counts GPUs: one card, or two or four in a layer split (maya-mm3's
                                  # tensor parallel is its EXL3 path's, not a GGUF pack's)
 compatible_drafters: [maya-mm3-dspark]
 # kv-calc has no model for a block-sparse indexer over streamed K / V: every slug sets kvcalc_key="SKIP", as the

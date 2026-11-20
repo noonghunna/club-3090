@@ -50,13 +50,14 @@
 # ---------------------------------------------------------------------------
 # Project Maya (github.com/mw00/project-maya) runs MiniMax-M3.1-Flash on its own maya-mm3 engine: see
 # docs/engines/STRATA_MAYA.md.
+# Siblings: ../../dual/maya-s/dspark.yml (dual), ../../multi4/maya-s/dspark.yml (multi4).
 #   bash scripts/switch.sh --force strata-maya/minimax31-flash-single-maya-s
 # The launcher (../../../launcher/) checks the files' SHA-256 once, builds Maya's pack on the data volume, writes
 # the config and starts Maya's server. By hand: SETUP_ONLY=1 docker compose -f dspark.yml run --rm strata-maya,
 # then up -d.
 services:
   strata-maya:
-    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:98da6b3ffb595e6a55dcca9d7d124cf2c1d827f7cf5546bf6ea96f7b1878f63c}
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5}
     container_name: ${ESTATE_CONTAINER:-strata-maya-minimax31-flash-single-maya-s}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # root, with the launcher's group: what Maya writes to the data volume stays removable by the user

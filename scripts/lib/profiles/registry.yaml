@@ -7171,6 +7171,38 @@ entries:
     gateway: false
     serve_aliases: []
     category: frontier
+  strata-maya/deepseek41-flash-multi4-ud-iq3-s:
+    origin: core
+    model: deepseek-v4.1-flash-1017
+    weights_variant: ud-iq3-s
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: null
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 229
+    kv_offload: null
+    chat_template: native
+    tp: 4
+    max_ctx: 65536
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/deepseek-v4.1-flash-1017/strata-maya/compose/multi4/ud-iq3-s/base.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8208
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "NEVER BOOTED (this rig has 2 GPUs; multi4 is COMMUNITY-VALIDATED BY DESIGN). Four cards, Maya's maya-ds4 layer split (--tp 1: each card its own layers, with whole experts), no drafter. unsloth's UD-IQ3_S GGUF (8 shards, 423.6 GB; the Engram tables Q6_K in the last shard, read from the disk) on the strata-maya engine (Project Maya's DeepSeek engine; club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/). host_ram_gb is the dual slug's measured 229 GB, an upper bound for four cards (more experts in VRAM, a smaller CPU lane to copy into RAM). Tensor parallel is opt-in: MAYA_TP=4 alone falls back to this layer split with this quant (its 256-value expert blocks do not split the FFN width 2304 four ways; the engine logs 'tensor parallel 4 -> 1'); MAYA_TP=4 MAYA_DS4_TP_GGUF_UNEVEN=1 forms the four-wide group measured for Maya-XS and ISTA on four RTX 5080s (#2047, #2054), not with this quant. Field values: kv_format fp16 is maya-ds4's latent cache; offload 'engine' = a per-layer VRAM expert pool + every CPU-side expert copied into RAM when they all fit (--mmap-experts auto), else read in place; tp 4 counts the cards (the engine runs --tp 1 across them). One request at a time. The dual slug's 8-pack (same weights and engine) is in its own note."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+    category: frontier
   strata-maya/deepseek41-flash-dual-maya-xs:
     origin: core
     model: deepseek-v4.1-flash-1017
@@ -7232,6 +7264,39 @@ entries:
     kvcalc_key: SKIP
     status: incubating
     status_note: "Two 3090s, Maya's maya-mm3 layer split (a GGUF pack runs that way: its tensor parallel is the EXL3 path's). Project Maya's own MiniMax-M3.1-Flash-Maya-S GGUF (IQ2_XXS experts, ~2.1 bits, 122.5 GB) on the strata-maya engine (Project Maya's MiniMax engine, maya-mm3; club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/). MEASURED 2026-10-27 on two 3090s capped at 230 W (v1.1.31 c94aa0e1, through switch.sh, bench.sh on its own boot, DSpark on, thinking off): 20.13 tok/s decode narrative (CV 2.6%), code 20.30 mean (18.31-24.56 across its 5 runs), 167 / 147 tok/s prefill @10K / @60K, DSpark kept 80.6% of drafts (bench.sh's sampler 0.6 / 0.95 / top-k 20); 1,625 of 7,296 experts resident in VRAM (layers 0-33 / 34-59), VRAM 23,376 / 23,360 MiB, host RAM 102 GB (MemAvailable fall, decimal, at its peak on a 224 GB host), verify-full every applicable check. Maya's speed calibration on v1.1.31 kept DSpark: 22.5 against 18.7 tok/s sustained (+20.5%). The first start (v1.1.30, DSpark off) was ready in 72 s. Field values: kv_format int8_per_token_head is maya-mm3's default INT8 K / V (a row per token and KV head, with its scale; rows rotated), streamed: 32K positions of each layer in VRAM, every one in pinned RAM (~13.0 GB at 204,800); offload 'engine' = a per-layer VRAM expert pool, the other experts computed by a CPU lane from RAM. DSpark drafter in the pack, on by default (DSPARK=off turns it off). One request at a time. Thinking auto by default (MiniMax's adaptive thinking); reasoning_effort none or enable_thinking false turns it off. ⚠️ MiniMax Community License (non-commercial free, commercial use has conditions). ⚠️ Quality unmeasured here (8-pack pending)."
+    weights_companions:
+      - maya-mm3-dspark
+    gateway: false
+    serve_aliases: []
+    category: frontier
+  strata-maya/minimax31-flash-multi4-maya-s:
+    origin: core
+    model: minimax-m3.1-flash
+    weights_variant: maya-s
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-mm3-dspark
+    spec_method: null
+    kv_format: int8_per_token_head
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 102
+    kv_offload: null
+    chat_template: native
+    tp: 4
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/minimax-m3.1-flash/strata-maya/compose/multi4/maya-s/dspark.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8209
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "NEVER BOOTED (this rig has 2 GPUs; multi4 is COMMUNITY-VALIDATED BY DESIGN). Four cards, Maya's maya-mm3 layer split (a GGUF pack runs that way: its tensor parallel is the EXL3 path's). Project Maya's own MiniMax-M3.1-Flash-Maya-S GGUF (IQ2_XXS experts, ~2.1 bits, 122.5 GB) on the strata-maya engine (Project Maya's MiniMax engine, maya-mm3; club-3090's image strata-maya-club3090, models/glm-5.3-flash/strata-maya/image/). host_ram_gb is the dual slug's measured 102 GB, an upper bound for four cards (more experts in VRAM; the ~13 GB of pinned K / V at 204,800 is the same). Field values: kv_format int8_per_token_head is maya-mm3's default INT8 K / V (a row per token and KV head, with its scale; rows rotated), streamed: 32K positions of each layer in VRAM, every one in pinned RAM; offload 'engine' = a per-layer VRAM expert pool, the other experts computed by a CPU lane from RAM. DSpark drafter in the pack, on the last card, on by default (DSPARK=off turns it off); measured ahead on two 3090s, not on four. One request at a time. Thinking auto by default (MiniMax's adaptive thinking); reasoning_effort none or enable_thinking false turns it off. ⚠️ MiniMax Community License (non-commercial free, commercial use has conditions). ⚠️ Quality unmeasured here (8-pack pending)."
     weights_companions:
       - maya-mm3-dspark
     gateway: false

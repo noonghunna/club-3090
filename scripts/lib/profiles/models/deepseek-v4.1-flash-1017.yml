@@ -18,7 +18,8 @@ num_experts_per_tok: 6           # num_experts_per_tok
 moe_intermediate_size: 2304      # moe_intermediate_size
 vision_capable: false            # the model has a vision tower, but the GGUF leaves it out and our image never fetches it
 default_weight_variant: ista-iq2-xxs
-valid_tp: [2]                    # the registry's tp counts GPUs: the dual slug's layer split (--tp 1 on two GPUs) is 2
+valid_tp: [2, 4]                 # the registry's tp counts GPUs: the dual slugs' layer split (--tp 1 on two GPUs) is 2,
+                                 # the multi4 slug's (--tp 1 on four) 4
 compatible_drafters: [maya-dspark-xs2]
 # kv-calc has no model for MLA + a sliding window + the DSA indexer + Engram: every slug sets kvcalc_key="SKIP",
 # the same call as deepseek4-moe and glm5next-moe.

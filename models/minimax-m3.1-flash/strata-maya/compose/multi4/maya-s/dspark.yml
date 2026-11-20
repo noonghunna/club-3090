@@ -1,0 +1,101 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     MiniMax-M3.1-Flash (MiniMaxAI; 428B MoE, 23B active a token) — Project Maya's own GGUF quant,
+#              MiniMax-M3.1-Flash-Maya-S: routed experts IQ2_XXS, the most sensitive IQ2_XS / IQ2_S / IQ3_XXS
+#              (~2.1 bits), attention and indexers Q8_0, the rest Q6_K; 3 shards + the dense layers' indexers
+#              side file, 122.5 GB (peasantsmith/MiniMax-M3.1-Flash-Maya-GGUF @4b40cc79)
+#   Engine:    Project Maya's maya-mm3 (MiniMax's engine in Project Maya, a Strata fork) —
+#              ghcr.io/noonghunna/strata-maya-club3090, built by club-3090 at the release commit
+#              (models/glm-5.3-flash/strata-maya/image/)
+#   Topology:  4× 24 GB, a layer split over four cards (a GGUF pack runs that way: maya-mm3's tensor parallel is
+#              its EXL3 path's): each card holds its own layers' dense part and an expert pool; the experts VRAM
+#              doesn't hold are computed on the CPU from RAM. No NCCL, no P2P needed
+#   Drafter:   DSpark n=7 (MiniMax's own drafter from the EXL3 repo, 2.3 GB, on the last card) — ON, as on the dual
+#              slug, where Maya's speed calibration measured it ahead on two 3090s; not measured on four cards.
+#              DSPARK=off turns it off
+#   KV:        INT8 K / V with rotated rows (maya-mm3's default), streamed: 32K positions of each layer in VRAM,
+#              every one in pinned RAM: 63,360 bytes a token, 12 GiB at 204,800 (KV=bf16 doubles it)
+#   Vision:    no (the vision tower isn't fetched or mounted: --vision off)
+#   Max ctx:   204800 (the model reaches 1M; Maya has run 256K end to end)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   Not gate-passing yet: quality unmeasured here (8-pack pending), one request at a time, and NEVER
+#              BOOTED on the reference rig (2 GPUs): multi4 is community-validated by design; its numbers come
+#              from community reports (numbers-from-your-rig). The dual slug's measurements are in its header.
+#              ⚠️ The MiniMax Community License (LICENSE.minimax-m31 in Maya's repo, LICENSE in the weights' repo):
+#              free for non-commercial use, commercial use has conditions. The FIRST start SHA-256-checks the 14
+#              files (~125 GB) against Maya's own manifests and builds Maya's pack on the data volume (an index, no
+#              weights copied), in the same minimax-maya-s folder as the single and dual slugs; a later start skips
+#              both. The CPU lane's threads default to half the CPUs (nproc / 2); a rig that has measured its own
+#              sets THREADS. Thinking: auto by default (MiniMax's adaptive thinking: the model decides whether to
+#              think, as Maya's own setup writes it); a request's reasoning_effort low / medium / high / xhigh / max
+#              picks a level, none (or enable_thinking false) turns it off. Host needs NVIDIA driver >= 580
+#              (CUDA 13) and an AVX2 CPU; x86-64 only.
+# CPU-Offload-Host-RAM-GB: 102
+#   ⤷ NOT MEASURED (never booted here): the dual slug's 102 GB is the upper bound, as four cards keep more
+#     experts in VRAM and leave fewer in RAM; the 12 GB of pinned K / V at 204,800 is the same on any card count.
+#   Best for:  MiniMax-M3.1-Flash on four 24 GB cards
+# ---------------------------------------------------------------------------
+# Project Maya (github.com/mw00/project-maya) runs MiniMax-M3.1-Flash on its own maya-mm3 engine: see
+# docs/engines/STRATA_MAYA.md.
+# Siblings: ../../single/maya-s/dspark.yml (single), ../../dual/maya-s/dspark.yml (dual).
+#   bash scripts/switch.sh --force strata-maya/minimax31-flash-multi4-maya-s
+# The launcher (../../../launcher/) checks the files' SHA-256 once, builds Maya's pack on the data volume, writes
+# the config and starts Maya's server. By hand: SETUP_ONLY=1 docker compose -f dspark.yml run --rm strata-maya,
+# then up -d.
+services:
+  strata-maya:
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5}
+    container_name: ${ESTATE_CONTAINER:-strata-maya-minimax31-flash-multi4-maya-s}
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
+    # (the entrypoint sets umask 0002)
+    user: "0:${DOCKER_GID:-1000}"
+    entrypoint: ["/bin/sh", "/opt/club3090/mm3-entrypoint.sh", "minimax-maya-s"]
+    ulimits:
+      memlock: -1            # Maya pins (locks) the experts it keeps in RAM, and the streamed K / V, for the GPUs
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8209}}:8080"
+    environment:
+      CONTEXT: "${CONTEXT:-204800}"
+      SETUP_ONLY: "${SETUP_ONLY:-0}"
+      REPACK: "${REPACK:-0}"
+      VERIFY: "${VERIFY:-1}"
+      MAYA_GPUS: "${MAYA_GPUS:-0,1,2,3}"
+      # Maya's server defaults, written into maya-mm3.json at every boot by mm3_prepare.py
+      # (launcher/mm3_settings.py maps each); unset = effort auto, sampling 1.0 / 0.95, the name minimax-m3.1-flash,
+      # INT8 K / V, DSpark on, a CPU lane of half the CPUs (nproc / 2), the loop guard on (Maya's own)
+      REASONING_EFFORT:
+      ENABLE_THINKING:
+      THINKING_BUDGET:
+      TEMP:
+      TOP_P:
+      TOP_K:
+      MIN_P:
+      PRESENCE_PENALTY:
+      REPEAT_PENALTY:
+      SERVED_NAME:
+      LOOP_GUARD:
+      KV:
+      DSPARK:
+      THREADS:
+      # Maya's model load/unload endpoints (/models/load, /models/unload, /models/sse; on by default from
+      # v1.1.47) and, from v1.1.50, its model API (/api/tags, /api/ps, /api/chat, ...). These composes set
+      # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
+      # switch are refused from outside the container. MAYA_MODEL_MANAGEMENT=0 turns all of them off
+      MAYA_MODEL_MANAGEMENT:
+      # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}/minimax-m3.1-flash-maya-gguf/Maya-S:/gguf:ro"
+      - "${MODEL_DIR:-../../../../../../models-cache}/minimax-m3.1-flash-maya-gguf/dspark:/companions/dspark:ro"
+      # one folder per quant (Maya's pack, the config, the engine's log); the launchers put it under
+      # ~/.local/share/club-3090, beside the GLM-5.3-Flash and DeepSeek quants' folders
+      - "${STRATA_MAYA_DATA_DIR:-${CLUB3090_DATA_DIR:-../../..}/strata-maya-data}:/data"
+      - "../../../launcher:/opt/club3090:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0,1,2,3}}']
+              capabilities: [gpu]
