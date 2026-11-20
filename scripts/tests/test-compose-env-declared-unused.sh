@@ -104,7 +104,10 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 # (src/core/glm_prefill.cu, src/core/glm_fast_path.cu)
                 "MAYA_GLM_SERVICE_NAP_US", "MAYA_GLM_SERVICE_SLEEP_MS",
                 "MAYA_DS4_SERVICE_NAP_US", "MAYA_DS4_SERVICE_SLEEP_MS",
-                "MAYA_GLM_PREFILL_CHECK", "MAYA_GLM_TIER_VERIFY"}
+                "MAYA_GLM_PREFILL_CHECK", "MAYA_GLM_TIER_VERIFY",
+                # ... and these, read at the v1.1.70 tag (b6632a0b) by maya-hy4 (src/hy4/hy4_model.cu, getenv):
+                # tensor parallel with the CPU lane (#1068), one card fewer (#1078), unsplit experts (#1062)
+                "HY4_TP_LANE", "HY4_TP_DOWN", "HY4_TP_EXPERTS"}
 
 # DEBT REGISTER — each entry must name WHY the dead knob is deliberate.
 # Shrink it; never grow it silently. An entry here means a documented knob is
