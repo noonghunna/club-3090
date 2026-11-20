@@ -13,7 +13,7 @@
 #                       (multi3), "0,1,2,3" (multi4); maya-hy4 runs tensor parallel over the largest group of equal
 #                       cards and splits the layers where none fits. The compose sets it
 #   CONTEXT             --max-context (default 262144: Maya has run its quants end to end up to 32K, and on the
-#                       reference rig verify-stress recalled to 240,107 tokens at it; the model reaches 1M). The cache has no RAM path in this engine: every position sits in VRAM, so a
+#                       reference rig verify-stress recalled to 240,107 tokens at it; the model reaches 1M). The cache sits in VRAM (the engine's KV streaming, v1.1.69 on, is off and this launcher doesn't set it), so a
 #                       longer context leaves fewer experts there. hy4_settings.py validates it (>= 4096)
 #   REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, TEMP, TOP_P, TOP_K, MIN_P, PRESENCE_PENALTY,
 #   REPEAT_PENALTY, SERVED_NAME, LOOP_GUARD, KV, DRAFTING, VISION, THREADS, HY4_EG_POPULATE
