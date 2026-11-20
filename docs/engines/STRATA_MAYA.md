@@ -18,7 +18,7 @@ Its profile declares `type: strata` and `lineage.relation: fork` (base `strata`)
 ## Image
 
 Maya publishes no image and no Linux engine: `maya.sh` compiles on the user's PC. From v1.1.53 its repository has a recipe for building an image yourself ([`docs/DOCKER.md`](https://github.com/mw00/project-maya/blob/main/docs/DOCKER.md), adapted from ours in [mw00/project-maya#808](https://github.com/mw00/project-maya/pull/808)), but no published image. So club-3090 builds `ghcr.io/noonghunna/strata-maya-club3090` for each release, an image-provenance exception recorded in [ADDING_ENGINES.md](../ADDING_ENGINES.md).
-- **Build:** our own Dockerfile compiles the engines (`maya` for GLM, `maya-ds4` for DeepSeek since #1801, `maya-mm3` for MiniMax-M3.1-Flash in the releases that define it, v1.1.29 on) the way `maya.py` does, with upstream's `STRATA_PORTABLE=ON` (ggml's CPU code for an AVX2 baseline instead of the build machine's CPU) and a fixed arch list. The runtime stage carries the release's files, llama.cpp's `gguf-py` and the server's Python packages.
+- **Build:** our own Dockerfile compiles the engines (`maya` for GLM, `maya-ds4` for DeepSeek since #1801, `maya-mm3` for MiniMax-M3.1-Flash in the releases that define it, v1.1.29 on, `maya-hy4` for Hy4-Flash, v1.1.68 on) the way `maya.py` does, with upstream's `STRATA_PORTABLE=ON` (ggml's CPU code for an AVX2 baseline instead of the build machine's CPU) and a fixed arch list. The runtime stage carries the release's files, llama.cpp's `gguf-py` and the server's Python packages.
 - **Archs:** `75;80;86;89;120` (RTX 20–50 and the A-series). V100 needs CUDA 12, which this image can't build; Maya's own setup builds it natively.
 - **Text only:** neither the vision encoder nor the DFlash2 drafter (CC BY-NC-ND weights) is in the image.
 - **Recipe, checks, publishing and pin flow:** [models/glm-5.3-flash/strata-maya/image/](../../models/glm-5.3-flash/strata-maya/image/README.md).
@@ -27,7 +27,7 @@ The profile pins a digest, and the launchers inject it as `STRATA_MAYA_IMAGE`. E
 
 **Bumping:** the maintainer publishes a release from the rig with `build.sh --tag <vX.Y.Z> --push` (`:<tag>`, `:sha-<commit>`), but publishing doesn't pin. What moving the pin checks, and when to skip a release: [the bump runbook](../NIGHTLY_BUMP_RUNBOOK.md#strata-and-project-maya-the-bump-rule).
 
-A release that renames a flag the launchers pass (`serve/server.py`, `tools/iq_pack.py`; for DeepSeek, `maya-ds4` and `tools/ds4/pack_gguf.py`; for MiniMax, `maya-mm3` and `tools/mm3/pack_gguf.py`) fails the image build, so the recipe and the launchers move together.
+A release that renames a flag the launchers pass (`serve/server.py`, `tools/iq_pack.py`; for DeepSeek, `maya-ds4` and `tools/ds4/pack_gguf.py`; for MiniMax, `maya-mm3` and `tools/mm3/pack_gguf.py`; for Hy4-Flash, `maya-hy4` and `tools/hy4/pack_gguf.py`) fails the image build, so the recipe and the launchers move together.
 
 ## Slugs
 

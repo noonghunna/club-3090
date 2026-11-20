@@ -63,6 +63,10 @@ REQUIRED_DS4_PACK_FLAGS="${REQUIRED_DS4_PACK_FLAGS:---model --out --drafter --en
 # itself: each must be one of its strings, exactly (the parser compares the argument against that literal).
 REQUIRED_MM3_FLAGS="${REQUIRED_MM3_FLAGS:---pack --max-context --profile --kv-cache --kv-streaming --cpu-threads --dspark --vision --serve}"
 REQUIRED_MM3_PACK_FLAGS="${REQUIRED_MM3_PACK_FLAGS:---model --out --companions --shards}"
+# ... and our Hy4-Flash launcher (the hy4-flash strata-maya slugs'), for build/maya-hy4 (v1.1.68 on) and tools/hy4/pack_gguf.py.
+# maya-hy4 stops at a flag it does not know; --serve is the server's own (it starts the engine with it)
+REQUIRED_HY4_FLAGS="${REQUIRED_HY4_FLAGS:---pack --max-context --mtp --kv --vision --cpu-threads --serve}"
+REQUIRED_HY4_PACK_FLAGS="${REQUIRED_HY4_PACK_FLAGS:---model --out --mmproj --mtp --files}"
 
 TAG="" PUSH=0 FORCE=0 VERIFY="" JOBS=""
 usage() { awk 'NR > 1 && !/^#/ {exit} NR > 1 {sub(/^# ?/, ""); print}' "$0"; }
@@ -211,6 +215,30 @@ $help"
   "${run[@]}" test "$ref" -s /opt/maya/tools/mm3/chat_template.jinja \
     || die "tools/mm3/chat_template.jinja is missing (the MiniMax pack builder copies it into every pack)"
   say "check: maya-mm3 resolves and takes every flag the MiniMax launcher passes; tools/mm3/pack_gguf.py offers its flags; the expert profile and chat template are there"
+
+  # Hy4-Flash's engine and pack builder (its strata-maya slugs; Maya v1.1.68 on)
+  local hy4=/opt/maya/build/maya-hy4
+  "${run[@]}" test "$ref" -x "$hy4" || die "$ref has no $hy4 (the release's CMakeLists.txt no longer defines maya-hy4?)"
+  missing="$("${run[@]}" ldd "$ref" "$hy4" | command grep 'not found' \
+             | command grep -v -E 'libcuda\.so|libnvidia' || true)"
+  [[ -z "$missing" ]] || die "libraries of $hy4 missing from the image:
+$missing"
+  absent="$("${run[@]}" /opt/maya/.venv/bin/python "$ref" -c '
+import sys
+data = open(sys.argv[1], "rb").read()
+print(" ".join(f for f in sys.argv[2:] if b"\0" + f.encode() + b"\0" not in data))' "$hy4" $REQUIRED_HY4_FLAGS 2>&1)" \
+    || die "could not read $hy4's strings:
+$absent"
+  [[ -z "$absent" ]] || die "maya-hy4 no longer takes: $absent (update the Hy4-Flash launcher before taking this release)"
+  help="$("${run[@]}" /opt/maya/.venv/bin/python "$ref" /opt/maya/tools/hy4/pack_gguf.py --help 2>&1)" \
+    || die "tools/hy4/pack_gguf.py --help failed:
+$help"
+  absent=""
+  for f in $REQUIRED_HY4_PACK_FLAGS; do
+    command grep -q -E -- "(^|[^a-z-])$f([^a-z-]|$)" <<<"$help" || absent="$absent $f"
+  done
+  [[ -z "$absent" ]] || die "tools/hy4/pack_gguf.py no longer offers:$absent (update the Hy4-Flash launcher before taking this release)"
+  say "check: maya-hy4 resolves and takes every flag the Hy4-Flash launcher passes; tools/hy4/pack_gguf.py offers its flags"
 
   # the launcher's first start builds a pack. gguf-py must import as the tools find it, and the pack
   # builder must index the release's own 12 MB synthetic GLM-5 model with the flags the launcher passes.
