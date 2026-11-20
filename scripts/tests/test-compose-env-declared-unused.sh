@@ -68,6 +68,8 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 # 0.2.10's reply-only penalty window
                 "STRATA_PCIE_AUTO_SPLIT", "STRATA_PCIE_K_RULE", "STRATA_PCIE_SHARE_MAX",
                 "STRATA_PENALTY_PROMPT",
+                # 0.2.17: the route tail skip (off unless set; 7 turns it on) and the two-card CPU prefill share
+                "STRATA_ROUTE_TAIL_SKIP", "STRATA_SPLIT_CPU_SHARE",
                 # from 1.3.2
                 "FLASH_PFB_ALIAS", "FLASH_PREFIX_GB", "FLASH_YARN", "FLASH_LEND_CHECK",
                 # 1.3.2's copy-engine prefill pipeline switch (#1841)
