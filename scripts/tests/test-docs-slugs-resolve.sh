@@ -64,11 +64,15 @@ ENGINES = sorted({k.split("/", 1)[0] for k in COMPOSE_REGISTRY})
 MODELS = sorted({e["model"] for e in COMPOSE_REGISTRY.values() if e.get("model")})
 
 # Which docs a user actually follows. Contributor-track and diagnostics prose are
-# out of scope on purpose; those aren't copy-paste onboarding paths.
+# out of scope on purpose; those aren't copy-paste onboarding paths. The engine
+# guides (docs/engines/) are in: each one's slug list and launch commands are what
+# a user copies to start that engine. Until 2026-11-20 only docs/*.md was read, so
+# a bad slug in an engine guide passed.
 TARGETS = [
     "README.md",
     "CONTRIBUTING.md",
     *sorted(str(p.relative_to(root)) for p in (root / "docs").glob("*.md")),
+    *sorted(str(p.relative_to(root)) for p in (root / "docs" / "engines").glob("*.md")),
 ]
 
 # Match a launcher invocation and capture only what sits in ARGUMENT position.
