@@ -19,7 +19,9 @@
 #   Max ctx:   32768 (Maya has run its quants end to end up to 32K; the model reaches 1M, and CONTEXT sets more)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   Not gate-passing: not booted on the reference rig yet (Maya-L is validated first).
+#   Caveats:   Not gate-passing: boot + verify-full only on the reference rig (2026-11-20, Maya v1.1.68, 230 W: 9
+#              passed, 0 failed, vision 4/4; 5% of the routed experts in VRAM); no bench, stress, soak or quality run
+#              yet.
 #              One request at a time (maya-hy4 has no --parallel yet). Quality per Maya's model card, against the
 #              full-precision model on held-out conversations (same top token / KL): 96.6% / 0.012; not measured here.
 #              ⚠️ The Tencent Hy License (LICENSE in the weights' repo, LICENSE.hy4-flash in Maya's). The n-gram
