@@ -38,9 +38,9 @@ so a setting removed is gone at the next boot. Maya's serve/server.py (the strat
                                                first use (0, Maya's default: the table belongs on an SSD). Written into
                                                the config's env, which the server hands to the engine
   CONTEXT                args: --max-context   the cache's capacity, a whole number >= 4096 (the floor the other Maya
-                                               recipes check). Unset: the entrypoint's default (32768 here, the
-                                               longest context Maya has run Maya's quants end to end at,
-                                               maya.py HY4_TESTED_CONTEXT); hy4_prepare.py writes it, this file only
+                                               recipes check). Unset: the entrypoint's default (262144 here; Maya
+                                               has run its quants end to end up to 32K, maya.py
+                                               HY4_TESTED_CONTEXT, and verify-stress recalled to 240,107 tokens); hy4_prepare.py writes it, this file only
                                                checks it
 
 Nor SPEC_N: maya-hy4 sizes its drafts by itself (--draft is its bench's).

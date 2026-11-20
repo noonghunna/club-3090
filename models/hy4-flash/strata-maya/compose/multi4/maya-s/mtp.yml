@@ -16,7 +16,8 @@
 #              engine: every position sits in VRAM, so a longer context leaves fewer experts there
 #   Vision:    yes (the vision tower runs in the engine a picture at a time; up to 0.8 GB kept free on the main GPU;
 #              VISION=off gives that room to the model)
-#   Max ctx:   32768 (Maya has run its quants end to end up to 32K; the model reaches 1M, and CONTEXT sets more)
+#   Max ctx:   262144 (Maya has run its quants end to end up to 32K; on the reference rig verify-stress recalled to
+#              240,107 tokens on the dual Maya-XS slug, Maya v1.1.69; the model reaches 1M, and CONTEXT sets another)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
 #   Caveats:   Not gate-passing: never booted on the reference rig (two GPUs): multi-card slugs are community-validated by design;
@@ -58,7 +59,7 @@ services:
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8223}}:8080"
     environment:
-      CONTEXT: "${CONTEXT:-32768}"
+      CONTEXT: "${CONTEXT:-262144}"
       SETUP_ONLY: "${SETUP_ONLY:-0}"
       REPACK: "${REPACK:-0}"
       VERIFY: "${VERIFY:-1}"

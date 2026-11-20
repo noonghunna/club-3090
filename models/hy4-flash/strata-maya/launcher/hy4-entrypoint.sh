@@ -12,8 +12,8 @@
 #   MAYA_GPUS           the cards to start on, as the container sees them: "0" (single), "0,1" (dual), "0,1,2"
 #                       (multi3), "0,1,2,3" (multi4); maya-hy4 runs tensor parallel over the largest group of equal
 #                       cards and splits the layers where none fits. The compose sets it
-#   CONTEXT             --max-context (default 32768: the longest context Maya has run its quants end to end at; the
-#                       model reaches 1M). The cache has no RAM path in this engine: every position sits in VRAM, so a
+#   CONTEXT             --max-context (default 262144: Maya has run its quants end to end up to 32K, and on the
+#                       reference rig verify-stress recalled to 240,107 tokens at it; the model reaches 1M). The cache has no RAM path in this engine: every position sits in VRAM, so a
 #                       longer context leaves fewer experts there. hy4_settings.py validates it (>= 4096)
 #   REASONING_EFFORT, ENABLE_THINKING, THINKING_BUDGET, TEMP, TOP_P, TOP_K, MIN_P, PRESENCE_PENALTY,
 #   REPEAT_PENALTY, SERVED_NAME, LOOP_GUARD, KV, DRAFTING, VISION, THREADS, HY4_EG_POPULATE
@@ -33,7 +33,7 @@ umask 0002                   # group-writable, so the launcher's user can clear 
 TAG="${1:?the quant (hy4-maya-xs, hy4-maya-s, hy4-maya-m or hy4-maya-l) is the argument to this script}"
 here="$(dirname "$0")"
 
-/opt/maya/.venv/bin/python "$here/hy4_prepare.py" --tag "$TAG" --context "${CONTEXT:-32768}" \
+/opt/maya/.venv/bin/python "$here/hy4_prepare.py" --tag "$TAG" --context "${CONTEXT:-262144}" \
   --gpus "${MAYA_GPUS:-0,1}" --verify "${VERIFY:-1}" --repack "${REPACK:-0}"
 
 if [ "${SETUP_ONLY:-0}" = "1" ]; then

@@ -198,7 +198,7 @@ def render_maya_hy4_prepare(entry: dict, settings: dict) -> dict:
     render_maya_mm3_prepare, its own config file (maya-hy4.json) and quant folder."""
     launcher = ROOT / Path(entry["programs"][-1]).parent
     settings = dict(settings)
-    context = settings.pop("CONTEXT", "32768")    # the entrypoint passes CONTEXT as hy4_prepare.py --context
+    context = settings.pop("CONTEXT", "262144")   # the entrypoint passes CONTEXT as hy4_prepare.py --context
     with tempfile.TemporaryDirectory() as d:
         _run([sys.executable, "-c", MAYA_HY4_RENDER, str(launcher), d, context], _env_for(entry, settings),
              f"hy4_prepare.config() {settings or '(no settings)'}")

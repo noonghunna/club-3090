@@ -245,7 +245,7 @@ Maya runs Tencent's [Hy4-Flash](https://huggingface.co/tencent/Hy4-flash) on a f
   - **Effort:** `high` by default. Hy4-Flash thinks at high or not at all, so `low` / `medium` / `xhigh` / `max` run at high (the boot log says so). `none`, or `ENABLE_THINKING=false`, turns thinking off.
   - **Sampling and name:** temperature 0.9 / top_p 1.0; the name is `hy4-flash`.
   - **More:** `KV`, `DRAFTING` (`on` / `off`), `VISION` (`off` gives the tower's room to the model), `THREADS` (`--cpu-threads`, half the CPUs by default), `HY4_EG_POPULATE` (`0` / `1`).
-- **Context:** 32,768. Maya has run its quants end to end up to 32K; the model reaches 1M. `CONTEXT` sets more.
+- **Context:** 262,144. Maya has run its quants end to end up to 32K; on the reference rig `verify-stress` on the dual Maya-XS slug (v1.1.69) recalled a needle at every rung of its ceiling ladder, up to 240,107 tokens. The model reaches 1M; `CONTEXT` sets another. The cache sits in VRAM, so at 262K a card keeps fewer experts: 2–9% on one card and 24–57% on two, against 5–16% and 28–64% at 32K on v1.1.68.
 - **One request at a time:** `maya-hy4` has no `--parallel` yet.
 - **Checked on the reference rig** (2026-11-20, v1.1.68 image `3815b467`, 230 W): every single and dual slug, each on its own boot, booted through `switch.sh` and passed `verify-full` (9 passed, 0 failed, vision 4/4).
   - Not benched yet.
