@@ -12,10 +12,11 @@
 #              layers where no group fits; the experts VRAM doesn't hold are computed on the CPU from RAM
 #   Drafter:   MTP (Tencent's MTP block from its own file, rounded to Q8_0 in VRAM: about 4 GB) — ON (Maya's setup
 #              turns it on on cards from about 16 GB); DRAFTING=off turns it off
-#   KV:        maya-hy4's latent cache (KV=auto: F16 rows, 8-bit rows where F16 doesn't fit). No RAM path in this
-#              engine: every position sits in VRAM, so a longer context leaves fewer experts there
-#   Vision:    yes (the vision tower runs in the engine a picture at a time; up to 0.8 GB kept free on the main GPU;
-#              VISION=off gives that room to the model)
+#   KV:        maya-hy4's latent cache (KV=auto: F16 rows, 8-bit rows where F16 doesn't fit), all of it in VRAM: the
+#              engine's KV streaming (v1.1.69 on) is off and the launcher doesn't set it, so a longer context leaves
+#              fewer experts there
+#   Vision:    yes (the vision tower runs in the engine a picture at a time, in the prompt buffers from v1.1.69: no
+#              VRAM is kept for pictures, so VISION=off adds no experts)
 #   Max ctx:   262144 (Maya has run its quants end to end up to 32K; on the reference rig verify-stress recalled to
 #              240,107 tokens on the dual Maya-XS slug, Maya v1.1.69; the model reaches 1M, and CONTEXT sets another)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific

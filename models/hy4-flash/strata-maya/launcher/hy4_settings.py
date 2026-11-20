@@ -22,14 +22,14 @@ so a setting removed is gone at the next boot. Maya's serve/server.py (the strat
   SERVED_NAME            model_name            the name /v1/models reports; unset = hy4-flash. One name, no spaces
   LOOP_GUARD             loop_guard            true | false: the server's loop guard; unset = Maya's own (on)
   KV                     args: --kv            auto (the engine's default: F16 latent rows, 8-bit rows where F16 does
-                                               not fit) | f16 | q8. The cache has no RAM path in this engine: a
-                                               context is VRAM alone
+                                               not fit) | f16 | q8. The cache sits in VRAM: the engine's KV
+                                               streaming (v1.1.69 on) is off and this launcher doesn't set it
   DRAFTING               args: --mtp           on | off: Tencent's MTP block (Hy4-Flash-mtp-BF16, its own file) drafts.
                                                Unset = on: about 4 GB of VRAM beside the model, and Maya's setup turns
                                                it on on cards from about 16 GB. A rig where it doesn't pay sets off
   VISION                 args: --vision off    on | off: the vision tower (the mmproj file in the pack). Unset = on,
-                                               the engine's default when the pack has the tower; off gives its room on
-                                               the main GPU (up to 0.8 GB) to the model
+                                               the engine's default when the pack has the tower. From v1.1.69 a picture
+                                               borrows the prompt buffers, so off frees no VRAM
   THREADS                args: --cpu-threads   the CPU lane's threads (the experts VRAM doesn't hold are computed
                                                there, from RAM); whole number >= 1. Unset: half the CPUs this
                                                container may use, at least 1 (threads(), below)

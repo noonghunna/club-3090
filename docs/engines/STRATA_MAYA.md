@@ -229,7 +229,7 @@ Maya runs Tencent's [Hy4-Flash](https://huggingface.co/tencent/Hy4-flash) on a f
   - the vision tower (`Maya-XS/mmproj-Hy4-Flash-Maya-XS.gguf`, 0.8 GB).
 
   Keep one copy of each. The catalog names the table by its `Maya-XS/` copy, and every compose mounts the shared files under its own size's names. All four sizes with the shared files take 327 GB.
-- **Not downloaded:** the repo also has a DFly2 drafter for each size (0.7–0.9 GB). `maya-hy4` doesn't read it yet, and Maya's own setup doesn't fetch it either.
+- **Not downloaded:** the repo also has a DFly2 drafter for each size (0.7–0.9 GB). From v1.1.69 `maya-hy4` can draft with it (`--dfly2`, on one GPU; several GPUs keep the MTP block), but these slugs draft with the MTP block and don't mount it.
 - **Launcher** (`models/hy4-flash/strata-maya/launcher/`: `hy4-entrypoint.sh`, `hy4_prepare.py`, `hy4_settings.py`). The launcher:
   - checks the four files' SHA-256 against Maya's manifest, once;
   - builds the pack with `tools/hy4/pack_gguf.py` on the data volume (`/data/hy4-maya-<size>/pack`, an index: no weights are copied);
@@ -239,12 +239,12 @@ Maya runs Tencent's [Hy4-Flash](https://huggingface.co/tencent/Hy4-flash) on a f
 - **Placement:** everything that isn't a routed expert sits in VRAM with the cache. The card fills the rest with the most-routed experts, and a CPU lane computes the others from the memory-mapped model file.
 - **Tensor parallel:** on several cards `maya-hy4` (`--tp auto`) runs tensor parallel where one member fits on every card, and splits the layers where it doesn't. On 2 × 3090 it never fits: a member needs 24.3 / 28.5 / 36.3 / 47.1 GB for XS / S / M / L. So the dual slugs run the layer split.
 - **Drafter:** the MTP block, **on**, including on one card (GLM's `maya` drafts only on two or more). `DRAFTING=off` turns it off.
-- **K / V:** `KV=auto` (F16 latent rows, 8-bit where F16 doesn't fit), or `f16` / `q8`. They live in VRAM only: this engine has no RAM path, so a longer context leaves fewer experts in VRAM.
+- **K / V:** `KV=auto` (F16 latent rows, 8-bit where F16 doesn't fit), or `f16` / `q8`. They live in VRAM: the engine's KV streaming (`--kv-streaming`, v1.1.69 on) keeps the indexed layers' cache in RAM and only its newest positions in VRAM, but it's off by default and the launcher doesn't set it, so a longer context leaves fewer experts in VRAM.
 - **The n-gram table** is read from the disk a row at a time while the model answers, so Maya says to keep it on an SSD. `HY4_EG_POPULATE=1` maps it into the page cache at start instead.
 - **Settings:** as for the other Maya slugs, with Hy4-Flash's:
   - **Effort:** `high` by default. Hy4-Flash thinks at high or not at all, so `low` / `medium` / `xhigh` / `max` run at high (the boot log says so). `none`, or `ENABLE_THINKING=false`, turns thinking off.
   - **Sampling and name:** temperature 0.9 / top_p 1.0; the name is `hy4-flash`.
-  - **More:** `KV`, `DRAFTING` (`on` / `off`), `VISION` (`off` gives the tower's room to the model), `THREADS` (`--cpu-threads`, half the CPUs by default), `HY4_EG_POPULATE` (`0` / `1`).
+  - **More:** `KV`, `DRAFTING` (`on` / `off`), `VISION` (`off` drops the tower; from v1.1.69 a picture borrows the prompt buffers, so it frees no VRAM), `THREADS` (`--cpu-threads`, half the CPUs by default), `HY4_EG_POPULATE` (`0` / `1`).
 - **Context:** 262,144. Maya has run its quants end to end up to 32K; on the reference rig `verify-stress` on the dual Maya-XS slug (v1.1.69) recalled a needle at every rung of its ceiling ladder, up to 240,107 tokens. The model reaches 1M; `CONTEXT` sets another. The cache sits in VRAM, so at 262K a card keeps fewer experts: 2–9% on one card and 24–57% on two, against 5–16% and 28–64% at 32K on v1.1.68.
 - **One request at a time:** `maya-hy4` has no `--parallel` yet.
 - **Checked on the reference rig** (2026-11-20, v1.1.68 image `3815b467`, 230 W): every single and dual slug, each on its own boot, booted through `switch.sh` and passed `verify-full` (9 passed, 0 failed, vision 4/4). The dual slugs were then benched with `bench.sh`, each on its own boot (v1.1.69 image `08b8a471`, 262,144 context, thinking off): narrative / code 42.83 / 58.69 tok/s on Maya-XS, 40.19 / 51.48 on Maya-S, 32.65 / 43.65 on Maya-M and 32.30 / 45.14 on Maya-L, with prefill at 10K tokens 765 / 703 / 634 / 528 tok/s and 70.6–71.7% of the MTP drafts kept. The single slugs aren't benched yet.
