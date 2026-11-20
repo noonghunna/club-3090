@@ -2,7 +2,7 @@
 # Profile (at-a-glance):
 #   Model:     Hy4-Flash (Tencent; 220B MoE: 42 layers, 512 routed experts, 16 a token, MLA attention with a sliding
 #              window and 12 indexed layers, an n-gram (Engram) table) — Project Maya's own GGUF quant,
-#              Hy4-Flash-Maya-L: routed experts IQ4_XS (4 bits); attention, head and shared expert Q8_0; model shard 89.5 GB
+#              Hy4-Flash-Maya-L: routed experts IQ4_XS (4 bits), Q5_K (5 bits) on 5 layers; attention, head and shared expert Q8_0; model shard 89.5 GB
 #              (peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d), plus the files shared by every size: the n-gram table (shard 00002, 63.4 GB, Maya-XS/ in the repo, one file for every size),
 #              Tencent's MTP block (mtp/Hy4-Flash-mtp-BF16.gguf_file, 7.5 GB) and the vision tower (Maya-XS/mmproj-Hy4-Flash-Maya-XS.gguf, 0.8 GB)
 #   Engine:    Project Maya's maya-hy4 (Hy4-Flash's engine in Project Maya, a Strata fork; v1.1.68 on) —

@@ -96,7 +96,7 @@ weights:
     files:
       - Maya-L/Hy4-Flash-Maya-L-IQ4_XS-00001-of-00002.gguf
     verify_glob: "Maya-L/Hy4-Flash-Maya-L-IQ4_XS-00001-of-00002.gguf"
-    manual_note: "🐣 Project Maya's largest Hy4-Flash quant (peasantsmith): routed experts IQ4_XS (4 bits), attention, head and shared expert Q8_0; the model shard 89.5 GB, plus the shared n-gram table, MTP block and vision tower. Maya's card: 96.6% the same top token, KL 0.012, for PCs with about 104-128 GB of RAM + VRAM. ⚠️ Tencent Hy License."
+    manual_note: "🐣 Project Maya's largest Hy4-Flash quant (peasantsmith): routed experts IQ4_XS (4 bits), Q5_K (5 bits) on 5 layers, attention, head and shared expert Q8_0; the model shard 89.5 GB, plus the shared n-gram table, MTP block and vision tower. Maya's card: 96.6% the same top token, KL 0.012, for PCs with about 104-128 GB of RAM + VRAM. ⚠️ Tencent Hy License."
   hy4-ngram:
     path: hy4-flash-maya-gguf/Maya-XS
     # the n-gram (Engram) table: shard 00002 of every size, ONE file (the same SHA-256 in every size's folder of the
