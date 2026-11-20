@@ -203,7 +203,7 @@ def main() -> int:
     ap.add_argument("--tag", required=True, choices=sorted(WEIGHTS))
     ap.add_argument("--src", default="/gguf")
     ap.add_argument("--data", default="/data")
-    ap.add_argument("--context", type=int, default=32768)
+    ap.add_argument("--context", type=int, default=262144)
     ap.add_argument("--gpus", default="0,1")
     ap.add_argument("--verify", default="1")
     ap.add_argument("--repack", default="0")
