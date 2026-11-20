@@ -103,6 +103,12 @@
    "REASONING_EFFORT": true,
    "THINKING_BUDGETS": "the per-effort budget knobs name Qwen3.8's levels (low / medium / xhigh, effort_budget.py LEVELS); its levels are low / high / max"
   },
+  "hy4-flash": {
+   "evidence": "Hy4-Flash's own chat template (the GGUF's tokenizer.chat_template, which tools/hy4/pack_gguf.py copies into the pack's tokenizer/; Maya's copy serve/fixtures/hy4_flash/chat_template.jinja): reasoning_effort high / max / no_think, unknown levels taken as high; serve/frontend.py renders thinking off (enable_thinking false, or reasoning_effort none) as no_think and every other level as high",
+   "ENABLE_THINKING": true,
+   "REASONING_EFFORT": true,
+   "THINKING_BUDGETS": "the per-effort budget knobs are effort_budget.py's, which only the vLLM / SGLang composes run; Maya's server takes one budget for every level (THINKING_BUDGET)"
+  },
   "inkling-small": {
    "evidence": "unsloth/Inkling-Small-GGUF tokenizer.chat_template (GGUF header): reasoning_effort none ... max or a number; no enable_thinking",
    "ENABLE_THINKING": "its template has no enable_thinking (thinking off is reasoning_effort none, which REASONING_EFFORT already covers)",

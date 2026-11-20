@@ -25,6 +25,7 @@ supported_model_families:
   - glm5next-moe          # GLM-5.3-Flash: the `maya` engine
   - deepseek41-moe        # DeepSeek-V4.1-Flash-1017: the `maya-ds4` engine (the image builds both since #1801)
   - minimax-m3-moe        # MiniMax-M3.1-Flash: the `maya-mm3` engine (Project Maya v1.1.29 on)
+  - hy4-moe               # Hy4-Flash: the `maya-hy4` engine (Project Maya v1.1.68 on)
 supported_weight_formats:
   - gguf                  # Project Maya's own quants (Maya-S / Maya-M / Maya-L); ISTA's GSQ-RCO GGUF of DeepSeek-V4.1-Flash
   - maya-dspark           # Maya's DSpark drafter format (drafter_pack.py's .bin + .json), read by tools/ds4/pack_gguf.py
@@ -37,6 +38,7 @@ supported_drafters:
   - dspark                # DeepSeek-V4.1-Flash's DSpark drafter (maya-ds4 --dspark on) and MiniMax-M3.1-Flash's
                           # (maya-mm3 --dspark on; Maya's own setup leaves it off). GLM's MTP is the model's own
                           # NextN block (two or more GPUs), not a club drafter
+  - mtp_gguf              # Hy4-Flash's MTP block, a GGUF of its own (maya-hy4 --mtp; drafter maya-hy4-mtp)
 # #1951 — what this engine changes about effort. The Maya slugs' composes
 # leave REASONING_EFFORT unset (empty) on purpose, so default_when_unset is
 # load-bearing for the render. The wire off switch is PROBED (2026-11-15,

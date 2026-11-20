@@ -829,16 +829,18 @@ check_mtp_acceptance() {
       if ! python3 "${ROOT_DIR}/scripts/lib/strata_metrics.py" snapshot "${URL}" "${sm_c[@]}" > "${sm_dir}/before.json" 2> "${sm_dir}/err"; then
         fail "could not read ${URL}/metrics before the request" "$(cat "${sm_dir}/err")"; rm -rf "${sm_dir}"; return 1
       fi
-      # Project Maya reports whether a draft block is loaded (engine.mtp): none on one GPU, where its MTP
-      # block can't run, so there is nothing to check. Strata's document has no such field: no skip there.
+      # Project Maya reports whether a draft block is loaded (engine.mtp): GLM's none on one GPU, where its MTP
+      # block can't run, Hy4-Flash's none with DRAFTING=off, so there is nothing to check. Strata's document has no
+      # such field: no skip there.
       if [[ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["engine"].get("mtp", ""))' "${sm_dir}/before.json" 2>/dev/null)" == 0 ]]; then
         skip "the engine loaded no draft block (engine.mtp 0: Project Maya drafts only on two or more GPUs)"
         rm -rf "${sm_dir}"; return 0
       fi
       # Maya reports its DSpark drafter as engine.dspark: MiniMax's maya-mm3 writes 0 when DSPARK=off (Maya's own
       # default for it), DeepSeek's maya-ds4 false when the pack holds no drafter (the UD-IQ3_S slug). Either is off;
-      # a missing field is not (Strata's document has none)
-      if [[ "$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))["engine"].get("dspark"); print("off" if v is not None and v == 0 else "")' "${sm_dir}/before.json" 2>/dev/null)" == off ]]; then
+      # a missing field is not (Strata's document has none). Hy4-Flash's maya-hy4 writes dspark 0 beside its MTP
+      # block (engine.mtp 1), which drafts: off only when no MTP block runs either
+      if [[ "$(python3 -c 'import json,sys; e=json.load(open(sys.argv[1]))["engine"]; v=e.get("dspark"); print("off" if v is not None and v == 0 and not e.get("mtp") else "")' "${sm_dir}/before.json" 2>/dev/null)" == off ]]; then
         skip "the engine runs no drafter (engine.dspark off: DSPARK=off on MiniMax, no drafter in the pack on DeepSeek)"
         rm -rf "${sm_dir}"; return 0
       fi

@@ -211,6 +211,69 @@
     "loop_guard": "loop_guard_setting(), from main(): svc.loop_guard (serve/loop_guard.py; MAYA_LOOP_GUARD in the environment wins, and no compose forwards it)"
    }
   },
+  "strata-maya:hy4": {
+   "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5",
+   "render": "maya_hy4_prepare",
+   "programs": [
+    "models/hy4-flash/strata-maya/launcher/hy4_settings.py",
+    "models/hy4-flash/strata-maya/launcher/hy4_prepare.py"
+   ],
+   "settings": {
+    "REASONING_EFFORT": "none",
+    "ENABLE_THINKING": "false",
+    "THINKING_BUDGET": "256",
+    "TEMP": "0.7",
+    "TOP_P": "0.9",
+    "TOP_K": "10",
+    "MIN_P": "0.05",
+    "PRESENCE_PENALTY": "0.5",
+    "REPEAT_PENALTY": "1.1",
+    "CONTEXT": "16384",
+    "SERVED_NAME": "llm",
+    "LOOP_GUARD": "false",
+    "KV": "q8",
+    "DRAFTING": "off",
+    "VISION": "off",
+    "THREADS": "7",
+    "HY4_EG_POPULATE": "1"
+   },
+   "setup_only": {},
+   "server": "/opt/maya/serve/server.py",
+   "engine_help": [
+    "/bin/sh",
+    "-c",
+    "grep -o 'a == \"--[a-z][a-z0-9-]*\"' /opt/maya/src/hy4/hy4_main.cpp | cut -d'\"' -f2"
+   ],
+   "config_receivers": [
+    "cfg",
+    "cfg or {}"
+   ],
+   "config_scopes": [
+    "main",
+    "sampling_defaults_from_config",
+    "loop_guard_setting",
+    "child_env"
+   ],
+   "reads": {
+    "reasoning_effort": "main(): svc.default_effort (a Hy4-Flash template: frontend.py renders none as no_think and every other level as high)",
+    "thinking_budget": "main(): svc.think_budget (logged 'thinking budget: N tokens')",
+    "sampling.temperature": "sampling_defaults_from_config(): a default for requests that leave the field out",
+    "sampling.top_p": "sampling_defaults_from_config()",
+    "sampling.top_k": "sampling_defaults_from_config()",
+    "sampling.min_p": "sampling_defaults_from_config()",
+    "sampling.presence_penalty": "sampling_defaults_from_config()",
+    "sampling.repetition_penalty": "sampling_defaults_from_config()",
+    "args:--max-context": "maya-hy4's own flag (its parser in src/hy4/hy4_main.cpp compares it; the engine has no --help): the cache's capacity (VRAM only in this engine)",
+    "args:--kv": "maya-hy4's own flag: the latent cache's rows, auto | f16 | q8",
+    "args:--mtp": "maya-hy4's own flag: draft with the pack's MTP block",
+    "args:--vision": "maya-hy4's own flag: --vision off leaves the pack's vision tower out",
+    "args:--cpu-threads": "maya-hy4's own flag: the CPU lane's threads (the experts VRAM doesn't hold)",
+    "model_name": "main(): the served name (/v1/models, /props, every answer's model field)",
+    "loop_guard": "loop_guard_setting(), from main(): svc.loop_guard (serve/loop_guard.py)",
+    "env": "child_env(): the config's env is exported into the engine's environment (maya_names.export_env); maya-hy4 reads HY4_EG_POPULATE at load"
+   }
+  },
   "strata-maya:mm3": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
    "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5",

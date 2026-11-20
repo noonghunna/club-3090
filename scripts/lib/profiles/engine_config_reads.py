@@ -183,8 +183,32 @@ def render_maya_mm3_prepare(entry: dict, settings: dict) -> dict:
         return json.loads(text)
 
 
+MAYA_HY4_RENDER = r"""
+import sys, types
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import hy4_prepare
+d = Path(sys.argv[2])
+hy4_prepare.config("hy4-maya-l", d, d / "pack", types.SimpleNamespace(gpus="0,1", context=int(sys.argv[3])))
+"""
+
+
+def render_maya_hy4_prepare(entry: dict, settings: dict) -> dict:
+    """Hy4-Flash on Maya's maya-hy4 (models/hy4-flash/strata-maya/launcher/hy4_prepare.py): the same shape as
+    render_maya_mm3_prepare, its own config file (maya-hy4.json) and quant folder."""
+    launcher = ROOT / Path(entry["programs"][-1]).parent
+    settings = dict(settings)
+    context = settings.pop("CONTEXT", "32768")    # the entrypoint passes CONTEXT as hy4_prepare.py --context
+    with tempfile.TemporaryDirectory() as d:
+        _run([sys.executable, "-c", MAYA_HY4_RENDER, str(launcher), d, context], _env_for(entry, settings),
+             f"hy4_prepare.config() {settings or '(no settings)'}")
+        text = (Path(d) / "maya-hy4.json").read_text(encoding="utf-8").replace(json.dumps(d)[1:-1], "/data/hy4-maya-l")
+        return json.loads(text)
+
+
 RENDERERS = {"strata_config": render_strata_config, "maya_prepare": render_maya_prepare,
-             "maya_ds4_prepare": render_maya_ds4_prepare, "maya_mm3_prepare": render_maya_mm3_prepare}
+             "maya_ds4_prepare": render_maya_ds4_prepare, "maya_mm3_prepare": render_maya_mm3_prepare,
+             "maya_hy4_prepare": render_maya_hy4_prepare}
 
 
 def arg_pairs(args) -> dict:

@@ -1,0 +1,144 @@
+schema_version: 1
+id: hy4-flash
+display_name: Hy4-Flash (220B MoE, Tencent)
+description: Hy4-Flash — Tencent's 220B MoE (42 layers; 512 routed experts, 16 a token, + 1 shared) with MLA attention, a sliding window on most layers and 12 indexed sparse-attention layers, four Engram n-gram layers and an MTP block, 1M native context; served on one to four 3090s by Project Maya's maya-hy4 engine from Maya's own GGUF quants (Maya-XS / S / M / L), the experts VRAM doesn't hold computed on the CPU from RAM.
+family: hy4-moe
+# Arch: HYV4FlashForConditionalGeneration (model_type hy_v4_flash). Values from tencent/Hy4-flash's config.json
+# (@b2498eba, read 2026-11-19).
+# ⚠️ LICENSE: the Tencent Hy License (LICENSE in the weights' repo, LICENSE.hy4-flash in Maya's).
+hidden_size: 3072                # hidden_size
+num_hidden_layers: 42            # num_hidden_layers (layer 0 dense, 1-41 MoE; the MTP block is a separate file)
+intermediate_size: 13824         # intermediate_size (the dense layer)
+num_attn_heads: 32               # num_attention_heads (MLA: q_lora_rank 1024, kv_lora_rank 512; sliding layers 64)
+num_kv_heads: 1                  # MLA: one latent KV row a position (kv_lora_rank 512 + rope 64), as Maya caches it
+head_dim_attn: 256               # qk_head_dim / v_head_dim
+attention_k_eq_v: false
+max_ctx_supported: 1048576       # max_position_embeddings — we SHIP 32768 (Maya has run its quants end to end up to 32K)
+num_experts: 512                 # n_routed_experts
+num_experts_per_tok: 16          # num_experts_per_tok
+moe_intermediate_size: 1536      # moe_intermediate_size
+shared_expert_intermediate_size: 1536   # n_shared_experts = 1
+vision_capable: true             # the vision tower (Maya's mmproj file, one for every size); VISION=off turns it off
+default_weight_variant: maya-l
+valid_tp: [1, 2, 3, 4]           # the registry's tp counts GPUs: maya-hy4 runs tensor parallel over the largest group of
+                                 # equal cards (--tp auto) and splits the layers where none fits
+compatible_drafters: [maya-hy4-mtp]
+# kv-calc has no model for MLA + sliding windows + the indexer + Engram: every slug sets kvcalc_key="SKIP", as the
+# other Maya slugs.
+kv_calc_supported: false
+requires_genesis: false
+
+# #1951 — honest placeholder: the strata-maya composes carry the
+# REASONING_EFFORT knob (the engine's SERVER-side effort), so the effort gate
+# fires, but the WIRE ladder for this model has never been probed. The render
+# emits NOTHING for it. Probe it like gate M10 and replace this block.
+effort:
+  status: unprobed
+  evidence: >-
+    hy4_settings.py is this model's launcher: DEFAULT_EFFORT = "high" and
+    EFFORTS = (none, low, medium, high, xhigh, max), every level but none
+    folded to high, as Maya's server does for Hy4-Flash (frontend.py: the
+    model's two levels, none and high). This is the launcher's server-knob
+    vocabulary, not a measured request-surface promise; no wire probe exists.
+
+weights:
+  maya-xs:
+    path: hy4-flash-maya-gguf/Maya-XS
+    # local_subdir is the BUCKET: Maya's repo keeps each size in a folder of its own; files and the glob carry the
+    # folder prefix. A size's own file is its model shard (00001); the n-gram table (00002), the MTP block and the
+    # vision tower are the same file for every size: hy4-ngram, maya-hy4-mtp and hy4-vision below
+    local_subdir: hy4-flash-maya-gguf
+    size_gb: 44.79
+    format: gguf
+    status: incubating
+    hf_repo: peasantsmith/Hy4-Flash-Maya-GGUF
+    revision: 9d73294d20e1119d03d00ea81d1d352bfbe61ff4
+    shards: 1
+    files:
+      - Maya-XS/Hy4-Flash-Maya-XS-IQ2_XXS-00001-of-00002.gguf
+    verify_glob: "Maya-XS/Hy4-Flash-Maya-XS-IQ2_XXS-00001-of-00002.gguf"
+    manual_note: "🐣 Project Maya's smallest Hy4-Flash quant (peasantsmith): routed experts IQ2_XXS (2 bits) in every layer, attention and head Q6_K, shared expert Q8_0; the model shard 44.8 GB, plus the shared n-gram table (63.4 GB), MTP block (7.5 GB) and vision tower (0.8 GB). Maya's card: 88.5% the same top token as the original, KL 0.16, for PCs with about 56-64 GB of RAM + VRAM. ⚠️ Tencent Hy License."
+  maya-s:
+    path: hy4-flash-maya-gguf/Maya-S
+    local_subdir: hy4-flash-maya-gguf
+    size_gb: 52.97
+    format: gguf
+    status: incubating
+    hf_repo: peasantsmith/Hy4-Flash-Maya-GGUF
+    revision: 9d73294d20e1119d03d00ea81d1d352bfbe61ff4
+    shards: 1
+    files:
+      - Maya-S/Hy4-Flash-Maya-S-IQ2_S-00001-of-00002.gguf
+    verify_glob: "Maya-S/Hy4-Flash-Maya-S-IQ2_S-00001-of-00002.gguf"
+    manual_note: "🐣 Project Maya's Hy4-Flash Maya-S (peasantsmith): routed experts IQ2_XXS (2 bits) on layers 1-23 and IQ3_XXS (3 bits) on 24-41, attention and head Q6_K, shared expert Q8_0; the model shard 53.0 GB, plus the shared n-gram table, MTP block and vision tower. Maya's card: 91.8% the same top token, KL 0.072, for PCs with about 68-80 GB of RAM + VRAM. ⚠️ Tencent Hy License."
+  maya-m:
+    path: hy4-flash-maya-gguf/Maya-M
+    local_subdir: hy4-flash-maya-gguf
+    size_gb: 68.39
+    format: gguf
+    status: incubating
+    hf_repo: peasantsmith/Hy4-Flash-Maya-GGUF
+    revision: 9d73294d20e1119d03d00ea81d1d352bfbe61ff4
+    shards: 1
+    files:
+      - Maya-M/Hy4-Flash-Maya-M-IQ3_XXS-00001-of-00002.gguf
+    verify_glob: "Maya-M/Hy4-Flash-Maya-M-IQ3_XXS-00001-of-00002.gguf"
+    manual_note: "🐣 Project Maya's Hy4-Flash Maya-M (peasantsmith): routed experts IQ3_XXS (3 bits), IQ4_XS (4 bits) on 7 layers, attention, head and shared expert Q8_0; the model shard 68.4 GB, plus the shared n-gram table, MTP block and vision tower. Maya's card: 93.6% the same top token, KL 0.046, for PCs with about 80-96 GB of RAM + VRAM. ⚠️ Tencent Hy License."
+  maya-l:
+    path: hy4-flash-maya-gguf/Maya-L
+    local_subdir: hy4-flash-maya-gguf
+    size_gb: 89.51
+    format: gguf
+    status: incubating
+    hf_repo: peasantsmith/Hy4-Flash-Maya-GGUF
+    revision: 9d73294d20e1119d03d00ea81d1d352bfbe61ff4
+    shards: 1
+    files:
+      - Maya-L/Hy4-Flash-Maya-L-IQ4_XS-00001-of-00002.gguf
+    verify_glob: "Maya-L/Hy4-Flash-Maya-L-IQ4_XS-00001-of-00002.gguf"
+    manual_note: "🐣 Project Maya's largest Hy4-Flash quant (peasantsmith): routed experts IQ4_XS (4 bits), Q5_K (5 bits) on 5 layers, attention, head and shared expert Q8_0; the model shard 89.5 GB, plus the shared n-gram table, MTP block and vision tower. Maya's card: 96.6% the same top token, KL 0.012, for PCs with about 104-128 GB of RAM + VRAM. ⚠️ Tencent Hy License."
+  hy4-ngram:
+    path: hy4-flash-maya-gguf/Maya-XS
+    # the n-gram (Engram) table: shard 00002 of every size, ONE file (the same SHA-256 in every size's folder of the
+    # repo). Maya's manifest names it by the Maya-XS folder's copy; every compose mounts that one under its own size's
+    # shard name. Read from the disk page by page while the model answers (Maya: keep it on an SSD; HY4_EG_POPULATE=1
+    # maps it into the page cache instead)
+    local_subdir: hy4-flash-maya-gguf
+    size_gb: 63.36
+    format: gguf
+    status: incubating
+    hf_repo: peasantsmith/Hy4-Flash-Maya-GGUF
+    revision: 9d73294d20e1119d03d00ea81d1d352bfbe61ff4
+    kind: companion
+    files:
+      - Maya-XS/Hy4-Flash-Maya-XS-IQ2_XXS-00002-of-00002.gguf
+    verify_glob: "Maya-XS/Hy4-Flash-Maya-XS-IQ2_XXS-00002-of-00002.gguf"
+    manual_note: "The Hy4-Flash n-gram table every Maya size shares (63.4 GB, Tencent's own values)."
+  hy4-vision:
+    path: hy4-flash-maya-gguf/Maya-XS
+    # the vision tower: Maya's one mmproj file (Q8_0) for every size, as Maya's manifest names it
+    local_subdir: hy4-flash-maya-gguf
+    size_gb: 0.78
+    format: gguf
+    status: incubating
+    hf_repo: peasantsmith/Hy4-Flash-Maya-GGUF
+    revision: 9d73294d20e1119d03d00ea81d1d352bfbe61ff4
+    kind: companion
+    files:
+      - Maya-XS/mmproj-Hy4-Flash-Maya-XS.gguf
+    verify_glob: "Maya-XS/mmproj-Hy4-Flash-Maya-XS.gguf"
+    manual_note: "The Hy4-Flash vision tower every Maya size shares (Maya's mmproj file, Q8_0, 0.8 GB)."
+  maya-hy4-mtp:
+    path: hy4-flash-maya-gguf/mtp
+    # Tencent's MTP block in a file of its own (on the Hub as .gguf_file; the composes mount it as .gguf)
+    local_subdir: hy4-flash-maya-gguf
+    size_gb: 7.49
+    format: gguf_file             # a GGUF the Hub's size list leaves out (.gguf_file); mounted as .gguf
+    status: incubating
+    hf_repo: peasantsmith/Hy4-Flash-Maya-GGUF
+    revision: 9d73294d20e1119d03d00ea81d1d352bfbe61ff4
+    kind: draft
+    files:
+      - mtp/Hy4-Flash-mtp-BF16.gguf_file
+    verify_glob: "mtp/Hy4-Flash-mtp-BF16.gguf_file"
+    manual_note: "Tencent's MTP block for Maya's Hy4-Flash sizes (7.5 GB): maya-hy4 drafts with it (--mtp)."

@@ -90,10 +90,10 @@ def parse(body, where):
 
 
 # GLM: "glm spec: 15 of 16 drafts accepted (93.8%)"; DeepSeek (maya-ds4): "maya ds4 serve: drafts 40 of 44 kept; ...";
-# MiniMax (maya-mm3): "maya mm3 serve: DSpark kept 40 of 44 drafts" (accepted first, then offered, in all three; one
-# line a request that drafted)
+# MiniMax (maya-mm3): "maya mm3 serve: DSpark kept 40 of 44 drafts"; Hy4-Flash (maya-hy4): "maya hy4 serve: MTP kept 40
+# of 44 drafts" (accepted first, then offered, in all four; one line a request that drafted)
 MAYA_SPEC = re.compile(r"glm spec: (\d+) of (\d+) drafts accepted|maya ds4 serve: drafts (\d+) of (\d+) kept"
-                       r"|maya mm3 serve: DSpark kept (\d+) of (\d+) drafts")
+                       r"|maya mm3 serve: DSpark kept (\d+) of (\d+) drafts|maya hy4 serve: MTP kept (\d+) of (\d+) drafts")
 # "glm fast: CUDA0 RAM tier 52.66 GB pinned, 4737 slots" — once per card at each start
 MAYA_RAM_TIER = re.compile(r"\b(CUDA\d+) RAM tier ([0-9]+(?:\.[0-9]+)?) GB pinned")
 # maya-ds4: "ds4: 11665 routed experts on the CPU lane (100.4 GB): 11665 copied into RAM ..." — once at each start
@@ -103,7 +103,7 @@ MAYA_DS4_CPU_LANE = re.compile(r"\bds4: \d+ routed experts on the CPU lane \(([0
 def maya_log_lines(data, source):
     """The engine log's per-request draft lines, oldest first, as (accepted, offered) pairs.
     source: ("container", name) reads the engine log there (maya_log_text); ("file", path) reads a file."""
-    return [(int(m.group(1) or m.group(3) or m.group(5)), int(m.group(2) or m.group(4) or m.group(6)))
+    return [(int(m.group(1) or m.group(3) or m.group(5) or m.group(7)), int(m.group(2) or m.group(4) or m.group(6) or m.group(8)))
             for m in MAYA_SPEC.finditer(maya_log_text(data, source))]
 
 

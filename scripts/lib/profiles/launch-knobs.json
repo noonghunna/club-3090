@@ -719,6 +719,45 @@
        ]
       }
      ]
+    },
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "hy4-flash"
+      ]
+     },
+     "enforced": "boot",
+     "min": 4096,
+     "source": {
+      "file": "models/hy4-flash/strata-maya/launcher/hy4_settings.py",
+      "what": "context(): CONTEXT must be a whole number >= 4096 or the boot exits 2 (settings() calls it, so a bad value stops before the SHA-256 check); the prepare script writes it into the run config's engine args as --max-context"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/hy4-flash/strata-maya/compose/dual/maya-l/mtp.yml",
+       "program": "models/hy4-flash/strata-maya/launcher/hy4_settings.py",
+       "args": [
+        "validate"
+       ],
+       "accept": [
+        "4096",
+        "65536",
+        "131072",
+        "204800"
+       ],
+       "reject": [
+        "0",
+        "4095",
+        "-1",
+        "x",
+        "64K"
+       ]
+      }
+     ]
     }
    ],
    "interacts": [
@@ -1303,6 +1342,50 @@
        "kind": "program",
        "compose": "models/minimax-m3.1-flash/strata-maya/compose/dual/maya-s/dspark.yml",
        "program": "models/minimax-m3.1-flash/strata-maya/launcher/mm3_settings.py",
+       "args": [
+        "validate"
+       ],
+       "accept": [
+        "true",
+        "false"
+       ],
+       "reject": [
+        "off",
+        "no",
+        "1",
+        "TRUE"
+       ]
+      }
+     ]
+    },
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "hy4-flash"
+      ]
+     },
+     "enforced": "boot",
+     "values": [
+      "true",
+      "false"
+     ],
+     "spelling": {
+      "on": "true",
+      "off": "false"
+     },
+     "default": "",
+     "source": {
+      "file": "models/hy4-flash/strata-maya/launcher/hy4_settings.py",
+      "what": "false -> \"reasoning_effort\": \"none\" in maya-hy4.json (thinking off; wins over REASONING_EFFORT with a note); true leaves the effort; anything else stops the boot"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/hy4-flash/strata-maya/compose/dual/maya-l/mtp.yml",
+       "program": "models/hy4-flash/strata-maya/launcher/hy4_settings.py",
        "args": [
         "validate"
        ],
@@ -1973,6 +2056,54 @@
         "max"
        ],
        "reject": [
+        "minimal",
+        "HIGH",
+        "75"
+       ]
+      }
+     ]
+    },
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "hy4-flash"
+      ]
+     },
+     "enforced": "boot",
+     "values": [
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "default": "",
+     "source": {
+      "file": "models/hy4-flash/strata-maya/launcher/hy4_settings.py",
+      "what": "settings(): REASONING_EFFORT must be one of none, low, medium, high, xhigh, max or the boot exits 2; Hy4-Flash thinks at high or not at all, so every level but none is written as high (the server's own fold) with a note in the boot log"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/hy4-flash/strata-maya/compose/dual/maya-l/mtp.yml",
+       "program": "models/hy4-flash/strata-maya/launcher/hy4_settings.py",
+       "args": [
+        "validate"
+       ],
+       "accept": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+       ],
+       "reject": [
+        "auto",
         "minimal",
         "HIGH",
         "75"
