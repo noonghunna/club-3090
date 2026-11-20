@@ -1,6 +1,6 @@
 schema_version: 1
 id: strata-maya
-display_name: Project Maya (a Strata fork for GLM-5.3-Flash, DeepSeek-V4.1-Flash and MiniMax-M3.1-Flash; club-3090's image of the upstream release)
+display_name: Project Maya (a Strata fork for GLM-5.3-Flash, DeepSeek-V4.1-Flash, MiniMax-M3.1-Flash and Hy4-Flash; club-3090's image of the upstream release)
 type: strata
 stability: experimental
 min_sm: 7.5
