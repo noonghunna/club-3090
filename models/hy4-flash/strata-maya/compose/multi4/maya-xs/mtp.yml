@@ -88,6 +88,12 @@ services:
       VISION:
       THREADS:
       HY4_EG_POPULATE:
+      # maya-hy4's tensor-parallel choice (v1.1.70, src/hy4/hy4_model.cu); unset = the engine's --tp auto order in the
+      # Topology line. HY4_TP_LANE=0: no tensor parallel with the CPU lane (v1.1.69's choice); HY4_TP_DOWN=0: no
+      # one-card-fewer tries; HY4_TP_EXPERTS=slices | unsplit: how a tensor-parallel group shares an expert
+      HY4_TP_LANE:
+      HY4_TP_DOWN:
+      HY4_TP_EXPERTS:
       # Maya's model load/unload endpoints and its model API (/api/tags, /api/ps, /api/chat, ...). These composes set
       # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
       # switch are refused from outside the container. MAYA_MODEL_MANAGEMENT=0 turns all of them off

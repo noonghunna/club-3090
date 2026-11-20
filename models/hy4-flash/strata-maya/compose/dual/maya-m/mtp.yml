@@ -88,6 +88,9 @@ services:
       VISION:
       THREADS:
       HY4_EG_POPULATE:
+      # maya-hy4 (v1.1.70, src/hy4/hy4_model.cu): HY4_TP_LANE=1 tries tensor parallel with the CPU lane on these two
+      # cards instead of the layer split (unset: the layer split, whose prompts read faster on two cards, Maya says)
+      HY4_TP_LANE:
       # Maya's model load/unload endpoints and its model API (/api/tags, /api/ps, /api/chat, ...). These composes set
       # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
       # switch are refused from outside the container. MAYA_MODEL_MANAGEMENT=0 turns all of them off
