@@ -3,7 +3,7 @@
  "engines": {
   "strata": {
    "engine_profile": "scripts/lib/profiles/engines/strata.yml",
-   "verified_image": "ghcr.io/niko1221/strata@sha256:b6e1876515d5663047a7cd8dfee5223c8b2d117710eb2a9c285a433fb6e4a703",
+   "verified_image": "ghcr.io/niko1221/strata@sha256:51d39e3fc342fcdec5f1c8d5e57dfcbd9dd6d3834bec838272cadfb4f879be61",
    "render": "strata_config",
    "programs": [
     "models/qwen3.8-flash-next/strata/launcher/strata_config.py"
@@ -75,7 +75,10 @@
     "KV": "Strata's own entrypoint passes it to `strata launch --kv`; strata_config.py only checks it",
     "API_KEY": "Strata's own entrypoint passes it to `strata launch` (--api-key-env); strata_config.py only checks its length"
    },
-   "server": "/opt/strata/terminal/serve/server.py",
+   "server": [
+    "/opt/strata/terminal/serve/server.py",
+    "/opt/strata/terminal/serve/server_parts/http_api.py"
+   ],
    "engine_help": [
     "/bin/sh",
     "-c",
@@ -91,7 +94,7 @@
    "reads": {
     "reasoning_effort": "_main(): the server's default effort for requests that name none (logged 'thinking level: ...'); since 0.2.11 main() only wraps _main() (activity lease, bounded console queue)",
     "reasoning_budget_tokens": "_main(): Service.reasoning_budget_tokens, the thinking cap for every request",
-    "sampling.temperature": "sampling_defaults_from_config(): a default for requests that leave the field out",
+    "sampling.temperature": "sampling_defaults_from_config(): a default for requests that leave the field out (serve/server_parts/http_api.py from 0.2.17, when server.py was split; _main() still calls it)",
     "sampling.top_p": "sampling_defaults_from_config()",
     "sampling.top_k": "sampling_defaults_from_config()",
     "sampling.min_p": "sampling_defaults_from_config()",
