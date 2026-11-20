@@ -2,7 +2,7 @@
 
 `ghcr.io/noonghunna/strata-maya-club3090` is [Project Maya](https://github.com/mw00/project-maya) (MIT),
 a fork of [Strata](https://github.com/Niko1221/Strata) for GLM-5.3-Flash (and, with engines of their own,
-DeepSeek-V4.1-Flash-1017 on `maya-ds4` and MiniMax-M3.1-Flash on `maya-mm3`), built by us for each release.
+DeepSeek-V4.1-Flash-1017 on `maya-ds4`, MiniMax-M3.1-Flash on `maya-mm3` and Hy4-Flash on `maya-hy4`), built by us for each release.
 Maya publishes no image and no Linux engine (its `maya.sh` compiles on the user's PC). From v1.1.53 its
 repository has a recipe for building an image yourself ([`docs/DOCKER.md`](https://github.com/mw00/project-maya/blob/main/docs/DOCKER.md),
 adapted from this one in [mw00/project-maya#808](https://github.com/mw00/project-maya/pull/808)), but no published
@@ -20,7 +20,7 @@ Two stages on NVIDIA's CUDA 13.0 images (so the host needs a driver ≥ 580):
 
 1. **Build** (`-devel`): the release's tree at its commit, llama.cpp's source at the commit `setup.py`
    pins (`LLAMA_CPP_COMMIT`; ggml's CPU backend computes the CPU-side experts), then the GLM engine's
-   target (`maya`, `strata` before v1.1.16), DeepSeek's `maya-ds4` and MiniMax's `maya-mm3` (when the release
+   target (`maya`, `strata` before v1.1.16), DeepSeek's `maya-ds4`, MiniMax's `maya-mm3` and Hy4-Flash's `maya-hy4` (when the release
    defines them) with the
    flags `maya.py`'s `compile_engine` passes, plus two of ours:
    - **`-DSTRATA_PORTABLE=ON`**: ggml's CPU code for an AVX2 baseline. Without it the CMake sets
@@ -68,6 +68,7 @@ same open question).
 | `ldd` on the engine: everything resolves except `libcuda` / `libnvidia-*` | a runtime library missing from the runtime stage |
 | `build/maya-ds4` is there and resolves; `maya-ds4 --help` and `tools/ds4/pack_gguf.py --help` still offer every flag the DeepSeek launcher passes; `data/expert-profile-ds4.bin` is there | a release that drops or renames DeepSeek's engine target or a flag its launcher depends on |
 | `build/maya-mm3` is there and resolves; every flag the MiniMax launcher passes is one of its strings exactly (its usage text leaves out `--profile` and `--serve`, which its parser takes); `tools/mm3/pack_gguf.py --help` offers its pack flags; `data/expert-profile-mm3.bin` and `tools/mm3/chat_template.jinja` are there | the same, for MiniMax's engine and its launcher |
+| `build/maya-hy4` is there and resolves (v1.1.68 on); every flag the Hy4-Flash launcher passes is one of its strings exactly (`--serve` is the server's own); `tools/hy4/pack_gguf.py --help` offers its pack flags (`--model --out --mmproj --mtp --files`) | the same, for Hy4-Flash's engine and its launcher |
 | `serve/server.py --help` and `tools/iq_pack.py --help` still offer every flag the launcher passes; the expert profile is there | a release renaming a flag that every launch depends on |
 | llama.cpp's `gguf-py` imports the way Maya's tools look for it, and `iq_pack.py` indexes the release's 12 MB synthetic GLM-5 model (`data/glm5-synth.gguf`; it carries no tokenizer, so the check wants the index and dense weights) | a pack builder that can't run in the image (the first local build lacked `gguf-py` and failed exactly there) |
 | every package in `setup.py`'s `PY_PACKAGES` (less `cmake` / `ninja`), read from the image's own copy of `setup.py`, is installed in the `.venv` at a version the release accepts | a package a release adds missing from the image (v1.1.18's `jsonschema`, which the Responses API's structured output needs, was missing from the hand-kept list the recipe had until then) |
