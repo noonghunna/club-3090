@@ -343,9 +343,21 @@ def _where(reads, key, limit=6) -> str:
     return "read in " + "; ".join(sites[:limit]) + (f"; and {len(sites) - limit} more" if len(sites) > limit else "")
 
 
-def verify_sources(entry: dict, src: str, help_text: str) -> list[str]:
+def server_files(entry: dict) -> list[str]:
+    """The entry's server source: one path, or a list (Strata 0.2.17 split server.py into serve/server_parts/, and
+    the sampling block is read in server_parts/http_api.py)."""
+    s = entry["server"]
+    return [s] if isinstance(s, str) else list(s)
+
+
+def verify_sources(entry: dict, src: str | list[str], help_text: str) -> list[str]:
     problems = []
-    reads, compared = scan(src)
+    reads, compared = [], {}
+    for one in ([src] if isinstance(src, str) else src):   # each file parsed on its own, the evidence merged
+        r, c = scan(one)
+        reads += r
+        for q, lits in c.items():
+            compared.setdefault(q, set()).update(lits)
     scopes, recv = set(entry["config_scopes"]), set(entry["config_receivers"])
     in_cfg = {(k, q) for k, q, r, _ in reads if r in recv}
     for key in sorted(entry["reads"]):
@@ -381,19 +393,22 @@ def verify(manifest: dict, name: str, record: bool) -> int:
     if not image_local(image):
         print(f"[engine-config-reads] {name}: {image} is not local. Fix: docker pull {image}", file=sys.stderr)
         return 2
-    src, rc = docker_out(["run", "--rm", "--network", "none", "--entrypoint", "cat", image, e["server"]])
-    if rc != 0:
-        print(f"[engine-config-reads] {name}: can't read {e['server']} from {image}: {src.strip()[-300:]}", file=sys.stderr)
-        return 1
+    srcs = []
+    for path in server_files(e):
+        src, rc = docker_out(["run", "--rm", "--network", "none", "--entrypoint", "cat", image, path])
+        if rc != 0:
+            print(f"[engine-config-reads] {name}: can't read {path} from {image}: {src.strip()[-300:]}", file=sys.stderr)
+            return 1
+        srcs.append(src)
     help_text, _ = docker_out(["run", "--rm", "--network", "none", "--entrypoint", e["engine_help"][0], image,
                                *e["engine_help"][1:]])
     if not help_text.strip():
         print(f"[engine-config-reads] {name}: {' '.join(e['engine_help'])} printed nothing", file=sys.stderr)
         return 1
     try:
-        problems = verify_sources(e, src, help_text)
+        problems = verify_sources(e, srcs, help_text)
     except SyntaxError as exc:
-        print(f"[engine-config-reads] {name}: {e['server']} doesn't parse with this python ({exc}); the check can't "
+        print(f"[engine-config-reads] {name}: {', '.join(server_files(e))} doesn't parse with this python ({exc}); the check can't "
               f"run, which is a failure, not a skip", file=sys.stderr)
         return 1
     for p in problems:
@@ -452,6 +467,16 @@ def selftest() -> int:
     bad = 0
     for reads, must_fail, what in cases:
         problems = verify_sources({**entry, "reads": reads}, SELFTEST_SRC, SELFTEST_HELP)
+        good = bool(problems) == must_fail
+        print(f"  {'✓' if good else '✗'} selftest: {what}" + (f" ({problems[0]})" if problems and good else ""))
+        bad += not good
+    # a server split over files (Strata 0.2.17: sampling_defaults_from_config moved to server_parts/http_api.py)
+    head, rest = SELFTEST_SRC.split("def sampling_defaults_from_config")
+    samp_src, tail = ("def sampling_defaults_from_config" + rest).split("\ndef main")
+    main_src = head + "\ndef main" + tail                 # Vision and main(), without the sampling scope
+    for srcs, must_fail, what in [([main_src, samp_src], False, "a sampling scope in the second server file passes"),
+                                  ([main_src], True, "the same field with only the first server file fails")]:
+        problems = verify_sources({**entry, "reads": {"sampling.temperature": ""}}, srcs, SELFTEST_HELP)
         good = bool(problems) == must_fail
         print(f"  {'✓' if good else '✗'} selftest: {what}" + (f" ({problems[0]})" if problems and good else ""))
         bad += not good
