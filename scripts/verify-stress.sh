@@ -101,6 +101,11 @@
 #   STRESS_TOOL_PREFILL_TIMEOUT_S  Curl timeout for tool-prefill OOM check
 #                          (default: 240, auto-bumped to 480 if container has
 #                          VLLM_ENFORCE_EAGER=1).
+#   VERIFY_NEEDLE_MAX_TOKENS        Needle reply budget for a model that cannot stop
+#                                  reasoning (no off-switch, or an always-on dial).
+#                                  Default 512; 30 for every other model.
+#   VERIFY_TOOL_PREFILL_MAX_TOKENS  Tool-prefill reply budget for such a model.
+#                                  Default 2048; 500 for every other model.
 
 # Force Python's UTF-8 mode (PEP 540) for every python3 this script runs.
 # Repo sources are full of unicode (— × → ⚠), and without this a rig on a real
@@ -185,7 +190,7 @@ req = {
     # A thinking-only model spends part of every budget reasoning before it can
     # answer (GLM-5.3-Flash: ~30 tokens even at its lowest level), so a flat 30
     # leaves nothing for the phrase and the needle reads as a recall miss.
-    # preflight sets NEEDLE_MAX_TOKENS from THINK_ALWAYS_ON.
+    # stress_set_reasoning_budgets sets NEEDLE_MAX_TOKENS (wider when the model can't stop reasoning).
     "max_tokens": int(os.environ.get("NEEDLE_MAX_TOKENS") or 30),
     "temperature": 0.0,
     **json.loads(os.environ.get("THINK_FRAG_OFF") or '{"chat_template_kwargs": {"enable_thinking": false}}'),
@@ -436,10 +441,23 @@ else
   THINK_FRAG_ON='{"chat_template_kwargs": {"enable_thinking": true}}'
 fi
 # Needle replies are a short phrase, so 30 tokens is right for a model that can
-# actually stop thinking. One that cannot needs room for the reasoning first.
-NEEDLE_MAX_TOKENS=30
-[[ "${THINK_ALWAYS_ON:-0}" == "1" ]] && NEEDLE_MAX_TOKENS="${VERIFY_NEEDLE_MAX_TOKENS:-512}"
-export NEEDLE_MAX_TOKENS
+# actually stop thinking, and the tool-prefill summary fits in 500. One that cannot
+# needs room for the reasoning first. "Cannot" is the same test verify-full uses for
+# its TOK_SCALE: no working off-switch (`none*`) OR a dial with no off position
+# (THINK_ALWAYS_ON). Keying on THINK_ALWAYS_ON alone missed the `none` case: on
+# vLLM, Inkling-2-Mini (it reasons under every switch) is detected as `none`, kept
+# the 30- and 500-token budgets, and every needle "missed" with an empty answer
+# while tool-prefill failed finish=length (2026-11-21).
+stress_set_reasoning_budgets() {
+  NEEDLE_MAX_TOKENS=30
+  TOOL_PREFILL_MAX_TOKENS=500
+  if [[ "${THINK_CONTROL:-}" == none* || "${THINK_ALWAYS_ON:-0}" == "1" ]]; then
+    NEEDLE_MAX_TOKENS="${VERIFY_NEEDLE_MAX_TOKENS:-512}"
+    TOOL_PREFILL_MAX_TOKENS="${VERIFY_TOOL_PREFILL_MAX_TOKENS:-2048}"
+  fi
+  export NEEDLE_MAX_TOKENS TOOL_PREFILL_MAX_TOKENS
+}
+stress_set_reasoning_budgets
 export THINK_FRAG_OFF THINK_FRAG_ON
 if [[ -z "${CONTAINER:-}" && -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
   # The old literal default 'vllm-qwen36-27b' matches NO registry container, so
@@ -965,7 +983,8 @@ payload = {
     ],
     "tools": [tool_def],
     "tool_choice": "auto",
-    "max_tokens": 500,
+    # 500, or more for a model that cannot stop reasoning (stress_set_reasoning_budgets).
+    "max_tokens": int(os.environ.get("TOOL_PREFILL_MAX_TOKENS") or 500),
     "temperature": 0.6,
     **json.loads(os.environ.get("THINK_FRAG_OFF") or '{"chat_template_kwargs": {"enable_thinking": false}}'),
 }
