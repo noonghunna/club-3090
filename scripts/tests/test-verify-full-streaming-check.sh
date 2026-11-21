@@ -53,6 +53,11 @@ case_() {   # <name> <want pass|fail> <body file>
     source "'"$TMP/check.sh"'"
     check_streaming' 2>&1) || rc=$?
   local got=pass; [[ $rc -ne 0 || "$out" == *"FAIL: "* ]] && got=fail
+  # The check's python sits in a bash double-quoted string: a backtick in it runs as a command.
+  if [[ "$out" == *"command not found"* ]]; then
+    echo "FAIL: $name → the check printed shell errors:" >&2; echo "$out" | command grep "command not found" | sed 's/^/      /' >&2
+    fails=$((fails+1)); return
+  fi
   if [[ "$got" == "$want" ]]; then echo "  ok  $name → $got"
   else echo "FAIL: $name → $got, expected $want" >&2; echo "$out" | sed 's/^/      /' >&2; fails=$((fails+1)); fi
 }
