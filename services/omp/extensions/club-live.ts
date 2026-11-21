@@ -19,11 +19,17 @@
 // block's own `reasoning_effort_levels` / `default_reasoning_effort` /
 // `supports_none_reasoning_effort` for the serving slug (#1951 — the same facts the
 // gateway renders for /model_group/info, so the alias and the route it names cannot
-// drift). The settings family is the fallback for a rendered view that predates those
-// fields, and it stays the source of the CLIENT facts (reply cap, compat). omp CLAMPS a
-// role's suffix to the registered list — a `:medium` role on GLM runs at `low`, `:xhigh`
-// runs at `high` (verified against omp's wire: the nearest lower rung is sent; no error,
-// and an effort the server has never heard of never reaches it).
+// drift), RESTRICTED to the rungs the settings family says the routes IMPLEMENT
+// (`ladder.rungs`: the model's levels minus refusals, fold aliases excluded) — plus, when
+// the family or route default is itself a name the route advertises but the base rungs do
+// not carry, that one name joins the menu. The rendered
+// list also carries names a route only ALIASES, and a stale one of those would ride this
+// route's fold instead of landing on its default. The settings family is the fallback for a
+// rendered view that predates those fields, and it stays the source of the CLIENT facts
+// (reply cap, compat). omp CLAMPS a role's suffix to the registered list — a `:medium` role
+// on GLM runs at `low`, `:xhigh` runs at `high` (verified against omp's wire: the nearest
+// lower rung is sent; no error, and an effort the server has never heard of never reaches
+// it).
 //
 // Three mechanisms, each scoped to the club-live provider alone:
 // 1. before_provider_request rewrites the wire `model` from "live" to the slug
@@ -62,12 +68,13 @@
 //   gateway      the gateway URL omp-setup.sh was given
 //   key          the gateway key, resolved through the club_config loader —
 //                the extension never re-implements that precedence
-//   families     the per-family CLIENT settings (reply cap, compat), plus the ladder
-//                and default the extension falls back to when the rendered route
-//                advertises none. Generated from the SAME lists omp-setup.sh writes
-//                into models.yml, so the alias and the `club` provider cannot drift.
-//                A slug in none of the families registers WITHOUT thinking — the same
-//                as a `club/<id>` route discovery reports no override for.
+//   families     the per-family CLIENT settings (reply cap, compat), plus the nameable
+//                ladder (`efforts`), the BASE rungs (`rungs`) the clamp intersects the
+//                route's advertisement with, and the default the extension falls back to
+//                when the rendered route advertises none. Generated from the SAME lists
+//                omp-setup.sh writes into models.yml, so the alias and the `club` provider
+//                cannot drift. A slug in none of the families registers WITHOUT thinking —
+//                the same as a `club/<id>` route discovery reports no override for.
 // $CLUB_LIVE_JSON overrides the settings file's path, $CLUB_LIVE_CFG the
 // rendered config's (both are how test-omp-club-live.sh points the extension
 // at scratch files). Without a settings file the defaults are the documented
@@ -108,7 +115,7 @@ function env(name: string): string | undefined {
 
 interface Family {
 	ids: string[];
-	ladder: { efforts: string[]; defaultLevel: string };
+	ladder: { efforts: string[]; rungs?: string[]; defaultLevel: string };
 	maxTokens: number;
 	compat: Record<string, unknown>;
 }
@@ -152,6 +159,8 @@ function loadSettings(): Settings {
 		key: typeof raw.key === "string" && raw.key ? raw.key : PUBLIC_DEFAULT_KEY,
 		// A malformed family entry degrades like an unknown slug (registers
 		// without thinking) instead of handing the host a half-built model.
+		// `ladder.rungs` is deliberately NOT part of that check: it is optional (an
+		// install from before #2109 has none), and wireFor falls back to `efforts`.
 		families: Array.isArray(raw.families)
 			? (raw.families as Family[]).filter(
 					(f) =>
@@ -174,8 +183,8 @@ function familyFor(settings: Settings, slug: string | undefined): Family | undef
 // the ladder/default when the rendered view carries none (a view rendered before
 // phase 2, or a route whose effort facts are unknown) and always the budget fact.
 // `undefined` = the alias registered WITHOUT thinking (no family for this slug, or
-// nothing to advertise), so the clamp leaves the request alone like any other
-// provider's.
+// nothing to advertise), so the clamp leaves any effort ALONE but still drops what
+// only a family can license: a `null` effort and a thinking budget (see the hook).
 interface WireFacts {
 	efforts: string[];
 	defaultLevel: string;
@@ -183,38 +192,73 @@ interface WireFacts {
 	budget: boolean;
 }
 
-function pickDefault(ladder: string[], candidates: (string | undefined)[]): string {
+function pickDefault(ladder: string[], candidates: (string | undefined)[]): string | undefined {
 	for (const c of candidates) {
 		if (c && ladder.includes(c)) return c;
 	}
-	return ladder[ladder.length - 1];
+	return undefined;
 }
 
 function wireFor(settings: Settings, live: LiveInfo | null): WireFacts | undefined {
 	const fam = familyFor(settings, live?.slug);
 	if (!fam) return undefined;
-	const declared = fam.ladder.efforts;
+	// The BASE rungs, not the generated ladder: `efforts` is levels-minus-refusals PLUS the
+	// fold sources every route serving the id agrees on, so for an id whose routes all fold
+	// the same way it already names the aliases — `high`/`max`/`minimal` on the Qwen template,
+	// `medium`/`xhigh` on Maya's. Intersecting the route advertisement with THAT leaves the
+	// aliases in and re-opens the switch window this phase exists to close: measured on the
+	// generated families for `thinkingcap38-27b` and `hy4-flash`, a stale `max` passed the
+	// membership test and rode the fold to `xhigh`. `rungs` is the same list without them.
+	// An install from before that field falls back to `efforts` rather than losing the family;
+	// re-running `omp-setup.sh --auto-switching` writes it.
+	const declared = fam.ladder.rungs?.length ? fam.ladder.rungs : fam.ladder.efforts;
 	if (!declared.length) return undefined;
-	// The rendered list is what the route ACCEPTS: the rungs it implements minus the ones
-	// it refuses, then the FOLD SOURCES — names it aliases rather than implements (`max`
-	// -> xhigh on the Qwen template, `medium` -> high on Maya's). The clamp needs the
-	// rungs the route really has, so the aliases drop out here: that is what makes a stale
-	// `max` from a GLM registration land on this route's default instead of riding the
-	// fold to xhigh, which is the switch window this whole phase exists to close. A route
-	// that shares no rung with the model profile is a metadata bug; advertising the
-	// profile ladder beats an empty thinking menu, and the clamp then passes whatever the
-	// route does take.
+	// The rendered list is what the route ACCEPTS: the rungs it implements minus the ones it
+	// refuses, then the FOLD SOURCES — names it aliases rather than implements (`max` -> xhigh
+	// on the Qwen template, `medium` -> high on Maya's). The clamp needs the rungs the route
+	// really has, so the aliases drop out here: that is what makes a stale `max` from a GLM
+	// registration land on this route's default instead of riding the fold to xhigh. A route
+	// that shares no rung with the model profile is a metadata bug; advertising the profile
+	// ladder beats an empty thinking menu, and the clamp then passes whatever the route does
+	// take.
 	const route = live?.efforts ?? [];
 	const shared = route.length ? declared.filter((e) => route.includes(e)) : declared;
-	const ladder = shared.length ? shared : declared;
-	// Default precedence: the route's rendered default, then the family's, then the top
-	// rung — which is also what omp sends when a ladder carries no default, so the last
-	// resort is documented behavior rather than a new guess. Whichever wins is always a
-	// rung omp can actually be shown.
+	let ladder = shared.length ? shared : declared;
+	// Default precedence: the route's rendered default, then the family's. A family default
+	// can sit OUTSIDE the base rungs: compute_families expresses a fold-target default by the
+	// fold SOURCE that reaches it (a compose that sets REASONING_EFFORT to a fold source, or
+	// a default that is a fold target, reaches that shape — no catalog id does today, every
+	// generated default is a base rung, so this is a safety net the synthetic leg pins). The
+	// route does accept that name, so it joins the menu instead of the default falling
+	// through to an arbitrary rung.
+	const candidates = [live?.defaultEffort, fam.ladder.defaultLevel];
+	let def = pickDefault(ladder, candidates);
+	let joined: string | undefined;
+	if (!def) {
+		for (const c of candidates) {
+			if (c && route.includes(c)) {
+				def = c;
+				joined = c;
+				break;
+			}
+		}
+	}
+	if (joined) {
+		// Rebuild in the GENERATED order (base rungs, then the fold sources in the
+		// generator's maps order), not appended: omp's suffix clamp resolves an above-top
+		// role onto the nearest lower menu entry, and a downward fold source appended last
+		// would sit above the top base rung in menu order.
+		ladder = fam.ladder.efforts.filter((e) => ladder.includes(e) || e === joined);
+	}
 	const eb = asRecord(asRecord(fam.compat)?.["extraBody"]);
 	return {
 		efforts: ladder,
-		defaultLevel: pickDefault(ladder, [live?.defaultEffort, fam.ladder.defaultLevel]),
+		// Nothing named a rung that is on the menu: the LOWEST one, never the top. The #1951
+		// round-down rule points this way and the 2026-11-06 findings called the top-rung
+		// fallback actively harmful — the top is the busiest rung the route has. Reachable
+		// only when a stale settings file disagrees with the current render, or when a family
+		// default is a fold source the route does not advertise.
+		defaultLevel: def ?? ladder[0],
 		supportsNone: live?.supportsNone === true,
 		budget: typeof eb?.["thinking_token_budget"] === "number",
 	};
@@ -438,8 +482,30 @@ export default function (pi: PiLike): void {
 		if (model !== MODEL_ID && model !== SELECTOR) return undefined;
 		if (!live) return undefined;
 		const next: Record<string, unknown> = { ...payload, model: live.slug };
+		// A copy of chat_template_kwargs, installed only when something inside it changes —
+		// the caller's object is never mutated.
+		const kwargsCopy = (): Record<string, unknown> => {
+			const copy = { ...(asRecord(payload["chat_template_kwargs"]) as Record<string, unknown>) };
+			next["chat_template_kwargs"] = copy;
+			return copy;
+		};
+		// `null` is omp's "no thinking config": the key must go, so the engine default applies.
+		const dropNullEffort = (holder: Record<string, unknown>): void => {
+			if (holder["reasoning_effort"] === null) delete holder["reasoning_effort"];
+		};
 		const w = wireFor(settings, live);
-		if (!w) return next; // registered without thinking: nothing to clamp against
+		if (!w) {
+			// Registered without thinking: there is no ladder to clamp a rung against, so a
+			// string effort passes through as it does for any other provider. The two rules
+			// that need no ladder still apply — this is the regime where omp actually serializes
+			// `null` (no thinking config to name), and a route with no family declares no
+			// thinking budget, so a budget left over from the previous slug must not reach it.
+			dropNullEffort(next);
+			const bare = asRecord(payload["chat_template_kwargs"]);
+			if (bare && bare["reasoning_effort"] === null) dropNullEffort(kwargsCopy());
+			delete next["thinking_token_budget"];
+			return next;
+		}
 		// omp writes the effort at top level or inside chat_template_kwargs depending on
 		// the compat mode, so BOTH placements are normalized against the live route.
 		const place = (holder: Record<string, unknown>): void => {
@@ -451,11 +517,7 @@ export default function (pi: PiLike): void {
 		};
 		place(next);
 		const kwargs = asRecord(payload["chat_template_kwargs"]);
-		if (kwargs && "reasoning_effort" in kwargs) {
-			const copy = { ...kwargs }; // never mutate the caller's object
-			next["chat_template_kwargs"] = copy;
-			place(copy);
-		}
+		if (kwargs && "reasoning_effort" in kwargs) place(kwargsCopy());
 		// A thinking budget the live family never declared: drop it rather than let a
 		// budget measured against another engine reach this route.
 		if (!w.budget) delete next["thinking_token_budget"];
