@@ -299,5 +299,18 @@ python3 "$SM" host-ram "$base/mm3-0" --log-file "$work/mm3.log" >/dev/null 2>&1;
 [[ $r -eq 1 ]] && ok "host-ram: a maya-mm3 RAM tier of 0 (every expert in VRAM) is not offload: exit 1" \
   || bad "host-ram mm3 zero tier: exit $r, want 1"
 
+# 10. Project Maya's Hy4-Flash engine (maya-hy4): its draft line is "maya hy4 serve: MTP kept N of M drafts" (src/hy4/hy4_main.cpp,
+# v1.1.68), one a request that drafted.
+printf '%s\n' "maya hy4 serve: MTP kept 1 of 2 drafts" \
+  "maya mm3 serve: DSpark kept 7 of 9 drafts" \
+  "maya hy4 serve: MTP kept 40 of 44 drafts" \
+  "maya hy4 serve: MTP kept 300 of 400 drafts" > "$work/hy4.log"
+out="$(python3 "$SM" recent "$base/ds4" 2 --log-file "$work/hy4.log")"
+command grep -qx 'drafts_offered=444' <<<"$out" && command grep -qx 'drafts_accepted=340' <<<"$out" \
+  && ok "maya-hy4 recent N --log-file: the newest N 'maya hy4 serve: MTP kept' lines" || bad "hy4 recent log: $(tr '\n' ' ' <<<"$out")"
+out="$(sdocker python3 "$SM" snapshot "$base/ds4" --log-file "$work/hy4.log")"
+python3 -c 'import json,sys; t=json.loads(sys.argv[1])["totals"]; sys.exit(0 if (t["drafts_accepted"], t["drafts_offered"]) == (348, 455) else 1)' "$out" 2>/dev/null \
+  && ok "maya-hy4 snapshot: every draft line summed (Hy4-Flash's and the MiniMax line alike)" || bad "hy4 snapshot: got $out"
+
 if [[ $rc -eq 0 ]]; then echo "PASS: test-strata-metrics"; else echo "FAIL: test-strata-metrics"; fi
 exit $rc

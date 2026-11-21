@@ -1,0 +1,117 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Hy4-Flash (Tencent; 220B MoE: 42 layers, 512 routed experts, 16 a token, MLA attention with a sliding
+#              window and 12 indexed layers, an n-gram (Engram) table) — Project Maya's own GGUF quant,
+#              Hy4-Flash-Maya-XS: routed experts IQ2_XXS (2 bits) in every layer; attention and head Q6_K, shared expert Q8_0; model shard 44.8 GB
+#              (peasantsmith/Hy4-Flash-Maya-GGUF @9d73294d), plus the files shared by every size: the n-gram table (shard 00002, 63.4 GB, Maya-XS/ in the repo, one file for every size),
+#              Tencent's MTP block (mtp/Hy4-Flash-mtp-BF16.gguf_file, 7.5 GB) and the vision tower (Maya-XS/mmproj-Hy4-Flash-Maya-XS.gguf, 0.8 GB)
+#   Engine:    Project Maya's maya-hy4 (Hy4-Flash's engine in Project Maya, a Strata fork; v1.1.68 on) —
+#              ghcr.io/noonghunna/strata-maya-club3090, built by club-3090 at the release commit
+#              (models/glm-5.3-flash/strata-maya/image/)
+#   Topology:  Dual 3090: maya-hy4 runs tensor parallel over the largest group of equal cards (its --tp auto) and splits the
+#              layers where no group fits; the experts VRAM doesn't hold are computed on the CPU from RAM
+#   Drafter:   MTP (Tencent's MTP block from its own file, rounded to Q8_0 in VRAM: about 4 GB) — ON (Maya's setup
+#              turns it on on cards from about 16 GB); DRAFTING=off turns it off
+#   KV:        maya-hy4's latent cache (KV=auto: F16 rows, 8-bit rows where F16 doesn't fit), all of it in VRAM: the
+#              engine's KV streaming (v1.1.69 on) is off and the launcher doesn't set it, so a longer context leaves
+#              fewer experts there
+#   Vision:    yes (the vision tower runs in the engine a picture at a time, in the prompt buffers from v1.1.69: no
+#              VRAM is kept for pictures, so VISION=off adds no experts)
+#   Max ctx:   262144 (Maya has run its quants end to end up to 32K; on the reference rig verify-stress recalled to
+#              240,107 tokens on the dual Maya-XS slug, Maya v1.1.69; the model reaches 1M, and CONTEXT sets another)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   Not gate-passing: boot, verify-full, verify-stress and bench on the reference rig, no more (2026-11-20, Maya v1.1.68, 230 W: 9
+#              passed, 0 failed, vision 4/4, at 32K: the layer split GPU0 0-16 / GPU1 17-41 with 64% of the routed experts
+#              in VRAM: tensor parallel would need 24.32 GB a card); at the 262144 default (Maya v1.1.69,
+#              2026-11-20) GPU0 0-17 / GPU1 18-41 with 57% (11,931 of 20,992), and verify-stress passed: the ceiling ladder
+#              recalled to 240,107 tokens; bench.sh there (thinking off): 42.83 / 58.69 tok/s narrative / code, prefill 765 tok/s at 10K.
+#              No soak or quality run yet.
+#              One request at a time (maya-hy4 has no --parallel yet). Quality per Maya's model card, against the
+#              full-precision model on held-out conversations (same top token / KL): 88.5% / 0.16; not measured here.
+#              ⚠️ The Tencent Hy License (LICENSE in the weights' repo, LICENSE.hy4-flash in Maya's). The n-gram
+#              table is read from the disk page by page while the model answers: Maya says keep it on an SSD;
+#              HY4_EG_POPULATE=1 maps it into the page cache instead. The FIRST start SHA-256-checks the four
+#              files against Maya's own manifest and builds Maya's pack on the data volume (an index, no weights
+#              copied); a later start skips both. Thinking: high by default (Hy4-Flash thinks at high or not at
+#              all; any other level runs at high); none (or enable_thinking false) turns it off. Host needs NVIDIA
+#              driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only.
+# CPU-Offload-Host-RAM-GB: 52
+#   ⤷ NOT MEASURED: Maya's own memory figure for Maya-XS (the VRAM + RAM that hold the whole set, tools/hy4/download.json
+#     memory_gb), an upper bound: the cards keep part of it in VRAM. The n-gram table (63.4 GB) is read from the disk and isn't counted;
+#     HY4_EG_POPULATE=1 maps it into the page cache instead (reclaimable memory, not counted here either).
+#   Best for:  Hy4-Flash on dual 3090 with about 56-64 GB of RAM + VRAM (Maya's figure for this size)
+# ---------------------------------------------------------------------------
+# Project Maya (github.com/mw00/project-maya) runs Hy4-Flash on its own maya-hy4 engine: see
+# docs/engines/STRATA_MAYA.md.
+# Siblings: ../../single/maya-xs/mtp.yml (single), ../../multi3/maya-xs/mtp.yml (multi3), ../../multi4/maya-xs/mtp.yml (multi4);
+#   other sizes: ../maya-s/mtp.yml (Maya-S), ../maya-m/mtp.yml (Maya-M), ../maya-l/mtp.yml (Maya-L).
+#   bash scripts/switch.sh --force strata-maya/hy4-flash-dual-maya-xs
+# The launcher (../../../launcher/) checks the files' SHA-256 once, builds Maya's pack on the data volume, writes
+# the config and starts Maya's server. By hand: SETUP_ONLY=1 docker compose -f mtp.yml run --rm strata-maya,
+# then up -d.
+services:
+  strata-maya:
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:d129c0c123c5e6da9c995151ee3102f63515199ca237c480a91312af8651658d}
+    container_name: ${ESTATE_CONTAINER:-strata-maya-hy4-flash-dual-maya-xs}
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
+    # (the entrypoint sets umask 0002)
+    user: "0:${DOCKER_GID:-1000}"
+    entrypoint: ["/bin/sh", "/opt/club3090/hy4-entrypoint.sh", "hy4-maya-xs"]
+    ulimits:
+      memlock: -1            # Maya pins (locks) host memory for the GPUs
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8214}}:8080"
+    environment:
+      CONTEXT: "${CONTEXT:-262144}"
+      SETUP_ONLY: "${SETUP_ONLY:-0}"
+      REPACK: "${REPACK:-0}"
+      VERIFY: "${VERIFY:-1}"
+      MAYA_GPUS: "${MAYA_GPUS:-0,1}"
+      # Maya's server defaults, written into maya-hy4.json at every boot by hy4_prepare.py
+      # (launcher/hy4_settings.py maps each); unset = thinking high, sampling 0.9 / 1.0, the name hy4-flash,
+      # drafting on, pictures on, KV rows auto, a CPU lane of half the CPUs (nproc / 2), the loop guard on (Maya's own),
+      # the n-gram table read from the disk (HY4_EG_POPULATE unset)
+      REASONING_EFFORT:
+      ENABLE_THINKING:
+      THINKING_BUDGET:
+      TEMP:
+      TOP_P:
+      TOP_K:
+      MIN_P:
+      PRESENCE_PENALTY:
+      REPEAT_PENALTY:
+      SERVED_NAME:
+      LOOP_GUARD:
+      KV:
+      DRAFTING:
+      VISION:
+      THREADS:
+      HY4_EG_POPULATE:
+      # maya-hy4 (v1.1.70, src/hy4/hy4_model.cu): HY4_TP_LANE=1 tries tensor parallel with the CPU lane on these two
+      # cards instead of the layer split (unset: the layer split, whose prompts read faster on two cards, Maya says)
+      HY4_TP_LANE:
+      # Maya's model load/unload endpoints and its model API (/api/tags, /api/ps, /api/chat, ...). These composes set
+      # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
+      # switch are refused from outside the container. MAYA_MODEL_MANAGEMENT=0 turns all of them off
+      MAYA_MODEL_MANAGEMENT:
+      # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
+    volumes:
+      # each file under the name Maya's setup gives it in the model's folder (the pack builder takes them by name);
+      # the n-gram table is the same file for every size, so it is mounted under this size's shard name
+      - "${MODEL_DIR:-../../../../../../models-cache}/hy4-flash-maya-gguf/Maya-XS/Hy4-Flash-Maya-XS-IQ2_XXS-00001-of-00002.gguf:/gguf/Hy4-Flash-Maya-XS-IQ2_XXS-00001-of-00002.gguf:ro"
+      - "${MODEL_DIR:-../../../../../../models-cache}/hy4-flash-maya-gguf/Maya-XS/Hy4-Flash-Maya-XS-IQ2_XXS-00002-of-00002.gguf:/gguf/Hy4-Flash-Maya-XS-IQ2_XXS-00002-of-00002.gguf:ro"
+      - "${MODEL_DIR:-../../../../../../models-cache}/hy4-flash-maya-gguf/mtp/Hy4-Flash-mtp-BF16.gguf_file:/gguf/Hy4-Flash-mtp-BF16.gguf:ro"
+      - "${MODEL_DIR:-../../../../../../models-cache}/hy4-flash-maya-gguf/Maya-XS/mmproj-Hy4-Flash-Maya-XS.gguf:/gguf/mmproj-Hy4-Flash-Maya-XS.gguf:ro"
+      # one folder per quant (Maya's pack, the config, the engine's log); the launchers put it under
+      # ~/.local/share/club-3090, beside the other Maya models' folders
+      - "${STRATA_MAYA_DATA_DIR:-${CLUB3090_DATA_DIR:-../../..}/strata-maya-data}:/data"
+      - "../../../launcher:/opt/club3090:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0,1}}']
+              capabilities: [gpu]

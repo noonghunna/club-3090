@@ -3,7 +3,7 @@
  "engines": {
   "strata": {
    "engine_profile": "scripts/lib/profiles/engines/strata.yml",
-   "verified_image": "ghcr.io/niko1221/strata@sha256:b6e1876515d5663047a7cd8dfee5223c8b2d117710eb2a9c285a433fb6e4a703",
+   "verified_image": "ghcr.io/niko1221/strata@sha256:51d39e3fc342fcdec5f1c8d5e57dfcbd9dd6d3834bec838272cadfb4f879be61",
    "render": "strata_config",
    "programs": [
     "models/qwen3.8-flash-next/strata/launcher/strata_config.py"
@@ -75,7 +75,10 @@
     "KV": "Strata's own entrypoint passes it to `strata launch --kv`; strata_config.py only checks it",
     "API_KEY": "Strata's own entrypoint passes it to `strata launch` (--api-key-env); strata_config.py only checks its length"
    },
-   "server": "/opt/strata/terminal/serve/server.py",
+   "server": [
+    "/opt/strata/terminal/serve/server.py",
+    "/opt/strata/terminal/serve/server_parts/http_api.py"
+   ],
    "engine_help": [
     "/bin/sh",
     "-c",
@@ -91,7 +94,7 @@
    "reads": {
     "reasoning_effort": "_main(): the server's default effort for requests that name none (logged 'thinking level: ...'); since 0.2.11 main() only wraps _main() (activity lease, bounded console queue)",
     "reasoning_budget_tokens": "_main(): Service.reasoning_budget_tokens, the thinking cap for every request",
-    "sampling.temperature": "sampling_defaults_from_config(): a default for requests that leave the field out",
+    "sampling.temperature": "sampling_defaults_from_config(): a default for requests that leave the field out (serve/server_parts/http_api.py from 0.2.17, when server.py was split; _main() still calls it)",
     "sampling.top_p": "sampling_defaults_from_config()",
     "sampling.top_k": "sampling_defaults_from_config()",
     "sampling.min_p": "sampling_defaults_from_config()",
@@ -105,7 +108,7 @@
   },
   "strata-maya": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:d129c0c123c5e6da9c995151ee3102f63515199ca237c480a91312af8651658d",
    "render": "maya_prepare",
    "programs": [
     "models/glm-5.3-flash/strata-maya/launcher/maya_settings.py",
@@ -158,7 +161,7 @@
   },
   "strata-maya:ds4": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:d129c0c123c5e6da9c995151ee3102f63515199ca237c480a91312af8651658d",
    "render": "maya_ds4_prepare",
    "programs": [
     "models/deepseek-v4.1-flash-1017/strata-maya/launcher/ds4_settings.py",
@@ -211,9 +214,72 @@
     "loop_guard": "loop_guard_setting(), from main(): svc.loop_guard (serve/loop_guard.py; MAYA_LOOP_GUARD in the environment wins, and no compose forwards it)"
    }
   },
+  "strata-maya:hy4": {
+   "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:d129c0c123c5e6da9c995151ee3102f63515199ca237c480a91312af8651658d",
+   "render": "maya_hy4_prepare",
+   "programs": [
+    "models/hy4-flash/strata-maya/launcher/hy4_settings.py",
+    "models/hy4-flash/strata-maya/launcher/hy4_prepare.py"
+   ],
+   "settings": {
+    "REASONING_EFFORT": "none",
+    "ENABLE_THINKING": "false",
+    "THINKING_BUDGET": "256",
+    "TEMP": "0.7",
+    "TOP_P": "0.9",
+    "TOP_K": "10",
+    "MIN_P": "0.05",
+    "PRESENCE_PENALTY": "0.5",
+    "REPEAT_PENALTY": "1.1",
+    "CONTEXT": "16384",
+    "SERVED_NAME": "llm",
+    "LOOP_GUARD": "false",
+    "KV": "q8",
+    "DRAFTING": "off",
+    "VISION": "off",
+    "THREADS": "7",
+    "HY4_EG_POPULATE": "1"
+   },
+   "setup_only": {},
+   "server": "/opt/maya/serve/server.py",
+   "engine_help": [
+    "/bin/sh",
+    "-c",
+    "grep -o 'a == \"--[a-z][a-z0-9-]*\"' /opt/maya/src/hy4/hy4_main.cpp | cut -d'\"' -f2"
+   ],
+   "config_receivers": [
+    "cfg",
+    "cfg or {}"
+   ],
+   "config_scopes": [
+    "main",
+    "sampling_defaults_from_config",
+    "loop_guard_setting",
+    "child_env"
+   ],
+   "reads": {
+    "reasoning_effort": "main(): svc.default_effort (a Hy4-Flash template: frontend.py renders none as no_think and every other level as high)",
+    "thinking_budget": "main(): svc.think_budget (logged 'thinking budget: N tokens')",
+    "sampling.temperature": "sampling_defaults_from_config(): a default for requests that leave the field out",
+    "sampling.top_p": "sampling_defaults_from_config()",
+    "sampling.top_k": "sampling_defaults_from_config()",
+    "sampling.min_p": "sampling_defaults_from_config()",
+    "sampling.presence_penalty": "sampling_defaults_from_config()",
+    "sampling.repetition_penalty": "sampling_defaults_from_config()",
+    "args:--max-context": "maya-hy4's own flag (its parser in src/hy4/hy4_main.cpp compares it; the engine has no --help): the cache's capacity (VRAM only in this engine)",
+    "args:--kv": "maya-hy4's own flag: the latent cache's rows, auto | f16 | q8",
+    "args:--mtp": "maya-hy4's own flag: draft with the pack's MTP block",
+    "args:--vision": "maya-hy4's own flag: --vision off leaves the pack's vision tower out",
+    "args:--cpu-threads": "maya-hy4's own flag: the CPU lane's threads (the experts VRAM doesn't hold)",
+    "model_name": "main(): the served name (/v1/models, /props, every answer's model field)",
+    "loop_guard": "loop_guard_setting(), from main(): svc.loop_guard (serve/loop_guard.py)",
+    "env": "child_env(): the config's env is exported into the engine's environment (maya_names.export_env); maya-hy4 reads HY4_EG_POPULATE at load"
+   }
+  },
   "strata-maya:mm3": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:d129c0c123c5e6da9c995151ee3102f63515199ca237c480a91312af8651658d",
    "render": "maya_mm3_prepare",
    "programs": [
     "models/minimax-m3.1-flash/strata-maya/launcher/mm3_settings.py",

@@ -1,0 +1,26 @@
+schema_version: 1
+id: maya-hy4-mtp
+display_name: Hy4-Flash MTP block (Tencent's, in its own GGUF, for Project Maya's sizes)
+spec_method: mtp_gguf
+model_compat:
+  - hy4-flash
+engine_compat:
+  engine_type: strata
+n_default: 3
+n_max: 3
+download:
+  hf_repo: peasantsmith/Hy4-Flash-Maya-GGUF
+  size_gb: 7.49
+vram_footprint_gb: variable
+status: incubating
+# Tencent's MTP block (the model's block 42, BF16) as AngelSlim's Q4_K_M GGUF carries it, its tensors unchanged in a
+# file of their own (Maya's tools/hy4/mtp_gguf.py): mtp/Hy4-Flash-mtp-BF16.gguf_file in Maya's repo (7.5 GB; the Hub
+# file is .gguf_file, Maya's setup saves it as .gguf, and the composes mount it under that name). One file for every
+# Maya size: tools/hy4/pack_gguf.py --mtp adds it to the pack and maya-hy4 --mtp drafts with it, rounding its matrices
+# to Q8_0 in VRAM (about 4 GB, maya.py HY4_MTP_VRAM). ON on the Hy4-Flash slugs (DRAFTING=off turns it off): Maya's
+# setup turns it on on cards from about 16 GB. maya-hy4 drafts up to 3 tokens a step (its --draft default) with a
+# confidence floor of 0.55 (--draft-floor), so n_default = n_max = 3. Maya's release notes: about +57% decode where
+# every expert sits in VRAM, +10% to +30% with part of the experts on the CPU (their rigs; not measured here).
+requires_engine_min: null
+speculative_config_template: null   # N/A — Maya's engine, not vLLM
+local_model_path: null

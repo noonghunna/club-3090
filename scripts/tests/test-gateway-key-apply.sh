@@ -75,7 +75,11 @@ cat <<'JSON'
  {"model": "glm-5.3-flash", "served_name": "glm-5.3-flash", "port": 8104,
   "effort": {"levels": ["low", "high", "max"], "refuses": null,
              "maps": {"medium": "high", "xhigh": "max"},
-             "compose_default": null, "default_when_unset": "max"}}
+             "compose_default": null, "default_when_unset": "max"}},
+ {"model": "hy4-flash", "served_name": "hy4-flash", "port": 8105,
+  "effort": {"levels": ["high"], "refuses": null,
+             "maps": {"low": "high", "medium": "high", "xhigh": "high", "max": "high"},
+             "compose_default": null, "default_when_unset": "high"}}
 ]}
 JSON
 STUB

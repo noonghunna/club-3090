@@ -7,6 +7,10 @@
 # drafter: strata-maya/deepseek41-flash-dual-ud-iq3-s). Step 9 matched only the 0, so the drafter-less DeepSeek
 # slug failed verify-full with "no MTP drafts offered", a correct engine read as a broken one (2026-11-02).
 #
+# Hy4-Flash's maya-hy4 (Maya v1.1.68) reports engine.dspark 0 beside its MTP block, engine.mtp 1 (engine.speculation
+# ["MTP"]): a skip on dspark 0 alone skipped a drafter that runs, and every Hy4 slug drafts (2026-11-20). With
+# DRAFTING=off it reports mtp 0, which skips. Against the pre-fix verify-full the MTP-on case must FAIL.
+#
 # This drives the REAL check_mtp_acceptance (extracted from scripts/verify-full.sh) with ENGINE_KIND=strata, a
 # stub strata_metrics.py that prints a /metrics snapshot, and curl / pass / fail / skip stubbed.
 #
@@ -53,6 +57,8 @@ printf '{"engine": {"maya_version": "1.1.48", "dspark": false}}' > "${TMP}/ds4-n
 printf '{"engine": {"maya_version": "1.1.30", "dspark": 0}}' > "${TMP}/mm3-off.json"
 printf '{"engine": {"maya_version": "1.1.48", "dspark": true}}' > "${TMP}/ds4-drafter.json"
 printf '{"engine": {"version": "0.1.55"}}' > "${TMP}/strata.json"
+printf '{"engine": {"maya_version": "1.1.68", "engine_kind": "hy4", "dspark": 0, "mtp": 1, "speculation": ["MTP"]}}' > "${TMP}/hy4-mtp.json"
+printf '{"engine": {"maya_version": "1.1.68", "engine_kind": "hy4", "dspark": 0, "mtp": 0, "speculation": []}}' > "${TMP}/hy4-off.json"
 printf '{"engine": {"dspark": true}}' > "${TMP}/ds4-noversion.json"      # #2053: /metrics named no maya_version
 printf '{"choices": [], "timings": {"draft_n": 174, "draft_n_accepted": 143}}' > "${TMP}/resp-drafts.json"
 printf '{"choices": [], "timings": {"draft_n": 100, "draft_n_accepted": 10}}' > "${TMP}/resp-low.json"
@@ -95,6 +101,16 @@ got="$(LOG="${TMP}/maya-ds4.log" run "${TMP}/ds4-drafter.json")"
 got="$(run "${TMP}/strata.json")"
 [[ "$got" == FAIL:*"acceptance-trigger request failed"* ]] && ok "Strata, no engine.dspark field: not skipped" \
   || bad "strata, no dspark field" "FAIL: acceptance-trigger request failed" "$got"
+
+got="$(REAL=1 run "${TMP}/hy4-mtp.json")"
+[[ "$got" == FAIL:*"acceptance-trigger request failed"* ]] && ok "maya-hy4, engine.dspark 0 with engine.mtp 1: not skipped (its MTP block drafts)" \
+  || bad "maya-hy4 dspark 0, mtp 1" "FAIL: acceptance-trigger request failed" "$got"
+got="$(REAL=1 RESP="${TMP}/resp-drafts.json" run "${TMP}/hy4-mtp.json")"
+[[ "$got" == PASS:*"timings"* ]] && ok "maya-hy4, MTP on: checked from the response's timings" \
+  || bad "maya-hy4 mtp on, timings" "PASS: … from the response's timings" "$got"
+got="$(REAL=1 run "${TMP}/hy4-off.json")"
+[[ "$got" == SKIP:*"no draft block"* ]] && ok "maya-hy4, DRAFTING=off (engine.mtp 0): skipped" \
+  || bad "maya-hy4 mtp 0" "SKIP: …no draft block…" "$got"
 
 
 echo "the trigger response's timings (#2053)"

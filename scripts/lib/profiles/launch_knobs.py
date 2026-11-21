@@ -138,6 +138,17 @@ MOUNTED_READERS = (
         },
     },
     {
+        # the Hy4-Flash Project Maya composes' entrypoint (maya-hy4): hy4_prepare.py writes these into maya-hy4.json at
+        # every boot through hy4_settings.py, which refuses a bad value (exit 1, before the SHA-256 check)
+        "invoke": '"/opt/club3090/hy4-entrypoint.sh"',
+        "file": "models/hy4-flash/strata-maya/launcher/hy4_settings.py",
+        "knobs": {
+            "REASONING_EFFORT": None,
+            "ENABLE_THINKING": None,
+            "CONTEXT": None,          # checked here; hy4_prepare.py writes it into maya-hy4.json's --max-context
+        },
+    },
+    {
         # the bucko-vllm composes' own default-thinking-budget patch (patches.yml
         # bucko-default-thinking-budget): reads the floor the compose declares
         "invoke": "python3 /etc/club3090/thinking-budget/apply.py",

@@ -66,7 +66,7 @@
 #   cache; switch.sh's generation probe (one token) is the real gate.
 services:
   strata:
-    image: ${STRATA_IMAGE:-ghcr.io/niko1221/strata@sha256:b6e1876515d5663047a7cd8dfee5223c8b2d117710eb2a9c285a433fb6e4a703}
+    image: ${STRATA_IMAGE:-ghcr.io/niko1221/strata@sha256:51d39e3fc342fcdec5f1c8d5e57dfcbd9dd6d3834bec838272cadfb4f879be61}
     container_name: ${ESTATE_CONTAINER:-strata-qwen38-flash-next-swift15-abl-iq3s}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # root, with the launcher's group: what Strata writes to the data volume stays
@@ -116,6 +116,11 @@ services:
       STRATA_PCIE_SHARE_MAX:
       # 0.2.10's penalties count only the reply's tokens; 1 counts the prompt's again, as before.
       STRATA_PENALTY_PROMPT:
+      # 0.2.17 (engine 0.1.63): the route tail skip is off unless set; 0.2.13 to 0.2.16 ran it at rank 7 on
+      # CUDA. 7 turns it on again (faster decode, answers a little further from exact routing).
+      STRATA_ROUTE_TAIL_SKIP:
+      # 0.2.17 arms the CPU prefill share on a layer split of two cards, as on one; 0 turns it off.
+      STRATA_SPLIT_CPU_SHARE:
       # PLE (n-gram) residency switch: 0 = direct disk reads instead of page-locking the ~27 GiB
       # table, a 2-3% prompt-speed trade-off; since 0.2.10 the auto policy's lock is given back
       # if RAM runs short (the dual ista-iq3s compose's block has the full note). Unset = Strata's auto policy.

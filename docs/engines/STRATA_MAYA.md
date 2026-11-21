@@ -1,4 +1,4 @@
-# Project Maya — a Strata fork for GLM-5.3-Flash on one, two or four cards, DeepSeek-V4.1-Flash on two, and MiniMax-M3.1-Flash on one or two
+# Project Maya — a Strata fork for GLM-5.3-Flash on one, two or four cards, DeepSeek-V4.1-Flash on two or four, MiniMax-M3.1-Flash on one, two or four, and Hy4-Flash on one to four
 
 **Engine id:** `strata-maya` · **Slug prefix:** `strata-maya/` · **Status of its slugs:** 🐣 Incubating · **Requires:** NVIDIA compute capability 7.5+, driver ≥ 580 (CUDA 13), an x86-64 CPU with AVX2, and enough host RAM to hold the experts that don't fit in VRAM (~65 GB for Maya-S on two cards up to ~148 GB for Maya-L on one, measured; less RAM still runs, reading the rest from the model files)
 
@@ -11,7 +11,7 @@ Where the experts live:
 - **host RAM:** a pinned tier sized from the memory free at start;
 - **the model files:** whatever fits in neither, read while it answers.
 
-Each token's RAM-tier experts are split between the CPU (computed in place) and PCIe copies to the GPU, priced per expert at start. On several cards it splits the **layers** (`--layer-split auto`, a placement search over the cards' free VRAM), and on two or more it drafts with the model's own MTP (NextN) block, the cards working on consecutive tokens. No NCCL and no P2P.
+Each token's RAM-tier experts are split between the CPU (computed in place) and PCIe copies to the GPU, priced per expert at start. On several cards it splits the **layers** (`--layer-split auto`, a placement search over the cards' free VRAM), and for GLM on two or more it drafts with the model's own MTP (NextN) block, the cards working on consecutive tokens (Hy4-Flash's `maya-hy4` drafts with its MTP block on one card too). No NCCL and no P2P.
 
 Its profile declares `type: strata` and `lineage.relation: fork` (base `strata`); its id carries the family prefix, so the tooling knows it as engine kind `strata` (`scripts/lib/engine-kind.sh`): container names `strata-maya-…`, image `strata-maya-club3090`.
 
@@ -20,7 +20,7 @@ Its profile declares `type: strata` and `lineage.relation: fork` (base `strata`)
 Maya publishes no image and no Linux engine: `maya.sh` compiles on the user's PC. From v1.1.53 its repository has a recipe for building an image yourself ([`docs/DOCKER.md`](https://github.com/mw00/project-maya/blob/main/docs/DOCKER.md), adapted from ours in [mw00/project-maya#808](https://github.com/mw00/project-maya/pull/808)), but no published image. So club-3090 builds `ghcr.io/noonghunna/strata-maya-club3090` for each release, an image-provenance exception recorded in [ADDING_ENGINES.md](../ADDING_ENGINES.md).
 - **Build:** our own Dockerfile compiles the engines (`maya` for GLM, `maya-ds4` for DeepSeek since #1801, `maya-mm3` for MiniMax-M3.1-Flash in the releases that define it, v1.1.29 on, `maya-hy4` for Hy4-Flash, v1.1.68 on) the way `maya.py` does, with upstream's `STRATA_PORTABLE=ON` (ggml's CPU code for an AVX2 baseline instead of the build machine's CPU) and a fixed arch list. The runtime stage carries the release's files, llama.cpp's `gguf-py` and the server's Python packages.
 - **Archs:** `75;80;86;89;120` (RTX 20–50 and the A-series). V100 needs CUDA 12, which this image can't build; Maya's own setup builds it natively.
-- **Text only:** neither the vision encoder nor the DFlash2 drafter (CC BY-NC-ND weights) is in the image.
+- **GLM is text only:** neither GLM's vision encoder nor its DFlash2 drafter (CC BY-NC-ND weights) is in the image. Hy4-Flash's vision tower is part of `maya-hy4`.
 - **Recipe, checks, publishing and pin flow:** [models/glm-5.3-flash/strata-maya/image/](../../models/glm-5.3-flash/strata-maya/image/README.md).
 
 The profile pins a digest, and the launchers inject it as `STRATA_MAYA_IMAGE`. Export `STRATA_MAYA_IMAGE` in the shell to try another build for one launch; a saved value loses to the pin.
@@ -40,7 +40,7 @@ A release that renames a flag the launchers pass (`serve/server.py`, `tools/iq_p
 
 - **Weights:** Maya's own quants from `peasantsmith/GLM-5.3-Flash-Maya-GGUF` (revision `f16ee4ba`), one folder per quant under `glm-5.3-flash-maya-gguf/`. Each carries the MTP draft block. Upstream's quality figures (KL against the FP8 model on held-out text, its own harness): Maya-L 0.188, Maya-M 0.291, Maya-S 0.428. Smaller quants fit more experts in VRAM, so they decode faster.
 - **multi4 is never booted on the reference rig** (two cards): community-validated by design. Its numbers come from community reports.
-- **One card has no drafting:** the MTP block runs only on two or more GPUs.
+- **One card has no drafting:** GLM's MTP block runs only on two or more GPUs (Hy4-Flash's drafts on one card too).
 
 **Data volume:** `strata-maya-data` under the data directory (`~/.local/share/club-3090` by default; `STRATA_MAYA_DATA_DIR` overrides), one folder per quant: a symlink per shard, Maya's pack (its index of the model files, ~1 GB, written next to the shards as the engine expects) and the config.
 
@@ -125,6 +125,13 @@ Measurements, with dates and settings, are in each compose's header and in [BENC
     - `MAYA_PAR_MAX` (v1.1.66): it lowers a config's `--parallel` before the engine starts, and the launchers write no `--parallel` (one conversation at a time), so it would change nothing.
     - `MAYA_GLM_HELPER_WARM` (v1.1.67) and v1.1.66's faster decode on the AMD APU + NVIDIA pair: both need Maya's expert helper on a second, integrated GPU (`MAYA_GLM_EXPERT_HELPER`), which these composes don't start.
     - Setup and Windows changes (the fit estimate before a download, the model menu, the long-path unpack fix): Maya's own setup, which the launcher doesn't use.
+- **v1.1.70 (pinned 2026-11-20), what reaches these slugs:**
+  - **Hy4-Flash on three or more cards:** `--tp auto` chooses differently. It now tries one card fewer before giving up on tensor parallel (mw00/project-maya#1078), then tensor parallel with the CPU lane (mw00/project-maya#1068); on four or five cards each expert stays whole on one card (mw00/project-maya#1062). The order is in the Hy4-Flash section's tensor-parallel bullet. Two cards keep the layer split; the dual pin boot took it.
+  - **Hy4-Flash's CPU lane:** new rows for IQ2_XXS / IQ2_S / IQ3_XXS / IQ4_XS experts. Upstream says the answers are the same; not benched here. The 4-bit expert copies' verdict is now remembered, but only after the timed turns, and on the reference rig the start probe rejects the copies (0.45 against 0.57 ms a call), so nothing is timed or written.
+  - **DeepSeek:** no hang right after the load on two GPUs (mw00/project-maya#1006); a restart after a failed peer all-reduce (mw00/project-maya#1059); restore points for prompts with pictures (mw00/project-maya#1007); faster IQ2 / IQ3 CPU-lane rows. The RAM arena asks for transparent huge pages only with `MAYA_DS4_ARENA_THP=1`, not forwarded: with THP `always` and defrag `defer`, as on the reference rig, nothing changes.
+  - **The server, every model:** `/metrics` counts every engine call after a tool call or a resumed answer (mw00/project-maya#1058), and an engine that aborts is no longer reported as out of RAM.
+  - **Forwarded, unset by default:** `HY4_TP_LANE`, `HY4_TP_DOWN` and `HY4_TP_EXPERTS` on the multi3 / multi4 Hy4-Flash composes, `HY4_TP_LANE` on the dual ones (the Hy4-Flash section's tensor-parallel bullet).
+  - **Not forwarded:** `--fast-drafting` and the Windows VRAM measure, which are Maya's own setup.
 - **Runtime numbers from `/metrics`.** Maya serves Strata's `/metrics` document (its version in `engine.maya_version`), but its draft counts are only in its engine log (`/data/<quant>/maya.log`, "glm spec: N of M drafts accepted"). Given the container, `scripts/lib/strata_metrics.py` sums them, so `health.sh`, `verify-full` (its MTP acceptance check), `bench.sh` and `report.sh` read Maya's drafts the way they read Strata's.
 - **The club conventions:** the `CLUB3090_RESTART` knob, `BIND_HOST` / `ESTATE_PORT` / `ESTATE_CONTAINER` / `ESTATE_GPUS`, and the host GID plus `umask 0002` on the data volume.
 
@@ -207,6 +214,58 @@ Maya runs MiniMaxAI's [MiniMax-M3.1-Flash](https://huggingface.co/MiniMaxAI/Mini
   - The first starts (v1.1.30, DSpark off) were ready in 72 s (dual) and 48 s (single).
   - Not measured yet: quality.
 
+## Hy4-Flash (maya-hy4)
+
+Maya runs Tencent's [Hy4-Flash](https://huggingface.co/tencent/Hy4-flash) on a fifth engine, `maya-hy4` (`src/hy4`, from v1.1.68), using Project Maya's own GGUF quants. The model is a 220B MoE with 42 layers:
+- layer 0 dense, the others with 512 routed experts (16 a token) plus a shared one;
+- MLA attention, with a sliding window on most layers and 12 indexed sparse-attention layers;
+- four Engram n-gram layers;
+- an MTP block, vision, and 1M native context.
+
+| Quant | Single (1 card) | Dual (2 cards) | Multi3 (3 cards) | Multi4 (4 cards) |
+|---|---|---|---|---|
+| **Maya-XS** (`maya-xs`, IQ2_XXS experts, Q6_K attention; model shard 44.8 GB) | `strata-maya/hy4-flash-single-maya-xs` · 8210 | `strata-maya/hy4-flash-dual-maya-xs` · 8214 | `…-multi3-maya-xs` · 8218 | `…-multi4-maya-xs` · 8222 |
+| **Maya-S** (`maya-s`, IQ2_XXS experts on layers 1–23, IQ3_XXS on 24–41; 53.0 GB) | `strata-maya/hy4-flash-single-maya-s` · 8211 | `strata-maya/hy4-flash-dual-maya-s` · 8215 | `…-multi3-maya-s` · 8219 | `…-multi4-maya-s` · 8223 |
+| **Maya-M** (`maya-m`, IQ3_XXS experts, IQ4_XS on 7 layers, Q8_0 attention; 68.4 GB) | `strata-maya/hy4-flash-single-maya-m` · 8212 | `strata-maya/hy4-flash-dual-maya-m` · 8216 | `…-multi3-maya-m` · 8220 | `…-multi4-maya-m` · 8224 |
+| **Maya-L** (`maya-l`, IQ4_XS experts, Q5_K on 5 layers, Q8_0 attention; 89.5 GB) | `strata-maya/hy4-flash-single-maya-l` · 8213 | `strata-maya/hy4-flash-dual-maya-l` · 8217 | `…-multi3-maya-l` · 8221 | `…-multi4-maya-l` · 8225 |
+
+- **⚠️ License:** the Tencent Hy License (`LICENSE` in the weights' repo, `LICENSE.hy4-flash` in Maya's).
+- **Weights:** [peasantsmith/Hy4-Flash-Maya-GGUF](https://huggingface.co/peasantsmith/Hy4-Flash-Maya-GGUF) @`9d73294d`. Each size's own file is its model shard (00001). Every size's folder also holds the same three shared files:
+  - shard 00002, the n-gram table (63.4 GB);
+  - the MTP block (`mtp/Hy4-Flash-mtp-BF16.gguf_file`, 7.5 GB);
+  - the vision tower (`Maya-XS/mmproj-Hy4-Flash-Maya-XS.gguf`, 0.8 GB).
+
+  Keep one copy of each. The catalog names the table by its `Maya-XS/` copy, and every compose mounts the shared files under its own size's names. All four sizes with the shared files take 327 GB.
+- **Not downloaded:** the repo also has a DFly2 drafter for each size (0.7–0.9 GB). From v1.1.69 `maya-hy4` can draft with it (`--dfly2`, on one GPU; several GPUs keep the MTP block), but these slugs draft with the MTP block and don't mount it.
+- **Launcher** (`models/hy4-flash/strata-maya/launcher/`: `hy4-entrypoint.sh`, `hy4_prepare.py`, `hy4_settings.py`). The launcher:
+  - checks the four files' SHA-256 against Maya's manifest, once;
+  - builds the pack with `tools/hy4/pack_gguf.py` on the data volume (`/data/hy4-maya-<size>/pack`, an index: no weights are copied);
+  - writes `maya-hy4.json` afresh at every boot and starts the server.
+
+  With the files in the page cache, the first start was ready in 60–80 s and later ones in 16 s.
+- **Placement:** everything that isn't a routed expert sits in VRAM with the cache. The card fills the rest with the most-routed experts, and a CPU lane computes the others from the memory-mapped model file.
+- **Tensor parallel:** `maya-hy4`'s `--tp auto` tries, in order (v1.1.70 on, read from `src/hy4/hy4_model.cu`):
+  1. tensor parallel with every routed expert in VRAM, over all the cards and then one card fewer down to two, each with F16 cache rows and then, under `KV=auto`, 8-bit rows;
+  2. on three or more cards, tensor parallel with the CPU lane: each card keeps the experts its VRAM takes (whole, the most routed first), the CPU computes the rest for a token and sends them to the cards for a prompt chunk, and the cache is in 8-bit rows under `KV=auto`. Maya's settings doc gives it where the group holds half the routed experts or more. Two cards skip this step, because their prompts read faster on the layer split;
+  3. the layer split.
+
+  On four or five cards each routed expert stays whole on one card, because its six 256-value blocks don't split evenly. On 2 × 3090 step 1 never fits: a member needs 24.3 / 28.5 / 36.3 / 47.1 GB for XS / S / M / L. So the dual slugs run the layer split, as before. Step 2 and the one-card-fewer tries are new in v1.1.70 (v1.1.69 took tensor parallel only where every expert fit on all the cards); the multi3 and multi4 slugs haven't been booted on the reference rig, so which step each size lands on is not measured.
+
+  The composes pass maya-hy4's own settings for this through, unset by default: `HY4_TP_LANE=0` skips step 2 (v1.1.69's choice) and `=1` takes it on two cards too (the dual slugs pass only this one); `HY4_TP_DOWN=0` skips the one-card-fewer tries; `HY4_TP_EXPERTS=slices` or `unsplit` sets how a group shares an expert. The engine's `tensor parallel not taken (…)` line names the setting it read.
+- **Drafter:** the MTP block, **on**, including on one card (GLM's `maya` drafts only on two or more). `DRAFTING=off` turns it off.
+- **K / V:** `KV=auto` (F16 latent rows, 8-bit where F16 doesn't fit), or `f16` / `q8`. They live in VRAM: the engine's KV streaming (`--kv-streaming`, v1.1.69 on) keeps the indexed layers' cache in RAM and only its newest positions in VRAM, but it's off by default and the launcher doesn't set it, so a longer context leaves fewer experts in VRAM.
+- **The n-gram table** is read from the disk a row at a time while the model answers, so Maya says to keep it on an SSD. `HY4_EG_POPULATE=1` maps it into the page cache at start instead.
+- **Settings:** as for the other Maya slugs, with Hy4-Flash's:
+  - **Effort:** `high` by default. Hy4-Flash thinks at high or not at all, so `low` / `medium` / `xhigh` / `max` run at high (the boot log says so). `none`, or `ENABLE_THINKING=false`, turns thinking off.
+  - **Sampling and name:** temperature 0.9 / top_p 1.0; the name is `hy4-flash`.
+  - **More:** `KV`, `DRAFTING` (`on` / `off`), `VISION` (`off` drops the tower; from v1.1.69 a picture borrows the prompt buffers, so it frees no VRAM), `THREADS` (`--cpu-threads`, half the CPUs by default), `HY4_EG_POPULATE` (`0` / `1`).
+- **Context:** 262,144. Maya has run its quants end to end up to 32K; on the reference rig `verify-stress` on the dual Maya-XS slug (v1.1.69) recalled a needle at every rung of its ceiling ladder, up to 240,107 tokens. The model reaches 1M; `CONTEXT` sets another. The cache sits in VRAM, so at 262K a card keeps fewer experts: 2–9% on one card and 24–57% on two, against 5–16% and 28–64% at 32K on v1.1.68.
+- **One request at a time:** `maya-hy4` has no `--parallel` yet.
+- **Checked on the reference rig** (2026-11-20, v1.1.68 image `3815b467`, 230 W): every single and dual slug, each on its own boot, booted through `switch.sh` and passed `verify-full` (9 passed, 0 failed, vision 4/4). The dual slugs were then benched with `bench.sh`, each on its own boot (v1.1.69 image `08b8a471`, 262,144 context, thinking off): narrative / code 42.83 / 58.69 tok/s on Maya-XS, 40.19 / 51.48 on Maya-S, 32.65 / 43.65 on Maya-M and 32.30 / 45.14 on Maya-L, with prefill at 10K tokens 765 / 703 / 634 / 528 tok/s and 70.6–71.7% of the MTP drafts kept. The single slugs aren't benched yet.
+  - Not benched yet.
+  - Quality per Maya's model card (same top token / KL against full precision): XS 88.5% / 0.16, S 91.8% / 0.072, M 93.6% / 0.046, L 96.6% / 0.012.
+  - multi3 and multi4 are community-validated by design.
+
 ## Tuning for your PC
 
 Maya's calibration measures decode at a few splits of each token's RAM-tier experts between the CPU and the PCIe link, and at fewer CPU threads, then keeps the fastest. It takes about 10–15 minutes, because the model loads first. Boot the slug you want to tune first and let it come up: the calibration reads the config that boot wrote, and all the topologies of one quant share its folder on the data volume, so a config last written by the one-card slug tunes one card. Then stop it, since the calibration needs the GPUs to itself. For `strata-maya/glm53-flash-single-maya-s`:
@@ -232,5 +291,5 @@ For another slug, use its compose and its quant's folder (`/data/maya-m/…`, `/
 
 - **Quality:** not validated here (no 8-pack yet); the KL figures above are upstream's.
 - **Reasoning:** GLM-5.3's template thinks by default. Maya's server closes the thinking block when a request sends `enable_thinking: false` or `reasoning_effort: none`, unlike the llama.cpp GLM slugs, where thinking can't be turned off. The server default for requests that name none is effort `max`, as on the other GLM-5.3-Flash slugs (Maya's own setup writes `high`), with Maya's own 32K reasoning budget. `REASONING_EFFORT`, `ENABLE_THINKING` and `THINKING_BUDGET` change these server-side (above). `thinking-budget.sh` (per-effort budgets) doesn't apply: Maya has one budget for every effort.
-- **Vision and DFlash2:** not in the image. Maya's DFlash2 drafter (+12% on two cards, +19% on one 3090, by upstream's measurements) has CC BY-NC-ND weights.
+- **GLM's vision and DFlash2:** not in the image (Hy4-Flash's vision is). Maya's DFlash2 drafter (+12% on two cards, +19% on one 3090, by upstream's measurements) has CC BY-NC-ND weights.
 - **Platforms:** x86-64 only. DGX Spark (ARM) can't run it. V100s need a native build (CUDA 12).

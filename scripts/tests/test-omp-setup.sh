@@ -138,6 +138,9 @@ PER_ID = {
     "qwen3.8-flash-next-swift15": (QWEN, "xhigh", "flashnext"),
     "swift-1.5-iq3_s": (STRATA, "xhigh", "flashnext"),                 # Strata, swift
     "glm-5.3-flash": (["low", "high", "max"], "max", "glm"),
+    # hy4-flash: one thinking level (Tencent's card: high or no_think); every other name
+    # folds to high on Maya, the only engine serving the id, so the fold sources are listed.
+    "hy4-flash": (["high", "low", "max", "medium", "xhigh"], "high", "hy4"),
 }
 # The client families, not the routes: which sit behind LiteLLM's Responses -> chat
 # bridge (omp adds `summary: "auto"` to the reasoning object and the bridge forwards the
@@ -170,6 +173,7 @@ PER_ID_ENGINES = {
     "qwen3.8-flash-next-swift15": {"bucko-vllm"},
     "swift-1.5-iq3_s": {"strata"},
     "glm-5.3-flash": {"llamacpp-club3090-v1.6", "strata-maya"},
+    "hy4-flash": {"strata-maya"},
 }
 
 def group(name):
@@ -220,7 +224,7 @@ def after_flags(tokens):
 served = set()
 by_file = {}
 for model_dir in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next",
-                  "glm-5.3-flash"):
+                  "glm-5.3-flash", "hy4-flash"):
     for f in sorted(glob.glob(os.path.join(root, "models", model_dir, "*", "compose",
                                            "*", "*", "*.yml"))):
         doc = yaml.safe_load(open(f, encoding="utf-8")) or {}
@@ -266,7 +270,8 @@ for model_dir in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next"
 # booting placeholder is the only other user, and the ready render renames it). The
 # generator's rule is "the compose's names, or the registry name when it declares none",
 # so the expected set here needs the same fallback.
-COVERED = {"qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next", "glm-5.3-flash"}
+COVERED = {"qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next", "glm-5.3-flash",
+           "hy4-flash"}
 sys.path.insert(0, os.path.join(root, "scripts", "lib"))     # the registry reader only
 from litellm_sync import registry_variants
 for _v in registry_variants(root):
@@ -823,6 +828,52 @@ elif ! grep -q "registry-emit:" "$T/fc.err"; then
         "sees WHY (no PyYAML? a broken emit?) and not just that it failed"
     sed 's/^/  /' "$T/fc.err" >&2
 fi
+
+
+# 13. the new-model gate (docs/ADDING_MODELS.md, checklist step 7b): every live model with a
+#     PROBED effort ladder (`levels:` in its model profile) has an omp family. Without one omp
+#     reads it as a non-reasoning model and sends it no effort (#1690); Hy4-Flash sat like that
+#     until #2121. A model still `status: unprobed` can't have a family yet (compute_families
+#     renders nothing for it), so it's only listed. A positive control drops one covered model
+#     and the check must name it: a check that can't see a gap would pass forever.
+python3 - "$ROOT" <<'PY' || bad "a live model with a probed effort ladder has no omp family (MODEL_FAMILIES in scripts/omp-setup.sh)"
+import glob, os, re, sys, yaml
+root = sys.argv[1]
+src = open(os.path.join(root, "scripts", "omp-setup.sh"), encoding="utf-8").read()
+blk = src[src.index("MODEL_FAMILIES = ["):]
+blk = blk[:blk.index("\n]\n")]
+covered = set()
+for m in re.finditer(r'"models":\s*\[([^\]]*)\]', blk):
+    covered |= set(re.findall(r'"([^"]+)"', m.group(1)))
+reg = os.path.join(root, "scripts", "lib", "profiles", "registry.yaml")
+entries = (yaml.safe_load(open(reg, encoding="utf-8")) or {}).get("entries", {})
+live = {v.get("model") for v in entries.values() if v.get("status") != "deprecated"}
+probed, unprobed = set(), set()
+for f in glob.glob(os.path.join(root, "scripts", "lib", "profiles", "models", "*.yml")):
+    mid = os.path.basename(f)[:-len(".yml")]
+    effort = (yaml.safe_load(open(f, encoding="utf-8")) or {}).get("effort") or {}
+    if mid in live and effort.get("levels"):
+        probed.add(mid)
+    elif mid in live and effort.get("status") == "unprobed":
+        unprobed.add(mid)
+def missing(cov):
+    return sorted(probed - cov)
+pick = sorted(probed & covered)
+if not pick or set(missing(covered - {pick[0]})) != set(missing(covered)) | {pick[0]}:
+    print("  positive control failed: with %r dropped from the families, the check didn't name it"
+          % (pick[0] if pick else None), file=sys.stderr)
+    sys.exit(1)
+gap = missing(covered)
+if gap:
+    print("  probed but no omp family: %s. Fix: add each to MODEL_FAMILIES in scripts/omp-setup.sh "
+          "and its route ids to this test's per-id table (docs/ADDING_MODELS.md, step 7b)"
+          % ", ".join(gap), file=sys.stderr)
+    sys.exit(1)
+left = sorted(unprobed - covered)
+if left:
+    print("  note: still unprobed, so omp sends them no effort: %s (docs/ADDING_MODELS.md, step 7b)"
+          % ", ".join(left))
+PY
 
 
 [ "$fail" -eq 0 ] && echo "test-omp-setup: ok (print-only, create, append beside other providers, idempotent refresh, refuses a hand-written club, overlay, doc block == overlay, override keys == every route the composes serve, per-route ladders and defaults, compat pins by model, auto-switching installs extension + settings and leaves config.yml alone, refuses a gateway on another machine, warns with no local litellm container, generator edge shapes: refusals, fold sources, lowest default, deterministic fold, MODEL_FAMILIES types, per-alias ladders, collisions, one-line scan, default fallback, empty registry fails closed)"

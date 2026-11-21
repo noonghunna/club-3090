@@ -1,6 +1,6 @@
 schema_version: 1
 id: strata-maya
-display_name: Project Maya (a Strata fork for GLM-5.3-Flash, DeepSeek-V4.1-Flash and MiniMax-M3.1-Flash; club-3090's image of the upstream release)
+display_name: Project Maya (a Strata fork for GLM-5.3-Flash, DeepSeek-V4.1-Flash, MiniMax-M3.1-Flash and Hy4-Flash; club-3090's image of the upstream release)
 type: strata
 stability: experimental
 min_sm: 7.5
@@ -9,7 +9,7 @@ lineage:
   base: "strata"
   base_version: null
   source: "https://github.com/mw00/project-maya"
-  source_ref: "05e0e2da90cacf174d791b0192f3488a3c61100b"
+  source_ref: "b6632a0b11dffd2b197c3bbdcb140bbabbe9fa12"
   chain: []
   delta: "Strata's C++/CUDA engine and Python server rewritten for GLM-5.3-Flash only (the GLM5-Next runner, a per-layer VRAM expert pool, a pinned RAM tier and a CPU lane priced against PCIe, MTP drafting across a two-card split), with its own quants (peasantsmith/GLM-5.3-Flash-Maya-GGUF); a second engine, maya-ds4, for DeepSeek-V4.1-Flash-1017 (src/ds4: tensor parallel or a layer split, every CPU-side expert copied into RAM when it fits, a DSpark drafter, Engram tables); and a third, maya-mm3, for MiniMax-M3.1-Flash (src/mm3: a layer split for its GGUF quants, the experts VRAM doesn't hold computed on the CPU from RAM, streamed K / V, a DSpark drafter). Upstream publishes no image or Linux engine (from v1.1.53 a recipe for building one yourself, docker/, adapted from ours); our image compiles each release with our own Dockerfile (upstream's STRATA_PORTABLE option for an AVX2 baseline, text only), an image-provenance exception (docs/ADDING_ENGINES.md)"
 image_env: STRATA_MAYA_IMAGE
@@ -18,13 +18,14 @@ install:
   # Built and pushed from the rig with models/glm-5.3-flash/strata-maya/image/ (text only); upstream, recipe and
   # archs are the image's own labels. scripts/strata-pin-bump.sh writes the two pin- lines (the first earlier pin
   # is the rollback).
-  # pin-current: v1.1.68 · upstream 05e0e2da · recipe 4de1452f · archs 75;80;86;89;120 · pinned 2026-11-20 · booted strata-maya/glm53-flash-dual-maya-l (verify-full)
-  # pin-earlier: v1.1.67 `98da6b3f…` (upstream 56b5216a, recipe 1b54085e, 2026-11-18); v1.1.65 `bfb38143…` (upstream c81fab6c, recipe 12177245, 2026-11-16); v1.1.61 `76962320…` (upstream f66a913c, recipe 0d08aa35, 2026-11-13); v1.1.57 `5a33892a…` (upstream 00655481, recipe f655e466, 2026-11-09); v1.1.56 `3cf8d5dd…` (upstream 22fc101f, recipe 2f72a6c2, 2026-11-07); v1.1.53 `856bb9c0…` (upstream 7c4aa56e, recipe e57b262d, 2026-11-04); v1.1.51 `86c574b7…` (upstream 3a47bbe8, recipe 951d650a, 2026-11-03); v1.1.50 `432274a7…` (upstream 10e69a0e, recipe 74b2080f, 2026-11-02); v1.1.48 `96abef95…` (upstream 465a9815, recipe 00719348, 2026-11-01); v1.1.46 `e8a413a8…` (upstream 3589d6f1, recipe b7ad55e3, 2026-11-01); v1.1.43 `94ed9078…` (upstream acdab34b, recipe 5e8a04f9, 2026-10-31); v1.1.41 `87e096b9…` (upstream 17107778, recipe bffe0318, 2026-10-30); v1.1.37 `7ca8c3d9…` (upstream 7ee8f277, recipe 9e7b5a24, 2026-10-29); v1.1.35 `f6648fe2…` (upstream e16dec85, recipe 3a61af95, 2026-10-28); v1.1.34 `fba8ae10…` (upstream b0426452, recipe 8e1e8a45, 2026-10-28); v1.1.31 `c94aa0e1…` (upstream c4be5441, recipe fc66fc2a, 2026-10-27); v1.1.30 `455863e7…` (upstream 8621e331, recipe 3aa8bd90, 2026-10-27; the first with maya-mm3, #1811); v1.1.30 `0495a19a…` (upstream 8621e331, recipe f2f8d4d5, 2026-10-27; the same release built before the recipe had maya-mm3, and `:v1.1.30` was re-pushed over it); v1.1.29 `0ea83d74…` (upstream 8b4b39f8, recipe e2ea8868, 2026-10-27); v1.1.28 `a39baf73…` (upstream 6afa525b, recipe 81a69535, 2026-10-25); v1.1.26 `e14f90af…` (upstream f26d8bab, recipe 360fd2c6, 2026-10-23); v1.1.25 `36658d16…` (upstream 94878e25, recipe 8c5ed499, 2026-10-23); v1.1.23 `232f1112…` (upstream 8ceadd7d, recipe 775557c4, 2026-10-22); v1.1.20 `1918560b…` (upstream 35bb2b22, #1774, 2026-10-21; v1.1.21, whose VERSION was empty, and v1.1.22 were skipped); v1.1.19 `1db76650…` (upstream 3bf6867d, #1773, 2026-10-21; v1.1.18 added jsonschema to setup.py, so the recipe installs that list from the release itself, #1772); v1.1.17 `1564614d…` (upstream 8d9a9b5d, #1759, 2026-10-20; v1.1.18 was skipped); v1.1.16 `bd8f12a8…` (upstream abc09c74, #1757, 2026-10-20; it renamed the engine strata → maya, so the recipe moved first, #1754); v1.1.11 `c6680830…` (built by our CI, run 38695509380, 2026-10-15)
-  spec: ghcr.io/noonghunna/strata-maya-club3090@sha256:3815b467c0fa59bd44064ece19fd1576cfb6e8b31529c6e8f6b45f16a3cb9ec5
+  # pin-current: v1.1.70 · upstream b6632a0b · recipe e9a16343 · archs 75;80;86;89;120 · pinned 2026-11-20 · booted strata-maya/hy4-flash-dual-maya-xs (verify-full)
+  # pin-earlier: v1.1.69 `08b8a471…` (upstream e9cb6510, recipe 2401d104, 2026-11-20); v1.1.68 `3815b467…` (upstream 05e0e2da, recipe 4de1452f, 2026-11-20); v1.1.67 `98da6b3f…` (upstream 56b5216a, recipe 1b54085e, 2026-11-18); v1.1.65 `bfb38143…` (upstream c81fab6c, recipe 12177245, 2026-11-16); v1.1.61 `76962320…` (upstream f66a913c, recipe 0d08aa35, 2026-11-13); v1.1.57 `5a33892a…` (upstream 00655481, recipe f655e466, 2026-11-09); v1.1.56 `3cf8d5dd…` (upstream 22fc101f, recipe 2f72a6c2, 2026-11-07); v1.1.53 `856bb9c0…` (upstream 7c4aa56e, recipe e57b262d, 2026-11-04); v1.1.51 `86c574b7…` (upstream 3a47bbe8, recipe 951d650a, 2026-11-03); v1.1.50 `432274a7…` (upstream 10e69a0e, recipe 74b2080f, 2026-11-02); v1.1.48 `96abef95…` (upstream 465a9815, recipe 00719348, 2026-11-01); v1.1.46 `e8a413a8…` (upstream 3589d6f1, recipe b7ad55e3, 2026-11-01); v1.1.43 `94ed9078…` (upstream acdab34b, recipe 5e8a04f9, 2026-10-31); v1.1.41 `87e096b9…` (upstream 17107778, recipe bffe0318, 2026-10-30); v1.1.37 `7ca8c3d9…` (upstream 7ee8f277, recipe 9e7b5a24, 2026-10-29); v1.1.35 `f6648fe2…` (upstream e16dec85, recipe 3a61af95, 2026-10-28); v1.1.34 `fba8ae10…` (upstream b0426452, recipe 8e1e8a45, 2026-10-28); v1.1.31 `c94aa0e1…` (upstream c4be5441, recipe fc66fc2a, 2026-10-27); v1.1.30 `455863e7…` (upstream 8621e331, recipe 3aa8bd90, 2026-10-27; the first with maya-mm3, #1811); v1.1.30 `0495a19a…` (upstream 8621e331, recipe f2f8d4d5, 2026-10-27; the same release built before the recipe had maya-mm3, and `:v1.1.30` was re-pushed over it); v1.1.29 `0ea83d74…` (upstream 8b4b39f8, recipe e2ea8868, 2026-10-27); v1.1.28 `a39baf73…` (upstream 6afa525b, recipe 81a69535, 2026-10-25); v1.1.26 `e14f90af…` (upstream f26d8bab, recipe 360fd2c6, 2026-10-23); v1.1.25 `36658d16…` (upstream 94878e25, recipe 8c5ed499, 2026-10-23); v1.1.23 `232f1112…` (upstream 8ceadd7d, recipe 775557c4, 2026-10-22); v1.1.20 `1918560b…` (upstream 35bb2b22, #1774, 2026-10-21; v1.1.21, whose VERSION was empty, and v1.1.22 were skipped); v1.1.19 `1db76650…` (upstream 3bf6867d, #1773, 2026-10-21; v1.1.18 added jsonschema to setup.py, so the recipe installs that list from the release itself, #1772); v1.1.17 `1564614d…` (upstream 8d9a9b5d, #1759, 2026-10-20; v1.1.18 was skipped); v1.1.16 `bd8f12a8…` (upstream abc09c74, #1757, 2026-10-20; it renamed the engine strata → maya, so the recipe moved first, #1754); v1.1.11 `c6680830…` (built by our CI, run 38695509380, 2026-10-15)
+  spec: ghcr.io/noonghunna/strata-maya-club3090@sha256:d129c0c123c5e6da9c995151ee3102f63515199ca237c480a91312af8651658d
 supported_model_families:
   - glm5next-moe          # GLM-5.3-Flash: the `maya` engine
   - deepseek41-moe        # DeepSeek-V4.1-Flash-1017: the `maya-ds4` engine (the image builds both since #1801)
   - minimax-m3-moe        # MiniMax-M3.1-Flash: the `maya-mm3` engine (Project Maya v1.1.29 on)
+  - hy4-moe               # Hy4-Flash: the `maya-hy4` engine (Project Maya v1.1.68 on)
 supported_weight_formats:
   - gguf                  # Project Maya's own quants (Maya-S / Maya-M / Maya-L); ISTA's GSQ-RCO GGUF of DeepSeek-V4.1-Flash
   - maya-dspark           # Maya's DSpark drafter format (drafter_pack.py's .bin + .json), read by tools/ds4/pack_gguf.py
@@ -37,6 +38,7 @@ supported_drafters:
   - dspark                # DeepSeek-V4.1-Flash's DSpark drafter (maya-ds4 --dspark on) and MiniMax-M3.1-Flash's
                           # (maya-mm3 --dspark on; Maya's own setup leaves it off). GLM's MTP is the model's own
                           # NextN block (two or more GPUs), not a club drafter
+  - mtp_gguf              # Hy4-Flash's MTP block, a GGUF of its own (maya-hy4 --mtp; drafter maya-hy4-mtp)
 # #1951 — what this engine changes about effort. The Maya slugs' composes
 # leave REASONING_EFFORT unset (empty) on purpose, so default_when_unset is
 # load-bearing for the render. The wire off switch is PROBED (2026-11-15,
@@ -60,6 +62,21 @@ effort:
         claim is wire-probed 2026-11-15 on maya-s24 (:8194): reasoning_effort
         none -> 0 chars of reasoning_content (low -> 60, max -> 1391 on a
         900-token cap).
+    hy4-flash:
+      default_when_unset: high
+      supports_none: true
+      maps: {low: high, medium: high, xhigh: high, max: high}
+      evidence: >-
+        hy4_settings.py — Hy4-Flash's own launcher on this engine:
+        DEFAULT_EFFORT = "high" (:57), EFFORTS (:60) with every level but none
+        written as high (:127). Maya's server does the same at the request:
+        serve/frontend.py's Hy4 render (v1.1.69) sends the template no_think for
+        none / no_think / enable_thinking false and high for every other level
+        ("the template would take them, the model is not made for them"), and
+        thinking_levels() reports none / high. Wire-probed 2026-11-20 on
+        hy4-flash-dual-maya-xs (:8214): none and minimal -> 0 chars of
+        reasoning_content; low / medium / xhigh / max reason like high
+        (178-314 chars on a 900-token cap, no growth with the rung).
   evidence: >-
     Engine-wide (off_switch / supports_none): all three launchers on this engine
     map a request's `none` to thinking off — maya_settings.py EFFORTS (:46),
@@ -67,7 +84,7 @@ effort:
     the tuple includes `none`). Only GLM's is measured on the wire: 2026-11-15 on
     maya-s24 (:8194), reasoning_effort none -> 0 chars of reasoning_content
     (low -> 60, max -> 1391 on a 900-token cap).
-    The engine's other two models are deliberately NOT listed under by_model:
+    The engine's DeepSeek and MiniMax models are deliberately NOT listed under by_model:
     their launchers disagree — ds4_settings.py defaults to "high" (:51) and
     mm3_settings.py to "auto" (:54) with seven pass-through levels (:57) — and
     both are `status: unprobed`, so there is no ladder to fold onto yet.
