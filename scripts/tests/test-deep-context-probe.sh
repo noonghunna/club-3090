@@ -58,6 +58,11 @@ ok "unmeasurable decode reports n/a, not a 0.0 that reads as silent-empty (#1267
 command grep -qF 'if ttft is None and any(v not in (None, "", [], {}) for k, v in delta.items() if k != "role"):' "$P" \
   || bad "TTFT anchored on the first chunk carrying output" "any non-role delta field starts TTFT" "not found"
 ok "TTFT anchored on the first chunk carrying output of any kind (#1096 trap avoided)"
+# The decode window opens on content OR reasoning, in either reasoning field name:
+# vLLM >= 0.34 streams `reasoning`, llama.cpp / SGLang `reasoning_content` (2026-11-21).
+command grep -qF 'if piece or delta.get("reasoning_content") or delta.get("reasoning"):' "$P" \
+  || bad "decode window opens on either reasoning field" "reasoning_content or reasoning" "not found"
+ok "decode window opens on reasoning in either field name (vLLM >= 0.34's reasoning)"
 
 # ===========================================================================
 # Fake engine. REPORT mode selects how prefix reuse is (not) exposed:

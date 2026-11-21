@@ -1186,9 +1186,15 @@ def run_once(prompt, max_tokens, force=0):
             choices = chunk.get("choices") or []
             if choices:
                 delta = choices[0].get("delta", {})
-                # /v1/completions puts the text at choices[0].text, not in a delta
+                # /v1/completions puts the text at choices[0].text, not in a delta.
+                # Reasoning streams before the answer: vLLM >= 0.34 names it
+                # `reasoning` (`reasoning_content` is only a deprecated input name
+                # there), llama.cpp / SGLang `reasoning_content`. Missing either one
+                # starts TTFT at the first ANSWER token and charges the whole
+                # reasoning phase to prefill (Inkling-2-Mini on vLLM: 2-8 s TTFT on a
+                # 27-token prompt, decode_TPS 170-2,029).
                 content = (delta.get("content") or delta.get("reasoning_content")
-                           or choices[0].get("text"))
+                           or delta.get("reasoning") or choices[0].get("text"))
                 if content and ttft is None:
                     ttft = time.time() - t_send
             usage = chunk.get("usage")
