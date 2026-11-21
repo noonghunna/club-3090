@@ -173,6 +173,18 @@ python3 "$SM" host-ram "$base/maya-tiers0" --log-file "$work/maya-ram0.log" >/de
   || bad "host-ram zero tier: exit $r, want 1"
 python3 "$SM" host-ram "$base/ok" --log-file "$work/maya-ram.log" >/dev/null 2>&1; r=$?
 [[ $r -eq 1 ]] && ok "host-ram: a Strata document doesn't read a Maya log: exit 1" || bad "host-ram Strata: exit $r, want 1"
+# Project Maya's Hy4-Flash engine (maya-hy4) logs no RAM line: its "CPU lane: N of M routed experts in VRAM" line
+# (the latest start's: the log is appended across restarts) means M - N are computed on the CPU from the model file
+printf '%s\n' "INFO CPU lane: 5125 of 20992 routed experts in VRAM (24%), the rest on 25 CPU threads from the model's file" \
+  "maya hy4 serve: MTP kept 40 of 56 drafts" \
+  "INFO CPU lane: 11931 of 20992 routed experts in VRAM (57%), the rest on 25 CPU threads from the model's file" > "$work/maya-hy4.log"
+printf '%s\n' "INFO CPU lane: 20992 of 20992 routed experts in VRAM (100%), the rest on 25 CPU threads from the model's file" > "$work/maya-hy4-all.log"
+out="$(python3 "$SM" host-ram "$base/maya" --log-file "$work/maya-hy4.log")"; r=$?
+[[ $r -eq 0 && "$out" == "engine log (CPU lane: 9061 of 20992 routed experts on the CPU, from the model file)" ]] \
+  && ok "host-ram: maya-hy4's CPU-lane line, the latest start's (an earlier start's superseded)" || bad "host-ram hy4: rc=$r, got: $out"
+python3 "$SM" host-ram "$base/maya" --log-file "$work/maya-hy4-all.log" >/dev/null 2>&1; r=$?
+[[ $r -eq 1 ]] && ok "host-ram: maya-hy4 with every routed expert in VRAM is not offload: exit 1" \
+  || bad "host-ram hy4 all in VRAM: exit $r, want 1"
 python3 "$SM" host-ram "$base/maya" --log-file "$work/no-such.log" >/dev/null 2>&1; r=$?
 [[ $r -eq 3 ]] && ok "host-ram: a Maya log that can't be read: exit 3" || bad "host-ram missing log: exit $r, want 3"
 python3 "$SM" host-ram "http://127.0.0.1:1" >/dev/null 2>&1; r=$?

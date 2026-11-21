@@ -19,7 +19,8 @@ nothing there and would report a dead drafter or an empty run. /metrics carries 
 slots in RAM that /metrics reports (`tiers.now.ram_slots`, from the engine's STAT lines, so only
 once a request has run), else, for Project Maya, the "RAM tier X GB pinned" lines of its engine
 log (the latest one per card), or for its DeepSeek engine (maya-ds4) the latest "N routed experts on
-the CPU lane (X GB)" line; for its MiniMax engine (maya-mm3), which logs no RAM line, the RAM tier its
+the CPU lane (X GB)" line, or for its Hy4-Flash engine (maya-hy4) the latest "CPU lane: N of M routed experts in
+VRAM" line (the other M - N on the CPU, from the model file); for its MiniMax engine (maya-mm3), which logs no RAM line, the RAM tier its
 /metrics carries (engine.ram_slots, tiers.now.ram_gb). bench.sh uses it for Maya, whose docker log doesn't say.
 
 `delta` and `recent` print key=value lines:
@@ -98,6 +99,9 @@ MAYA_SPEC = re.compile(r"glm spec: (\d+) of (\d+) drafts accepted|maya ds4 serve
 MAYA_RAM_TIER = re.compile(r"\b(CUDA\d+) RAM tier ([0-9]+(?:\.[0-9]+)?) GB pinned")
 # maya-ds4: "ds4: 11665 routed experts on the CPU lane (100.4 GB): 11665 copied into RAM ..." — once at each start
 MAYA_DS4_CPU_LANE = re.compile(r"\bds4: \d+ routed experts on the CPU lane \(([0-9]+(?:\.[0-9]+)?) GB\)")
+# maya-hy4: "INFO CPU lane: 11931 of 20992 routed experts in VRAM (57%), the rest on 25 CPU threads from the model's
+# file" — once at each start; the rest are computed on the CPU from the model file (read through the page cache)
+MAYA_HY4_CPU_LANE = re.compile(r"\bCPU lane: (\d+) of (\d+) routed experts in VRAM \(\d+%\)")
 
 
 def maya_log_lines(data, source):
@@ -111,7 +115,9 @@ def maya_host_ram(data, source):
     """The engine log's evidence of experts in host RAM, as host-ram prints it, or None. GLM: the RAM
     tier, the latest line per card, summed (the log is appended across restarts, so an earlier start's
     line for the same card is superseded). maya-ds4 has no tier line: the latest start's CPU lane, whose
-    experts are in RAM (copied there, or read in place from the page cache). maya-mm3 logs no RAM line
+    experts are in RAM (copied there, or read in place from the page cache). maya-hy4 logs neither: the
+    latest start's "N of M routed experts in VRAM" line, the rest computed on the CPU from the model file
+    (none when every expert is in VRAM). maya-mm3 logs no RAM line
     under the server: its evidence is in /metrics (main's host-ram)."""
     text = maya_log_text(data, source)
     latest = {}
@@ -122,7 +128,15 @@ def maya_host_ram(data, source):
         return f"engine log (RAM tier {gb:.2f} GB pinned)" if gb > 0 else None
     lane = MAYA_DS4_CPU_LANE.findall(text)
     gb = float(lane[-1]) if lane else 0.0
-    return f"engine log (CPU lane: {gb:.2f} GB of experts)" if gb > 0 else None
+    if gb > 0:
+        return f"engine log (CPU lane: {gb:.2f} GB of experts)"
+    # maya-hy4 logs no GB figure: how many routed experts are NOT in VRAM, the latest start's line
+    hy4 = MAYA_HY4_CPU_LANE.findall(text)
+    if hy4:
+        vram, total = (int(x) for x in hy4[-1])
+        if total > vram:
+            return f"engine log (CPU lane: {total - vram} of {total} routed experts on the CPU, from the model file)"
+    return None
 
 
 def maya_log_text(data, source):
