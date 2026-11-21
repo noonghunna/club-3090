@@ -419,6 +419,10 @@ if not j["renderedCfg"].endswith("config.runtime.yaml"):
 seen = set()
 for fam in j["families"]:
     ladder, cap = fam["ladder"], fam["maxTokens"]
+    # The live-alias clamp intersects the route advertisement against `rungs`, so every
+    # family the installer writes must carry it, as a subset of the nameable ladder.
+    if not ladder.get("rungs") or set(ladder["rungs"]) - set(ladder["efforts"]):
+        print(f"  {mid}: settings family carries no usable rungs: {ladder}", file=sys.stderr); sys.exit(1)
     for mid in fam["ids"]:
         seen.add(mid)
         if mid not in ov:
@@ -564,7 +568,7 @@ for label, v in (("no effort key at all", {"model": "m", "served_name": "x"}),
         sys.exit(1)
 # a maps that is not a dict is not a fold table: the base ladder survives, the fold does not
 fams, _ = gen(row(levels=["low"], maps="high:xhigh", compose_default="low"))
-if [f["ladder"] for f in fams] != [{"efforts": ["low"], "defaultLevel": "low"}]:
+if [f["ladder"] for f in fams] != [{"efforts": ["low"], "rungs": ["low"], "defaultLevel": "low"}]:
     print("  a non-dict maps must be ignored, not crash or invent a fold:", fams)
     sys.exit(1)
 # (d) the rules the live catalog's fold tables exercise, on synthetic rows: a refusal by
@@ -573,7 +577,7 @@ if [f["ladder"] for f in fams] != [{"efforts": ["low"], "defaultLevel": "low"}]:
 #     reaching one target resolve deterministically (ladder order), not by set iteration.
 fams, _ = gen(row(levels=["low", "medium"], compose_default="low"),
               row(levels=["low", "medium"], refuses=["medium"], compose_default="low"))
-if [f["ladder"] for f in fams] != [{"efforts": ["low"], "defaultLevel": "low"}]:
+if [f["ladder"] for f in fams] != [{"efforts": ["low"], "rungs": ["low"], "defaultLevel": "low"}]:
     print("  a refusal by any route must drop the rung for all:", fams)
     sys.exit(1)
 fams, _ = gen(row(levels=["low", "medium", "xhigh"], maps={"high": "xhigh"},
@@ -581,6 +585,18 @@ fams, _ = gen(row(levels=["low", "medium", "xhigh"], maps={"high": "xhigh"},
               row(levels=["low", "medium", "xhigh"], compose_default="low"))
 if [f["ladder"]["efforts"] for f in fams] != [["low", "medium", "xhigh"]]:
     print("  a route with no fold table means no fold sources:", fams)
+    sys.exit(1)
+# (d2) the fold sources belong to `efforts` ONLY. `rungs` is what the routes IMPLEMENT, and
+#      it is the list the live alias clamps against: intersecting the route advertisement
+#      with `efforts` admits a stale fold name and the route then folds it — the switch
+#      window #1951 phase 4 exists to close, and the exact shape #2109 round 1 caught.
+fams, _ = gen(row(levels=["low", "medium"], maps={"high": "xhigh", "max": "xhigh"},
+                  compose_default="low"),
+              row(levels=["low", "medium"], maps={"high": "xhigh", "max": "xhigh"},
+                  compose_default="low"))
+if [f["ladder"] for f in fams] != [{"efforts": ["low", "medium", "high", "max"],
+                                    "rungs": ["low", "medium"], "defaultLevel": "low"}]:
+    print("  fold sources must ride in `efforts`, never in `rungs`:", fams)
     sys.exit(1)
 fams, _ = gen(row(levels=["low", "high"], compose_default="high"),
               row(levels=["low", "high"], compose_default="low"))
@@ -695,10 +711,12 @@ write_compose("ma", "alias.yml", alias_list("a-only"))
 fams, _ = gen2(MF2, arow("ma", "shared.yml", levels=["low"]),
                arow("ma", "alias.yml", levels=["low", "high"], compose_default="high"))
 got = {f["name"]: (f["ids"], f["ladder"]) for f in fams}
-if got.get("a-only") != (["a-only"], {"efforts": ["low", "high"], "defaultLevel": "high"}):
+if got.get("a-only") != (["a-only"], {"efforts": ["low", "high"], "rungs": ["low", "high"],
+                                      "defaultLevel": "high"}):
     print("  an alias is its own family, with its own ladder and its own default:", got)
     sys.exit(1)
-if got.get("a-shared") != (["a-shared"], {"efforts": ["low"], "defaultLevel": "low"}):
+if got.get("a-shared") != (["a-shared"], {"efforts": ["low"], "rungs": ["low"],
+                                          "defaultLevel": "low"}):
     print("  the shared route keeps the ladder of the rows that answer to it — the alias "
           "must not widen it or steal its default:", got)
     sys.exit(1)
