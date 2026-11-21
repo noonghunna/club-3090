@@ -305,7 +305,8 @@ def measure(msgs, max_tokens=24):
                 piece = delta.get("content") or ""
                 # Reasoning tokens are decode work too, so they open the decode
                 # window — timing on `content` alone charges them to prefill (#1096).
-                if piece or delta.get("reasoning_content"):
+                # (`reasoning` on vLLM >= 0.34, `reasoning_content` elsewhere.)
+                if piece or delta.get("reasoning_content") or delta.get("reasoning"):
                     ncontent += 1
                     if c_first is None: c_first = now
                     c_last = now

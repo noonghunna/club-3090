@@ -683,7 +683,8 @@ try:
             choices = chunk.get("choices") or []
             if choices and ttft is None:
                 delta = choices[0].get("delta", {})
-                if delta.get("content") or delta.get("reasoning_content"):
+                # vLLM >= 0.34 streams reasoning as `reasoning`; others `reasoning_content`.
+                if delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning"):
                     ttft = time.time() - t_send
 
             # Accumulate streamed content
