@@ -12,12 +12,10 @@
 #   Max ctx:   100000 (the maintainer's one-card cap with the drafter, 2026-11-21); KV pool 112,381 tokens
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   NOT VALIDATED through switch.sh yet: every number below was measured on 2026-11-21 with the
-#              same flags on the overlay this image bakes (vLLM's launch image + the two rebuilt libraries +
-#              the diff, bind-mounted), before the image existed. sm_86 only: the image has no code for
-#              sm_90+ or a 5090 (its FA2 vision library is sm_80 cubins). A club-built bridge image until a
-#              vLLM release runs Inkling-2-Mini on sm_86 (models/inkling-2-mini/vllm-inkling/image/README.md).
-#              The drafter costs half the one-card window (vllm/inkling-2-mini-single-max has 200K without
+#   Caveats:   sm_86 only: the image has no code for sm_90+ or a 5090 (its FA2 vision library is sm_80
+#              cubins). A club-built bridge image until a vLLM release runs Inkling-2-Mini on sm_86
+#              (models/inkling-2-mini/vllm-inkling/image/README.md).
+#              The drafter costs 80K of the one-card window (vllm/inkling-2-mini-single-max has 180K without
 #              it). The model card documents long reasoning loops "particularly when debugging code" and
 #              recommends output-token caps: cap max_tokens on agent traffic. ALWAYS REASONS (default effort
 #              high); `none` is not off. Quality not measured (no 8-pack); no soak.
@@ -27,13 +25,14 @@
 # Requires-min-gpu-count: 1
 # Tensor-parallel: 1
 #
-# Measured 2026-11-21 on one RTX 3090 (GPU1) at 230 W, same flags, the overlay this image bakes (bench.sh 3 warm
-# + 5, temperature 0.6 / top_p 0.95 / top_k 20): narrative 87.39 / code 129.16 wall tok/s (no drafter, 200K:
-# 76.68 / 76.68), TTFT 67 ms, prefill 2,865-2,888 tok/s at 10K and 1,786 at 90K, KV pool 112,381 tokens (1.12x of
-# 100K), verify-full all pass (DSpark acceptance length 3.20), the five known-answer questions 5/5, verify-stress
-# all pass, DSpark acceptance 2.63 over the bench. DSpark's gain was measured at temperature 0.6; the
-# checkpoint's own default is 1.0, and the vLLM recipe says acceptance depends on the sampling temperature, so
-# treat +68% on code as an upper bound.
+# Measured 2026-11-22 through switch.sh on the pinned image, one RTX 3090 (GPU1) at 230 W (bench.sh 3 warm + 5 on
+# its own boot, temperature 0.6 / top_p 0.95 / top_k 20): narrative 90.85 / code 135.31 wall tok/s (no drafter,
+# vllm/inkling-2-mini-single-max: 76.87 / 76.85), TTFT 66-68 ms, prefill 2,837 tok/s at 10K and 1,806 at 90K, KV
+# pool 112,381 tokens (1.12x of 100K), peak VRAM 23,166 MiB; verify-full all pass (DSpark acceptance length
+# 2.59); verify-stress all pass (60K / 90K recalled; the ceiling ladder starts at 95K, so it doesn't run at this
+# window). The overlay the image bakes (2026-11-21): 87.39 / 129.16. DSpark's gain was measured at temperature
+# 0.6; the checkpoint's own default is 1.0, and the vLLM recipe says acceptance depends on the sampling
+# temperature, so treat +76% on code as an upper bound.
 #
 #   bash scripts/setup.sh vllm/inkling-2-mini-single-fast
 #   bash scripts/switch.sh --force vllm/inkling-2-mini-single-fast
@@ -49,7 +48,7 @@
 # Sampling: the checkpoint's generation_config (temperature 1.0), what a request that names none gets.
 services:
   vllm-inkling-2-mini-single-fast:
-    image: ${VLLM_IMAGE:-ghcr.io/noonghunna/vllm-inkling-club3090:r1}
+    image: ${VLLM_IMAGE:-ghcr.io/noonghunna/vllm-inkling-club3090@sha256:dc54479d7eae7dedc41c450d605fb19a3e0126028d931ccf3c8119038d6bc544}
     container_name: "${ESTATE_CONTAINER:-vllm-inkling-2-mini-single-fast}"
     user: "0:${DOCKER_GID:-1000}"
     restart: ${CLUB3090_RESTART:-unless-stopped}

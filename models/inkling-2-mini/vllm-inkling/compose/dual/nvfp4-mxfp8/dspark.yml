@@ -11,26 +11,27 @@
 #   Max ctx:   262144 (the maintainer's cap for Inkling-2-Mini, 2026-11-21); KV pool 312,280 tokens
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   NOT VALIDATED through switch.sh yet: every number below was measured on 2026-11-21 with the
-#              same flags on the overlay this image bakes (vLLM's launch image + the two rebuilt libraries +
-#              the diff, bind-mounted), before the image existed. sm_86 only: the image has no code for
-#              sm_90+ or a 5090 (its FA2 vision library is sm_80 cubins). A club-built bridge image until a
-#              vLLM release runs Inkling-2-Mini on sm_86 (models/inkling-2-mini/vllm-inkling/image/README.md).
-#              BF16 KV on purpose: with FP8 KV the same config was slower (105.80 / 158.25) and verify-full
-#              [5]'s haiku request looped on both boots tried, token for token (vLLM's default seed hands it
-#              the same sample); BF16 passes. The model card documents long reasoning loops "particularly when debugging code" and
-#              recommends output-token caps: cap max_tokens on agent traffic. ALWAYS REASONS (default effort
-#              high); `none` is not off. Quality not measured (no 8-pack); no soak.
+#   Caveats:   sm_86 only: the image has no code for sm_90+ or a 5090 (its FA2 vision library is sm_80
+#              cubins). A club-built bridge image until a vLLM release runs Inkling-2-Mini on sm_86
+#              (models/inkling-2-mini/vllm-inkling/image/README.md).
+#              BF16 KV on purpose: with FP8 KV the same config was slower (105.80 / 158.25 on the overlay,
+#              2026-11-21) and verify-full [5]'s haiku request looped on both boots tried, token for token
+#              (vLLM's default seed hands it the same sample); BF16 passes. The model card documents long
+#              reasoning loops "particularly when debugging code" and recommends output-token caps: cap
+#              max_tokens on agent traffic. ALWAYS REASONS (default effort high); `none` is not off. Quality
+#              not measured (no 8-pack); no soak.
 #   Best for:  Inkling-2-Mini on two cards: the fastest decode and the full 262K window
 # ---------------------------------------------------------------------------
 # Requires-min-vram-gb: 24
 # Requires-min-gpu-count: 2
 # Tensor-parallel: 2
 #
-# Measured 2026-11-21 on 2x RTX 3090 at 230 W, same flags, the overlay this image bakes (bench.sh 3 warm + 5,
-# temperature 0.6 / top_p 0.95 / top_k 20): narrative 113.98 / code 164.07 wall tok/s (no drafter: 98.35 /
-# 97.26), prefill 3,760-4,058 tok/s at 10K and 3,629 at 90K, KV pool 312,280 tokens (1.19x of 262K),
-# verify-full all pass (vision 4/4, DSpark acceptance length 2.51), DSpark acceptance 2.83 over the bench.
+# Measured 2026-11-22 through switch.sh on the pinned image, 2x RTX 3090 at 230 W (bench.sh 3 warm + 5 on its own
+# boot, temperature 0.6 / top_p 0.95 / top_k 20): narrative 120.41 / code 159.23 wall tok/s, TTFT 61 / 67 ms,
+# prefill 4,647 tok/s at 10K and 3,715 at 90K, KV pool 312,280 tokens (1.19x of 262K), peak VRAM 44,784 MiB over
+# both cards, DSpark acceptance ~2.7 over the bench; verify-full all pass (vision 4/4, DSpark acceptance length
+# 2.37); verify-stress all pass, the ceiling ladder recalled to 240,547 tokens (91% of 262K). The same flags on
+# the overlay the image bakes (2026-11-21, before the image existed): 113.98 / 164.07, no drafter 98.35 / 97.26.
 # DSpark's gain was measured at temperature 0.6; the checkpoint's own default is 1.0, and the vLLM recipe says
 # acceptance depends on the sampling temperature, so treat +68.7% on code as an upper bound.
 #
@@ -50,7 +51,7 @@
 # Sampling: the checkpoint's generation_config (temperature 1.0), what a request that names none gets.
 services:
   vllm-inkling-2-mini-dual-fast:
-    image: ${VLLM_IMAGE:-ghcr.io/noonghunna/vllm-inkling-club3090:r1}
+    image: ${VLLM_IMAGE:-ghcr.io/noonghunna/vllm-inkling-club3090@sha256:dc54479d7eae7dedc41c450d605fb19a3e0126028d931ccf3c8119038d6bc544}
     container_name: "${ESTATE_CONTAINER:-vllm-inkling-2-mini-dual-fast}"
     user: "0:${DOCKER_GID:-1000}"
     restart: ${CLUB3090_RESTART:-unless-stopped}

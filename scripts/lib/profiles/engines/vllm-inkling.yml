@@ -23,11 +23,10 @@ lineage:
   delta: "vLLM's own Inkling-2-Mini launch image (digest sha256:c2dc759f…, Hopper/Blackwell only: its compiled ops carry sm_100 code plus Marlin's sm_80) with _C_stable_libtorch and _moe_C_stable_libtorch rebuilt for sm_86 from vllm-project/vllm@fc144315, and club-3090's diff to vllm/models/inkling2 baked in (sm_8x takes the SM12x / Hopper paths, PDL off, software E4M3 for an FP8 KV cache). Built and published by club-3090 from models/inkling-2-mini/vllm-inkling/image/: an image-provenance exception (docs/ADDING_ENGINES.md), maintainer decision 2026-11-21, a bridge until a vLLM release runs Inkling-2-Mini on sm_86"
 install:
   method: docker_image
-  # Built on the rig with models/inkling-2-mini/vllm-inkling/image/build.sh. NOT PUSHED YET: this is the tag the
-  # recipe builds; once the image is validated and pushed, pin its digest here (build.sh --push prints it) and make
-  # the GHCR package public (the catalog needs an anonymous pull).
-  # pin-current: r1 · launch image c2dc759f · ops from vllm-project/vllm@fc144315 for sm_86 · not pushed yet
-  spec: ghcr.io/noonghunna/vllm-inkling-club3090:r1
+  # Built and pushed from the rig with models/inkling-2-mini/vllm-inkling/image/build.sh (build.sh --push pushes
+  # the image that was validated, never a rebuild). Bump REV in build.sh with any recipe change.
+  # pin-current: r1 · recipe 805b3dd8 · launch image c2dc759f · ops from vllm-project/vllm fc144315 for sm_86 · pinned 2026-11-22 · booted all three vllm/inkling-2-mini-* slugs through switch.sh (verify-full, verify-stress, bench)
+  spec: ghcr.io/noonghunna/vllm-inkling-club3090@sha256:dc54479d7eae7dedc41c450d605fb19a3e0126028d931ccf3c8119038d6bc544
 supported_model_families:
   - inkling2-loop-moe     # Inkling-2-Mini only: the image's diff is to vllm/models/inkling2
 features: {}
