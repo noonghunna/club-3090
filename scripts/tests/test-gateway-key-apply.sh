@@ -79,7 +79,11 @@ cat <<'JSON'
  {"model": "hy4-flash", "served_name": "hy4-flash", "port": 8105,
   "effort": {"levels": ["high"], "refuses": null,
              "maps": {"low": "high", "medium": "high", "xhigh": "high", "max": "high"},
-             "compose_default": null, "default_when_unset": "high"}}
+             "compose_default": null, "default_when_unset": "high"}},
+ {"model": "inkling-2-mini", "served_name": "inkling-2-mini", "port": 8106,
+  "effort": {"levels": ["minimal", "low", "medium", "high", "xhigh"], "refuses": null,
+             "maps": {"max": "xhigh"},
+             "compose_default": "high", "default_when_unset": "high"}}
 ]}
 JSON
 STUB

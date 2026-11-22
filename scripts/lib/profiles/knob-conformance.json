@@ -109,6 +109,12 @@
    "REASONING_EFFORT": true,
    "THINKING_BUDGETS": "the per-effort budget knobs are effort_budget.py's, which only the vLLM / SGLang composes run; Maya's server takes one budget for every level (THINKING_BUDGET)"
   },
+  "inkling-2-mini": {
+   "evidence": "thinkingmachines/Inkling-2-Mini chat_template.jinja: reasoning_effort none / minimal / low / medium / high / xhigh / max or a number in [0.0, 0.99]; no enable_thinking",
+   "ENABLE_THINKING": "its template has no enable_thinking, and nothing turns its reasoning off (reasoning_effort none is 0.0, which still reasons); REASONING_EFFORT covers the dial",
+   "REASONING_EFFORT": true,
+   "THINKING_BUDGETS": "the per-effort budget knobs name Qwen3.8's levels (low / medium / xhigh, effort_budget.py LEVELS); its levels are none / minimal / low / medium / high / xhigh / max or a number"
+  },
   "inkling-small": {
    "evidence": "unsloth/Inkling-Small-GGUF tokenizer.chat_template (GGUF header): reasoning_effort none ... max or a number; no enable_thinking",
    "ENABLE_THINKING": "its template has no enable_thinking (thinking off is reasoning_effort none, which REASONING_EFFORT already covers)",

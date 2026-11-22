@@ -1,0 +1,29 @@
+schema_version: 1
+id: inkling-2-mini-dspark
+display_name: Inkling-2-Mini DSpark block drafter (the checkpoint's own mtp.safetensors)
+spec_method: dspark
+model_compat:
+  - inkling-2-mini
+engine_compat:
+  engine_type: vllm
+n_default: 7
+n_max: 7
+# Ships in the model's own repo (mtp.safetensors, 0.64 GB): the main weights entry fetches it.
+download: false
+vram_footprint_gb: variable
+status: incubating
+# Thinking Machines' DSpark drafter for Inkling-2-Mini (config.json mtp_config: 3 layers, block_size 8, a Markov
+# head, target layers 5 / 23 / 41 / 48). vLLM's Inkling recipe engages it with
+#   --speculative-config '{"method":"dspark","num_speculative_tokens":7,"draft_sample_method":"probabilistic"}'
+# (num_speculative_tokens 7 = block_size - 1), which the composes pass; SPEC_N sets the depth, SPEC_N=0 turns it off.
+# The draft keeps a BF16 KV cache whatever the target's KV dtype.
+#
+# MEASURED 2026-11-21 on 2x RTX 3090 at 230 W (bench.sh, temperature 0.6 / top_p 0.95 / top_k 20), on the overlay
+# the vllm-inkling image bakes: two cards, 262K, BF16 KV: 113.98 / 164.07 wall tok/s narrative / code against 98.35 /
+# 97.26 without it (+15.9% / +68.7%), acceptance length 2.83 over the bench. One card, 100K, FP8 KV: 87.39 / 129.16
+# (acceptance length 2.63). Two cards with DSpark need --max-num-seqs 8 (the sampler warm-up runs out of memory with
+# the default). The vLLM recipe: acceptance "depends on the prompts and the sampling temperature", and these were at
+# 0.6, colder than the checkpoint's default 1.0.
+requires_engine_min: null
+speculative_config_template: '{"method":"dspark","num_speculative_tokens":{N},"draft_sample_method":"probabilistic"}'
+local_model_path: null

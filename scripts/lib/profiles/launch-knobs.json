@@ -1697,6 +1697,68 @@
     {
      "match": {
       "engine": [
+       "vllm"
+      ],
+      "model": [
+       "inkling-2-mini"
+      ]
+     },
+     "enforced": "boot",
+     "values": [
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "default": "high",
+     "every_consumer_contains": [
+      "case \"$$_reff\" in none|minimal|low|medium|high|xhigh|max) : ;;"
+     ],
+     "source": {
+      "file": "models/inkling-2-mini/vllm-inkling/compose/dual/nvfp4-mxfp8/dspark.yml",
+      "what": "`case \"$$_reff\" in none|minimal|low|medium|high|xhigh|max) : ;; *) exit 1`, then passed as --default-chat-template-kwargs {\"reasoning_effort\": ...}, which a request's own effort overrides. The checkpoint's template maps these names to its float dial (none 0.0, minimal 0.1, low 0.2, medium 0.7, high 0.9 = its own default, xhigh and max 0.99) and raises on any other name, so the boot takes exactly the names the template does; none is a legal name, not off"
+     },
+     "checks": [
+      {
+       "kind": "shell",
+       "compose": "models/inkling-2-mini/vllm-inkling/compose/dual/nvfp4-mxfp8/dspark.yml",
+       "from": "^\\s*_reff=\"\\$\\{REASONING_EFFORT",
+       "to": "^\\s*case \"\\$\\$_reff\" in",
+       "accept": [
+        "none",
+        "minimal",
+        "high",
+        "max"
+       ],
+       "reject": [
+        "off",
+        "HIGH",
+        "0.5",
+        "extreme"
+       ]
+      },
+      {
+       "kind": "shell",
+       "compose": "models/inkling-2-mini/vllm-inkling/compose/single/nvfp4-mxfp8/fp8.yml",
+       "from": "^\\s*_reff=\"\\$\\{REASONING_EFFORT",
+       "to": "^\\s*case \"\\$\\$_reff\" in",
+       "accept": [
+        "low",
+        "xhigh"
+       ],
+       "reject": [
+        "off",
+        "0.5"
+       ]
+      }
+     ]
+    },
+    {
+     "match": {
+      "engine": [
        "llamacpp"
       ],
       "model": [

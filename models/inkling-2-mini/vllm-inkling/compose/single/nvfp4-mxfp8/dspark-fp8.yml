@@ -1,0 +1,160 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Inkling-2-Mini (thinkingmachines' own NVFP4 + MXFP8 ModelOpt checkpoint, 20.2 GB with its drafter)
+#   Engine:    vllm-inkling — vLLM's Inkling image with its op libraries rebuilt for sm_86 and an sm_8x diff
+#              baked in (ghcr.io/noonghunna/vllm-inkling-club3090, club-3090's image)
+#   Topology:  Single card (TP=1)
+#   Drafter:   DSpark, the checkpoint's own block drafter (mtp.safetensors), 7 tokens, probabilistic
+#              (SPEC_N sets the depth; SPEC_N=0 or SPEC=off disables)
+#   KV:        fp8 (E4M3, converted in software on sm_8x: Triton has no fp8e4nv below sm_89); the draft's own
+#              KV stays BF16
+#   Vision:    yes (the checkpoint's vision encoder; image input)
+#   Max ctx:   100000 (the maintainer's one-card cap with the drafter, 2026-11-21); KV pool 112,381 tokens
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   NOT VALIDATED through switch.sh yet: every number below was measured on 2026-11-21 with the
+#              same flags on the overlay this image bakes (vLLM's launch image + the two rebuilt libraries +
+#              the diff, bind-mounted), before the image existed. sm_86 only: the image has no code for
+#              sm_90+ or a 5090 (its FA2 vision library is sm_80 cubins). A club-built bridge image until a
+#              vLLM release runs Inkling-2-Mini on sm_86 (models/inkling-2-mini/vllm-inkling/image/README.md).
+#              The drafter costs half the one-card window (vllm/inkling-2-mini-single-max has 200K without
+#              it). The model card documents long reasoning loops "particularly when debugging code" and
+#              recommends output-token caps: cap max_tokens on agent traffic. ALWAYS REASONS (default effort
+#              high); `none` is not off. Quality not measured (no 8-pack); no soak.
+#   Best for:  Inkling-2-Mini's fastest decode on one 24 GB card (code above all)
+# ---------------------------------------------------------------------------
+# Requires-min-vram-gb: 24
+# Requires-min-gpu-count: 1
+# Tensor-parallel: 1
+#
+# Measured 2026-11-21 on one RTX 3090 (GPU1) at 230 W, same flags, the overlay this image bakes (bench.sh 3 warm
+# + 5, temperature 0.6 / top_p 0.95 / top_k 20): narrative 87.39 / code 129.16 wall tok/s (no drafter, 200K:
+# 76.68 / 76.68), TTFT 67 ms, prefill 2,865-2,888 tok/s at 10K and 1,786 at 90K, KV pool 112,381 tokens (1.12x of
+# 100K), verify-full all pass (DSpark acceptance length 3.20), the five known-answer questions 5/5, verify-stress
+# all pass, DSpark acceptance 2.63 over the bench. DSpark's gain was measured at temperature 0.6; the
+# checkpoint's own default is 1.0, and the vLLM recipe says acceptance depends on the sampling temperature, so
+# treat +68% on code as an upper bound.
+#
+#   bash scripts/setup.sh vllm/inkling-2-mini-single-fast
+#   bash scripts/switch.sh --force vllm/inkling-2-mini-single-fast
+#
+# Knobs:
+#   SPEC_N=<n>            DSpark draft depth (default 7, the drafter's block size - 1); SPEC_N=0 / SPEC=off disables
+#   DRAFT_SAMPLE_METHOD   probabilistic (default, vLLM's recipe) or greedy
+#   REASONING_EFFORT      server-default effort for requests that send none: minimal | low | medium | high
+#                         (default, the template's own) | xhigh | max (= xhigh) | none (0.0: NOT off). A request's
+#                         own chat_template_kwargs.reasoning_effort or top-level reasoning_effort wins.
+#   MAX_MODEL_LEN         default 100000 (the KV pool holds 112,381 tokens at these settings)
+#   GPU_MEMORY_UTILIZATION  default 0.95 (as measured)
+# Sampling: the checkpoint's generation_config (temperature 1.0), what a request that names none gets.
+services:
+  vllm-inkling-2-mini-single-fast:
+    image: ${VLLM_IMAGE:-ghcr.io/noonghunna/vllm-inkling-club3090:r1}
+    container_name: "${ESTATE_CONTAINER:-vllm-inkling-2-mini-single-fast}"
+    user: "0:${DOCKER_GID:-1000}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    shm_size: "16gb"
+    ipc: host
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8228}}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton:/root/.triton/cache
+    environment:
+      # Our launch knobs, read by the entrypoint below.
+      - SPEC_N
+      - SPEC
+      - DRAFT_SAMPLE_METHOD
+      - REASONING_EFFORT
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      # CUDA-level GPU mask (#610): launch.sh --gpus exports GPU UUIDs here. Unset -> absent.
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+    entrypoint:
+      - bash
+      - -c
+      - |
+        umask 0002
+        set -e
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  DSpark depth (this compose defaults to 7); SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # A non-numeric SPEC_N is a hard error, so a typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-7}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        _dsm="$${DRAFT_SAMPLE_METHOD:-probabilistic}"
+        case "$$_dsm" in
+          greedy|probabilistic) : ;;
+          *) echo "[spec] DRAFT_SAMPLE_METHOD='$$_dsm' must be greedy or probabilistic" >&2; exit 1 ;;
+        esac
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"method\":\"dspark\",\"num_speculative_tokens\":$$_spec_n,\"draft_sample_method\":\"$$_dsm\"}")
+          echo "[spec] drafter ON - dspark n=$$_spec_n, draft sampling $$_dsm" >&2
+        else
+          echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
+        fi
+        # -- REASONING_EFFORT -> the template's default effort for requests that send none --------
+        # The template takes these names (none = 0.0, minimal 0.1 ... high 0.9, xhigh / max 0.99) and raises on
+        # any other; checked here so a typo refuses the boot instead of 400-ing every request.
+        _reff="${REASONING_EFFORT:-high}"
+        case "$$_reff" in none|minimal|low|medium|high|xhigh|max) : ;; *) echo "[reasoning] REASONING_EFFORT='$$_reff' must be one of none|minimal|low|medium|high|xhigh|max" >&2; exit 1 ;; esac
+        echo "[reasoning] default reasoning_effort=$$_reff (a request's own effort wins)" >&2
+        exec vllm serve "$$@" "$${SPEC_ARGS[@]}" --default-chat-template-kwargs "{\"reasoning_effort\":\"$$_reff\"}"
+      - --
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - /root/.cache/huggingface/Inkling-2-Mini
+      # SERVED_NAME renames the model the API serves (default: inkling-2-mini).
+      - --served-model-name
+      - ${SERVED_NAME:-inkling-2-mini}
+      - --tensor-parallel-size
+      - "1"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-100000}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      # vLLM v0.34's extensible KV cache holds back ~2.9 GiB a card on this model (vllm#68184, docs/UPSTREAM.md).
+      - --no-enable-extensible-kv-cache
+      # One card: the sliding-window and conv-state caches reserve window + in-flight tokens per request.
+      - --max-num-batched-tokens
+      - "512"
+      - --max-num-seqs
+      - "2"
+      - --no-async-scheduling
+      - --kv-cache-dtype
+      - fp8
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - inkling
+      - --reasoning-parser
+      - inkling
+    healthcheck:
+      # The container's own hostname, not loopback, so a bad bind address can't look healthy.
+      test: ["CMD-SHELL", "curl -sf \"http://$${HOSTNAME}:8000/health\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 900s

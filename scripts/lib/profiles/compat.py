@@ -1598,6 +1598,12 @@ def fits(
     # overlay also targets sm_86, hence the sm_80 floor here.
     _fp8_ampere_floor = 8.0 if (effective_kv == "fp8_e4m3" and model.family == "qwen4exp") else 8.6
     _fp8w_ampere_kv = _fp8w_ampere_kv or _fp8_ampere_floor == 8.0
+    # vllm-inkling added 2026-11-21: its image (models/inkling-2-mini/vllm-inkling/image/) converts E4M3 in
+    # software on sm_8x (Triton has no fp8e4nv below SM89), measured with the overlay it bakes on a 3090 (one
+    # card at 200K, FP8 KV pool 203,730 tokens, verify-full + verify-stress pass). Keyed on the ENGINE, not the family: the image is what
+    # makes it work, and stock vLLM gates Inkling's FP8 KV to SM12x. (Its weights key, nvfp4-mxfp8, also matches
+    # the nvfp4 prefix above, whose FlashInfer rationale doesn't apply to this model.)
+    _fp8w_ampere_kv = _fp8w_ampere_kv or (effective_kv == "fp8_e4m3" and engine.id == "vllm-inkling")
     unsupported_hw = [
         hw.id for hw in hardware
         if effective_kv not in hw.supported_kv_formats

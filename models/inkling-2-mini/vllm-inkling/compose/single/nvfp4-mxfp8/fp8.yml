@@ -1,0 +1,130 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Inkling-2-Mini (thinkingmachines' own NVFP4 + MXFP8 ModelOpt checkpoint, 20.2 GB with its drafter)
+#   Engine:    vllm-inkling — vLLM's Inkling image with its op libraries rebuilt for sm_86 and an sm_8x diff
+#              baked in (ghcr.io/noonghunna/vllm-inkling-club3090, club-3090's image)
+#   Topology:  Single card (TP=1)
+#   Drafter:   none
+#   KV:        fp8 (E4M3, converted in software on sm_8x: Triton has no fp8e4nv below sm_89)
+#   Vision:    yes (the checkpoint's vision encoder; image input)
+#   Max ctx:   200000 (the maintainer's one-card cap, 2026-11-21); KV pool 203,730 tokens
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   NOT VALIDATED through switch.sh yet: every number below was measured on 2026-11-21 with the
+#              same flags on the overlay this image bakes (vLLM's launch image + the two rebuilt libraries +
+#              the diff, bind-mounted), before the image existed. sm_86 only: the image has no code for
+#              sm_90+ or a 5090 (its FA2 vision library is sm_80 cubins). A club-built bridge image until a
+#              vLLM release runs Inkling-2-Mini on sm_86 (models/inkling-2-mini/vllm-inkling/image/README.md).
+#              200K fits ONLY at these settings: FP8 KV (BF16 tops out at ~97K on one card), util 0.95, and
+#              --max-num-batched-tokens 512 --max-num-seqs 2 --no-async-scheduling (the sliding-window and
+#              conv-state caches reserve window + in-flight tokens per request). The model card documents long
+#              reasoning loops "particularly when debugging code" and recommends output-token caps: cap
+#              max_tokens on agent traffic. ALWAYS REASONS (default effort high); `none` is not off. Quality
+#              not measured (no 8-pack); no soak.
+#   Best for:  Inkling-2-Mini's longest window on one 24 GB card
+# ---------------------------------------------------------------------------
+# Requires-min-vram-gb: 24
+# Requires-min-gpu-count: 1
+# Tensor-parallel: 1
+#
+# Measured 2026-11-21 on one RTX 3090 (GPU1) at 230 W, same flags, the overlay this image bakes (bench.sh 3 warm
+# + 5, temperature 0.6 / top_p 0.95 / top_k 20): narrative 76.68 / code 76.68 wall tok/s, TTFT 121 ms, prefill
+# 2,930-2,936 tok/s at 10K and 1,802 at 90K, KV pool 203,730 tokens (1.02x of 200K), verify-full all pass, the
+# five known-answer questions 5/5, verify-stress ladder 4/4 recalled up to 183,523 tokens.
+#
+#   bash scripts/setup.sh vllm/inkling-2-mini-single-max
+#   bash scripts/switch.sh --force vllm/inkling-2-mini-single-max
+#
+# Knobs:
+#   REASONING_EFFORT      server-default effort for requests that send none: minimal | low | medium | high
+#                         (default, the template's own) | xhigh | max (= xhigh) | none (0.0: NOT off). A request's
+#                         own chat_template_kwargs.reasoning_effort or top-level reasoning_effort wins.
+#   MAX_MODEL_LEN         default 200000 (the KV pool holds 203,730 tokens at these settings)
+#   GPU_MEMORY_UTILIZATION  default 0.95 (as measured)
+# Sampling: the checkpoint's generation_config (temperature 1.0), what a request that names none gets.
+services:
+  vllm-inkling-2-mini-single-max:
+    image: ${VLLM_IMAGE:-ghcr.io/noonghunna/vllm-inkling-club3090:r1}
+    container_name: "${ESTATE_CONTAINER:-vllm-inkling-2-mini-single-max}"
+    user: "0:${DOCKER_GID:-1000}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    shm_size: "16gb"
+    ipc: host
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8227}}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/triton:/root/.triton/cache
+    environment:
+      # Our launch knob, read by the entrypoint below.
+      - REASONING_EFFORT
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      # CUDA-level GPU mask (#610): launch.sh --gpus exports GPU UUIDs here. Unset -> absent.
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+    entrypoint:
+      - bash
+      - -c
+      - |
+        umask 0002
+        set -e
+        # -- REASONING_EFFORT -> the template's default effort for requests that send none --------
+        # The template takes these names (none = 0.0, minimal 0.1 ... high 0.9, xhigh / max 0.99) and raises on
+        # any other; checked here so a typo refuses the boot instead of 400-ing every request.
+        _reff="${REASONING_EFFORT:-high}"
+        case "$$_reff" in none|minimal|low|medium|high|xhigh|max) : ;; *) echo "[reasoning] REASONING_EFFORT='$$_reff' must be one of none|minimal|low|medium|high|xhigh|max" >&2; exit 1 ;; esac
+        echo "[reasoning] default reasoning_effort=$$_reff (a request's own effort wins)" >&2
+        exec vllm serve "$$@" --default-chat-template-kwargs "{\"reasoning_effort\":\"$$_reff\"}"
+      - --
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - /root/.cache/huggingface/Inkling-2-Mini
+      # SERVED_NAME renames the model the API serves (default: inkling-2-mini).
+      - --served-model-name
+      - ${SERVED_NAME:-inkling-2-mini}
+      - --tensor-parallel-size
+      - "1"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-200000}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      # vLLM v0.34's extensible KV cache holds back ~2.9 GiB a card on this model (vllm#68184, docs/UPSTREAM.md).
+      - --no-enable-extensible-kv-cache
+      # One card: the sliding-window and conv-state caches reserve window + in-flight tokens per request, so
+      # small batches are what leave room for 200K.
+      - --max-num-batched-tokens
+      - "512"
+      - --max-num-seqs
+      - "2"
+      - --no-async-scheduling
+      - --kv-cache-dtype
+      - fp8
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - inkling
+      - --reasoning-parser
+      - inkling
+    healthcheck:
+      # The container's own hostname, not loopback, so a bad bind address can't look healthy.
+      test: ["CMD-SHELL", "curl -sf \"http://$${HOSTNAME}:8000/health\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 900s

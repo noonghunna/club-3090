@@ -141,6 +141,9 @@ PER_ID = {
     # hy4-flash: one thinking level (Tencent's card: high or no_think); every other name
     # folds to high on Maya, the only engine serving the id, so the fold sources are listed.
     "hy4-flash": (["high", "low", "max", "medium", "xhigh"], "high", "hy4"),
+    # inkling-2-mini: the probed ladder plus max, which every route (vllm-inkling only) folds onto xhigh;
+    # the default is the composes' REASONING_EFFORT high, the template's own.
+    "inkling-2-mini": (["minimal", "low", "medium", "high", "xhigh", "max"], "high", "inkling"),
 }
 # The client families, not the routes: which sit behind LiteLLM's Responses -> chat
 # bridge (omp adds `summary: "auto"` to the reasoning object and the bridge forwards the
@@ -174,6 +177,7 @@ PER_ID_ENGINES = {
     "swift-1.5-iq3_s": {"strata"},
     "glm-5.3-flash": {"llamacpp-club3090-v1.6", "strata-maya"},
     "hy4-flash": {"strata-maya"},
+    "inkling-2-mini": {"vllm-inkling"},
 }
 
 def group(name):
@@ -224,7 +228,7 @@ def after_flags(tokens):
 served = set()
 by_file = {}
 for model_dir in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next",
-                  "glm-5.3-flash", "hy4-flash"):
+                  "glm-5.3-flash", "hy4-flash", "inkling-2-mini"):
     for f in sorted(glob.glob(os.path.join(root, "models", model_dir, "*", "compose",
                                            "*", "*", "*.yml"))):
         doc = yaml.safe_load(open(f, encoding="utf-8")) or {}
@@ -271,7 +275,7 @@ for model_dir in ("qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next"
 # generator's rule is "the compose's names, or the registry name when it declares none",
 # so the expected set here needs the same fallback.
 COVERED = {"qwen3.8-27b", "thinkingcap-qwen3.8-27b", "qwen3.8-flash-next", "glm-5.3-flash",
-           "hy4-flash"}
+           "hy4-flash", "inkling-2-mini"}
 sys.path.insert(0, os.path.join(root, "scripts", "lib"))     # the registry reader only
 from litellm_sync import registry_variants
 for _v in registry_variants(root):
