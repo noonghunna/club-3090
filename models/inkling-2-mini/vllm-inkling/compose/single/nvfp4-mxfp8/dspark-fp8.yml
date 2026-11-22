@@ -16,9 +16,11 @@
 #              cubins). A club-built bridge image until a vLLM release runs Inkling-2-Mini on sm_86
 #              (models/inkling-2-mini/vllm-inkling/image/README.md).
 #              The drafter costs 80K of the one-card window (vllm/inkling-2-mini-single-max has 180K without
-#              it). The model card documents long reasoning loops "particularly when debugging code" and
-#              recommends output-token caps: cap max_tokens on agent traffic. ALWAYS REASONS (default effort
-#              high); `none` is not off. Quality not measured (no 8-pack); no soak.
+#              it). VRAM margin unchecked at this window (verify-stress's ceiling ladder starts at 95K): it runs
+#              util 0.95, at which single-max kept 1,017 MB free, under the 1,024 MB margin. The model card
+#              documents long reasoning loops "particularly when debugging code" and recommends output-token
+#              caps: cap max_tokens on agent traffic. ALWAYS REASONS (default effort high); `none` is not off.
+#              Quality not measured (no 8-pack); no soak.
 #   Best for:  Inkling-2-Mini's fastest decode on one 24 GB card (code above all)
 # ---------------------------------------------------------------------------
 # Requires-min-vram-gb: 24
