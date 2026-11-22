@@ -1,0 +1,87 @@
+schema_version: 1
+id: vllm-inkling
+display_name: vLLM for Inkling-2-Mini on sm_86 (vLLM's Inkling image + ops rebuilt for sm_86 + an sm_8x diff; club-3090's image)
+type: vllm
+# The compose env var this engine's image is injected as. Shared with the other vLLM profiles, as
+# vllm-lmcache and vllm-hyperqwen do: each launch injects its own engine's pin, so no launcher allowlist
+# arm is needed.
+image_env: VLLM_IMAGE
+stability: experimental
+# sm_86 cubins only (they also run on sm_89; nothing there is tested). The image's other compiled code (FA2 for
+# vision: sm_80 cubins) doesn't run on sm_90+ either, so the slugs pin supported_sm too.
+min_sm: 8.6
+lineage:
+  relation: derivative
+  base: vllm
+  # vLLM's Inkling launch image (vllm/vllm-openai:inkling-2-mini): its vllm.__version__ is
+  # 0.1.dev25855+g7cb5dae22, a commit that is not published; source_ref is the public Inkling PR head its Python
+  # matches, which the two op libraries are rebuilt from.
+  base_version: "0.1.dev25855+g7cb5dae22"
+  source: https://github.com/vllm-project/vllm
+  source_ref: fc1443152c0eb655f5c2762f56b540bebe93b196
+  chain: []
+  delta: "vLLM's own Inkling-2-Mini launch image (digest sha256:c2dc759f…, Hopper/Blackwell only: its compiled ops carry sm_100 code plus Marlin's sm_80) with _C_stable_libtorch and _moe_C_stable_libtorch rebuilt for sm_86 from vllm-project/vllm@fc144315, and club-3090's diff to vllm/models/inkling2 baked in (sm_8x takes the SM12x / Hopper paths, PDL off, software E4M3 for an FP8 KV cache). Built and published by club-3090 from models/inkling-2-mini/vllm-inkling/image/: an image-provenance exception (docs/ADDING_ENGINES.md), maintainer decision 2026-11-21, a bridge until a vLLM release runs Inkling-2-Mini on sm_86"
+install:
+  method: docker_image
+  # Built and pushed from the rig with models/inkling-2-mini/vllm-inkling/image/build.sh (build.sh --push pushes
+  # the image that was validated, never a rebuild). Bump REV in build.sh with any recipe change.
+  # pin-current: r1 · recipe 805b3dd8 · launch image c2dc759f · ops from vllm-project/vllm fc144315 for sm_86 · pinned 2026-11-22 · booted all three vllm/inkling-2-mini-* slugs through switch.sh (verify-full, verify-stress, bench)
+  spec: ghcr.io/noonghunna/vllm-inkling-club3090@sha256:dc54479d7eae7dedc41c450d605fb19a3e0126028d931ccf3c8119038d6bc544
+supported_model_families:
+  - inkling2-loop-moe     # Inkling-2-Mini only: the image's diff is to vllm/models/inkling2
+features: {}
+supported_kv_formats:
+  - bf16                  # the two-card slug: faster than FP8 on this engine (decode +7.7% / +3.7%, 90K prefill +20%)
+  - fp8_e4m3              # the one-card slugs: E4M3 in software on sm_8x (Triton has no fp8e4nv below sm_89)
+supported_drafters:
+  - dspark                # the checkpoint's own DSpark block drafter (mtp.safetensors), vLLM's dspark method
+supported_weight_formats:
+  - modelopt              # thinkingmachines/Inkling-2-Mini: mixed NVFP4 + MXFP8 ModelOpt (vLLM's inkling2 quantization)
+required_overlays: []
+vendored_overlays:
+  - id: vllm-inkling2-sm86
+    pr_url: https://github.com/vllm-project/vllm/pull/69165
+    upstream_status: filed
+    upstream_merged_in_version: null
+    local_status: vendored
+    image_baked: true   # baked into ghcr.io/noonghunna/vllm-inkling-club3090, not a mountable overlay
+    purpose: "Inkling-2-Mini on sm_8x: our inkling2-sm86.diff (models/inkling-2-mini/vllm-inkling/image/) plus the two op libraries rebuilt for sm_86. vllm-project/vllm#69165 (Ar4ikov, open) does the same job on vLLM's main, which the launch image predates; it keeps FP8 KV gated to SM12x, so on sm_8x it serves BF16 KV only."
+required_genesis: false
+effort:
+  supports_none: true
+  by_model:
+    inkling-2-mini:
+      default_when_unset: high
+      # `none` reaches the template as 0.0, which is not off: it reasoned more than minimal (450 against 116
+      # tokens on the code probe). Nothing switches reasoning off.
+      supports_none: false
+      maps: {max: xhigh}
+      evidence: >-
+        The checkpoint's chat_template.jinja: an unset reasoning_effort is 0.9
+        (high), and max and xhigh are both 0.99; none is 0.0, which the
+        2026-11-21 wire probe measured reasoning more than minimal and low
+        (models/inkling-2-mini.yml effort.evidence). The composes pass
+        REASONING_EFFORT (default high) as --default-chat-template-kwargs,
+        which a request's own chat_template_kwargs or top-level
+        reasoning_effort overrides (vLLM renderers/params.py with_defaults:
+        merge_kwargs(defaults, request), request wins).
+  evidence: >-
+    vLLM's ReasoningEffort accepts none and passes it through to the
+    template (entrypoints/openai/chat_completion/protocol.py
+    build_chat_params), as on vllm-stable.
+notes: >
+  Inkling-2-Mini (thinkingmachines/Inkling-2-Mini) on RTX 3090s. vLLM's own Inkling image
+  (vllm/vllm-openai:inkling-2-mini) refuses anything below Hopper ("Minimum capability: 90"), and lowering
+  that gate isn't enough: its compiled ops carry sm_100 code only (plus Marlin's sm_80), so on a 3090
+  moe_align_block_size silently returns unwritten buffers and other ops fail at warm-up. This engine's image
+  is that launch image with the two op libraries rebuilt for sm_86 and club-3090's diff to
+  vllm/models/inkling2 baked in (recipe and checks: models/inkling-2-mini/vllm-inkling/image/README.md).
+  It is an image-provenance exception by maintainer decision (2026-11-21) and a bridge: vLLM main has
+  Inkling-2-Mini (#69028) and builds its ops for 8.6 and 12.0, and vllm-project/vllm#69165 does this
+  engine's job upstream. Maintainer plan: the slugs move to vllm-stable once that engine reaches v0.35
+  (the vLLM recipe's floor for Mini). The two-card slug (BF16 KV) can move if v0.35.0 carries #69165;
+  the one-card slugs need FP8 KV, which stock vLLM gates to SM12x, so they either stay here or move to
+  BF16 at about half the context. Serves --served-model-name inkling-2-mini with the inkling
+  reasoning and tool-call parsers and the checkpoint's own chat template; the server-default sampling is
+  the checkpoint's generation_config (temperature 1.0). Every slug needs --no-enable-extensible-kv-cache
+  (v0.34's extensible cache holds back ~2.9 GiB a card).

@@ -2006,6 +2006,108 @@ entries:
     serve_aliases: []
     required_sm: 8.6
     category: frontier
+  vllm/inkling-2-mini-dual-fast:
+    origin: core
+    model: inkling-2-mini
+    weights_variant: nvfp4-mxfp8
+    workload: long-ctx-single
+    engine: vllm-inkling
+    drafter: inkling-2-mini-dspark
+    spec_method: null
+    kv_format: bf16
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    kv_offload: null
+    chat_template: native
+    tp: 2
+    max_ctx: 262144
+    max_num_seqs: 8
+    mem_util: 0.9
+    compose_path: models/inkling-2-mini/vllm-inkling/compose/dual/nvfp4-mxfp8/dspark.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8226
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Inkling-2-Mini on two cards (TP=2) at 262144 (the maintainer's cap), BF16 KV (pool 312,280 tokens), DSpark 7 tokens. Validated 2026-11-22 through switch.sh on the pinned image (r1), 2x RTX 3090 at 230 W: verify-full all pass (vision 4/4, DSpark acceptance length 2.37), verify-stress all pass (ceiling ladder recalled to 240,547 tokens, 91% of 262K), bench.sh on its own boot 120.41 / 159.23 wall tok/s narrative / code, prefill 4,647 @10K / 3,715 @90K, peak VRAM 44,784 MiB. BF16 on purpose: with FP8 KV the same config was slower (105.80 / 158.25 on the overlay, 2026-11-21) and verify-full [5]'s seeded haiku sample looped on both boots tried. DSpark needs --max-num-seqs 8. sm_86 only (the image's FA2 vision library is sm_80 cubins: no sm_90+, no 5090). A club-built bridge image until a vLLM release runs Inkling-2-Mini on sm_86. ALWAYS REASONS: reasoning_effort minimal ... xhigh (default high), not enable_thinking; `none` is not off. The model card documents long reasoning loops 'particularly when debugging code' and recommends output-token caps. Quality not measured (no 8-pack), no soak."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    supported_sm:
+      - 8.6
+  vllm/inkling-2-mini-single-max:
+    origin: core
+    model: inkling-2-mini
+    weights_variant: nvfp4-mxfp8
+    workload: long-ctx-single
+    engine: vllm-inkling
+    drafter: null
+    spec_method: null
+    kv_format: fp8_e4m3
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    kv_offload: null
+    chat_template: native
+    tp: 1
+    max_ctx: 180000
+    max_num_seqs: 2
+    mem_util: 0.94
+    compose_path: models/inkling-2-mini/vllm-inkling/compose/single/nvfp4-mxfp8/fp8.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8227
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Inkling-2-Mini on one card at 180000 (the maintainer's one-card cap since 2026-11-22), FP8 KV in software (pool 187,450 tokens; BF16 tops out at ~97K), no drafter, util 0.94, --max-num-batched-tokens 512 --max-num-seqs 2 --no-async-scheduling. Validated 2026-11-22 through switch.sh on the pinned image (r1), one RTX 3090 at 230 W: verify-full all pass, verify-stress all pass (ceiling ladder recalled to 165,220 tokens, 1,259 MB free throughout), bench.sh on its own boot 76.87 / 76.85 wall tok/s, TTFT 119 ms, prefill 2,881 @10K / 1,822 @90K, peak VRAM 22,866 MiB. 200K at util 0.95 also fits (pool 203,730) but leaves 1,017 MB free, under verify-stress's 1,024 MB margin, so the cap is 180K. sm_86 only (the image's FA2 vision library is sm_80 cubins: no sm_90+, no 5090). A club-built bridge image until a vLLM release runs Inkling-2-Mini on sm_86. ALWAYS REASONS: reasoning_effort minimal ... xhigh (default high), not enable_thinking; `none` is not off. The model card documents long reasoning loops 'particularly when debugging code' and recommends output-token caps. Quality not measured (no 8-pack), no soak."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    supported_sm:
+      - 8.6
+  vllm/inkling-2-mini-single-fast:
+    origin: core
+    model: inkling-2-mini
+    weights_variant: nvfp4-mxfp8
+    workload: long-ctx-single
+    engine: vllm-inkling
+    drafter: inkling-2-mini-dspark
+    spec_method: null
+    kv_format: fp8_e4m3
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    kv_offload: null
+    chat_template: native
+    tp: 1
+    max_ctx: 100000
+    max_num_seqs: 2
+    mem_util: 0.95
+    compose_path: models/inkling-2-mini/vllm-inkling/compose/single/nvfp4-mxfp8/dspark-fp8.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8228
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Inkling-2-Mini on one card at 100000 (the maintainer's one-card cap with the drafter), FP8 KV in software (pool 112,381 tokens), DSpark 7 tokens, --max-num-batched-tokens 512 --max-num-seqs 2 --no-async-scheduling. Validated 2026-11-22 through switch.sh on the pinned image (r1), one RTX 3090 at 230 W: verify-full all pass (DSpark acceptance length 2.59), verify-stress all pass (60K / 90K recalled; the ceiling ladder starts above this window), bench.sh on its own boot 90.85 / 135.31 wall tok/s, TTFT 66-68 ms, prefill 2,837 @10K / 1,806 @90K, peak VRAM 23,166 MiB. sm_86 only (the image's FA2 vision library is sm_80 cubins: no sm_90+, no 5090). A club-built bridge image until a vLLM release runs Inkling-2-Mini on sm_86. ALWAYS REASONS: reasoning_effort minimal ... xhigh (default high), not enable_thinking; `none` is not off. The model card documents long reasoning loops 'particularly when debugging code' and recommends output-token caps. Quality not measured (no 8-pack), no soak."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    supported_sm:
+      - 8.6
   llamacpp-club3090/glm53-flash-dual-iq4xs-moecache:
     origin: core
     model: glm-5.3-flash

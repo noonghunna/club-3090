@@ -143,6 +143,13 @@ MODEL_FAMILIES = [
     {"models": ["hy4-flash"],
      "maxTokens": 32768,
      "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True}},
+    # Inkling-2-Mini on vllm-inkling: the template reads chat_template_kwargs.reasoning_effort (it ignores
+    # enable_thinking, and none is 0.0, which still reasons). A vLLM route, so no Responses-bridge summary pin,
+    # and no thinking budget (vLLM's thinking_token_budget is the Qwen line's; the effort ladder is the dial here).
+    # NOT probed through the gateway yet: the route id and its effort were wire-probed on the engine only.
+    {"models": ["inkling-2-mini"],
+     "maxTokens": 32768,
+     "compat": {"supportsReasoningEffort": True, "qwenTemplateReasoningEffort": True}},
 ]
 
 # MODEL_FAMILIES is the one hand-maintained input left, and the renderer below INDEXES

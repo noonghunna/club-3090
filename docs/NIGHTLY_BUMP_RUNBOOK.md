@@ -304,6 +304,24 @@ does, and what to do by hand when it refuses.
 - Prepare runs at every start and is idempotent: a new image that adds a preparation step applies it in
   place, in the model directory, at the first start after the bump.
 
+### vllm-inkling
+
+- Pinned by digest to our own `ghcr.io/noonghunna/vllm-inkling-club3090`, built on vLLM's Inkling launch image
+  (`vllm/vllm-openai:inkling-2-mini`, by digest). There's no upstream release stream: the pin moves only when the
+  recipe in `models/inkling-2-mini/vllm-inkling/image/` changes (a fix to `inkling2-sm86.diff`, or a new launch
+  image). Then bump `REV` in `build.sh` in the same PR, merge it, build from master (`build.sh`), boot all three
+  `vllm/inkling-2-mini-*` slugs on the local image through `switch.sh` (verify-full, verify-stress, and bench on its
+  own boot), push that same image (`build.sh --push`), and pin the digest it prints in
+  `scripts/lib/profiles/engines/vllm-inkling.yml` and the three composes' `image:` defaults.
+- The volatile parts: the diff applies to the launch image's `vllm/models/inkling2` and is checked against
+  `inkling2-sm86.sha256`, so a new launch image that touches those files stops the build at `patch` or the hash
+  check, on purpose. The two op libraries are built from `VLLM_SRC_COMMIT`, which must match the commit the launch
+  image's Python came from.
+- **Retirement, not a bump:** when a vLLM release carries Inkling-2-Mini with sm_86 ops (0.35.0 is the first
+  candidate), boot `vllm/inkling-2-mini-dual-fast`'s flags on `vllm-stable`. The maintainer's plan: the two-card slug
+  moves if the release also carries vllm#69165; the one-card slugs need FP8 KV, which stock vLLM gates to SM12x, so
+  they stay here or move to BF16 at about half the context (the maintainer's call).
+
 ### qengine
 
 - Pinned by digest to the author's own `ghcr.io/bpx03/qengine:<release>-vision` (the engine plus PyTorch for the vision

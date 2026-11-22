@@ -1,0 +1,77 @@
+schema_version: 1
+id: inkling-2-mini
+display_name: Inkling-2-Mini (26B MoE, looped, Thinking Machines)
+description: Inkling-2-Mini — Thinking Machines' 26B multimodal MoE (3.4B active a token, 5.4B with its three passes) with a looped middle (layers 6-17 run three times with shared weights, 48 layer applications from 24), 128 routed experts top-8, sliding-window attention on 20 of 24 layers, image input and a DSpark block drafter (mtp.safetensors); one NVFP4 + MXFP8 checkpoint, served on one or two 3090s by the vllm-inkling engine (vLLM's Inkling image with its ops rebuilt for sm_86).
+family: inkling2-loop-moe
+# Arch: Inkling2LoopForConditionalGeneration (model_type inkling2_loop). Values from
+# thinkingmachines/Inkling-2-Mini's config.json text_config (@ed40e7da, read 2026-11-21).
+# ⚠️ NOT a plain transformer: the looped core (loop_config core_start 6, core_end 18, num_passes 3),
+# short convolutions (sconv_kernel_size 4), a relative-position term (d_rel 16, rel_extent 1024),
+# attention-residual blocks (n_layers_per_attn_res_block 6) and logit soft-capping. Every loop pass
+# keeps its own KV, so the KV footprint is not num_hidden_layers x per-layer.
+hidden_size: 2304                # text_config.hidden_size
+num_hidden_layers: 24            # text_config.num_hidden_layers (48 layer applications with the loop)
+intermediate_size: 1152          # text_config.intermediate_size (per expert)
+num_attn_heads: 24               # num_attention_heads (the sliding layers: 24 too)
+num_kv_heads: 8                  # num_key_value_heads (the sliding layers: 8 too)
+head_dim_attn: 128               # head_dim (swa_head_dim 128)
+attention_k_eq_v: false
+num_full_attn_layers: 4          # global layers 5, 11, 17, 23
+num_sliding_attn_layers: 20      # local_layer_ids: the other 20
+sliding_window: 1024             # sliding_window_size
+num_experts: 128                 # n_routed_experts
+num_experts_per_tok: 8           # num_experts_per_tok; n_shared_experts 0
+active_params_b: 3.4             # the model card: 3.4B active, 5.4B effective with the three passes
+max_ctx_supported: 1048576       # model_max_length — we SHIP at most 262144 (maintainer cap, 2026-11-21)
+vision_capable: true             # the vision encoder is in the checkpoint (vision_config); served on every slug
+default_weight_variant: nvfp4-mxfp8
+valid_tp: [1, 2]                 # 8 KV heads would divide to TP 8; only TP 1 and 2 have run on this engine
+compatible_drafters: [inkling-2-mini-dspark]
+# kv-calc has no model for a looped core whose passes each keep KV, sliding windows and the conv state:
+# every slug sets kvcalc_key="SKIP".
+kv_calc_supported: false
+requires_genesis: false
+
+# #1951 — the wire ladder, probed 2026-11-21 (gate M10 shape) on the overlay this engine's image bakes.
+effort:
+  levels: [minimal, low, medium, high, xhigh]
+  template_kwarg: true    # chat_template_kwargs.reasoning_effort; vLLM also passes the top-level field
+  budget_map: false       # effort_budget.py knows only the Qwen ladder
+  evidence: >-
+    The checkpoint's chat_template.jinja maps reasoning_effort names to a
+    float dial and emits it as a system line ("Thinking effort level: X"):
+    none 0.0, minimal 0.1, low 0.2, medium 0.7, high 0.9, xhigh and max 0.99,
+    or a float in [0.0, 0.99]; unset = 0.9 (high); it raises on any other
+    name (HTTP 400), and has no enable_thinking (sent, it is ignored). Wire
+    probe 2026-11-21 (65 requests, 2x RTX 3090, TP2, BF16 KV, max 12,000
+    tokens) through chat_template_kwargs, reasoning tokens on an IPv4-
+    validator coding prompt: none 450, minimal 116, low 146, medium 515,
+    high 1,692 (= unset), xhigh 3,325, max = xhigh; every level ended on its
+    own (finish=stop) and answered a timetable question correctly. `none` is
+    NOT the floor (it reasoned more than minimal and low), so it stays off the
+    ladder; the floor is minimal, and reasoning never switches off (the model
+    card: "Setting reasoning effort to its minimum does not fully disable
+    reasoning"). The top-level reasoning_effort field reaches the template
+    too (low 135 / xhigh 206 tokens on a word problem, the kwarg's values),
+    except minimal (179 against 135 through the kwarg, not traced).
+
+weights:
+  nvfp4-mxfp8:
+    path: Inkling-2-Mini
+    local_subdir: Inkling-2-Mini
+    size_gb: 20.2
+    format: modelopt
+    status: incubating
+    hf_repo: thinkingmachines/Inkling-2-Mini
+    # The revision every number in the slugs' status notes was measured on.
+    revision: ed40e7da625f594fc9c4990f5f66be24873c22d7
+    # One repo, one artifact: the model (19.5 GB, NVFP4 experts + MXFP8), the DSpark drafter
+    # (mtp.safetensors, 0.64 GB), the tokenizer (tiktoken/) and the processor config.
+    files:
+      - "*.safetensors"
+      - "*.json"
+      - chat_template.jinja
+      - tiktoken/*
+    engine: vllm-inkling
+    kind: main
+    manual_note: "🐣 Thinking Machines' own checkpoint, the only one (mixed NVFP4 + MXFP8 ModelOpt, 19.5 GB of weights + the 0.64 GB DSpark drafter in mtp.safetensors). Apache-2.0. On RTX 3090s it runs only on the vllm-inkling engine: vLLM's own Inkling image refuses anything below Hopper. ⚠️ ALWAYS REASONS: the template reads reasoning_effort (minimal … xhigh, default high), not enable_thinking, and its minimum does not switch reasoning off. ⚠️ The model card warns it can get stuck in long reasoning loops, 'particularly when debugging code', and recommends output-token and agent-turn limits. ⚠️ Sampling: the checkpoint's generation_config sets temperature 1.0 (Unsloth's guide: 1.0 / top_p 1.0 / top_k 0 / min_p 0), not the stack's Qwen values."
