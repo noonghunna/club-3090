@@ -1,0 +1,378 @@
+diff -ruN -x __pycache__ a/inkling2/nvidia/attention.py b/inkling2/nvidia/attention.py
+--- a/inkling2/nvidia/attention.py
++++ b/inkling2/nvidia/attention.py
+@@ -50,7 +50,7 @@
+ 
+ from ..configs import Inkling2ModelConfig
+ from .lora import add_linear_lora
+-from .ops import use_sm100_kernels
++from .ops import pre_hopper, use_sm100_kernels
+ from .ops.attention import (
+     _INKLING2_FA4_REL_ATTENTION_KERNEL,
+     gate_sink,
+@@ -291,7 +291,8 @@
+         self.max_decode_query_len = max_decode_query_len(vllm_config)
+         cache_dtype = vllm_config.cache_config.cache_dtype
+         supported: tuple[str, ...] = ("auto", "bfloat16")
+-        if current_platform.is_device_capability_family(120):
++        # club-3090 sm86 overlay: sm_8x too (E4M3 converted in software, ops/e4m3_sw.py).
++        if current_platform.is_device_capability_family(120) or pre_hopper():
+             supported += ("float16", "fp8", "fp8_e4m3")
+         if cache_dtype not in supported:
+             raise ValueError(f"Inkling2 KV cache dtype must be one of {supported}")
+diff -ruN -x __pycache__ a/inkling2/nvidia/ops/attention_sm90.py b/inkling2/nvidia/ops/attention_sm90.py
+--- a/inkling2/nvidia/ops/attention_sm90.py
++++ b/inkling2/nvidia/ops/attention_sm90.py
+@@ -18,6 +18,12 @@
+ 
+ from vllm.triton_utils import tl, triton
+ 
++from . import pre_hopper
++from .e4m3_sw import e4m3_bits_to_f16, kv_cache_for_kernels
++
++# club-3090 sm86 overlay: `cvt.rn.f16x2.e4m3x2` needs sm_89; below it, decode in software.
++_HW_E4M3 = tl.constexpr(not pre_hopper())
++
+ # The query tile of tml_fa4 that shears the relative logits.
+ _SHEAR_TILE = tl.constexpr(128)
+ 
+@@ -45,14 +51,18 @@
+         mask=mask[:, None],
+         other=0,
+     )
+-    lo, hi = tl.inline_asm_elementwise(
+-        "{ .reg .b32 pair; cvt.rn.f16x2.e4m3x2 pair, $2; mov.b32 {$0, $1}, pair; }",
+-        "=h,=h,h",
+-        [pair],
+-        dtype=(tl.float16, tl.float16),
+-        is_pure=True,
+-        pack=1,
+-    )
++    if _HW_E4M3:
++        lo, hi = tl.inline_asm_elementwise(
++            "{ .reg .b32 pair; cvt.rn.f16x2.e4m3x2 pair, $2; mov.b32 {$0, $1}, pair; }",
++            "=h,=h,h",
++            [pair],
++            dtype=(tl.float16, tl.float16),
++            is_pure=True,
++            pack=1,
++        )
++    else:
++        lo = e4m3_bits_to_f16(pair)
++        hi = e4m3_bits_to_f16(pair >> 8)
+     return tl.interleave(lo, hi).to(dtype)
+ 
+ 
+@@ -267,6 +277,8 @@
+     `(S, T, H, D)` and log2 `lse` `(S, T, H)` partials.
+     """
+     num_tokens, num_heads, head_dim = q.shape
++    # club-3090 sm86 overlay: an E4M3 cache reaches the kernel as bytes below sm_89.
++    key_cache, value_cache = kv_cache_for_kernels(key_cache), kv_cache_for_kernels(value_cache)
+     page, num_kv_heads = key_cache.shape[1:3]
+     group = num_heads // num_kv_heads
+     assert key_cache.stride() == value_cache.stride() and key_cache.stride(3) == 1
+diff -ruN -x __pycache__ a/inkling2/nvidia/ops/conv_mix.py b/inkling2/nvidia/ops/conv_mix.py
+--- a/inkling2/nvidia/ops/conv_mix.py
++++ b/inkling2/nvidia/ops/conv_mix.py
+@@ -7,6 +7,7 @@
+ 
+ from vllm.platforms import current_platform
+ 
++from . import pre_hopper
+ from .attn_res import attn_res
+ from .sconv import short_conv
+ from .seq_parallel import SeqParallel
+@@ -89,7 +90,8 @@
+     )
+     if sp is None:
+         assert halo == 0 and positions.shape[0] == num_tokens and x.dim() == 2
+-        if current_platform.is_device_capability_family(120):
++        if current_platform.is_device_capability_family(120) or pre_hopper():
++            # club-3090 sm86 overlay: sm_8x too.
+             # Native conv/mix kernels require Hopper or SM10x. Keep the
+             # loop executor's cache writes and residual rounding on SM12x.
+             short_conv(
+diff -ruN -x __pycache__ a/inkling2/nvidia/ops/e4m3_sw.py b/inkling2/nvidia/ops/e4m3_sw.py
+--- a/inkling2/nvidia/ops/e4m3_sw.py
++++ b/inkling2/nvidia/ops/e4m3_sw.py
+@@ -0,0 +1,69 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""club-3090 sm86 overlay: E4M3 KV cache conversions in software, for GPUs below
++sm_89 (Ampere).
++
++The FP8 KV cache of Inkling2 is unit-scale E4M3 (K is L2-clipped and V RMS-normed
++before the store, so values stay far inside +-448). Upstream converts with PTX
++(`cvt.rn.f16x2.e4m3x2` on load, Triton's fp8e4nv cast on store), and Triton refuses
++fp8e4nv pointers and casts below sm_89. Here the cache is handed to the kernels as
++uint8 and converted with integer ops:
++
++* load:  E4M3 -> FP16 exactly. The 7 magnitude bits shifted left by 7 are an FP16
++  whose value is the E4M3 value times 2^-8 (exponent bias 7 vs 15, and both formats
++  have subnormals), so multiplying by 2^8 is exact. 0x7F / 0xFF are NaN.
++* store: FP32 -> E4M3 with round-to-nearest-even and saturation to +-448 (the
++  semantics of `cvt.rn.satfinite.e4m3x2.f32`); NaN -> 0x7F.
++"""
++
++import torch
++
++from vllm.triton_utils import tl, triton
++
++from . import pre_hopper
++
++
++def kv_cache_for_kernels(cache: torch.Tensor) -> torch.Tensor:
++    """Below sm_89 an E4M3 cache goes to the Triton kernels as its bytes."""
++    if cache.dtype == torch.float8_e4m3fn and pre_hopper():
++        return cache.view(torch.uint8)
++    return cache
++
++
++@triton.jit
++def e4m3_bits_to_f16(b):
++    """FP16 value of the E4M3 byte(s) `b` (any integer dtype; low 8 bits used)."""
++    b = b.to(tl.uint16) & 0xFF
++    mag = b & 0x7F
++    h = ((mag << 7) | ((b & 0x80) << 8)).to(tl.float16, bitcast=True)
++    v = h.to(tl.float32) * 256.0
++    v = tl.where(mag == 0x7F, float("nan"), v)
++    return v.to(tl.float16)
++
++
++@triton.jit
++def f32_to_e4m3_bits(x):
++    """E4M3 byte of fp32 `x`: round to nearest even, saturate to +-448, NaN -> 0x7F."""
++    x = x.to(tl.float32)
++    bits = x.to(tl.uint32, bitcast=True)
++    sign = (bits >> 24) & 0x80
++    a = tl.minimum(tl.abs(x), 448.0)
++    abits = a.to(tl.uint32, bitcast=True)
++    e32 = (abits >> 23).to(tl.int32) - 127
++    # Normal range (a >= 2^-6): keep the top 3 mantissa bits, round the other 20.
++    m23 = abits & 0x7FFFFF
++    keep = m23 >> 20
++    rem = m23 & 0xFFFFF
++    up = (rem > 0x80000) | ((rem == 0x80000) & ((keep & 1) == 1))
++    normal = ((tl.maximum(e32 + 7, 0)).to(tl.uint32) << 3) + keep + up.to(tl.uint32)
++    # Subnormal range (a < 2^-6): the byte is a / 2^-9 rounded to nearest even; 8
++    # (the rounding carry) is the smallest normal, 2^-6, so it needs no special case.
++    s = a * 512.0
++    f = tl.floor(s)
++    d = s - f
++    fi = f.to(tl.uint32)
++    sub = fi + ((d > 0.5) | ((d == 0.5) & ((fi & 1) == 1))).to(tl.uint32)
++    q = tl.where(e32 < -6, sub, normal)
++    q = tl.minimum(q, 0x7E)
++    q = tl.where(x != x, 0x7F, q | sign)
++    return q.to(tl.uint8)
+diff -ruN -x __pycache__ a/inkling2/nvidia/ops/__init__.py b/inkling2/nvidia/ops/__init__.py
+--- a/inkling2/nvidia/ops/__init__.py
++++ b/inkling2/nvidia/ops/__init__.py
+@@ -4,6 +4,47 @@
+ 
+ 
+ @functools.cache
++def pre_hopper() -> bool:
++    """club-3090 sm86 overlay: sm_8x has no TMA, no griddepcontrol (PDL) and no
++    Triton fp8e4nv, so it takes the SM12x branches that avoid them."""
++    from vllm.platforms import current_platform
++
++    return not current_platform.has_device_capability(90)
++
++
++def _pre_hopper_triton() -> None:
++    """`tl.extra.cuda.gdc_wait` / `gdc_launch_dependents` lower to
++    `griddepcontrol`, which ptxas rejects below sm_90. Without programmatic
++    dependent launch every kernel is stream-ordered, so both are no-ops; PDL is
++    forced off so no launch relies on them."""
++    if not pre_hopper():
++        return
++    import triton.language.extra.cuda as tl_cuda
++    from triton.language import core
++    from triton.runtime.jit import JITFunction
++
++    @core.extern
++    def _gdc_noop(_semantic=None):
++        return None
++
++    tl_cuda.gdc_wait = _gdc_noop
++    tl_cuda.gdc_launch_dependents = _gdc_noop
++    if not getattr(JITFunction.run, "_club3090_no_pdl", False):
++        run = JITFunction.run
++
++        def run_no_pdl(self, *args, **kwargs):
++            if kwargs.get("launch_pdl"):
++                kwargs["launch_pdl"] = False
++            return run(self, *args, **kwargs)
++
++        run_no_pdl._club3090_no_pdl = True
++        JITFunction.run = run_no_pdl
++
++
++_pre_hopper_triton()
++
++
++@functools.cache
+ def use_sm100_kernels() -> bool:
+     """Whether to run the Blackwell kernels (tml_fa4, tcgen05 attention,
+     TRT-LLM-gen expert GEMMs, e2m1 conversions). Hopper uses Humming experts;
+@@ -11,3 +52,48 @@
+     from vllm.platforms import current_platform
+ 
+     return current_platform.is_device_capability_family(100)
++
++
++def moe_align_block_size_torch(
++    topk_ids, block_size: int, num_experts: int, expert_map=None, pad_sorted_ids: bool = False,
++    ignore_invalid_experts: bool = False, return_scatter_idx: bool = False,
++):
++    """club-3090 sm86 overlay: torch stand-in for vLLM's `moe_align_block_size`, whose CUDA kernel this image
++    builds for sm_100 only (on sm_86 the op returns its buffers unwritten). Same buffers and contract for
++    the `ignore_invalid_experts=True`, no `expert_map` call that the Humming experts make: ids outside
++    [0, num_experts) are skipped, each expert's rows are padded to `block_size` with `topk_ids.numel()`,
++    and `expert_ids` names each block's expert. No host syncs, so CUDA graphs can capture it."""
++    import torch
++    from vllm.triton_utils import triton
++    from vllm.utils.math_utils import round_up
++
++    assert expert_map is None and ignore_invalid_experts and not return_scatter_idx, "sm86 stand-in: Humming's call only"
++    numel = topk_ids.numel()
++    device = topk_ids.device
++    max_padded = numel + num_experts * (block_size - 1)
++    if pad_sorted_ids:
++        max_padded = round_up(max_padded, block_size)
++    if numel < num_experts:
++        max_padded = min(numel * block_size, max_padded)
++    max_blocks = triton.cdiv(max_padded, block_size)
++    flat = topk_ids.reshape(-1).to(torch.int64)
++    valid = (flat >= 0) & (flat < num_experts)
++    key = torch.where(valid, flat, torch.full_like(flat, num_experts))  # invalid rows sort last
++    counts = torch.zeros(num_experts + 1, dtype=torch.int64, device=device)
++    counts.scatter_add_(0, key, torch.ones_like(key))
++    counts = counts[:num_experts]
++    padded = (counts + block_size - 1) // block_size * block_size
++    padded_end = torch.cumsum(padded, 0)
++    padded_start = padded_end - padded
++    raw_start = torch.cumsum(counts, 0) - counts
++    order = torch.sort(key, stable=True).indices                  # rows grouped by expert, in row order
++    sorted_key = key[order]
++    rank = torch.arange(numel, device=device) - raw_start.index_select(0, sorted_key.clamp(max=num_experts - 1))
++    dest = padded_start.index_select(0, sorted_key.clamp(max=num_experts - 1)) + rank
++    dest = torch.where(sorted_key < num_experts, dest, torch.full_like(dest, max_padded))  # invalid -> dump slot
++    sorted_ids = torch.full((max_padded + 1,), numel, dtype=torch.int32, device=device)
++    sorted_ids.scatter_(0, dest, order.to(torch.int32))
++    block_start = torch.arange(max_blocks, device=device, dtype=torch.int64) * block_size
++    expert_ids = torch.searchsorted(padded_end, block_start, right=True).clamp(max=num_experts - 1).to(torch.int32)
++    num_tokens_post_pad = padded_end[-1:].to(torch.int32)
++    return sorted_ids[:max_padded], expert_ids, num_tokens_post_pad
+diff -ruN -x __pycache__ a/inkling2/nvidia/ops/linear.py b/inkling2/nvidia/ops/linear.py
+--- a/inkling2/nvidia/ops/linear.py
++++ b/inkling2/nvidia/ops/linear.py
+@@ -9,7 +9,7 @@
+ from vllm.triton_utils import tl, triton
+ from vllm.utils.flashinfer import is_flashinfer_autotuning
+ 
+-from . import use_sm100_kernels
++from . import pre_hopper, use_sm100_kernels
+ from .gemv import sm12x_bf16_gemv, use_sm12x_bf16_gemv
+ 
+ # Up to this many rows, FlashInfer's CuTe DSL low-M kernels run near HBM
+@@ -213,7 +213,8 @@
+     assert x.is_contiguous() and weight.is_contiguous()
+     tokens, hidden = x.shape
+     n = weight.shape[0]
+-    sm120 = current_platform.is_device_capability_family(120)
++    # club-3090 sm86 overlay: sm_8x takes the SM12x branch (no TMA, 2 stages).
++    sm120 = current_platform.is_device_capability_family(120) or pre_hopper()
+     if tokens >= TMA_MIN_TOKENS and not sm120:
+         from triton.tools.tensor_descriptor import TensorDescriptor
+ 
+diff -ruN -x __pycache__ a/inkling2/nvidia/ops/sconv.py b/inkling2/nvidia/ops/sconv.py
+--- a/inkling2/nvidia/ops/sconv.py
++++ b/inkling2/nvidia/ops/sconv.py
+@@ -24,6 +24,7 @@
+ 
+ import torch
+ 
++from vllm.models.inkling2.nvidia.ops.e4m3_sw import f32_to_e4m3_bits, kv_cache_for_kernels
+ from vllm.models.inkling2.nvidia.ops.norm import qr_clip_rel_tokens, rsqrt
+ from vllm.triton_utils import tl, triton
+ 
+@@ -810,7 +811,11 @@
+         + head * stride_kv_h
+         + d_idx[None, :]
+     )
+-    tl.store(dst, y.to(cache.dtype.element_ty), mask=(kv_slot >= 0)[:, None])
++    if cache.dtype.element_ty == tl.uint8:
++        # club-3090 sm86 overlay: an E4M3 cache as bytes (below sm_89), encoded in software.
++        tl.store(dst, f32_to_e4m3_bits(y), mask=(kv_slot >= 0)[:, None])
++    else:
++        tl.store(dst, y.to(cache.dtype.element_ty), mask=(kv_slot >= 0)[:, None])
+ 
+ 
+ # From this many tokens, q/r run in their own launch (8 tokens per program)
+@@ -879,6 +884,8 @@
+     `k/v_dynamic` the `(W, H * D)` static part.
+     """
+     num_tokens = kv_slot_mapping.shape[0]
++    # club-3090 sm86 overlay: an E4M3 cache reaches the kernel as bytes below sm_89.
++    key_cache, value_cache = kv_cache_for_kernels(key_cache), kv_cache_for_kernels(value_cache)
+     num_heads, head_dim = key_cache.shape[2:]
+     num_q_heads, d_rel = r.shape[1:]
+     extent = rel_proj.shape[2] - _SHIFT_PAD
+diff -ruN -x __pycache__ a/inkling2/nvidia/vision.py b/inkling2/nvidia/vision.py
+--- a/inkling2/nvidia/vision.py
++++ b/inkling2/nvidia/vision.py
+@@ -17,7 +17,7 @@
+ from torch import nn
+ 
+ from vllm.model_executor.model_loader.weight_utils import default_weight_loader
+-from vllm.models.inkling2.nvidia.ops import use_sm100_kernels
++from vllm.models.inkling2.nvidia.ops import pre_hopper, use_sm100_kernels
+ from vllm.models.inkling2.nvidia.ops.linear import linear_k_groups
+ from vllm.models.inkling2.nvidia.ops.vision import (
+     apply_rotary_qk_,
+@@ -91,7 +91,12 @@
+         else:
+             from vllm.vllm_flash_attn import flash_attn_varlen_func
+ 
+-            version = 2 if current_platform.is_device_capability_family(120) else 3
++            # club-3090 sm86 overlay: FA2 below Hopper too.
++            version = (
++                2
++                if current_platform.is_device_capability_family(120) or pre_hopper()
++                else 3
++            )
+             out = flash_attn_varlen_func(q, k, v, fa_version=version, **kwargs)
+         return self.out_proj(out.view(hidden.shape))
+ 
+diff -ruN -x __pycache__ a/inkling2/quant_config.py b/inkling2/quant_config.py
+--- a/inkling2/quant_config.py
++++ b/inkling2/quant_config.py
+@@ -43,7 +43,9 @@
+ 
+     @classmethod
+     def get_min_capability(cls) -> int:
+-        return 90
++        # club-3090 sm86 overlay: Ampere runs the Hopper path's Humming experts
++        # (bf16 activations, Humming has Sm86Heuristics). Upstream: 90.
++        return 80
+ 
+     @staticmethod
+     def get_config_filenames() -> list[str]:
+diff -ruN -x __pycache__ a/inkling2/speculator_config.py b/inkling2/speculator_config.py
+--- a/inkling2/speculator_config.py
++++ b/inkling2/speculator_config.py
+@@ -15,7 +15,10 @@
+     @classmethod
+     def adapt_draft_model_config(cls, spec: "SpeculativeConfig") -> None:
+         super().adapt_draft_model_config(spec)
+-        if current_platform.is_device_capability_family(120):
++        from .nvidia.ops import pre_hopper
++
++        # club-3090 sm86 overlay: sm_8x keeps a BF16 draft cache too.
++        if current_platform.is_device_capability_family(120) or pre_hopper():
+             # The target's clipped, unit-scale FP8 cache does not describe the
+             # draft's unnormalized values. Keep the draft cache in BF16.
+             if spec.kv_cache_dtype is None:
