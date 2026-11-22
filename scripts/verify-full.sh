@@ -496,9 +496,16 @@ for line in sys.stdin:
         break
     try:
         d = json.loads(payload)
-        delta = d['choices'][0].get('delta', {}).get('content') or ''
+        dd = d['choices'][0].get('delta', {})
+        delta = dd.get('content') or ''
+        # Reasoning chunks prove the stream is live too ('reasoning' on vLLM >= 0.34,
+        # 'reasoning_content' elsewhere). No backticks here: this python sits in a bash
+        # double-quoted string, where they run as commands. Counting content alone failed a healthy
+        # speculative-decoding boot: DSpark emits up to 8 tokens per chunk, so a
+        # 20-token haiku arrived as 3 content chunks (Inkling-2-Mini, 2026-11-21).
         if delta:
             text += delta
+        if delta or dd.get('reasoning_content') or dd.get('reasoning'):
             chunks += 1
     except Exception:
         pass

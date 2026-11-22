@@ -37,6 +37,11 @@ export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never re
 #   safety
 #     8. endpoint unreachable                   → enable_thinking (today's shape)
 #     9. env override wins AND suppresses the top-level param
+#   vLLM >= 0.34 shape (reasoning in a `reasoning` field, no /props) — 2026-11-21
+#    19. switch answers but reasoning persists  → none (step 1b on the probe branch)
+#    20. switch honoured, no reasoning          → enable_thinking (no regression)
+#    21. ON ladder reads `reasoning`            → xhigh
+#    22. off-payload shape reads `reasoning`    → std param dropped
 #
 # Scenario 3 is the load-bearing one: it is what guarantees this change can only
 # ADD coverage. Every model passing today keeps its exact request shape.
@@ -81,6 +86,15 @@ trap cleanup EXIT
 #                         as having no reasoning.
 #   noprops:<key>       → /props 404s; completions return content ONLY when the
 #                         request's chat_template_kwargs carries <key> ("-" = never)
+#   noprops-thinks:     → /props 404s; completions ALWAYS answer "OK" and ALWAYS carry
+#                         reasoning, whatever the kwargs: a switch that is accepted but
+#                         ignored. Inkling-2-Mini on vLLM, 2026-11-21: `enable_thinking:
+#                         false` -> "OK" after 253 chars of reasoning.
+#   noprops-honours:    → /props 404s; completions answer "OK", with reasoning UNLESS
+#                         chat_template_kwargs.enable_thinking is false (Qwen on vLLM).
+# MOCK_REASONING_FIELD=reasoning renames every reply's `reasoning_content` to
+# `reasoning` — what vLLM >= 0.34 returns (`reasoning_content` is only a deprecated
+# input name there). Default: reasoning_content (llama.cpp, SGLang).
 cat > "$TMP/mock.py" <<'PY'
 import json, os, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -93,6 +107,11 @@ class H(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code, obj):
+        if os.environ.get("MOCK_REASONING_FIELD") == "reasoning":
+            for ch in (obj.get("choices") or []) if isinstance(obj, dict) else []:
+                msg = ch.get("message") or {}
+                if "reasoning_content" in msg:
+                    msg["reasoning"] = msg.pop("reasoning_content")
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -156,6 +175,14 @@ class H(BaseHTTPRequestHandler):
             # Switch named in the template, ignored by the model: the client sees
             # the reasoning preamble eat the whole budget, so content is empty.
             content = ""
+        if MODE.startswith("noprops-thinks:"):
+            return self._send(200, {"choices": [{"message": {
+                "content": "OK", "reasoning_content": "thinking " * 30}}]})
+        if MODE.startswith("noprops-honours:"):
+            kw = body.get("chat_template_kwargs") or {}
+            rc = "" if kw.get("enable_thinking") is False else "thinking " * 30
+            return self._send(200, {"choices": [{"message": {
+                "content": "OK", "reasoning_content": rc}}]})
         if MODE.startswith("noprops:"):
             want = MODE.split(":", 1)[1]
             kw = body.get("chat_template_kwargs") or {}
@@ -173,7 +200,7 @@ free_port() { python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0)
 start_mock() {
   [[ -n "$MOCK_PID" ]] && { kill "$MOCK_PID" 2>/dev/null || true; wait "$MOCK_PID" 2>/dev/null || true; }
   PORT="$(free_port)"
-  MOCK_MODE="$1" python3 "$TMP/mock.py" "$PORT" >/dev/null 2>&1 &
+  MOCK_MODE="$1" MOCK_REASONING_FIELD="${2:-reasoning_content}" python3 "$TMP/mock.py" "$PORT" >/dev/null 2>&1 &
   MOCK_PID=$!
   for _ in $(seq 1 50); do
     curl -sf -m 1 "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1 && return 0
@@ -339,5 +366,31 @@ expect "17. top-level DEFEATS kwarg → std param dropped" "http://127.0.0.1:${P
 start_mock 'props-agree:Effort: {{ reasoning_effort }}'
 expect "18. top-level AGREES with kwarg → std param kept" "http://127.0.0.1:${PORT}" \
        "reasoning_effort|${KW_EFFORT}|${STD_EFFORT}"
+
+echo ""
+# --- vLLM >= 0.34 response shape (2026-11-21) ----------------------------------
+# vLLM has no /props, so detection takes the BEHAVIOURAL branch, whose key probe
+# reads CONTENT only. Inkling-2-Mini answered `enable_thinking: false` with "OK"
+# after 253 chars of reasoning: the switch was accepted, TOK_SCALE stayed 1 and
+# verify-full [3]/[5] failed on 30/120-token budgets. Step 1b (does reasoning
+# actually stop?) ran only on the template-scan branch. And vLLM >= 0.34 returns
+# reasoning as `reasoning`, which two of the reasoning-length probes never read.
+echo "--- vLLM >= 0.34 shape (\`reasoning\` field, no /props)"
+start_mock 'noprops-thinks:' reasoning
+expect "19.  ⭐ accepted-but-ignored switch on the probe branch → none" "http://127.0.0.1:${PORT}" "none|{}|" THINK_PROBE=1
+start_mock 'noprops-thinks:'
+expect "19b. same, reasoning_content field (SGLang shape) → none" "http://127.0.0.1:${PORT}" "none|{}|" THINK_PROBE=1
+# NEGATIVE CONTROL: no opt-in, so no probe at all — measurement scripts keep the
+# safe default and send nothing extra.
+start_mock 'noprops-thinks:' reasoning
+expect "19c. same mock, no opt-in → safe default, no probe" "http://127.0.0.1:${PORT}" "enable_thinking|${KW_QWEN}|"
+start_mock 'noprops-honours:' reasoning
+expect "20.  honoured switch on the probe branch → enable_thinking (unchanged)" "http://127.0.0.1:${PORT}" "enable_thinking|${KW_QWEN}|" THINK_PROBE=1
+start_mock 'props-xhigh:Thinking effort level: {{ reasoning_effort }}' reasoning
+expect_on "21.  ON ladder reads \`reasoning\` → xhigh" "http://127.0.0.1:${PORT}" \
+  '{"reasoning_effort": "xhigh"}' THINK_PROBE=1
+start_mock 'props-defeat:Effort: {{ reasoning_effort }}' reasoning
+expect "22.  off-payload shape reads \`reasoning\` → std param dropped" "http://127.0.0.1:${PORT}" \
+       "reasoning_effort|${KW_EFFORT}|"
 
 echo "test-thinking-control: ${PASS} assertions passed"

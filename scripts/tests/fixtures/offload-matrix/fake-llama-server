@@ -64,6 +64,12 @@ FAKE_SCENARIO:
                   a few content deltas, data: {"error": {...}} with no choices,
                   the usage chunk and [DONE]. bench.sh must count the run as a
                   failed request, not a short normal one
+  reasoning_first the first half of every streamed answer arrives as REASONING in
+                  vLLM >= 0.34's field (choices[0].delta.reasoning; `reasoning_content`
+                  is only a deprecated input name there), slowly (FAKE_REASONING_DELAY,
+                  default 0.02 s per chunk), then the rest as content. TTFT must land on
+                  the FIRST reasoning chunk, not on the first answer token (2026-11-21:
+                  Inkling-2-Mini on vLLM read 2-8 s TTFT on a 27-token prompt)
   engine_422      every completion gets HTTP 422 with Maya's engine_error body,
                   whose reason carries the digits 400 (a position): the prefill
                   calibrator must report it as a FAIL, not 'exceeds the served
@@ -107,6 +113,7 @@ EXPERT_KIB   = int(os.environ.get("FAKE_EXPERT_KIB", "1536"))
 # needs a measured phase LONGER than the 1 Hz dmon sample period raises it, since
 # a phase shorter than the sample period genuinely contains no samples.
 TOK_DELAY    = float(os.environ.get("FAKE_TOKEN_DELAY", "0.002"))
+REASON_DELAY = float(os.environ.get("FAKE_REASONING_DELAY", "0.02"))
 # Per-canvas denoise cost for the canvas/canvas_mixed scenarios. Spent BEFORE the
 # block becomes visible, which is what collapses the decode window to zero width.
 CANVAS_DELAY = float(os.environ.get("FAKE_CANVAS_DELAY", "0.05"))
@@ -373,10 +380,12 @@ class H(BaseHTTPRequestHandler):
             for i in emit_loop:
                 if raw_completion:
                     d = {"choices": [{"text": f"tok{i} "}]}
+                elif SC == "reasoning_first" and i < emit // 2:
+                    d = {"choices": [{"delta": {"reasoning": f"thought{i} "}}]}
                 else:
                     d = {"choices": [{"delta": {"content": f"tok{i} "}}]}
                 chunk("data: " + json.dumps(d) + "\n\n")
-                time.sleep(TOK_DELAY)
+                time.sleep(REASON_DELAY if (SC == "reasoning_first" and i < emit // 2) else TOK_DELAY)
             if SC == "stream_error":
                 # Maya's StreamJob: the fault becomes a choices-less error chunk
                 chunk("data: " + json.dumps({"error": {"type": "server_error",

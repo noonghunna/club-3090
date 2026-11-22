@@ -1485,4 +1485,18 @@ command grep -q 'SKIP: 2000 tokens exceeds the served context (HTTP 400: the req
 command grep -qE 'FAIL: ' "$H" && fail "control: the healthy run must have no failed request"
 echo "  ✓ an engine's error fails the run (stream chunk → REQ_ERRORS; a 422 is not 'exceeds context'); over-context 400 still skips"
 
+# --- 25. reasoning streamed before the answer starts the TTFT clock (2026-11-21) ---
+# vLLM >= 0.34 streams reasoning as `delta.reasoning`. bench.sh started TTFT on
+# `content` / `reasoning_content` only, so on a model that reasons first the whole
+# reasoning phase was charged to prefill: Inkling-2-Mini on vLLM read 2-8 s TTFT on
+# a 27-token prompt and decode_TPS 170-2,029. The fake streams 20 reasoning chunks
+# 20 ms apart (~0.4 s) before any content: TTFT must sit near the first chunk.
+run_bench reasoning_first "$((PORT_BASE+28))" "$TMP/rfirst.out" ONLY=narr RUNS=2 WARMUPS=0
+R="$TMP/rfirst.out"
+rf_max="$(command grep -m1 -E '^  TTFT +mean=' "$R" | sed -nE 's/.*max=([0-9]+)ms.*/\1/p')"
+[[ "$rf_max" =~ ^[0-9]+$ ]] || fail "reasoning_first: no TTFT summary line: $(command grep -m1 -E 'run-1 |TTFT' "$R")"
+(( rf_max < 200 )) \
+  || fail "reasoning_first: TTFT must start at the first \`delta.reasoning\` chunk (~20 ms), got max=${rf_max}ms — it waited for the answer"
+echo "  ✓ reasoning streamed in vLLM's \`reasoning\` field starts the TTFT clock (max ${rf_max} ms)"
+
 echo "test-bench-capture: ok"
