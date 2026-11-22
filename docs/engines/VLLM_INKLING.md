@@ -23,18 +23,19 @@ The recipe, the file-by-file diff table and the build checks are in
 
 ## Why we build it
 
-It is an exception to two rules, by maintainer decision (2026-11-21), until a vLLM release runs Inkling-2-Mini on
-sm_86:
+It is an exception to two rules, by maintainer decision (2026-11-21):
 - **Image provenance** ([ADDING_ENGINES.md](../ADDING_ENGINES.md), "CONTRACT — image provenance"): the image is ours,
   and the diff is baked in rather than mounted, because the op libraries have to be rebuilt.
 - **Upstream first** for engine patches: the diff is ours.
   [vllm#69165](https://github.com/vllm-project/vllm/pull/69165) does the same job on vLLM's `main`, which the launch
   image predates ([UPSTREAM.md](../UPSTREAM.md) has both rows).
 
-**It ends** when a release carries Inkling-2-Mini with sm_86 ops. vLLM 0.35.0 is the first candidate: `main` has the
-model (vllm#69028) and builds its ops for 8.6 and 12.0. The maintainer's plan is to move the slugs to `vllm-stable`
-then. The two-card slug (BF16 KV) can move if the release also carries #69165. The one-card slugs need FP8 KV, which
-stock vLLM gates to SM12x, so they either stay here or move to BF16 at about half the context.
+**When the slugs leave it.** The two-card slug (BF16 KV) moves to `vllm-stable` once a release carries Inkling-2-Mini
+with sm_86 ops and vllm#69165. vLLM 0.35.0 is the first candidate: `main` has the model (vllm#69028) and builds its ops
+for 8.6 and 12.0. **The one-card slugs stay here, on FP8 KV, for now** (maintainer decision, 2026-11-22), rather than
+moving to BF16 at about half the context. Stock vLLM gates Inkling's FP8 KV to SM12x, and #69165's own software E4M3
+decode made prefill 3.6–8× slower than ours when we opened that gate (2026-11-21). So this engine outlives v0.35
+unless a release fixes both.
 
 ## Image
 

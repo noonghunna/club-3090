@@ -20,7 +20,7 @@ lineage:
   source: https://github.com/vllm-project/vllm
   source_ref: fc1443152c0eb655f5c2762f56b540bebe93b196
   chain: []
-  delta: "vLLM's own Inkling-2-Mini launch image (digest sha256:c2dc759f…, Hopper/Blackwell only: its compiled ops carry sm_100 code plus Marlin's sm_80) with _C_stable_libtorch and _moe_C_stable_libtorch rebuilt for sm_86 from vllm-project/vllm@fc144315, and club-3090's diff to vllm/models/inkling2 baked in (sm_8x takes the SM12x / Hopper paths, PDL off, software E4M3 for an FP8 KV cache). Built and published by club-3090 from models/inkling-2-mini/vllm-inkling/image/: an image-provenance exception (docs/ADDING_ENGINES.md), maintainer decision 2026-11-21, a bridge until a vLLM release runs Inkling-2-Mini on sm_86"
+  delta: "vLLM's own Inkling-2-Mini launch image (digest sha256:c2dc759f…, Hopper/Blackwell only: its compiled ops carry sm_100 code plus Marlin's sm_80) with _C_stable_libtorch and _moe_C_stable_libtorch rebuilt for sm_86 from vllm-project/vllm@fc144315, and club-3090's diff to vllm/models/inkling2 baked in (sm_8x takes the SM12x / Hopper paths, PDL off, software E4M3 for an FP8 KV cache). Built and published by club-3090 from models/inkling-2-mini/vllm-inkling/image/: an image-provenance exception (docs/ADDING_ENGINES.md), maintainer decision 2026-11-21: the two-card slug's bridge until a vLLM release runs Inkling-2-Mini on sm_86; the one-card slugs keep it for FP8 KV (maintainer decision 2026-11-22)"
 install:
   method: docker_image
   # Built and pushed from the rig with models/inkling-2-mini/vllm-inkling/image/build.sh (build.sh --push pushes
@@ -76,12 +76,12 @@ notes: >
   moe_align_block_size silently returns unwritten buffers and other ops fail at warm-up. This engine's image
   is that launch image with the two op libraries rebuilt for sm_86 and club-3090's diff to
   vllm/models/inkling2 baked in (recipe and checks: models/inkling-2-mini/vllm-inkling/image/README.md).
-  It is an image-provenance exception by maintainer decision (2026-11-21) and a bridge: vLLM main has
+  It is an image-provenance exception by maintainer decision (2026-11-21): vLLM main has
   Inkling-2-Mini (#69028) and builds its ops for 8.6 and 12.0, and vllm-project/vllm#69165 does this
-  engine's job upstream. Maintainer plan: the slugs move to vllm-stable once that engine reaches v0.35
-  (the vLLM recipe's floor for Mini). The two-card slug (BF16 KV) can move if v0.35.0 carries #69165;
-  the one-card slugs need FP8 KV, which stock vLLM gates to SM12x, so they either stay here or move to
-  BF16 at about half the context. Serves --served-model-name inkling-2-mini with the inkling
+  engine's job upstream. Maintainer plan: the two-card slug (BF16 KV) moves to vllm-stable once that
+  engine reaches v0.35 (the vLLM recipe's floor for Mini), if the release carries #69165. The one-card
+  slugs stay here on FP8 KV for now (maintainer decision, 2026-11-22): stock vLLM gates Inkling's FP8 KV
+  to SM12x, and #69165's own software E4M3 decode was 3.6-8x slower in prefill than this image's. Serves --served-model-name inkling-2-mini with the inkling
   reasoning and tool-call parsers and the checkpoint's own chat template; the server-default sampling is
   the checkpoint's generation_config (temperature 1.0). Every slug needs --no-enable-extensible-kv-cache
   (v0.34's extensible cache holds back ~2.9 GiB a card).

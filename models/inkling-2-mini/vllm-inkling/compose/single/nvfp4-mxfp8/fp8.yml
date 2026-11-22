@@ -11,8 +11,9 @@
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
 #   Caveats:   sm_86 only: the image has no code for sm_90+ or a 5090 (its FA2 vision library is sm_80
-#              cubins). A club-built bridge image until a vLLM release runs Inkling-2-Mini on sm_86
-#              (models/inkling-2-mini/vllm-inkling/image/README.md).
+#              cubins). A club-built image. This slug stays on it for FP8 KV after a vLLM release runs
+#              Inkling-2-Mini on sm_86 (stock vLLM gates Inkling's FP8 KV to SM12x; maintainer decision
+#              2026-11-22; models/inkling-2-mini/vllm-inkling/image/README.md).
 #              This window needs FP8 KV (BF16 tops out at ~97K on one card) and --max-num-batched-tokens 512
 #              --max-num-seqs 2 --no-async-scheduling (the sliding-window and conv-state caches reserve window +
 #              in-flight tokens per request). 200K also fits (util 0.95, pool 203,730 tokens) but leaves 1,017

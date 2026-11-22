@@ -317,10 +317,11 @@ does, and what to do by hand when it refuses.
   `inkling2-sm86.sha256`, so a new launch image that touches those files stops the build at `patch` or the hash
   check, on purpose. The two op libraries are built from `VLLM_SRC_COMMIT`, which must match the commit the launch
   image's Python came from.
-- **Retirement, not a bump:** when a vLLM release carries Inkling-2-Mini with sm_86 ops (0.35.0 is the first
-  candidate), boot `vllm/inkling-2-mini-dual-fast`'s flags on `vllm-stable`. The maintainer's plan: the two-card slug
-  moves if the release also carries vllm#69165; the one-card slugs need FP8 KV, which stock vLLM gates to SM12x, so
-  they stay here or move to BF16 at about half the context (the maintainer's call).
+- **The two-card slug's move, not a bump:** when a vLLM release carries Inkling-2-Mini with sm_86 ops (0.35.0 is the
+  first candidate), boot `vllm/inkling-2-mini-dual-fast`'s flags on `vllm-stable`; it moves if the release also carries
+  vllm#69165. The one-card slugs **stay on this engine, on FP8 KV, for now** (maintainer decision, 2026-11-22): stock
+  vLLM gates Inkling's FP8 KV to SM12x, and #69165's software E4M3 decode was 3.6–8× slower in prefill than ours.
+  Re-check both on each release; the engine retires only when a release runs FP8 KV on sm_86 at our prefill speed.
 
 ### qengine
 
