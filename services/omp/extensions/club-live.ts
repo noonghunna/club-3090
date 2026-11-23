@@ -15,17 +15,27 @@
 //     # a cloud orchestrator role stays literal and is NEVER touched:
 //     # advisor: anthropic/claude-opus-4-5
 //
-// Effort suffixes resolve against the LADDER OF THE SERVING FAMILY: the
-// extension registers the serving slug's own ladder (GLM has no `medium`, the
-// Qwen3.8 family has no `max`), and omp CLAMPS a role's suffix to it — a
-// `:medium` role on GLM runs at `low`, `:xhigh` runs at `high` (verified
-// against omp's wire: the nearest lower rung is sent; no error, and an
-// effort the server has never heard of never reaches it).
+// Effort suffixes resolve against the LADDER THE LIVE ROUTE ADVERTISES: the rendered
+// block's own `reasoning_effort_levels` / `default_reasoning_effort` /
+// `supports_none_reasoning_effort` for the serving slug (#1951 — the same facts the
+// gateway renders for /model_group/info, so the alias and the route it names cannot
+// drift), RESTRICTED to the rungs the settings family says the routes IMPLEMENT
+// (`ladder.rungs`: the model's levels minus refusals, fold aliases excluded) — plus, when
+// the family or route default is itself a name the route advertises but the base rungs do
+// not carry, that one name joins the menu. The rendered
+// list also carries names a route only ALIASES, and a stale one of those would ride this
+// route's fold instead of landing on its default. The settings family is the fallback for a
+// rendered view that predates those fields, and it stays the source of the CLIENT facts
+// (reply cap, compat). omp CLAMPS a role's suffix to the registered list — a `:medium` role
+// on GLM runs at `low`, `:xhigh` runs at `high` (verified against omp's wire: the nearest
+// lower rung is sent; no error, and an effort the server has never heard of never reaches
+// it).
 //
 // Three mechanisms, each scoped to the club-live provider alone:
 // 1. before_provider_request rewrites the wire `model` from "live" to the slug
-//    the gateway is serving, so the stable id always routes correctly. No
-//    other request is modified — literal cloud selectors pass through.
+//    the gateway is serving, so the stable id always routes correctly, and
+//    normalizes the effort to what THAT route accepts (see clampEffort). No other
+//    request is modified — literal cloud selectors pass through.
 // 2. The live slug comes from the GENERATED LOCAL BLOCK of the litellm-sync
 //    rendered config — only local answering backends appear inside those
 //    markers, never the user's own cloud routes from config.local.yaml. An
@@ -58,12 +68,13 @@
 //   gateway      the gateway URL omp-setup.sh was given
 //   key          the gateway key, resolved through the club_config loader —
 //                the extension never re-implements that precedence
-//   families     the per-family wire settings (ids, effort ladder, reply cap,
-//                compat) generated from the SAME lists omp-setup.sh writes
-//                into models.yml, so the alias and the `club` provider cannot
-//                drift. A slug in none of the families registers WITHOUT
-//                thinking — the same as a `club/<id>` route discovery reports
-//                no override for.
+//   families     the per-family CLIENT settings (reply cap, compat), plus the nameable
+//                ladder (`efforts`), the BASE rungs (`rungs`) the clamp intersects the
+//                route's advertisement with, and the default the extension falls back to
+//                when the rendered route advertises none. Generated from the SAME lists
+//                omp-setup.sh writes into models.yml, so the alias and the `club` provider
+//                cannot drift. A slug in none of the families registers WITHOUT thinking —
+//                the same as a `club/<id>` route discovery reports no override for.
 // $CLUB_LIVE_JSON overrides the settings file's path, $CLUB_LIVE_CFG the
 // rendered config's (both are how test-omp-club-live.sh points the extension
 // at scratch files). Without a settings file the defaults are the documented
@@ -104,7 +115,7 @@ function env(name: string): string | undefined {
 
 interface Family {
 	ids: string[];
-	ladder: { efforts: string[]; defaultLevel: string };
+	ladder: { efforts: string[]; rungs?: string[]; defaultLevel: string };
 	maxTokens: number;
 	compat: Record<string, unknown>;
 }
@@ -148,6 +159,8 @@ function loadSettings(): Settings {
 		key: typeof raw.key === "string" && raw.key ? raw.key : PUBLIC_DEFAULT_KEY,
 		// A malformed family entry degrades like an unknown slug (registers
 		// without thinking) instead of handing the host a half-built model.
+		// `ladder.rungs` is deliberately NOT part of that check: it is optional (an
+		// install from before #2109 has none), and wireFor falls back to `efforts`.
 		families: Array.isArray(raw.families)
 			? (raw.families as Family[]).filter(
 					(f) =>
@@ -165,10 +178,127 @@ function familyFor(settings: Settings, slug: string | undefined): Family | undef
 	return settings.families.find((f) => Array.isArray(f.ids) && f.ids.includes(slug));
 }
 
+// What the live route actually accepts on the wire, and what to fall back to.
+// The route's own model_info is the source (#1951); the settings family supplies
+// the ladder/default when the rendered view carries none (a view rendered before
+// phase 2, or a route whose effort facts are unknown) and always the budget fact.
+// `undefined` = the alias registered WITHOUT thinking (no family for this slug, or
+// nothing to advertise), so the clamp leaves any effort ALONE but still drops what
+// only a family can license: a `null` effort and a thinking budget (see the hook).
+interface WireFacts {
+	efforts: string[];
+	defaultLevel: string;
+	supportsNone: boolean;
+	budget: boolean;
+}
+
+function pickDefault(ladder: string[], candidates: (string | undefined)[]): string | undefined {
+	for (const c of candidates) {
+		if (c && ladder.includes(c)) return c;
+	}
+	return undefined;
+}
+
+function wireFor(settings: Settings, live: LiveInfo | null): WireFacts | undefined {
+	const fam = familyFor(settings, live?.slug);
+	if (!fam) return undefined;
+	// The BASE rungs, not the generated ladder: `efforts` is levels-minus-refusals PLUS the
+	// fold sources every route serving the id agrees on, so for an id whose routes all fold
+	// the same way it already names the aliases — `high`/`max`/`minimal` on the Qwen template,
+	// `medium`/`xhigh` on Maya's. Intersecting the route advertisement with THAT leaves the
+	// aliases in and re-opens the switch window this phase exists to close: measured on the
+	// generated families for `thinkingcap38-27b` and `hy4-flash`, a stale `max` passed the
+	// membership test and rode the fold to `xhigh`. `rungs` is the same list without them.
+	// An install from before that field falls back to `efforts` rather than losing the family;
+	// re-running `omp-setup.sh --auto-switching` writes it.
+	const declared = fam.ladder.rungs?.length ? fam.ladder.rungs : fam.ladder.efforts;
+	if (!declared.length) return undefined;
+	// The rendered list is what the route ACCEPTS: the rungs it implements minus the ones it
+	// refuses, then the FOLD SOURCES — names it aliases rather than implements (`max` -> xhigh
+	// on the Qwen template, `medium` -> high on Maya's). The clamp needs the rungs the route
+	// really has, so the aliases drop out here: that is what makes a stale `max` from a GLM
+	// registration land on this route's default instead of riding the fold to xhigh. A route
+	// that shares no rung with the model profile is a metadata bug; advertising the profile
+	// ladder beats an empty thinking menu, and the clamp then passes whatever the route does
+	// take.
+	const route = live?.efforts ?? [];
+	const shared = route.length ? declared.filter((e) => route.includes(e)) : declared;
+	let ladder = shared.length ? shared : declared;
+	// Default precedence: the route's rendered default, then the family's. A family default
+	// can sit OUTSIDE the base rungs: compute_families expresses a fold-target default by the
+	// fold SOURCE that reaches it (a compose that sets REASONING_EFFORT to a fold source, or
+	// a default that is a fold target, reaches that shape — no catalog id does today, every
+	// generated default is a base rung, so this is a safety net the synthetic leg pins). The
+	// route does accept that name, so it joins the menu instead of the default falling
+	// through to an arbitrary rung.
+	const candidates = [live?.defaultEffort, fam.ladder.defaultLevel];
+	let def = pickDefault(ladder, candidates);
+	let joined: string | undefined;
+	if (!def) {
+		for (const c of candidates) {
+			if (c && route.includes(c)) {
+				def = c;
+				joined = c;
+				break;
+			}
+		}
+	}
+	if (joined) {
+		// Rebuild in the GENERATED order (base rungs, then the fold sources in the
+		// generator's maps order), not appended: omp's suffix clamp resolves an above-top
+		// role onto the nearest lower menu entry, and a downward fold source appended last
+		// would sit above the top base rung in menu order.
+		ladder = fam.ladder.efforts.filter((e) => ladder.includes(e) || e === joined);
+	}
+	const eb = asRecord(asRecord(fam.compat)?.["extraBody"]);
+	return {
+		efforts: ladder,
+		// Nothing named a rung that is on the menu: the LOWEST one, never the top. The #1951
+		// round-down rule points this way and the 2026-11-06 findings called the top-rung
+		// fallback actively harmful — the top is the busiest rung the route has. Reachable
+		// only when a stale settings file disagrees with the current render, or when a family
+		// default is a fold source the route does not advertise.
+		defaultLevel: def ?? ladder[0],
+		supportsNone: live?.supportsNone === true,
+		budget: typeof eb?.["thinking_token_budget"] === "number",
+	};
+}
+
+// The clamp (#1951 phase 4). A RUNNING session keeps the effort its registration
+// advertised, so a switch can leave a rung on the wire that the NEW route has never
+// heard of — GLM's `max` reaching a Qwen route, or omp's thinking-off `none` reaching a
+// route that cannot turn thinking off that way (llama.cpp answers 200 and renders the
+// prompt as `xhigh`). Every row of the settled decision table:
+//
+//   in the route's ladder   a valid request for THIS route -> pass unchanged
+//   outside it              a stale rung from another route, or a name this route only
+//                           aliases -> the route's own default
+//   null                    "no thinking config" -> drop the key, engine default
+//   absent                  raw client / principle 1 -> never inject
+//   "none"                  thinking off -> pass only if the route takes `none`; else its
+//                           LOWEST admitted rung, NEVER the default (an off request must
+//                           not land on the busiest rung the route happens to default to)
+//
+// `undefined` = leave the key alone; `null` = drop it. Exported for
+// test-omp-club-live.sh, which pins every row.
+export function clampEffort(value: unknown, w: WireFacts): string | null | undefined {
+	if (value === undefined) return undefined;
+	if (value === null) return null;
+	if (typeof value !== "string") return w.defaultLevel;
+	if (value === "none") return w.supportsNone ? "none" : w.efforts[0];
+	return w.efforts.includes(value) ? value : w.defaultLevel;
+}
+
 interface LiveInfo {
 	slug: string;
 	ctxWindow: number;
 	maxOut: number;
+	// The route's own effort advertisement, read from THIS route's model_info.
+	// Absent when the route declares no ladder (an older rendered view, or a route
+	// whose effort facts are unknown) — the family's ladder covers that case.
+	efforts?: string[];
+	defaultEffort?: string;
+	supportsNone?: boolean;
 }
 
 // The generated block between litellm_sync's BEGIN/END markers holds ONLY the
@@ -184,17 +314,30 @@ export function parseRenderedConfig(text: string): LiveInfo | null {
 	if (!block) return null; // not a litellm-sync rendered view
 	const starts = [...block[0].matchAll(/^ {2}- model_name:/gm)].map((m) => m.index);
 	if (starts.length === 0) return null; // "(no local routes right now)"
-	// The window comes from THIS route's own model_info — a route whose engine
-	// reports no context must not inherit the next route's window.
+	// Everything below comes from THIS route's own model_info — a route whose engine
+	// reports no context must not inherit the next route's window, and an alias must
+	// not inherit the ladder of the route it shares a port with.
 	const route = block[0].slice(starts[0], starts.length > 1 ? starts[1] : block[0].length);
 	const slug = /^ {2}- model_name:\s*(\S+)/.exec(route)?.[1];
 	if (!slug) return null;
 	const mi = /max_input_tokens:\s*(\d+)/.exec(route);
 	const mo = /max_output_tokens:\s*(\d+)/.exec(route);
+	// The effort advertisement litellm_sync.model_info renders (#1951): the NAMEABLE
+	// set (the model's ladder minus refused rungs, then the fold sources), the route's
+	// default, and whether it takes `none`. All three are optional by design — the
+	// default is OMITTED when it is `max` (outside litellm's Literal) or a refused rung,
+	// and supports_none only appears when it was probed. An empty list is no ladder.
+	const levels = /reasoning_effort_levels:\s*\[([^\]]*)\]/.exec(route)?.[1];
+	const efforts = (levels ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+	const dflt = /default_reasoning_effort:\s*(\S+)/.exec(route)?.[1];
+	const none = /supports_none_reasoning_effort:\s*(true|false)/.exec(route)?.[1];
 	return {
 		slug,
 		ctxWindow: mi ? Number(mi[1]) : DEFAULT_CTX,
 		maxOut: mo ? Number(mo[1]) : DEFAULT_MAX_OUT,
+		...(efforts.length ? { efforts } : {}),
+		...(dflt ? { defaultEffort: dflt } : {}),
+		...(none ? { supportsNone: none === "true" } : {}),
 	};
 }
 
@@ -289,6 +432,7 @@ export default function (pi: PiLike): void {
 		// the old one first when the host exposes the teardown hook.
 		registeredFrom = JSON.stringify([settings.gateway, settings.key, settings.families]);
 		const fam = familyFor(settings, live?.slug);
+		const w = wireFor(settings, live);
 		pi.unregisterProvider?.(PROVIDER);
 		pi.registerProvider(PROVIDER, {
 			baseUrl: `${settings.gateway}/v1`,
@@ -301,12 +445,14 @@ export default function (pi: PiLike): void {
 					// switch; before_provider_request maps it to the live slug.
 					id: MODEL_ID,
 					name: live ? `club-3090 live (${live.slug})` : "club-3090 live (not resolved yet)",
-					// A slug in no family registers WITHOUT thinking — the same
-					// as a `club/<id>` route that has no override: omp goes by
-					// what discovery reports, which is nothing.
-					reasoning: fam !== undefined,
+					// A slug in no family registers WITHOUT thinking — the same as a
+					// `club/<id>` route that has no override: omp goes by what discovery
+					// reports, which is nothing. The ladder and the default are the LIVE
+					// ROUTE's own advertisement (#1951), so a switch re-registers the
+					// rung set the new slug actually accepts.
+					reasoning: w !== undefined,
 					input: ["text"],
-					thinking: fam ? { mode: "effort", ...fam.ladder } : undefined,
+					thinking: w ? { mode: "effort", efforts: w.efforts, defaultLevel: w.defaultLevel } : undefined,
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 					contextWindow: live?.ctxWindow ?? DEFAULT_CTX,
 					maxTokens: fam?.maxTokens ?? live?.maxOut ?? DEFAULT_MAX_OUT,
@@ -323,18 +469,59 @@ export default function (pi: PiLike): void {
 		console.error(`club-live: initial registration failed: ${err instanceof Error ? err.message : String(err)}`);
 	}
 
-	// The alias's own resolution for agent turns. omp's compaction and
-	// skill-compression dispatch skip this hook and send the wire model as-is —
-	// the gateway's `live` alias route (litellm_sync.render_block) resolves
-	// those. While nothing has resolved AND no alias route exists (rig down),
-	// the request passes through and the gateway 400s honestly.
+	// The alias's own resolution for agent turns, plus the effort clamp. omp's
+	// compaction and skill-compression dispatch skip this hook and send the wire model
+	// as-is — the gateway's `live` alias route (litellm_sync.render_block) resolves
+	// those, and they keep today's behavior (no effort → engine default). While nothing
+	// has resolved AND no alias route exists (rig down), the request passes through and
+	// the gateway 400s honestly.
 	pi.on("before_provider_request", (event: unknown) => {
 		const payload = asRecord(asRecord(event)?.["payload"]);
 		if (!payload) return undefined;
 		const model = payload["model"];
 		if (model !== MODEL_ID && model !== SELECTOR) return undefined;
 		if (!live) return undefined;
-		return { ...payload, model: live.slug };
+		const next: Record<string, unknown> = { ...payload, model: live.slug };
+		// A copy of chat_template_kwargs, installed only when something inside it changes —
+		// the caller's object is never mutated.
+		const kwargsCopy = (): Record<string, unknown> => {
+			const copy = { ...(asRecord(payload["chat_template_kwargs"]) as Record<string, unknown>) };
+			next["chat_template_kwargs"] = copy;
+			return copy;
+		};
+		// `null` is omp's "no thinking config": the key must go, so the engine default applies.
+		const dropNullEffort = (holder: Record<string, unknown>): void => {
+			if (holder["reasoning_effort"] === null) delete holder["reasoning_effort"];
+		};
+		const w = wireFor(settings, live);
+		if (!w) {
+			// Registered without thinking: there is no ladder to clamp a rung against, so a
+			// string effort passes through as it does for any other provider. The two rules
+			// that need no ladder still apply — this is the regime where omp actually serializes
+			// `null` (no thinking config to name), and a route with no family declares no
+			// thinking budget, so a budget left over from the previous slug must not reach it.
+			dropNullEffort(next);
+			const bare = asRecord(payload["chat_template_kwargs"]);
+			if (bare && bare["reasoning_effort"] === null) dropNullEffort(kwargsCopy());
+			delete next["thinking_token_budget"];
+			return next;
+		}
+		// omp writes the effort at top level or inside chat_template_kwargs depending on
+		// the compat mode, so BOTH placements are normalized against the live route.
+		const place = (holder: Record<string, unknown>): void => {
+			if (!("reasoning_effort" in holder)) return;
+			const v = clampEffort(holder["reasoning_effort"], w);
+			if (v === undefined) return;
+			if (v === null) delete holder["reasoning_effort"];
+			else holder["reasoning_effort"] = v;
+		};
+		place(next);
+		const kwargs = asRecord(payload["chat_template_kwargs"]);
+		if (kwargs && "reasoning_effort" in kwargs) place(kwargsCopy());
+		// A thinking budget the live family never declared: drop it rather than let a
+		// budget measured against another engine reach this route.
+		if (!w.budget) delete next["thinking_token_budget"];
+		return next;
 	});
 
 	pi.on("agent_start", async () => {
@@ -368,11 +555,11 @@ export default function (pi: PiLike): void {
 					boundCtx?.ui?.notify?.(`club-live: ${settings.problem}`, "warning");
 				}
 				if (!next) continue; // keep the last-known-good; the next round retries
-				const changed =
-					!live ||
-					next.slug !== live.slug ||
-					next.ctxWindow !== live.ctxWindow ||
-					next.maxOut !== live.maxOut;
+				// Any field of the resolved route counts, INCLUDING the effort
+				// advertisement: a re-render that only changes the rung set (a profile
+				// fact edited, a pin bump) must re-register, or the alias keeps
+				// advertising the old ladder and the clamp keeps the old rung set.
+				const changed = !live || JSON.stringify(next) !== JSON.stringify(live);
 				const settingsMoved =
 					JSON.stringify([settings.gateway, settings.key, settings.families]) !== registeredFrom;
 				if (!changed && !settingsMoved && !force) continue;

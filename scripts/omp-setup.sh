@@ -332,7 +332,10 @@ if auto:
     # checkout), falling back to this checkout's rendered view. The key comes
     # from the club_config loader above — the extension never re-implements
     # that precedence; a rotate means re-running this script, as for `club`.
-    # families is the same FAMILIES list the modelOverrides above are built from.
+    # families is the same FAMILIES list the modelOverrides above are built from — including
+    # ladder.rungs, the BASE rungs (levels minus refusals, no fold aliases) the extension
+    # clamps against; models.yml keeps rendering only efforts/defaultLevel, so `club/<id>`
+    # is unaffected by that field.
     rendered = None
     try:
         from litellm_sync import mounted_runtime_path

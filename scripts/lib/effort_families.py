@@ -10,6 +10,13 @@ default are derived, not written down:
     every one of them folds the same src->dst (an engine with no fold table means the
     id advertises no fold sources). A rung is offered only if no route 400s it, so the
     family and the route it names cannot drift;
+  * beside it, `rungs` carries only the BASE rungs — levels minus refusals, fold sources
+    left out. `efforts` is what a client may NAME; `rungs` is what the routes IMPLEMENT.
+    A menu can offer the first; a clamp must compare against the second: a stale rung that
+    this route only ALIASES (GLM's `max` reaching a Qwen route that folds `max` -> xhigh)
+    has to land on the route's default, not ride the fold — the switch window #1951 phase
+    4 exists to close. The live alias (services/omp/extensions/club-live.ts) clamps
+    against `rungs` for exactly that reason.
   * its default is the LOWEST of the compose defaults across the routes serving the id,
     an empty REASONING_EFFORT falling back to that engine's pair default — the #1951
     "rounds down, per id" decision. A default that is a fold target (e.g. strata's
@@ -51,7 +58,11 @@ def served_id(v):
 
 
 def _id_facts(variants):
-    """(efforts, defaultLevel) for one served name, or None when it has no ladder.
+    """(efforts, rungs, defaultLevel) for one served name, or None when it has no ladder.
+
+    `efforts` is the nameable ladder (base rungs plus the fold sources every route agrees
+    on); `rungs` is the base alone — the model's levels minus refusals, no aliases. See the
+    module docstring for why a clamp needs the second and a menu can use the first.
 
     `variants` are the registry rows served under that name; each carries the merged
     (model, engine) effort facts — levels, refuses, maps, compose_default and
@@ -88,6 +99,9 @@ def _id_facts(variants):
     # The base rungs that survive, in the model's order, then the fold sources (kept
     # in the first engine's maps order so the rendered order is stable).
     efforts = [l for l in levels if l not in refuses]
+    # Snapshot the base rungs before the fold sources join: the clamp in the live alias
+    # needs to know which names this route IMPLEMENTS and which it only ALIASES.
+    rungs = list(efforts)
     for b in blocks:
         m = b.get("maps")
         if isinstance(m, dict) and m:
@@ -126,8 +140,8 @@ def _id_facts(variants):
         if eff in rung:
             defaults.append(rung[eff])
     if not defaults:
-        return {"efforts": efforts, "defaultLevel": None}
-    return {"efforts": efforts, "defaultLevel": min(defaults, key=efforts.index)}
+        return {"efforts": efforts, "rungs": rungs, "defaultLevel": None}
+    return {"efforts": efforts, "rungs": rungs, "defaultLevel": min(defaults, key=efforts.index)}
 
 
 # The names a compose's route answers to. The gateway names its routes from the engine's
@@ -264,8 +278,8 @@ def compute_families(variants, model_families, root=None):
     client-side wire knowledge (which models, their reply cap and compat pins).
 
     Returns the FAMILIES list — one entry per ROUTE ID (see the module docstring), each
-    {name, ids: [name], ladder: {efforts, defaultLevel}, maxTokens, compat}, the last two
-    from the model_families entry covering the model behind that route. `root` is the
+    {name, ids: [name], ladder: {efforts, rungs, defaultLevel}, maxTokens, compat}, the
+    last two from the model_families entry covering the model behind that route. `root` is the
     checkout the composes are read from; without it a route is only the name the registry
     declares, which is what the unit tests exercise.
 
@@ -350,7 +364,7 @@ def compute_families(variants, model_families, root=None):
         out.append({
             "name": rid,
             "ids": [rid],
-            "ladder": {"efforts": f["efforts"], "defaultLevel": dflt},
+            "ladder": {"efforts": f["efforts"], "rungs": f["rungs"], "defaultLevel": dflt},
             "maxTokens": fam["maxTokens"],
             "compat": fam["compat"],
         })

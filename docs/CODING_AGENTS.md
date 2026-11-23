@@ -481,8 +481,8 @@ modelRoles:
   `~/.omp/agent/extensions/club-live.json` — the rendered config's host path
   (resolved from the running litellm container's mount, so a checkout outside
   `~/club-3090` just works), the gateway URL, the gateway key (resolved
-  through the `club_config` loader), and the per-family wire settings (effort
-  ladder, reply cap, compat) generated from the same lists `omp-setup.sh`
+  through the `club_config` loader), and the per-family wire settings (the base
+  effort rungs, the reply cap, compat) generated from the same lists `omp-setup.sh`
   writes into `models.yml`. After `gateway-key.sh rotate` or a `--gateway`
   change, re-run `bash scripts/omp-setup.sh --auto-switching` — the extension
   re-reads the file on its next refresh; no omp restart. The alias needs the
@@ -503,12 +503,16 @@ modelRoles:
 - If your `config.yml` sets `enabledModels`, it must list `club-live/*` too —
   an allow-list that omits the alias makes every `club-live/live` role fall
   back to another provider with only a startup warning.
-- Effort suffixes clamp to the SERVING family's ladder: the extension
-  registers the serving slug's own levels (GLM: `low/high/max`; the Qwen3.8
-  family: `low/medium/xhigh`), and omp sends the nearest lower rung when a
-  role's suffix isn't one of them — a `club-live/live:medium` role runs at
-  `low` while GLM serves, `:xhigh` at `high`. Never an error, and an effort
-  the serving engine has never heard of never reaches it.
+- Effort is decided per request against the SERVING route, not the family you started
+  on: the extension registers the live route's own rungs — narrowed to the base rungs the
+  generated family says its routes implement — and its default. A `club-live/live:medium`
+  role on a GLM registration runs at `low`: omp clamps the suffix to the registered menu
+  itself (the nearest lower rung) before the extension sees the request. The extension's
+  own clamp is for what a **stale** registration sends during a switch: GLM's `max`
+  reaching a Qwen route lands on that route's default, not on the `max → xhigh` fold.
+  `none` passes only on a route that turns thinking off that way; elsewhere it becomes
+  the route's lowest rung. The whole table is in
+  [How effort is decided on the wire](#how-effort-is-decided-on-the-wire).
 - `scripts/omp-setup.sh --auto-switching` does the install for you: it copies
   the extension into the agent dir, writes `club-live.json` beside it (mode
   600 — the gateway key is in it), and prints the `modelRoles` block above to
@@ -517,6 +521,74 @@ modelRoles:
 
 Always write `club-live/live`, like `club/<id>` — a bare `live` is
 fuzzy-matching territory.
+
+### How effort is decided on the wire
+
+One source per fact, everything downstream derived. Four rows are human-authored — the
+model, engine and compose profiles plus `MODEL_FAMILIES`; the rest is generated from them.
+
+| Layer | File | Set by | Carries |
+|---|---|---|---|
+| Model profile | `scripts/lib/profiles/models/<model>.yml` | humans (curated) | the ladder (`levels:`), the template kwarg the effort rides through, and whether `effort_budget.py` maps that ladder (`budget_map`) |
+| Engine profile | `scripts/lib/profiles/engines/<engine>.yml` | probe + source reading | the engine's own default when a compose leaves `REASONING_EFFORT` unset, whether it turns thinking off with `none`, and any name it runs as another rung (`medium` as `high` on Maya) |
+| Compose | `models/**/compose/**/*.yml` | operator | `REASONING_EFFORT` for that one deployment |
+| Client wire facts | `scripts/omp-setup.sh`, `MODEL_FAMILIES` | humans | the reply cap, the compat pins, and the `thinking_token_budget` number — the wire knowledge that has no home in a profile |
+| Rendered gateway view | `services/litellm/config.runtime.yaml` (generated block) | `scripts/lib/litellm_sync.py` | per route: `reasoning_effort_levels`, `default_reasoning_effort`, `supports_none_reasoning_effort` — LiteLLM's own `model_info` fields, no custom keys |
+| Rendered omp overrides | `~/.omp/agent/models.yml` | `scripts/omp-setup.sh` | each `club/<id>` ladder + `defaultLevel` (always rendered) |
+| Runtime | `services/omp/extensions/club-live.ts` | the extension, per tick and per request | the live route's rungs and default for `club-live/live`, plus the clamp below |
+
+The rendered `reasoning_effort_levels` is what a route **accepts** — the rungs it implements
+minus the ones it refuses, then the names its fold map aliases. So `club-live/live`
+registers that list narrowed to the **base rungs** the generated family carries
+(`ladder.rungs`, levels minus refusals, aliases excluded) and clamps every request against
+the same list — plus, when the family or route default is itself a name the route
+advertises but the base rungs do not carry, that single name joins the menu (no catalog id
+reaches that shape today: every generated default is a base rung, but a compose that sets
+`REASONING_EFFORT` to a fold source does). With that one exception the menu never offers a
+rung the clamp would then rewrite, and a name carried over from another route lands on
+this route's default instead of riding a fold. `club/<id>` keeps the full nameable ladder —
+both spellings are valid request names there and nothing rewrites them. The same levels are
+what LiteLLM resolves `/v1/messages` effort names through, so Claude Code benefits from the
+render without reading any of it.
+
+Every `club-live/live` request passes one table (`clampEffort` in the extension). A slug in
+no family has no rung set to clamp against and no budget declared, so the first two rows do
+not apply to it — a string effort passes through as it would to any other provider — but
+the `null` row and the budget rule still do.
+
+| Incoming effort | On the wire |
+|---|---|
+| in the route's ladder | unchanged — a valid request for this route |
+| outside it: a stale rung from another route, or a name this route only aliases | the route's own default |
+| `null` (omp's "no thinking config") | the key is dropped, so the engine default applies |
+| absent (a raw client) | never injected |
+| `none` | passed where the route takes it; otherwise its **lowest** rung, never the default |
+
+A `thinking_token_budget` goes only to a family that declares one. Side channels
+(compaction, skill compression) bypass the hook entirely and keep the engine default, the
+same as any client that names no effort. `test-omp-club-live.sh` pins every row, drives the
+parser and the clamp against `litellm_sync.render_block`'s real output, and drives the clamp
+again against the `club-live.json` that `omp-setup.sh --auto-switching` actually writes —
+hand-written families are what let an alias-carrying ladder pass the membership test in
+round 1 of the review.
+
+**Why `club-live.json` still carries `families`.** The phase list in #1951 sketched phase 4
+as "club-live reads the live route's levels, and `club-live.json` drops `families`". It does
+the first and deliberately not the second: the reply cap, the compat pins and the thinking
+budget have no LiteLLM `model_info` field to ride (custom keys were a non-goal of the
+issue), and the family is where the **base rungs** come from — the list the route's own
+advertisement is narrowed against. Read the split as responsibility, not as stale-versus-
+live: the rendered view decides which rungs the alias offers and what reaches the wire, the
+family decides how big a reply may be and which compat pins the request uses.
+
+⚠️ **Stale installs.** `models.yml` and `club-live.json` are written once, by
+`bash scripts/omp-setup.sh --auto-switching`. A profile edit or an engine pin bump changes
+nothing until you run it again. The extension re-reads the rendered route facts on every
+refresh, so a route's default follows a switch immediately — but a ladder, reply cap or
+compat pin that only lives in the installed family entry stays exactly as installed. An
+install from before the `rungs` field carries none, and the alias then narrows against the
+family's full ladder — the pre-#2109 behaviour, fold aliases included — until the script is
+run again. Re-running it is cheap and idempotent; do it after editing a profile.
 
 ### Cloud fallback to OpenRouter's free models — how it's set up
 
