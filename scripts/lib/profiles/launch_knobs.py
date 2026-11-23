@@ -94,6 +94,7 @@ MOUNTED_READERS = (
         # the Strata composes' entrypoint (#1695 follow-up): it runs strata_config.py, which
         # writes these into Strata's run config at every boot and refuses a bad value (exit 1)
         "invoke": '"/opt/club3090/strata-entrypoint.sh"',
+        "unless": '"inkling-2-mini"',   # the Inkling family's invocation (below) reads CONTEXT only
         "file": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
         "knobs": {
             "REASONING_EFFORT": None,
@@ -101,6 +102,15 @@ MOUNTED_READERS = (
             "SPEC_N": None,
             "ROPE_SCALING": None,
             "ROPE_SCALE": None,
+            "CONTEXT": None,          # checked here; Strata's own entrypoint hands it to setup
+        },
+    },
+    {
+        # the same entrypoint for Inkling-2-Mini (strata-inkling): its compose forwards none of the Flash-Next
+        # settings above (Strata fixes Inkling's effort; --spec and the rope flags are Flash-Next engine flags)
+        "invoke": '"/opt/club3090/strata-entrypoint.sh", "inkling-2-mini"',
+        "file": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+        "knobs": {
             "CONTEXT": None,          # checked here; Strata's own entrypoint hands it to setup
         },
     },
@@ -743,7 +753,7 @@ def scan_compose_text(text: str, names) -> dict[str, KnobUse]:
     # 3. programs the compose mounts and runs that read knobs from their environment.
     for reader in MOUNTED_READERS:
         for idx, ln in enumerate(code):
-            if reader["invoke"] not in ln:
+            if reader["invoke"] not in ln or (reader.get("unless") and reader["unless"] in ln):
                 continue
             for nm, arg in reader["knobs"].items():
                 if nm not in uses:

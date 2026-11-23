@@ -25,6 +25,12 @@
 # GGUFs, revision d9620119, Strata 0.2.11+). The weights are our model folder, mounted read-only at
 # /gguf; packs, the MTP layer and the run configs go to /data. Each unsloth set gets its own launch
 # preset (club-<tag>): two sets share one data volume, and a preset keeps its user_args launch to launch.
+# inkling-2-mini with SQ-20 is the other model on this launcher (models/inkling-2-mini/strata/, Strata's
+# strata-inkling engine): its .strata pack is mounted read-only where setup looks for it,
+# /data/Strata-data/models/inkling-2-mini, and accepted there by its pinned size, since 0.2.19's entrypoint
+# takes only .gguf files as MODEL_PATH. Vision is on. Setup fetches the newest Inkling engine through
+# Strata's update feed in every new container (STRATA_OFFLINE=1 doesn't stop it), so an unreachable proxy
+# keeps the engine the pinned image ships: the one that was tested.
 #
 # The first start for a model in a topology (its own folder on the data volume) runs setup before there
 # is a run config to write the settings into, so it serves on a port nothing outside reaches
@@ -48,7 +54,8 @@ case "$FAMILY/$SET" in
   swift/IQ3_S) tag="swift-iq3_s" ;;
   unsloth/UD-IQ4_XS-v31|unsloth/UD-IQ3_XXS)
     tag="unsloth-$(printf '%s' "$SET" | tr '[:upper:]' '[:lower:]')" ;;   # setup's tag: family prefix + set, lower case
-  *) echo "[strata-recipe] the family and set must be qwen or swift with IQ3_S, or unsloth with UD-IQ4_XS-v31 or UD-IQ3_XXS, not '$FAMILY $SET'" >&2; exit 1 ;;
+  inkling-2-mini/SQ-20) tag="inkling-2-mini-sq-20" ;;   # setup's tag for Inkling's .strata builds (inkling_family.TAG)
+  *) echo "[strata-recipe] the family and set must be qwen or swift with IQ3_S, unsloth with UD-IQ4_XS-v31 or UD-IQ3_XXS, or inkling-2-mini with SQ-20, not '$FAMILY $SET'" >&2; exit 1 ;;
 esac
 PY=/opt/strata/terminal/python/bin/python3   # the image's python (it has no other)
 knobs=/opt/club3090/strata_config.py
@@ -61,6 +68,13 @@ mkdir -p /data/club3090
 
 # the image entrypoint's own settings (docs/DOCKER.md upstream)
 export MODEL="$SET" FAMILY MODEL_PATH=/gguf VISION=off
+if [ "$FAMILY" = inkling-2-mini ]; then
+  unset MODEL_PATH                           # the pack sits in setup's own models folder (see above)
+  export VISION=on
+  # the feed unreachable: setup keeps the image's own Inkling engine (localhost stays direct)
+  export HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 \
+    http_proxy=http://127.0.0.1:9 NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost
+fi
 export GPUS="${STRATA_START_GPUS:-0,1}"
 export CONTEXT="${CONTEXT:-131072}"
 case "$FAMILY" in

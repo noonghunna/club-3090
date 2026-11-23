@@ -1,7 +1,7 @@
 schema_version: 1
 id: inkling-2-mini
 display_name: Inkling-2-Mini (26B MoE, looped, Thinking Machines)
-description: Inkling-2-Mini — Thinking Machines' 26B multimodal MoE (3.4B active a token, 5.4B with its three passes) with a looped middle (layers 6-17 run three times with shared weights, 48 layer applications from 24), 128 routed experts top-8, sliding-window attention on 20 of 24 layers, image input and a DSpark block drafter (mtp.safetensors); one NVFP4 + MXFP8 checkpoint, served on one or two 3090s by the vllm-inkling engine (vLLM's Inkling image with its ops rebuilt for sm_86).
+description: Inkling-2-Mini — Thinking Machines' 26B multimodal MoE (3.4B active a token, 5.4B with its three passes) with a looped middle (layers 6-17 run three times with shared weights, 48 layer applications from 24), 128 routed experts top-8, sliding-window attention on 20 of 24 layers, image input and a DSpark block drafter (mtp.safetensors); one NVFP4 + MXFP8 checkpoint, served on one or two 3090s by the vllm-inkling engine (vLLM's Inkling image with its ops rebuilt for sm_86), and on one 3090 by Strata's strata-inkling engine from Strata's own SQ-20 build.
 family: inkling2-loop-moe
 # Arch: Inkling2LoopForConditionalGeneration (model_type inkling2_loop). Values from
 # thinkingmachines/Inkling-2-Mini's config.json text_config (@ed40e7da, read 2026-11-21).
@@ -75,3 +75,27 @@ weights:
     engine: vllm-inkling
     kind: main
     manual_note: "🐣 Thinking Machines' own checkpoint, the only one (mixed NVFP4 + MXFP8 ModelOpt, 19.5 GB of weights + the 0.64 GB DSpark drafter in mtp.safetensors). Apache-2.0. On RTX 3090s it runs only on the vllm-inkling engine: vLLM's own Inkling image refuses anything below Hopper. ⚠️ ALWAYS REASONS: the template reads reasoning_effort (minimal … xhigh, default high), not enable_thinking, and its minimum does not switch reasoning off. ⚠️ The model card warns it can get stuck in long reasoning loops, 'particularly when debugging code', and recommends output-token and agent-turn limits. ⚠️ Sampling: the checkpoint's generation_config sets temperature 1.0 (Unsloth's guide: 1.0 / top_p 1.0 / top_k 0 / min_p 0), not the stack's Qwen values."
+  strata-sq20:
+    path: inkling-2-mini-strata
+    local_subdir: inkling-2-mini-strata
+    size_gb: 20.0
+    format: strata
+    status: incubating
+    hf_repo: strata-engine/Inkling-2-Mini-Strata
+    # Strata's own SQ-20 build, at the revision the strata slug was booted on (2026-11-23); Strata's setup
+    # accepts these files by their pinned sizes and its SHA256SUMS.txt lists the two .strata files.
+    revision: 04996a1e2c45009b6a04f2af126cb6bdb2ba3587
+    files:
+      - Inkling-2-Mini-SQ-20.strata
+      - Inkling-2-Mini-Vision.strata
+      - tokenizer.json
+      - tokenizer_config.json
+      - special_tokens_map.json
+      - chat_template.jinja
+      - config.json
+      - SHA256SUMS.txt
+      - README.md
+    verify_glob: "*.strata"
+    engine: strata
+    kind: main
+    manual_note: "🐣 Strata's own SQ-20 build of Inkling-2-Mini (19.35 GB, which Strata calls bit-exact lossless native SF4+MX8 against Thinking Machines' checkpoint, with its DSpark drafter built in), plus the 0.64 GB vision file and the tokenizer. Only Strata's strata-inkling engine reads .strata files. ⚠️ Strata fixes the effort: its Inkling dialect sends reasoning_effort none on every request."

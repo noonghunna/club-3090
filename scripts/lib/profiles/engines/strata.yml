@@ -11,7 +11,7 @@ lineage:
   source: "https://github.com/Niko1221/Strata"
   source_ref: "d46f5f268f8ed797e83a5c63a69bffbd7a581cf6"
   chain: []
-  delta: "Independent C++/CUDA engine for Qwen3.8-Flash-Next with its own Python server and Terminal; uses ggml's CPU backend and llama.cpp's mtmd/gguf-py as libraries. Pinned to the image upstream publishes (ghcr.io/niko1221/strata:<release>-cuda13, from 0.2.1 on), built from its signed engine packages"
+  delta: "Independent C++/CUDA engine for Qwen3.8-Flash-Next (and, on its strata-inkling engine in the same image, Inkling-2-Mini) with its own Python server and Terminal; uses ggml's CPU backend and llama.cpp's mtmd/gguf-py as libraries. Pinned to the image upstream publishes (ghcr.io/niko1221/strata:<release>-cuda13, from 0.2.1 on), built from its signed engine packages"
 image_env: STRATA_IMAGE
 install:
   method: docker_image
@@ -22,11 +22,14 @@ install:
   # pin-earlier: 0.2.19 `5cf423c2…` (upstream c6f6427d, engine 0.1.65, 2026-11-23); 0.2.17 `51d39e3f…` (upstream 12d491da, engine 0.1.63, 2026-11-20); 0.2.13 `b6e18765…` (upstream d2f09647, engine 0.1.59, 2026-11-09); 0.2.12 `c3a85342…` (upstream 146df3c4, engine 0.1.58, 2026-11-07); 0.2.11 `871e1e79…` (upstream c3b3f503, engine 0.1.57, 2026-11-05); 0.2.9 `83e37db8…` (upstream c62d5e3a, engine 0.1.55, 2026-10-31); 0.2.8 `27f04a74…` (upstream 870aedd9, engine 0.1.54, 2026-10-30); 0.2.7 `db96cd9b…` (upstream 5e8a4cca, engine 0.1.52, 2026-10-27); 0.2.3 `d39ca9fc…` (upstream 5c8dd322, engine 0.1.48, 2026-10-23); 0.2.2 `17e96f76…` (upstream 011c9e60, engine 0.1.47, 2026-10-22); 0.2.1 `a0398afb…` (upstream 90767252, engine 0.1.46, #1764, 2026-10-20); club-3090's own builds of upstream's Dockerfile (strata-club3090): v0.1.45 `75deea40…` (2026-10-17), v0.1.44.1 `fb97d83b…` (2026-10-14), v0.1.43.1 `7f8643c8…` (2026-10-13, the one that also carried sm_90)
   spec: ghcr.io/niko1221/strata@sha256:992c38a2c6dd42d5cf23cabf2f4ba7702abef0cc1b82cfeb17239da822e081b4
 supported_model_families:
-  - qwen4exp              # Qwen3.8-Flash-Next family: Strata is written for this model only
+  - qwen4exp              # Qwen3.8-Flash-Next family (the Strata engine itself)
+  - inkling2-loop-moe     # Inkling-2-Mini, on Strata's strata-inkling engine (shipped in the image since 0.2.19)
 supported_weight_formats:
   - gguf                  # ISTA-DASLab GSQ-RCO i-quants (+ Unsloth UD-Q4_K_XL, experimental)
+  - strata                # Strata's own .strata builds (Inkling-2-Mini SQ-20)
 supported_kv_formats:
   - q8_0                  # nearest catalog token for Strata's int8 KV (--kv int8), MEASURED 2026-10-06
+  - fp16                  # strata-inkling's default KV with host KV offload (kv_fmt 0), MEASURED 2026-11-23
 supported_drafters: []    # MTP is Strata's built-in draft layer (--spec), not a club drafter
 # #1951 — what this engine changes about effort. The Flash-Next Strata
 # composes leave REASONING_EFFORT unset ON PURPOSE (#1951 decision 2026-11-06:
@@ -68,6 +71,27 @@ effort:
         rejects those two names. The pair's none claim stands from the
         2026-11-15 probe: reasoning_effort none -> 0 chars of
         reasoning_content (low -> 214).
+    inkling-2-mini:
+      default_when_unset: low
+      supports_none: true
+      evidence: >-
+        From 0.2.21 (engine 0.1.67) Strata's Inkling dialect
+        (terminal/serve/inkling_dialect.py) hands the request's effort to the
+        template: EFFORT_LEVEL none 0.0, minimal 0.1, low 0.2, medium 0.7, high
+        0.9, xhigh and max 0.99. A request that names none gets DEFAULT_EFFORT,
+        the server's STRATA_INKLING_EFFORT or else "low" (our launcher doesn't
+        set it). reasoning_effort none and enable_thinking false are level 0,
+        with enable_thinking false in the template, so thinking is off. A name
+        outside its EFFORT table raises ("unknown reasoning effort"). Measured
+        2026-11-24 on strata/inkling-2-mini-sq20-single (0.2.21's image), an
+        IPv4-validator prompt at temperature 0, reasoning_content chars
+        (completion tokens): none 0 (129), minimal 929 (427), low 1,274 (563),
+        medium 1,548 (602), high 2,510 (924), xhigh 2,883 (1,074); unset gave
+        exactly low's 1,274 (563). Top-level reasoning_effort and
+        chat_template_kwargs gave the same. HISTORY: in 0.2.19 and 0.2.20 the
+        dialect overwrote every request's effort with "none" (normalize_effort()
+        returned "none"); measured 2026-11-23 on 0.2.20's image, verify-full's
+        thinking check got no reasoning on either question.
   evidence: >-
     Engine-wide (off_switch / supports_none): measured 2026-11-15 on
     qwen3.8-flash-next-iq3s-dual (:8018) — reasoning_effort none -> 0 chars of

@@ -144,6 +144,10 @@ PER_ID = {
     # inkling-2-mini: the probed ladder plus max, which every route (vllm-inkling only) folds onto xhigh;
     # the default is the composes' REASONING_EFFORT high, the template's own.
     "inkling-2-mini": (["minimal", "low", "medium", "high", "xhigh", "max"], "high", "inkling"),
+    # inkling-2-mini-sq-20: Strata's own id for its SQ-20 build. The emit renders the model's ladder and the
+    # template's default, but Strata's Inkling dialect serves every name as none (engines/strata.yml
+    # by_model evidence): the names reach the server and change nothing there.
+    "inkling-2-mini-sq-20": (["minimal", "low", "medium", "high", "xhigh"], "low", "inkling"),
 }
 # The client families, not the routes: which sit behind LiteLLM's Responses -> chat
 # bridge (omp adds `summary: "auto"` to the reasoning object and the bridge forwards the
@@ -178,6 +182,7 @@ PER_ID_ENGINES = {
     "glm-5.3-flash": {"llamacpp-club3090-v1.6", "strata-maya"},
     "hy4-flash": {"strata-maya"},
     "inkling-2-mini": {"vllm-inkling"},
+    "inkling-2-mini-sq-20": {"strata"},
 }
 
 def group(name):
@@ -203,7 +208,7 @@ import glob, os, re, sys, yaml
 root, printed = sys.argv[1], sys.argv[2]
 FLAGS = {"--served-model-name", "--served-name", "--alias", "--model-name"}
 STRATA = {"qwen": "qwen3.8-flash-next", "swift": "swift-1.5",
-          "unsloth": "qwen3.8-flash-next-unsloth"}
+          "unsloth": "qwen3.8-flash-next-unsloth", "inkling-2-mini": "inkling-2-mini"}
 NAME = re.compile(r"[A-Za-z0-9][\w.\-]*")
 def resolved(tok):
     m = re.fullmatch(r"\$\{\w+:-([^}]+)\}", tok)      # ${SERVED_NAME:-x} -> its default

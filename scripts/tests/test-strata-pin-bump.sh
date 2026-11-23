@@ -138,15 +138,15 @@ command grep -qx "  source_ref: \"$COMMIT\"" "$y" || fail "strata: source_ref no
 command grep -qx "  # pin-current: 9.9.9 · upstream 12345678 · engine 9.9.8 · pinned $TODAY · booted pending" "$y" \
   || fail "strata: pin-current line wrong: $(command grep pin-current "$y")"
 command grep -q "^  # pin-earlier: $OLD_VER \`$OLD_SHORT…\` (upstream " "$y" || fail "strata: outgoing pin not first in pin-earlier"
-[[ "$(command grep -c "strata@$DIGEST" "$d"/models/qwen3.8-flash-next/strata/compose/*/*/base.yml | awk -F: '{s+=$2} END{print s}')" == 7 ]] \
-  || fail "strata: not all 7 compose image defaults repointed"
+[[ "$(command grep -c "strata@$DIGEST" "$d"/models/*/strata/compose/*/*/base.yml | awk -F: '{s+=$2} END{print s}')" == 8 ]] \
+  || fail "strata: not all 8 compose image defaults repointed"
 cmp -s "$PRISTINE/docs/UPSTREAM.md" "$d/docs/UPSTREAM.md" || fail "strata: the bump edited docs/UPSTREAM.md (the pin lives in the profile)"
 command grep -qxF -- "- **Pinned:** 9.9.9 (engine 9.9.8), since $TODAY ($OLD_VER, engine $OLD_ENG, from $OLD_DATE)." "$d/docs/engines/STRATA.md" \
   || fail "strata: STRATA.md Pinned line wrong"
 [[ "$(cat "$STUB_DIR/recorded")" == "verify strata --record" ]] || fail "strata: settings evidence not re-recorded"
 command grep -qxF -- "- **Releases skipped since the last pin:** v9.9.7" <<<"$OUT" || fail "strata: skipped releases wrong (drafts and the two pins don't count): $OUT"
 want="$(printf '%s\n' docs/engines/STRATA.md scripts/lib/profiles/engines/strata.yml \
-  $(cd "$d" && ls models/qwen3.8-flash-next/strata/compose/*/*/base.yml) | sort)"
+  $(cd "$d" && ls models/*/strata/compose/*/*/base.yml) | sort)"
 [[ "$(changed "$d")" == "$want" ]] || fail "strata: changed files differ from the pin's places:\n$(changed "$d")"
 ok
 
