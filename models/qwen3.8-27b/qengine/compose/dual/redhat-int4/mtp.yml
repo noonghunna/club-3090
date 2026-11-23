@@ -17,7 +17,8 @@
 #              374,784 -> 289,792 tokens (-23%, still a full 262K context); VISION=0 gives it back.
 #              On 1.3.5 the pool with vision is 368,640 tokens (2026-11-06, two boots; cause not traced);
 #              on 1.3.5.9 with the DFlash2 drafter loaded (0.82 GB a card), 316,416 (2026-11-13);
-#              on 1.3.6, 331,776 (2026-11-15); on 1.5.1, 331,776 (2026-11-23)
+#              on 1.3.6, 331,776 (2026-11-15); on 1.5.1, 331,776 (2026-11-23). Those are all at 32 slots;
+#              at 16, the default from 2026-11-23, the pool on 1.5.1 is 538,624 tokens (2026-11-23)
 #   Max ctx:   262144
 #   Genesis:   none
 #   Status:    ⚠️ Production w/ caveats — promoted 2026-10-31 (the full gate on a community rig, #1862)
@@ -29,7 +30,8 @@
 #              off / on); bpx03's, QEngine's author (#1979: 1.3.5.5, two 3090s at stock power, our scripts
 #              at 3e395893), ran verify-full, verify-stress 8/8 with the ladder filled to 240,664 tokens,
 #              both soaks (0 silent, 0 MiB growth) and the 8-pack (110 / 131 of 150). Here it has bench
-#              and verify-full. 1.3.1 to 1.3.6 and 1.5.1 were boot-tested. From 1.3.4.3
+#              and verify-full. 1.3.1 to 1.3.6 and 1.5.1 were boot-tested. All of that ran 32 slots, the
+#              default until 2026-11-23; at 16 slots it has verify-full here (1.5.1, 2026-11-23). From 1.3.4.3
 #              our THINKING_BUDGET_* map (4096 / 16384 / 32768 by effort, as on the vLLM and SGLang
 #              slugs) reaches QEngine's own per-effort QE_THINKING_BUDGET; a request's own budget wins.
 #              The default effort is low, as on the other Qwen3.8 slugs, through QEngine's
@@ -42,7 +44,7 @@
 #              2026-10-31), P2P for the decode all-reduce. Those runs drafted with MTP; from 1.3.5.8 a
 #              conversation that decodes alone drafts with DFlash2 (not re-benched here).
 #              First start 25 s including the GEMM tuning, later starts 21 s.
-#   Best for:  many concurrent chats on two 3090s (32 slots, full 262K context)
+#   Best for:  many concurrent chats on two 3090s (16 slots, full 262K context)
 # ---------------------------------------------------------------------------
 # Requires-min-vram-gb: 24
 # Requires-min-gpu-count: 2
@@ -52,9 +54,11 @@
 # RTX 3090s: INT4 GEMV / GEMM kernels, tensor parallel over PCIe with the all-reduces inside the
 # kernels, MTP and lookup drafts, FP8 KV with prefix reuse and a host-RAM archive, continuous
 # batching. Three cards are its tuned configuration; this compose is its measured two-card one,
-# QE_DEVICES=0,1 QE_MAX_SEQS=32 (README "Running on one or two GPUs" up to 1.3.6: ~387K-token KV
-# pool, 32 slots, full 262K context; from 1.5 the README serves 16 slots on two cards, 32 opt-in). It reads only compressed-tensors weight_packed / weight_scale, so
-# our AutoRound INT4 doesn't load; RedHatAI's checkpoint is the one it is built for.
+# QE_DEVICES=0,1 with 16 slots (README "Recipes by card count" from 1.5: two cards serve 16 slots, as
+# three do, with a 623,616-token KV pool and the full 262K context; QE_MAX_SEQS=32 is opt-in, 417,792
+# tokens). Up to 1.3.6 the README ran two cards at QE_MAX_SEQS=32, our default until 2026-11-23.
+# It reads only compressed-tensors weight_packed / weight_scale, so our AutoRound INT4 doesn't load;
+# RedHatAI's checkpoint is the one it is built for.
 #
 #   bash scripts/setup.sh qengine/qwen38-27b-dual
 #   bash scripts/switch.sh qengine/qwen38-27b-dual
@@ -98,7 +102,13 @@
 #   KV_OFFLOAD_DISK_GB  cap on the disk cache, GiB in total (unset = QEngine's own 200); oldest files go first.
 #                     Needs KV_OFFLOAD_DISK=1. QEngine keeps no free-space margin, so size it to the volume.
 # QEngine's own settings, passed through when set (its defaults otherwise):
-#   QE_MAX_SEQS       sequence slots, up to 32 (32 here: the README's two-card setting up to 1.3.6; 1.5's is 16)
+#   QE_MAX_SEQS       sequence slots, up to 32 (16 here: QEngine's default, and from 1.5 its README's two-card
+#                     setting; ours was 32 until 2026-11-23). From 1.5, 2 of them are kept for prompts: a reply
+#                     past 14 decoding waits parked in host RAM after its first token, and resumes oldest first.
+#                     32 seats 32 at once on a smaller KV pool: on 1.5.1 here 331,776 tokens against 538,624,
+#                     so two full 262K conversations no longer fit at once. Pick 32 for many agents at once:
+#                     upstream, two cards, 32 agents in flight: median first token 25 s -> 0.48 s, 106% more
+#                     total output
 #   QE_RESERVE_GB     VRAM left outside the KV pool, per card (1.5); a list sets each card
 #   QE_KV_ARCHIVE_GB  pinned host-RAM archive of evicted conversations (32; 0 = off)
 #   QE_KV_BITS        4 stores the KV cache in 4 bits (QEngine 1.3.6 on): about 1.5x the context on 8-12 GB
@@ -156,10 +166,13 @@
 #   QE_GRAPH_RESERVE_MB  VRAM per card kept for CUDA graphs (128, from 1.3.5; 0 = off): when another process
 #                     takes all free VRAM, a step that needs a new graph uses it instead of stopping, then
 #                     runs without a graph (one log line; 1.3.4.3 aborted there)
-#   QE_SNAPSHOTS      the store of recurrent-state snapshots a new turn resumes from (from 1.3.5.6: 4 per
-#                     sequence slot, at least 32, so 128 at our 32 slots, ~80 MB each; it was 32 for every slot
-#                     count). The first 32 are pinned at start, the rest as the store fills while the host has
-#                     room; from 1.3.5.7 the host-RAM plan counts only those 32 (1.3.5.6 counted them all).
+#   QE_SNAPSHOTS      the store of recurrent-state snapshots a new turn resumes from. From 1.5: up to 8 per
+#                     sequence slot while they take at most 8% of the host's RAM, at least 4 per slot and at
+#                     least 32, ~150 MB each split over the cards; those within the 8% are pinned at start,
+#                     before the first request (QE_ARCHIVE_WAIT_S), the rest as the store fills. On the
+#                     reference rig (257.6 GB) the start-up line reads 123 of 123 snapshot entries pinned at
+#                     16 slots, 123 of 128 at 32 (1.5.1, 2026-11-23). 1.3.5.6 to 1.3.6: 4 per slot, at least
+#                     32, ~80 MB each, the first 32 pinned at start; before that, 32 for every slot count.
 #                     32 = the old size, for a host short of RAM
 #   QE_LOAD_DROP      the model files' pages leave the page cache during the load, a layer once both cards
 #                     have read it (1.3.5.7): automatic on the 27B, on only when MemAvailable is short of the
@@ -188,7 +201,7 @@
 #                     found needles at 524K and 1.04M on three cards), and --lsa (QE_LSA above)
 # `switch.sh --set` saves only our knobs above for this slug; it refuses QEngine's own names, because
 # they aren't catalogued launch settings. Set those for one launch, or for every QEngine slug:
-#   QE_MAX_SEQS=16 bash scripts/switch.sh --force qengine/qwen38-27b-dual
+#   QE_MAX_SEQS=32 bash scripts/switch.sh --force qengine/qwen38-27b-dual
 #   bash scripts/settings.sh set QE_KV_ARCHIVE_GB=8
 services:
   qengine-qwen38-27b-dual:
@@ -227,7 +240,7 @@ services:
       # the cards as the container numbers them (device_ids above picks which)
       - QE_GPUS=0,1
       - QE_PORT=8080
-      - QE_MAX_SEQS=${QE_MAX_SEQS:-32}
+      - QE_MAX_SEQS=${QE_MAX_SEQS:-16}
       - QE_RESERVE_GB
       - QE_KV_ARCHIVE_GB
       - QE_KV_BITS
