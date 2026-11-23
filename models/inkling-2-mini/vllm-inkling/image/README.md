@@ -13,8 +13,8 @@ vLLM image itself refuses anything below Hopper.
 
 ## Why it is an image of ours
 
-This image is an exception to two of the repo's rules, by maintainer decision (2026-11-21), until a vLLM release
-runs Inkling-2-Mini on sm_86 itself:
+This image is an exception to two of the repo's rules, by maintainer decision (2026-11-21), for as long as the
+slugs need it ("When it ends", below):
 
 - **Image provenance** ([`docs/ADDING_ENGINES.md`](../../../../docs/ADDING_ENGINES.md)): an engine's image comes
   from its own maintainer, and vLLM patches are mounted into the stock image rather than baked. A mount can't
@@ -25,9 +25,11 @@ runs Inkling-2-Mini on sm_86 itself:
   [#69165](https://github.com/vllm-project/vllm/pull/69165) does the same job on vLLM's `main`, which the launch
   image predates.
 
-**It ends** when a vLLM release carries Inkling-2-Mini with sm_86 ops (vLLM 0.35.0 is the first candidate:
-`main` builds its ops for 8.6 and 12.0, and Mini merged in #69028). The slugs then move to a stock vLLM engine.
-Until then, this image is the only way they run.
+**When it ends.** The two-card slug moves to a stock vLLM engine once a release carries Inkling-2-Mini with sm_86 ops
+and vLLM PR #69165 (vLLM 0.35.0 is the first candidate: `main` builds its ops for 8.6 and 12.0, and Mini merged in
+#69028). The one-card slugs stay on this image, on FP8 KV, for now (maintainer decision, 2026-11-22): stock vLLM gates
+Inkling's FP8 KV to SM12x, and #69165's own E4M3 decode was 3.6–8× slower in prefill than this diff's. So the image
+lasts until a release runs FP8 KV on sm_86 at that speed.
 
 ## What the image is
 
