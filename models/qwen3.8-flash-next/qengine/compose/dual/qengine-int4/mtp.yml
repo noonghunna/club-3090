@@ -4,8 +4,8 @@
 #              QEngine 1.3.4.1 and later (routed experts INT4 bit-exact; DeltaNet projections INT8; shared
 #              expert INT4 GPTQ; attention and lm_head INT8 at load), the INT8 n-gram table, its INT4 MTP
 #              head (129 GB)
-#   Engine:    QEngine 1.3.6 (bpx03; upstream's stable release): its second
-#              engine, libqflash.so, in the author's own image ghcr.io/bpx03/qengine (source ee98bd10, the
+#   Engine:    QEngine 1.5.1 (bpx03; upstream's stable release): its second
+#              engine, libqflash.so, in the author's own image ghcr.io/bpx03/qengine (source 2d171c07, the
 #              :vision image: PyTorch for the encoder)
 #   Topology:  Dual 3090 PCIe (experts split evenly over the two cards; GPU-to-GPU P2P when the
 #              driver grants it)
@@ -279,7 +279,7 @@
 #   bash scripts/settings.sh set FLASH_MAX_SEQS=4      # one user at a time: faster still (above)
 services:
   qengine-qwen38-flash-next-dual:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:5064093b2ac65d9afa82f6c5b3553bf32caec46292adbea32cfa8132bf4d7a42}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:3f5f54d4df74e5c4494cc3458b5fe588991681fc9441319345e12870f6d58d90}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-flash-next-dual}"
     user: "0:${DOCKER_GID:-1000}"
