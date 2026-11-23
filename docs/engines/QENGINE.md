@@ -22,7 +22,7 @@ What it does, from its README:
 
 ## Image
 
-The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<release>`, text only (about 0.3 GB), and `:<release>-vision`, which adds PyTorch for the vision encoder (about 3 GB to pull). Each image's `org.opencontainers.image.revision` label names its source commit. The profile pins **`1.3.6-vision`** by digest (`sha256:5064093b…`, source `444b2e49` = git tag `v1.3.6`), upstream's stable release: `latest` and `vision` moved to it. The rollback is 1.3.5.9-vision (`sha256:e670c0d9…`), the previous stable pin, or 1.3.5.7-vision (`sha256:2d790174…`), the last under the PolyForm Noncommercial licence, and the launchers inject the pin as `QENGINE_IMAGE`. Its server, engine libraries and entrypoint are byte-identical to the text image's, so text serving is the same in either; the vision image is what lets the slugs take images.
+The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<release>`, text only (about 1 GB to pull since 1.5.0 added three more engines), and `:<release>-vision`, which adds PyTorch for the vision encoder (about 4 GB to pull). Each image's `org.opencontainers.image.revision` label names its source commit. The profile pins **`1.5.1-vision`** by digest (`sha256:3f5f54d4…`, source `2d171c07` = git tag `v1.5.1`), upstream's stable release: `latest` and `vision` moved to it. The rollback is 1.3.6-vision (`sha256:5064093b…`), the previous stable pin, or 1.3.5.7-vision (`sha256:2d790174…`), the last under the PolyForm Noncommercial licence, and the launchers inject the pin as `QENGINE_IMAGE`. Its server, engine libraries and entrypoint are byte-identical to the text image's, so text serving is the same in either; the vision image is what lets the slugs take images.
 
 **1.3.3.1** (pinned 2026-11-01, a fix-only release for both engines) fixes replies that could pick up text from another conversation running at the same time: when a new request was admitted between two chunks of another prompt's prefill, the next generation step of a running request ran on the new request's sequence slot, so it continued that conversation and sent the tokens to the wrong client (or ended early with empty content). Only a server handling several requests at once is affected, which both slugs allow (several slots); upstream recommends that everyone upgrade. Flash-Next also had the same mix-up after a failed prompt in a batched prefill. Both engines now refuse a generation step on a slot that is still prefilling or no longer in use, and log a `BUG:` line if one is attempted.
 
@@ -153,6 +153,37 @@ The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<releas
 - **Booted on both slugs** (2026-11-15, 230 W):
   - the 27B fetched the DFlash2 drafter on its first start and loaded it: ready in 108 s, verify-full all pass with vision 4/4, MTP acceptance length 7.93, KV pool **331,776** (+15,360 tokens on 1.3.5.9's 316,416 with the drafter), every conversation served 262144;
   - Flash-Next was ready in 128 s, verify-full all pass with vision 4/4, MTP acceptance length **5.90** (3.97 on 1.3.5.9, the confidence-based draft depth), context 262144, 31.7 GB of experts in host memory.
+
+  No bench was run.
+
+**1.5.1** (pinned 2026-11-23) is upstream's new stable release. `latest` and `vision` moved from 1.3.6 to 1.5.0 on 2026-11-20, and on 2026-11-22 to 1.5.1, a patch release with two Flash-Next fixes. The weights of both Qwen models are unchanged.
+- **Three more models, as previews:** DeepSeek-V4.1-Flash (from the Maya-S GGUF files), GLM-5.3-Flash (only from the author's own INT4 checkpoint) and gpt-oss-120B, each set up for three cards. No slug here runs them yet. Their engines ship in the same image, which grew from 9.5 to 10.8 GB.
+- **Many agents at once:** on both Qwen engines the time split between prefill and running replies follows the queue (`--prefill-share-min`; 0.5 is the old split). Requests beyond the decode seats get their first token on one of two seats kept for prompts, and their replies then wait, parked in host memory, until a seat frees (`--park`). Upstream measured agent replay on two cards with 32 agents in flight: median first token 25.0 s on 1.3.6, 0.48 s on 1.5.0. On the 27B slug, which runs 32 slots, the start log reads "replies beyond 30 decoding sequences are parked … (2 seats kept for prompts)".
+- **Host memory under pressure:** a monitor watches the kernel's pressure and swap-in counters and `MemAvailable`, and gives memory back in logged stages: archive, pinned prompts, and last the Flash-Next n-gram table to the page cache. It is on by default (`QE_MEMP=0` turns it off; the composes don't forward it).
+  - Flash-Next pins its archive in the background, 1 GB at a time while the engine is idle. That fixes the hand-off stalls of [bpx03/QEngine#32](https://github.com/bpx03/QEngine/issues/32) and [#25](https://github.com/bpx03/QEngine/issues/25).
+  - The 27B pins its prompt-state store at start and waits for it (`QE_ARCHIVE_WAIT_S`).
+- **For every model:**
+  - A streamed reply with no event for 10 s gets the SSE comment line `: keep-alive` (`QE_SSE_KEEPALIVE`). Our stream readers (`bench.sh`, `bench-agentic.sh`, `verify-full.sh`, `verify-stress.sh`, the soak helper and the concurrency and deep-context probes) skip every line that doesn't start with `data:`, so a long prefill's time to first token is measured as before.
+  - At start the server logs a `[settings]` line for every setting that is set but does nothing for the loaded model. Neither slug logs one.
+  - A top-level `enable_thinking` is read too ([bpx03/QEngine#31](https://github.com/bpx03/QEngine/issues/31)).
+- **1.5.1's fixes (Flash-Next):**
+  - `FLASH_CKPT=0` no longer crashes the server ([#41](https://github.com/bpx03/QEngine/issues/41)). The composes don't set it.
+  - The archive goes back under its budget at once after a pinned prefix is dropped ([#40](https://github.com/bpx03/QEngine/issues/40)).
+- **Upstream's two-card advice for the 27B changed:**
+  - **Up to 1.3.6:** the README ran two cards at 32 slots (`QE_MAX_SEQS=32`).
+  - **From 1.5:** it serves 16 by default, as on three cards, and 32 is opt-in for a smaller KV pool. Upstream's figures on two cards: 417,792 tokens instead of 623,616.
+  - **Our 27B slugs:** they keep 32; this pin doesn't change it.
+- **Interfaces:**
+  - Every `QE_*` / `FLASH_*` name the composes forward (76) is present in the 1.5.1 build.
+  - `app.py` lost no flag (it gained 20, none of which we pass), and `server/run.sh` is byte-identical.
+  - The entrypoint only learned to recognise a DeepSeek GGUF folder.
+- **Booted on both slugs** (2026-11-23, 230 W):
+  - **The 27B:**
+    - It downloaded the DFlash2 drafter on its first start (the engine cache is kept per image) and loaded it.
+    - Ready in 128 s, verify-full all pass with vision 4/4, MTP acceptance length 7.93, KV pool 331,776 (as on 1.3.6), every conversation served 262144.
+    - That start waited 28 s for the 42.9 GB archive, of which only 4.5 GB landed on 2 MB pages (the log warns that decode steps may be slower). 216 GB of the host's memory was page cache at the time.
+    - A second start, after the Flash-Next boot had left 4 GB of page cache, pinned it in 6.3 s, all on 2 MB pages as on 1.3.6, and was ready in 32 s. So 1.5.1 gets every page with little page cache. 1.3.6 wasn't tried with that much page cache, and the decode cost of the first start's coverage wasn't measured. Upstream's `docs/advanced.md` says a fragmented host costs the archive load time, not decode speed ([bpx03/QEngine#28](https://github.com/bpx03/QEngine/issues/28)).
+  - **Flash-Next:** ready in 132 s, verify-full all pass with vision 4/4, MTP acceptance length 5.90, context 262144. 31.7 GB of experts are in host memory, and the 51.8 GB n-gram table was pinned in 11 s.
 
   No bench was run.
 
