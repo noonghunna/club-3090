@@ -22,7 +22,7 @@
 #   3. docker build with fixed build args and OCI labels (upstream commit, llama.cpp pin from
 #      setup.py, archs, CPU baseline, this recipe's commit);
 #   4. checks on the finished image, none needing a GPU:
-#      - the CPU settings the engine was configured with: STRATA_PORTABLE and GGML_AVX2 on,
+#      - the CPU settings the engine was configured with: MAYA_PORTABLE (STRATA_PORTABLE before v1.1.75) and GGML_AVX2 on,
 #        GGML_NATIVE and anything above AVX2 off;
 #      - the CUDA archs the engine was configured with, and VERSION = the release;
 #      - every library resolves except the host driver's (libcuda, libnvidia-*);
@@ -115,7 +115,8 @@ for line in sys.argv[1].splitlines():
 bad = []
 if not seen:
     bad.append("no CPU settings recorded")
-for name, want in (("STRATA_PORTABLE", "ON"), ("GGML_NATIVE", "OFF"), ("GGML_AVX2", "ON")):
+portable = "MAYA_PORTABLE" if "MAYA_PORTABLE" in seen else "STRATA_PORTABLE"   # MAYA_ from v1.1.75
+for name, want in ((portable, "ON"), ("GGML_NATIVE", "OFF"), ("GGML_AVX2", "ON")):
     if seen and seen.get(name) != want:
         bad.append(f"{name}={seen.get(name, '(unset)')}, want {want}")
 for name, value in sorted(seen.items()):
@@ -125,7 +126,7 @@ for m in bad:
     print(f"[maya-image]   {m}", file=sys.stderr)
 sys.exit(1 if bad else 0)
 PY
-  say "check: the engine was configured portable (STRATA_PORTABLE on, GGML_NATIVE off, nothing above AVX2)"
+  say "check: the engine was configured portable (MAYA_PORTABLE / STRATA_PORTABLE on, GGML_NATIVE off, nothing above AVX2)"
 
   archs="$("${run[@]}" cat "$ref" /opt/club3090/cuda-architectures.txt 2>/dev/null | tr -d '[:space:]')" \
     || die "$ref has no /opt/club3090/cuda-architectures.txt"

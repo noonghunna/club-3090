@@ -7,7 +7,7 @@
 # fetches the release's commit into the build context and runs it; see README.md.
 #
 # What it builds, the way maya.py's compile_engine does, with two differences:
-#   - STRATA_PORTABLE=ON: ggml's CPU code for an AVX2 baseline instead of the build machine's CPU
+#   - MAYA_PORTABLE=ON (STRATA_PORTABLE before v1.1.75): ggml's CPU code for an AVX2 baseline instead of the build machine's CPU
 #     (upstream's CMake option, which maya.py passes only for its HIP build);
 #   - CUDA archs from CUDA_ARCHITECTURES (a fat binary) instead of the user's own cards.
 # Text only: the vision encoder and the DFlash2 drafter are not built or fetched.
@@ -40,10 +40,13 @@ RUN test -n "$LLAMA_CPP_COMMIT" \
     && mv "/tmp/llama.cpp-${LLAMA_CPP_COMMIT}" /llama.cpp \
     && rm /tmp/llama.zip
 
-RUN cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-        -DSTRATA_ENABLE_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}" \
-        -DSTRATA_NATIVE_EXPERTS=ON -DSTRATA_BUILD_TESTS=OFF -DSTRATA_PORTABLE=ON \
-        -DSTRATA_GGML_DIR=/llama.cpp \
+# The build options are MAYA_X from v1.1.75 (STRATA_X before; v1.1.75 still takes STRATA_X, as MAYA_X, and drops
+# the STRATA_X entry from the cache, which build.sh's check reads): the release's own spelling is used
+RUN o=STRATA; grep -q -E '^ *option\(MAYA_PORTABLE ' /src/CMakeLists.txt && o=MAYA; \
+    cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -D${o}_ENABLE_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}" \
+        -D${o}_NATIVE_EXPERTS=ON -D${o}_BUILD_TESTS=OFF -D${o}_PORTABLE=ON \
+        -D${o}_GGML_DIR=/llama.cpp \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
 # The engines' targets: `maya` since v1.1.16, `strata` before (v1.1.16 renamed the programs after Maya),
 # and DeepSeek's `maya-ds4`, MiniMax's `maya-mm3` and Hy4-Flash's `maya-hy4` beside it in the releases that define them (build.sh
@@ -61,7 +64,7 @@ RUN --mount=type=cache,id=strata-maya-ccache,target=/root/.cache/ccache \
     ccache --show-stats
 # the CPU settings and archs the tree was configured with, read by build.sh's checks
 RUN mkdir -p /out/bin && for t in $(cat /tmp/engine-targets); do cp "/build/$t" "/out/bin/$t" || exit 1; done \
-    && grep -E '^(STRATA_PORTABLE|GGML_NATIVE|GGML_AVX[A-Z0-9_]*|GGML_FMA|GGML_F16C|GGML_BMI2|GGML_AMX_[A-Z0-9_]*):' \
+    && grep -E '^((STRATA|MAYA)_PORTABLE|GGML_NATIVE|GGML_AVX[A-Z0-9_]*|GGML_FMA|GGML_F16C|GGML_BMI2|GGML_AMX_[A-Z0-9_]*):' \
          /build/CMakeCache.txt | sed 's/^/build /' > /out/maya-cpu-flags.txt \
     && sed -n 's/^CMAKE_CUDA_ARCHITECTURES:[A-Z]*=//p' /build/CMakeCache.txt > /out/cuda-architectures.txt
 
