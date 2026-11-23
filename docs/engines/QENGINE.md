@@ -182,7 +182,7 @@ The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<releas
     - It downloaded the DFlash2 drafter on its first start (the engine cache is kept per image) and loaded it.
     - Ready in 128 s, verify-full all pass with vision 4/4, MTP acceptance length 7.93, KV pool 331,776 (as on 1.3.6), every conversation served 262144.
     - That start waited 28 s for the 42.9 GB archive, of which only 4.5 GB landed on 2 MB pages (the log warns that decode steps may be slower). 216 GB of the host's memory was page cache at the time.
-    - A second start, after the Flash-Next boot had left 4 GB of page cache, pinned it in 6.3 s, all on 2 MB pages as on 1.3.6, and was ready in 32 s. So the first start's shortfall came from the host's state, not from the release.
+    - A second start, after the Flash-Next boot had left 4 GB of page cache, pinned it in 6.3 s, all on 2 MB pages as on 1.3.6, and was ready in 32 s. So 1.5.1 gets every page with little page cache. 1.3.6 wasn't tried with that much page cache, and the decode cost of the first start's coverage wasn't measured. Upstream's `docs/advanced.md` says a fragmented host costs the archive load time, not decode speed ([bpx03/QEngine#28](https://github.com/bpx03/QEngine/issues/28)).
   - **Flash-Next:** ready in 132 s, verify-full all pass with vision 4/4, MTP acceptance length 5.90, context 262144. 31.7 GB of experts are in host memory, and the 51.8 GB n-gram table was pinned in 11 s.
 
   No bench was run.
