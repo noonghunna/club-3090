@@ -190,8 +190,8 @@ supported_model_families:
 features:
   ternary_g128: true      # {-1, 0, +1} weights, one FP16 scale per 128, stored
                           # in a Hadamard-rotated basis. Two packings:
-                          #   PTQ1_0 — dense trits, 1.75 bpw, 5.95 GB
-                          #   PQ2_0  — one trit per 2-bit slot, 2.13 bpw, 7.21 GB
+                          #   PTQ1_0 — dense trits, 1.75 bpw, 5.95 GB (Bonsai 2) / 5.99 GB (2.5)
+                          #   PQ2_0  — one trit per 2-bit slot, 2.13 bpw, 7.21 GB (Bonsai 2) / 7.25 GB (2.5)
                           # Packed weights are consumed directly and never
                           # expanded to FP16.
 
@@ -212,8 +212,10 @@ supported_kv_formats:
                           # q4_0 etc. remain UNBOOTED here; add them only from a
                           # boot, never from upstream's docs.
 
-supported_drafters: [mtp_gguf]   # bundled MTP head (prism-mtp-bundled); stock since b10735 (#205). Boot-tested 2026-10-06 on b10754 and 2026-10-14 on b10776.
-  # ⚠️ prism-ml's own Bonsai packs carry NO MTP head — VERIFIED IN THE GGUF, not
+supported_drafters: [mtp_gguf]   # bundled MTP head (prism-mtp-bundled); stock since b10735 (#205). Boot-tested 2026-10-06 on b10754, 2026-10-14 on b10776, and 2026-11-24 on b12178 with Bonsai 2.5's own head.
+  # ⭐ 2026-11-24, Bonsai 2.5: prism-ml now ships MTP variants (`-mtp.gguf`) with its own head at blk.64
+  # (nextn_predict_layers 1, 866 tensors). The plain 2.5 packs still have none. What follows is Bonsai 2.
+  # ⚠️ prism-ml's own Bonsai 2 packs carry NO MTP head — VERIFIED IN THE GGUF, not
   # assumed:
   #     qwen35.block_count = 64 · blk indices 0..63 · nextn/mtp tensors = 0
   # ⚠️⚠️ THIS DIFFERS FROM THE SAME MODEL'S OTHER GGUFs. The unsloth Qwen3.8-27B
@@ -222,8 +224,9 @@ supported_drafters: [mtp_gguf]   # bundled MTP head (prism-mtp-bundled); stock s
   # prism-ml's ternary conversion DROPPED it. "Qwen3.8-27B has MTP" is therefore
   # true of the model and FALSE of this artifact — do not carry the assumption
   # across. The head this field enables comes from ProCreations' re-bundled file
-  # (weights variant prism-ternary-mtp, slug …-ternary-mtp), which put
-  # blk.64.nextn.* back; throughput on the plain -pq2 slug is UN-DRAFTED.
+  # (weights variant prism-ternary-mtp, slug …-ternary-mtp, until 2026-11-24), which put
+  # blk.64.nextn.* back; from 2026-11-24 that variant is PrismML's own 2.5 -mtp file.
+  # Throughput on the plain -pq2 slug is UN-DRAFTED.
   # An EXTERNAL draft model (upstream's card points at Bonsai-demo) is untried here.
   # ⚠️ This field holds spec_method VALUES, not drafter ids — adding one without
   # a measured boot is how the sibling llamacpp profile got it wrong three
@@ -250,7 +253,7 @@ effort:
     xhigh,medium,low) and --reasoning-effort-fallback (default xhigh): an
     effort name outside the allow-list runs at the fallback rather than
     erroring
-    (models/qwen3.8-27b/llama-cpp-prism/compose/single/prism-ternary-mtp/mtp.yml:164-165).
+    (models/qwen3.8-27b/llama-cpp-prism/compose/single/prism-ternary-mtp/mtp.yml:170-171).
 
 notes: >
   🧪 EXPERIMENTAL — catalogued 2026-09-18. VALIDATED BY BOOT on this rig: the

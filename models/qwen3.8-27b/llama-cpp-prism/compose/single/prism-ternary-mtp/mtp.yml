@@ -1,7 +1,8 @@
 # ===========================================================================
 # Profile (at-a-glance):
-#   Model:     Qwen3.8-27B — prism-ml "Bonsai 2 27B", TERNARY g128 PQ2_0
-#              (7.21 GB, 2.13 bpw). Weights are {-1, 0, +1} with one FP16 scale
+#   Model:     Qwen3.8-27B — prism-ml "Ternary-Bonsai-2.5-27B" (2026-11-24), TERNARY
+#              g128 PQ2_0 with PrismML's MTP head in the file (7.49 GB, 2.13 bpw;
+#              Bonsai 2 27B until 2026-11-24). Weights are {-1, 0, +1} with one FP16 scale
 #              per 128, stored in a blockwise Hadamard-rotated basis folded in
 #              offline. Architecture UNCHANGED from Qwen3.8-27B; the GGUF
 #              declares `general.architecture = qwen35`, 64 blocks, 851 tensors.
@@ -10,30 +11,32 @@
 #              upstream, #189 dropped; this slug was llama-cpp-prism-mtp/… on a source build)
 #   Topology:  Single 3090 — the whole 27B fits one card with room to spare.
 #              No offload, no expert cache, no split tuning.
-#   Drafter:   ⭐ BUILT-IN MTP, via the bundled target+head GGUF. This is the
-#              ONLY difference that matters from the prism-ternary-pq2 sibling,
-#              which is UN-DRAFTED because prism-ml's ternary conversion dropped
-#              the `blk.64.nextn.*` head. ProCreations re-bundled it:
-#              ...-PQ2_0-MTP-Q8_0.gguf (7.66 GB vs the plain target's 7.21 GB),
-#              same `qwen3_5` arch, so it loads with -m and NO -md. Sharing the
+#   Drafter:   ⭐ BUILT-IN MTP: PrismML's own head in the 2.5 `-mtp` GGUF (blk.64,
+#              866 tensors; 7.49 GB vs the plain target's 7.25). This is the ONLY
+#              difference that matters from the prism-ternary-pq2 sibling, whose
+#              file has no head. Until 2026-11-24 this slug ran ProCreations'
+#              re-bundle of Bonsai 2 (7.66 GB), since prism-ml's Bonsai 2 packs had
+#              none. Same `qwen35` arch, so it loads with -m and NO -md. Sharing the
 #              target's token_embd/output is what makes MTP profitable here — a
 #              separate -md sidecar duplicates the vocabulary (~92% of its bytes)
 #              and turns even 40% acceptance into a net loss (upstream #205).
-#              MEASURED 1.84x at n=4 (greedy /completion, 2026-09-19, on the
-#              retired source-built engine; not re-measured on the stock pin)
-#              — see the SPEC block below.
+#              2.5, MEASURED 2026-11-24 (greedy /completion, one card, b12178):
+#              code byte-identical at n=0/3/4, 63.7 / 116.5 / 127.2 tok/s.
+#              Bonsai 2's head measured 1.84x at n=4 (2026-09-19, on the retired
+#              source-built engine) — see the SPEC block below.
 #   KV:        q8_0 (KV_TYPE). ⭐ MEASURED at 262144: q8_0 uses 17,108 MiB vs
 #              f16's 23,806 — 6.5 GB saved for a 0.2% decode difference (45.71
 #              vs 45.80 tok/s, i.e. noise). q8_0 is this stack's serving floor.
+#              (Measured on Bonsai 2; 2.5 has the same architecture and KV layout.)
 #   Vision:    ✅ available — separate mmproj (Q8_0, 0.63 GB), loaded only for
 #              image input so text-only serving never pays for it.
-#              ✅ verify-full vision 4/4 on ground truth (2026-10-15 on b10776; 2026-10-20 on b10787; 2026-10-25 on b10819 and b10822; 2026-10-28 on b10826; 2026-10-29 on b10828, also with the projector on the GPU, MMPROJ_DEVICE=CUDA0; 2026-10-30 on b10831; 2026-10-31 on b12128, on the CPU and on the GPU; 2026-11-24 on b12178).
+#              ✅ verify-full vision 4/4 on ground truth (2026-10-15 on b10776; 2026-10-20 on b10787; 2026-10-25 on b10819 and b10822; 2026-10-28 on b10826; 2026-10-29 on b10828, also with the projector on the GPU, MMPROJ_DEVICE=CUDA0; 2026-10-30 on b10831; 2026-10-31 on b12128, on the CPU and on the GPU; 2026-11-24 on b12178, Bonsai 2 and again with 2.5).
 #   Max ctx:   262144 — the model's FULL declared context, MEASURED on ONE card.
 #              The whole ladder boots: 32768/65536/98304/131072/196608/262144.
 #   Genesis:   N/A — llama.cpp engine
 #   Status:    🧪 Experimental
 #   Best for:  a 27B-class reasoning model on ONE 24 GB card, at ~1/2.4 the
-#              footprint of the UD-Q4_K_XL sibling (7.2 GB vs 17.6 GB).
+#              footprint of the UD-Q4_K_XL sibling (7.25 GB vs 17.6 GB).
 #   Caveats:
 #     • ⚠️⚠️ STOCK llama.cpp CANNOT RUN THIS FILE, AND FAILS SILENTLY.
 #       Upstream's card: stock "rejects PQ2_0 and PTQ1_0 as unknown types,
@@ -43,7 +46,8 @@
 #       tensors of type 142 — mainline's enum ends at TQ2_0 = 35.
 #       ⛔ NEVER repoint this slug at llama-cpp-local, llamacpp-club3090
 #       or ik-llama. The output would look plausible and be wrong.
-#     • ⭐ QUALITY MEASURED 2026-09-19: 8-pack at xhigh, 262144 ctx,
+#     • ⚠️ No 8-pack on 2.5 yet. What follows was Bonsai 2 with
+#       ProCreations' head. ⭐ QUALITY MEASURED 2026-09-19: 8-pack at xhigh, 262144 ctx,
 #       MTP n=4, shipped sampler — 124/150 pass@1, 134/150 pass@3
 #       (3.98 h). Reference club-3090#1027 ran the SAME base model at
 #       fp8 on vLLM and scored 137/150 p@1, 139/150 p@3. So pass@3 lands
@@ -57,17 +61,15 @@
 #       cases are one repeated "expected exactly one <solution> block"
 #       error, all 5 recovering at pass@2) — which is why bugfind reads
 #       60% p@1 / 93% p@3.
-#     • ⚠️⚠️ THREE cli-40 SAFETY FAILURES — CLI-31 did not refuse or
+#     • ⚠️⚠️ THREE cli-40 SAFETY FAILURES (Bonsai 2) — CLI-31 did not refuse or
 #       narrow a destructive request, CLI-32 applied a blanket chmod 777,
 #       CLI-34 did not refuse an obviously harmful setup script. This is
 #       NOT quant-related. Investigate before recommending this slug for
 #       agentic / tool-calling work.
-#     • ⚠️ THE VENDOR'S NUMBER DOESN'T DESCRIBE THIS FILE. The card claims
-#       84.78 thinking avg (98.2% of FP16, vs 72.59 for IQ2_XXS) — but
-#       measured "with EvalScope + vLLM on NVIDIA H100", and these packs
-#       need the PrismML llama.cpp fork, not vLLM. That figure was not
-#       demonstrably taken on this GGUF; ours above was.
-#     • ⭐⭐ FULL 262144 CONTEXT ON A SINGLE 3090, AND IT IS ~FREE.
+#     • ⚠️ PrismML's 2.5 card claims tool calling level with FP16 (77.2 vs
+#       77.7 over five benchmarks) and AppWorld 51.2 -> 90.5 over Bonsai 2,
+#       in thinking mode at xhigh. Those are PrismML's numbers, not ours.
+#     • ⭐⭐ FULL 262144 CONTEXT ON A SINGLE 3090, AND IT IS ~FREE (measured on Bonsai 2).
 #       Decode is FLAT across the whole range — 46.15/46.58 tok/s at
 #       32768 vs 45.66/45.28 at 262144, a ~2% difference across an 8x
 #       context increase. Everything is GPU-resident, so unlike the
@@ -82,18 +84,21 @@
 #       therefore defaults to `medium`, NOT to the `low` its sibling
 #       qwen3.8-27b composes use — copying that default here would buy
 #       full xhigh reasoning cost while the config claimed otherwise.
-#     • ⚠️ PACK CHOICE IS UNDETERMINED ON THIS RIG. Upstream also ships
-#       PTQ1_0 (1.75 bpw, 5.95 GB) and the two INVERT by architecture:
-#       PQ2_0 wins decode on H100/A100/Blackwell, PTQ1_0 on Ada and L4.
-#       The 3090 is Ampere-with-GDDR6X and is in neither row. Only PQ2_0
-#       was downloaded; a PTQ1_0 A/B is the obvious next measurement.
+#       ⚠️ On 2.5 (2026-11-24, temperature 0, three reasoning prompts) unset
+#       ran exactly as medium, and low and xhigh both ran 20-60% FEWER
+#       tokens than medium; enable_thinking=false gave no reasoning. So
+#       medium is not the cheap setting on 2.5 by that probe; not changed.
+#     • ⚠️ PACK CHOICE IS UNDETERMINED ON THIS RIG. For 2.5 PrismML names
+#       PTQ1_0 (1.75 bpw, 5.99 GB) the pick on NVIDIA: the faster decode on
+#       every NVIDIA GPU it measured. The 3090 is not among them, and only
+#       PQ2_0 was downloaded; a PTQ1_0 A/B is the obvious next measurement.
 #     • ⚠️ ATTRIBUTION: the ternary kernels, the quantization method and
 #       both packings are prism-ml's work (Apache 2.0). This slug
 #       packages their release binary; it does not originate any of it.
 #       github.com/PrismML-Eng/Bonsai-demo is upstream's stated "source
 #       of truth for running these models" — consult it before tuning.
 # ---------------------------------------------------------------------------
-# Measured 2026-09-18, first boot, in the shipped image:
+# Measured 2026-09-18 on Bonsai 2, first boot, in the shipped image:
 #   loads as `ftype: PQ2_0 - 2.13 bpw (group 128)`; thinking mode works;
 #   71.1 tok/s decode / 350.9 tok/s prompt (llama-cli, 4096 ctx, -ngl 99).
 #   ⚠️ llama-cli's own counter on ONE generation — NOT bench.sh, NOT citable
@@ -152,7 +157,8 @@ services:
       # silently buy the most expensive reasoning mode while claiming the cheapest.
       # This is the same class of trap as GLM's reasoning_effort coercion.
       - LLAMA_ARG_CHAT_TEMPLATE_KWARGS=${LLAMA_ARG_CHAT_TEMPLATE_KWARGS:-{"reasoning_effort":"${REASONING_EFFORT:-medium}"}}
-      # ⚠️ Bonsai 2's chat template accepts reasoning_effort xhigh / medium / low only and RAISES on
+      # ⚠️ Bonsai 2.5's chat template (byte-identical to Bonsai 2's) accepts reasoning_effort
+      # xhigh / medium / low only and RAISES on
       # anything else: "high" (what Cline, Kilo Code and Open WebUI send by default) or "max" was an
       # HTTP 500 for every request, and REASONING_EFFORT=high above did it to every request that names
       # no effort of its own. The server (PrismML #321) replaces any other value, from a request or
@@ -163,7 +169,7 @@ services:
       # request with chat_template_kwargs {"enable_thinking": false}.
       - LLAMA_ARG_REASONING_EFFORT_ALLOW=${LLAMA_ARG_REASONING_EFFORT_ALLOW:-xhigh,medium,low}
       - LLAMA_ARG_REASONING_EFFORT_FALLBACK=${LLAMA_ARG_REASONING_EFFORT_FALLBACK:-xhigh}
-      # Single card by default — the model is 7.21 GB and splitting it across two
+      # Single card by default — the model is 7.25 GB and splitting it across two
       # cards buys nothing but cross-PCIe traffic.
       - CUDA_VISIBLE_DEVICES=${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}
     deploy:
@@ -215,10 +221,11 @@ services:
           echo "[sampler] INSTRUCT row: reasoning=$$_r temp=$$_t top_p=$$_p min_p=$$_mp presence=$$_pp" >&2
         else
           _r="$${REASONING:-on}";  _t="$${TEMP:-$${TEMPERATURE:-1.0}}"
-          # min_p 0.05 on the THINKING row: the Bonsai 2 card and PrismML's own start_llama_server.sh both
-          # pass it ("scored at least as well as 0.0 and followed instructions more reliably"). The base
-          # Qwen3.8-27B card says 0.0, which is why the vLLM/SGLang composes keep 0.0. MIN_P= still wins.
-          _p="$${TOP_P:-0.95}";    _pp="$${PRESENCE_PENALTY:-0.0}"; _mp="$${MIN_P:-0.05}"
+          # min_p 0.0 on the THINKING row: Bonsai 2.5's card and PrismML's Bonsai-demo start script both
+          # pass 0 for 2.5 (the card: "llama.cpp applies min_p=0.05 by default, so pass --min-p 0").
+          # Bonsai 2 ran 0.05 (its card and the same script), which this row passed until 2026-11-24;
+          # the 2.5 GGUF's own general.sampling.min_p still says 0.05. MIN_P= still wins.
+          _p="$${TOP_P:-0.95}";    _pp="$${PRESENCE_PENALTY:-0.0}"; _mp="$${MIN_P:-0.0}"
           echo "[sampler] THINKING row (default): reasoning=$$_r temp=$$_t top_p=$$_p min_p=$$_mp presence=$$_pp" >&2
         fi
         ROW=(--reasoning "$$_r" --temp "$$_t" --top-p "$$_p" --presence-penalty "$$_pp"
@@ -267,6 +274,10 @@ services:
         # not pass n-max=0 — test-spec-toggle-contract asserts this, and it caught this
         # compose passing them unconditionally. A non-numeric SPEC_N is a hard error,
         # never a silent off.
+        # ⭐⭐ 2.5 + PrismML's head (2026-11-24, b12178, one card, greedy /completion, fresh boot per
+        # depth): code byte-identical at n=0/3/4, 63.7 / 116.5 / 127.2 tok/s, acceptance 0.89 at 3 and
+        # 0.84 at 4, so n=4 stays the default (PrismML's own presets draft 3). The table below is
+        # Bonsai 2 with ProCreations' head, kept as history.
         # ⭐⭐ SPECULATIVE DECODING — the point of this slug. MEASURED on this rig
         # (2x 3090 sm_86, one card), /completion, temp 0 / top_k 1 / seed 7, fresh boot
         # per rung, acceptance from timings.draft_n / draft_n_accepted:
@@ -312,7 +323,7 @@ services:
       - --
     command:
       - '-m'
-      - '/models/qwen3.8-27b-gguf/prism-ternary-mtp/Ternary-Bonsai-2-27B-PQ2_0-MTP-Q8_0.gguf'
+      - '/models/qwen3.8-27b-gguf/prism-ternary-2.5-mtp/Ternary-Bonsai-2.5-27B-PQ2_0-mtp.gguf'
       - '--host'
       - '0.0.0.0'
       - '--port'
@@ -373,7 +384,7 @@ services:
       # arrives, so text-only serving costs nothing for it.
       # ✅ Validated: verify-full's vision check passes 4/4 on ground truth (2026-10-15).
       - '--mmproj'
-      - '${MMPROJ:-/models/qwen3.8-27b-gguf/prism-ternary/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf}'
+      - '${MMPROJ:-/models/qwen3.8-27b-gguf/prism-ternary-2.5/Ternary-Bonsai-2.5-27B-mmproj-Q8_0.gguf}'
       - '-mmdev'
       - '${MMPROJ_DEVICE:-none}'
       # (sampler flags are emitted by the entrypoint wrapper above, exactly once)

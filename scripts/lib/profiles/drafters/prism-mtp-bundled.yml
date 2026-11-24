@@ -1,12 +1,16 @@
 schema_version: 1
 id: prism-mtp-bundled
-display_name: Bonsai 2 27B MTP head, bundled INTO the ternary target GGUF
+display_name: Ternary-Bonsai-2.5-27B MTP head (PrismML's own), bundled INTO the ternary target GGUF
 spec_method: mtp_gguf
 model_compat:
   - qwen3.8-27b
 engine_compat:
   engine_type: llama.cpp
-# ⭐ n=4 is MEASURED, not inherited. On 2x3090 sm_86 (one card), /completion,
+# ⭐ 2.5 (PrismML's head, 2026-11-24, prism-b12178, one card, /completion, temp 0 / top_k 1 / seed 7, fresh boot per
+# depth): code byte-identical at n=0/3/4, 63.7 / 116.5 / 127.2 tok/s, acceptance 0.89 at 3 and 0.84 at 4. n=4 stays
+# the default; PrismML's own presets draft 3. verify-full's acceptance 0.877.
+# The sweep below is Bonsai 2 with ProCreations' head (2026-09-19, the retired source-built engine), kept as history.
+# n=4 is MEASURED, not inherited. On 2x3090 sm_86 (one card), /completion,
 # temp 0 / top_k 1 / seed 7, fresh boot per rung:
 #   n=1 74.96 (1.54x, 94% acc) · n=2 79.78 (1.64x, 86%) · n=3 82.57 (1.70x, 82%)
 #   n=4 89.58 (1.84x, 77%)  <-- peak · n=5 73.21 (1.50x, 61%) · n=6 69.68 (1.43x)
@@ -19,7 +23,7 @@ engine_compat:
 n_default: 4
 n_max: 6
 # ⭐ NOT a separate download: the head ships INSIDE the target GGUF
-# (Ternary-Bonsai-2-27B-PQ2_0-MTP-Q8_0.gguf, 7.66 GB vs the plain target's 7.21).
+# (Ternary-Bonsai-2.5-27B-PQ2_0-mtp.gguf, 7.49 GB vs the plain target's 7.25; Bonsai 2's re-bundle was 7.66 vs 7.21).
 # That is load-bearing, not packaging trivia — sharing the target's
 # token_embd/output is what makes MTP profitable here. A separate -md sidecar
 # duplicates the vocabulary (~92% of its bytes) and turns even 40% acceptance
