@@ -37,7 +37,7 @@
 # effort_map: none 0.0 ... high 0.9, xhigh / max 0.99); none turns thinking off here (measured).
 services:
   strata-maya:
-    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:3d4e5368e628ef07a67e7bb2f1e2779676c681414f35bf0070fef4f857abaa5f}
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:3798de4d0b7c2a1ba959d96d5f70d6e0b06184ba62ee78f92f0c7bbc4e1c0b4d}
     container_name: ${ESTATE_CONTAINER:-strata-maya-inkling-2-mini-single-ud-q4kxl}
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
