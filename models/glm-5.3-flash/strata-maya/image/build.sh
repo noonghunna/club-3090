@@ -67,6 +67,10 @@ REQUIRED_MM3_PACK_FLAGS="${REQUIRED_MM3_PACK_FLAGS:---model --out --companions -
 # maya-hy4 stops at a flag it does not know; --serve is the server's own (it starts the engine with it)
 REQUIRED_HY4_FLAGS="${REQUIRED_HY4_FLAGS:---pack --max-context --mtp --kv --vision --cpu-threads --serve}"
 REQUIRED_HY4_PACK_FLAGS="${REQUIRED_HY4_PACK_FLAGS:---model --out --mmproj --mtp --files}"
+# ... and the Inkling-2-Mini launcher's (models/inkling-2-mini/strata-maya/launcher/, the slug that runs maya-ik2), for
+# build/maya-ik2 (v1.1.72 on; required where the release's CMakeLists.txt defines it). maya-ik2 stops at a flag it does
+# not know; --serve is the server's own
+REQUIRED_IK2_FLAGS="${REQUIRED_IK2_FLAGS:---model --max-context --draft --drafting --threads --serve}"
 
 TAG="" PUSH=0 FORCE=0 VERIFY="" JOBS=""
 usage() { awk 'NR > 1 && !/^#/ {exit} NR > 1 {sub(/^# ?/, ""); print}' "$0"; }
@@ -240,6 +244,27 @@ $help"
   done
   [[ -z "$absent" ]] || die "tools/hy4/pack_gguf.py no longer offers:$absent (update the Hy4-Flash launcher before taking this release)"
   say "check: maya-hy4 resolves and takes every flag the Hy4-Flash launcher passes; tools/hy4/pack_gguf.py offers its flags"
+
+  # Inkling-2-Mini's engine (its strata-maya slug; Maya v1.1.72 on): required where the release defines it
+  if "${run[@]}" grep "$ref" -q -E '^ *add_executable\(maya-ik2 ' /opt/maya/CMakeLists.txt; then
+    local ik2=/opt/maya/build/maya-ik2
+    "${run[@]}" test "$ref" -x "$ik2" || die "$ref has no $ik2 although the release's CMakeLists.txt defines maya-ik2"
+    missing="$("${run[@]}" ldd "$ref" "$ik2" | command grep 'not found' \
+               | command grep -v -E 'libcuda\.so|libnvidia' || true)"
+    [[ -z "$missing" ]] || die "libraries of $ik2 missing from the image:
+$missing"
+    absent="$("${run[@]}" /opt/maya/.venv/bin/python "$ref" -c '
+import sys
+data = open(sys.argv[1], "rb").read()
+print(" ".join(f for f in sys.argv[2:] if b"\0" + f.encode() + b"\0" not in data))' "$ik2" $REQUIRED_IK2_FLAGS 2>&1)" \
+      || die "could not read $ik2's strings:
+$absent"
+    [[ -z "$absent" ]] || die "maya-ik2 no longer takes: $absent (update the Inkling-2-Mini launcher before taking this release)"
+    "${run[@]}" test "$ref" -f /opt/maya/tools/strata_tokenizer.py -a -f /opt/maya/tools/ik2/chat_template.jinja \
+      -a -f /opt/maya/tools/ik2/download.json \
+      || die "the release lacks tools/strata_tokenizer.py, tools/ik2/chat_template.jinja or tools/ik2/download.json (the Inkling-2-Mini launcher reads them)"
+    say "check: maya-ik2 resolves and takes every flag the Inkling-2-Mini launcher passes; its tokenizer tools are there"
+  fi
 
   # the launcher's first start builds a pack. gguf-py must import as the tools find it, and the pack
   # builder must index the release's own 12 MB synthetic GLM-5 model with the flags the launcher passes.

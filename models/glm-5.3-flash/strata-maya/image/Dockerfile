@@ -49,7 +49,7 @@ RUN o=STRATA; grep -q -E '^ *option\(MAYA_PORTABLE ' /src/CMakeLists.txt && o=MA
         -D${o}_GGML_DIR=/llama.cpp \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
 # The engines' targets: `maya` since v1.1.16, `strata` before (v1.1.16 renamed the programs after Maya),
-# and DeepSeek's `maya-ds4`, MiniMax's `maya-mm3` and Hy4-Flash's `maya-hy4` beside it in the releases that define them (build.sh
+# and DeepSeek's `maya-ds4`, MiniMax's `maya-mm3`, Hy4-Flash's `maya-hy4` and Inkling-2-Mini's `maya-ik2` (v1.1.72 on) beside it in the releases that define them (build.sh
 # checks they are there)
 # (the ccache statistics of this build go to the build log: build.sh's caller can see what the cache saved)
 RUN --mount=type=cache,id=strata-maya-ccache,target=/root/.cache/ccache \
@@ -58,6 +58,7 @@ RUN --mount=type=cache,id=strata-maya-ccache,target=/root/.cache/ccache \
     grep -q -E '^ *add_executable\(maya-ds4 ' /src/CMakeLists.txt && target="$target maya-ds4"; \
     grep -q -E '^ *add_executable\(maya-mm3 ' /src/CMakeLists.txt && target="$target maya-mm3"; \
     grep -q -E '^ *add_executable\(maya-hy4 ' /src/CMakeLists.txt && target="$target maya-hy4"; \
+    grep -q -E '^ *add_executable\(maya-ik2 ' /src/CMakeLists.txt && target="$target maya-ik2"; \
     echo "$target" > /tmp/engine-targets; \
     jobs="${JOBS:-$(( $(nproc) / 2 ))}"; [ "$jobs" -ge 1 ] || jobs=1; \
     for t in $target; do cmake --build /build --target "$t" -j "$jobs" || exit 1; done; \
@@ -104,7 +105,7 @@ RUN python3 -m venv /opt/maya/.venv \
     && /opt/maya/.venv/bin/pip install --no-cache-dir -r /opt/club3090/maya-py-packages.txt \
     && /opt/maya/.venv/bin/pip freeze > /opt/club3090/maya-pip-freeze.txt
 # the engines under the release's own names: /opt/maya/build/maya (v1.1.16 on) or /opt/maya/build/strata,
-# /opt/maya/build/maya-ds4, /opt/maya/build/maya-mm3 and /opt/maya/build/maya-hy4
+# /opt/maya/build/maya-ds4, /opt/maya/build/maya-mm3, /opt/maya/build/maya-hy4 and /opt/maya/build/maya-ik2
 COPY --from=build /out/bin/ /opt/maya/build/
 COPY --from=build /out/maya-cpu-flags.txt /out/cuda-architectures.txt /opt/club3090/
 
