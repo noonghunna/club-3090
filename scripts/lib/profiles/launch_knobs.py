@@ -159,6 +159,16 @@ MOUNTED_READERS = (
         },
     },
     {
+        # the Inkling-2-Mini Project Maya compose's entrypoint (maya-ik2): ik2_prepare.py writes these into maya-ik2.json at
+        # every boot through ik2_settings.py, which refuses a bad value (exit 1, before the SHA-256 check)
+        "invoke": '"/opt/club3090/ik2-entrypoint.sh"',
+        "file": "models/inkling-2-mini/strata-maya/launcher/ik2_settings.py",
+        "knobs": {
+            "REASONING_EFFORT": None,
+            "CONTEXT": None,          # checked here; ik2_prepare.py writes it into maya-ik2.json's --max-context
+        },
+    },
+    {
         # the bucko-vllm composes' own default-thinking-budget patch (patches.yml
         # bucko-default-thinking-budget): reads the floor the compose declares
         "invoke": "python3 /etc/club3090/thinking-budget/apply.py",

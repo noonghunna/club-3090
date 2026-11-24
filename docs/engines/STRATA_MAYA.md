@@ -1,4 +1,4 @@
-# Project Maya — a Strata fork for GLM-5.3-Flash on one, two or four cards, DeepSeek-V4.1-Flash on two or four, MiniMax-M3.1-Flash on one, two or four, and Hy4-Flash on one to four
+# Project Maya — a Strata fork for GLM-5.3-Flash on one, two or four cards, DeepSeek-V4.1-Flash on two or four, MiniMax-M3.1-Flash on one, two or four, Hy4-Flash on one to four, and Inkling-2-Mini on one
 
 **Engine id:** `strata-maya` · **Slug prefix:** `strata-maya/` · **Status of its slugs:** 🐣 Incubating · **Requires:** NVIDIA compute capability 7.5+, driver ≥ 580 (CUDA 13), an x86-64 CPU with AVX2, and enough host RAM to hold the experts that don't fit in VRAM (~65 GB for Maya-S on two cards up to ~148 GB for Maya-L on one, measured; less RAM still runs, reading the rest from the model files)
 
@@ -265,6 +265,27 @@ Maya runs Tencent's [Hy4-Flash](https://huggingface.co/tencent/Hy4-flash) on a f
   - Not benched yet.
   - Quality per Maya's model card (same top token / KL against full precision): XS 88.5% / 0.16, S 91.8% / 0.072, M 93.6% / 0.046, L 96.6% / 0.012.
   - multi3 and multi4 are community-validated by design.
+
+## Inkling-2-Mini (maya-ik2)
+
+Maya runs Thinking Machines' Inkling-2-Mini on a sixth engine, `maya-ik2` (`src/ik2`, from v1.1.72, an experimental preview upstream). It reads unsloth's GGUF in place: there is no pack. The model is a 26B looped MoE (layers 6–17 run three times), with 128 experts per layer and 8 active per token, and a DSpark drafter of its own.
+
+| Quant | Single (1 card) |
+|---|---|
+| **unsloth UD-Q4_K_XL** (`unsloth-ud-q4kxl`: NVFP4 experts on layers 0–19, their original bits, Q8_0 on 20–23 and the dense weights; 17.63 GB) | `strata-maya/inkling-2-mini-single-ud-q4kxl` · 8230 |
+
+- **Weights:** the files Maya's own setup downloads (`tools/ik2/download.json`):
+  - the model from `unsloth/Inkling-2-Mini-GGUF` at revision `ae9327c5`;
+  - the drafter, unsloth's GGUF of the model's own DSpark drafter (0.40 GB), from Maya's `peasantsmith/Inkling-2-Mini-Maya-GGUF` at revision `37027719`.
+
+  Both are under `inkling-2-mini-gguf/unsloth-ud-q4kxl/`, and the launcher checks their SHA-256 against Maya's manifest once.
+- **The image has to build `maya-ik2`.** The recipe builds it in releases that define it, and `build.sh` checks that the image has it and that it takes every flag the launcher passes.
+- **The launcher** is the model's own, in `models/inkling-2-mini/strata-maya/launcher/`. It exports the tokenizer from the GGUF with thinkingmachines' own chat template, as Maya's setup does. That goes to the data volume, since the model folder is mounted read-only. It also writes `maya-ik2.json` there.
+- **Effort reaches the template by name**, through thinkingmachines' `effort_map`: none 0.0, minimal 0.1, low 0.2, medium 0.7, high 0.9, and 0.99 for xhigh and max. `none` turns thinking off: measured on an IPv4-validator prompt at temperature 0, no reasoning at `none` (and none at `minimal` on that prompt), 1,033 characters at `low`, 1,962 at `medium`, 3,777 at `high`, 3,002 at `xhigh` and `max`. That differs from the same model on the vllm-inkling slugs, where `none` (0.0) still reasons. The default is `high`. There's no thinking-budget setting: the server cuts a reasoning block at a `</think>` token, which Inkling's typed segments don't use.
+- **Drafting is auto.** At the first start, `maya-ik2` measures which decodes fastest on the card: no drafting, the prompt lookup, the drafter, or both. It keeps the choice in `ik2-drafting.txt` on the data volume, so a new container doesn't measure again. `DRAFTING=on` or `off` sets it by hand.
+- **The KV cache is FP8 (E4M3)**, Maya's default; `KV=f16` keeps 16 bits.
+- **Text only:** pictures need Maya's separate `maya-vision` encoder, which our image doesn't build.
+- **One request at a time:** Maya's setup leaves `--parallel` off, and with it set, `maya-ik2` turns drafting off.
 
 ## Tuning for your PC
 

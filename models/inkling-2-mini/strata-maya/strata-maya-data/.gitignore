@@ -1,0 +1,4 @@
+# Project Maya's data volume (packs, configs, engine logs) when a compose is run by hand with
+# CLUB3090_DATA_DIR unset. The launchers use ~/.local/share/club-3090/strata-maya-data instead.
+*
+!.gitignore

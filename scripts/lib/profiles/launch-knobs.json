@@ -612,7 +612,8 @@
       ],
       "model": [
        "inkling-2-mini"
-      ]
+      ],
+      "compose_contains": "strata-entrypoint.sh"
      },
      "enforced": "boot",
      "min": 4096,
@@ -786,6 +787,46 @@
         "65536",
         "131072",
         "204800"
+       ],
+       "reject": [
+        "0",
+        "4095",
+        "-1",
+        "x",
+        "64K"
+       ]
+      }
+     ]
+    },
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "inkling-2-mini"
+      ],
+      "compose_contains": "ik2-entrypoint.sh"
+     },
+     "enforced": "boot",
+     "min": 4096,
+     "source": {
+      "file": "models/inkling-2-mini/strata-maya/launcher/ik2_settings.py",
+      "what": "context(): CONTEXT must be a whole number >= 4096 or the boot exits 2 (settings() calls it, so a bad value stops before the SHA-256 check); the prepare script writes it into the run config's engine args as --max-context"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/inkling-2-mini/strata-maya/compose/single/unsloth-ud-q4kxl/dspark.yml",
+       "program": "models/inkling-2-mini/strata-maya/launcher/ik2_settings.py",
+       "args": [
+        "validate"
+       ],
+       "accept": [
+        "4096",
+        "65536",
+        "131072",
+        "262144"
        ],
        "reject": [
         "0",
@@ -2207,6 +2248,57 @@
         "minimal",
         "HIGH",
         "75"
+       ]
+      }
+     ]
+    },
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "inkling-2-mini"
+      ],
+      "compose_contains": "ik2-entrypoint.sh"
+     },
+     "enforced": "boot",
+     "values": [
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "default": "",
+     "source": {
+      "file": "models/inkling-2-mini/strata-maya/launcher/ik2_settings.py",
+      "what": "settings(): REASONING_EFFORT must be one of the template's effort_map names (none, minimal, low, medium, high, xhigh, max) or the boot exits 2; unset, the config's reasoning_effort is high (Maya's own default for Inkling-2-Mini)"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/inkling-2-mini/strata-maya/compose/single/unsloth-ud-q4kxl/dspark.yml",
+       "program": "models/inkling-2-mini/strata-maya/launcher/ik2_settings.py",
+       "args": [
+        "validate"
+       ],
+       "accept": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+       ],
+       "reject": [
+        "auto",
+        "HIGH",
+        "0.5",
+        "off"
        ]
       }
      ]

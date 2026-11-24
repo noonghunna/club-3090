@@ -99,3 +99,31 @@ weights:
     engine: strata
     kind: main
     manual_note: "🐣 Strata's own SQ-20 build of Inkling-2-Mini (19.35 GB, which Strata calls bit-exact lossless native SF4+MX8 against Thinking Machines' checkpoint, with its DSpark drafter built in), plus the 0.64 GB vision file and the tokenizer. Only Strata's strata-inkling engine reads .strata files. ⚠️ Strata fixes the effort: its Inkling dialect sends reasoning_effort none on every request."
+  unsloth-ud-q4kxl:
+    path: inkling-2-mini-gguf/unsloth-ud-q4kxl
+    local_subdir: inkling-2-mini-gguf/unsloth-ud-q4kxl
+    size_gb: 17.63
+    format: gguf
+    status: incubating
+    hf_repo: unsloth/Inkling-2-Mini-GGUF
+    # The revision Project Maya's own manifest pins (tools/ik2/download.json at v1.1.75), with its size and SHA-256.
+    revision: ae9327c5fbc7333116ba32eee78bb5d2bbefae4f
+    files:
+      - Inkling-2-Mini-UD-Q4_K_XL.gguf
+    verify_glob: Inkling-2-Mini-UD-Q4_K_XL.gguf
+    engine: strata-maya
+    kind: main
+    manual_note: "🐣 unsloth's UD-Q4_K_XL GGUF of Inkling-2-Mini (17.63 GB): NVFP4 experts in layers 0-19 (their original bits), Q8_0 in layers 20-23 and the dense weights, in Unsloth's looped layout, which Project Maya's maya-ik2 engine reads in place (Maya v1.1.72 on). The file Maya's own setup downloads. Its drafter is maya-ik2-dspark."
+  maya-ik2-dspark:
+    path: inkling-2-mini-gguf/unsloth-ud-q4kxl/drafter
+    local_subdir: inkling-2-mini-gguf/unsloth-ud-q4kxl
+    size_gb: 0.40
+    format: gguf
+    status: incubating
+    hf_repo: peasantsmith/Inkling-2-Mini-Maya-GGUF
+    revision: 37027719327de5f574684b525ad88fe50c4ff222
+    kind: draft
+    files:
+      - drafter/dspark-Inkling-2-Mini-Q8_0.gguf
+    verify_glob: drafter/dspark-Inkling-2-Mini-Q8_0.gguf
+    manual_note: "The model's own DSpark drafter as unsloth's GGUF of it (0.40 GB), from Maya's repo: maya-ik2 drafts with it (--draft, --drafting auto)."

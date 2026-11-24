@@ -1,0 +1,26 @@
+schema_version: 1
+id: maya-ik2-dspark
+display_name: Inkling-2-Mini DSpark drafter (the model's own, as unsloth's GGUF of it, for Project Maya's maya-ik2)
+spec_method: dspark
+model_compat:
+  - inkling-2-mini
+engine_compat:
+  engine_type: strata
+n_default: 7
+n_max: 7
+download:
+  hf_repo: peasantsmith/Inkling-2-Mini-Maya-GGUF
+  size_gb: 0.40
+vram_footprint_gb: variable
+status: incubating
+# Thinking Machines' DSpark drafter for Inkling-2-Mini (the checkpoint's mtp.safetensors) as unsloth's GGUF of it
+# (llama.cpp's dflash architecture, Q8_0 matrices: dspark-Inkling-2-Mini-Q8_0.gguf, 0.40 GB), which Maya's repo carries
+# byte for byte at drafter/ (tools/ik2/download.json's "drafter" at v1.1.75: peasantsmith/Inkling-2-Mini-Maya-GGUF
+# @37027719). maya-ik2 --draft reads it on its fastest drafting path, beside the prompt lookup; --drafting auto (Maya's
+# default, and the slug's) measures once at the first start which of no drafting, the lookup, the drafter and both
+# decodes fastest on the PC and keeps it (IK2_DRAFT_FILE, on the data volume). The draft block is the drafter's own
+# (block_size 8), so n_default = n_max = 7. Maya v1.1.75's notes: on one RTX 3090 at 262,144, new code 140 -> about
+# 200 tok/s with drafting, the same tokens (their measurement; not reproduced here).
+requires_engine_min: null
+speculative_config_template: null   # N/A — Maya's engine, not vLLM
+local_model_path: null

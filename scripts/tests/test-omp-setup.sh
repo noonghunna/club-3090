@@ -141,7 +141,7 @@ PER_ID = {
     # hy4-flash: one thinking level (Tencent's card: high or no_think); every other name
     # folds to high on Maya, the only engine serving the id, so the fold sources are listed.
     "hy4-flash": (["high", "low", "max", "medium", "xhigh"], "high", "hy4"),
-    # inkling-2-mini: the probed ladder plus max, which every route (vllm-inkling only) folds onto xhigh;
+    # inkling-2-mini: the probed ladder plus max, which every route (vllm-inkling and strata-maya, the same template) folds onto xhigh;
     # the default is the composes' REASONING_EFFORT high, the template's own.
     "inkling-2-mini": (["minimal", "low", "medium", "high", "xhigh", "max"], "high", "inkling"),
     # inkling-2-mini-sq-20: Strata's own id for its SQ-20 build. The emit renders the model's ladder and the
@@ -181,7 +181,7 @@ PER_ID_ENGINES = {
     "swift-1.5-iq3_s": {"strata"},
     "glm-5.3-flash": {"llamacpp-club3090-v1.6", "strata-maya"},
     "hy4-flash": {"strata-maya"},
-    "inkling-2-mini": {"vllm-inkling"},
+    "inkling-2-mini": {"strata-maya", "vllm-inkling"},
     "inkling-2-mini-sq-20": {"strata"},
 }
 

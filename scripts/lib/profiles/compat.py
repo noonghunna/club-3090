@@ -1605,6 +1605,12 @@ def fits(
     # KV to SM12x. (Its weights key, nvfp4-mxfp8, also matches the nvfp4 prefix above, whose FlashInfer
     # rationale doesn't apply to this model.)
     _fp8w_ampere_kv = _fp8w_ampere_kv or (effective_kv == "fp8_e4m3" and engine.id == "vllm-inkling")
+    # strata-maya's maya-ik2 (Inkling-2-Mini, Project Maya v1.1.72 on) added 2026-11-23: its own CUDA kernels keep the
+    # cache in E4M3 bytes on every card (IK2_KV=fp8, Maya's default: src/ik2/ik2_main.cu), validated on a 3090 through
+    # switch.sh. Keyed on the engine AND the family: Maya's other engines (maya, maya-ds4, maya-mm3, maya-hy4) keep
+    # their own KV formats and claim no FP8.
+    _fp8w_ampere_kv = _fp8w_ampere_kv or (effective_kv == "fp8_e4m3" and engine.id == "strata-maya"
+                                          and model.family == "inkling2-loop-moe")
     unsupported_hw = [
         hw.id for hw in hardware
         if effective_kv not in hw.supported_kv_formats
