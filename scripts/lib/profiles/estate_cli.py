@@ -17,7 +17,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +30,7 @@ if str(REPO_ROOT) not in sys.path:
 
 os.environ.setdefault("CLUB3090_LOG_LEVEL", "ERROR")
 
+from scripts.lib import engine_http  # noqa: E402  (our requests to an engine carry its key)
 from scripts.lib.profiles.canonical_scenarios import CANONICAL_SCENARIOS  # noqa: E402
 from scripts.lib.profiles.compat import (  # noqa: E402
     InstanceSpec,
@@ -637,8 +637,12 @@ def boot_failure_error(name: str, why: str) -> EstateCliError:
 
 
 def endpoint_ready(port: int) -> bool:
+    # Through engine_http, not a bare urlopen: Strata 0.2+ answers /v1/models with 401 until it
+    # gets its key, so a Strata instance never read as ready and the boot waited out its whole
+    # timeout on a healthy server. engine_http sends nothing extra to an engine that doesn't ask;
+    # on a 401 it resolves the key of the container publishing the URL and retries once.
     try:
-        with urllib.request.urlopen(f"http://localhost:{port}/v1/models", timeout=3) as resp:
+        with engine_http.urlopen(f"http://localhost:{port}/v1/models", timeout=3) as resp:
             return 200 <= resp.status < 300
     except Exception:
         return False
