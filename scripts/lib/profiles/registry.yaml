@@ -2139,6 +2139,37 @@ entries:
     weights_companions: []
     gateway: false
     serve_aliases: []
+  strata-maya/inkling-2-mini-single-ud-q4kxl:
+    origin: core
+    model: inkling-2-mini
+    weights_variant: unsloth-ud-q4kxl
+    workload: long-ctx-single
+    engine: strata-maya
+    drafter: maya-ik2-dspark
+    spec_method: null
+    kv_format: fp8_e4m3
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    kv_offload: null
+    chat_template: native
+    tp: 1
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/inkling-2-mini/strata-maya/compose/single/unsloth-ud-q4kxl/dspark.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8230
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Inkling-2-Mini on one card at 262144 (the maintainer's cap) on Project Maya's maya-ik2 (v1.1.72 on, an experimental preview upstream): unsloth's UD-Q4_K_XL GGUF read in place, every expert in VRAM, FP8 E4M3 KV, the model's own DSpark drafter with --drafting auto, text only, one request at a time. Validated through switch.sh on one RTX 3090 at 230 W. On the pinned v1.1.77 image (2026-11-24): ready 20 s, the drafting choice measured on v1.1.75 reused from the data volume; verify-full all pass (vision n/a: text only), draft acceptance 0.94; effort reaches the template (minimal 0 reasoning chars / 140 tokens, xhigh 3,002 / 1,353, unset high 3,777 / 1,409: the same as on v1.1.75); 23,578 MiB on the card at ready. On a local v1.1.75 + maya-ik2 image built from the same recipe (2026-11-23): ready 44 s on the first start (SHA-256 check, tokenizer export, the drafting measurement in 19 s, which picked the drafter: 106.9 tok/s against 102.0 with no drafting); verify-full all pass, draft acceptance 0.92; verify-stress all pass, the ceiling ladder recalled to 240,545 tokens (91% of 262,144; prefill 1,526 tok/s at 94K, 1,155 at 240K); 23,652 MiB (24.8 GB) of the card's 24,576 MiB at its peak; host RAM fell 2.2 GB at most. verify-stress was not re-run on v1.1.77 (maintainer's call). Needs Maya v1.1.72 or newer in an image whose recipe builds maya-ik2: the v1.1.77 pin's does. No bench."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
   llamacpp-club3090/glm53-flash-dual-iq4xs-moecache:
     origin: core
     model: glm-5.3-flash

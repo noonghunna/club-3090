@@ -1,0 +1,91 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Inkling-2-Mini — unsloth's UD-Q4_K_XL GGUF (unsloth/Inkling-2-Mini-GGUF @ae9327c5, 17.63 GB: NVFP4 experts
+#              in layers 0-19, the original bits; Q8_0 in layers 20-23 and the dense weights), the file Maya's own
+#              setup downloads (tools/ik2/download.json, v1.1.72 on). The launcher checks its SHA-256 once
+#   Engine:    Project Maya (the release engines/strata-maya.yml pins) — its maya-ik2 engine, v1.1.72 on, in club-3090's
+#              image ghcr.io/noonghunna/strata-maya-club3090 (pinned by digest); club-3090's launcher (../../../launcher/)
+#              writes the config
+#   Topology:  Single 3090 (GPU0; ESTATE_GPUS picks another), every expert in VRAM
+#   Drafter:   DSpark — the model's own drafter as unsloth's GGUF of it (dspark-Inkling-2-Mini-Q8_0.gguf, 0.40 GB, from
+#              Maya's repo peasantsmith/Inkling-2-Mini-Maya-GGUF @37027719), with the prompt lookup: --drafting auto
+#              (maya-ik2 measures once on the PC which of no drafting, the lookup, the drafter and both decodes fastest,
+#              and keeps the choice on the data volume)
+#   KV:        FP8 E4M3 (IK2_KV=fp8, Maya's default; KV=f16 keeps 16 bits)
+#   Vision:    no (pictures need Maya's maya-vision encoder, which club-3090's image does not build)
+#   Max ctx:   262144 (the maintainer's cap for Inkling-2-Mini; the model reaches 1M)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   Not gate-passing: an experimental preview upstream (Maya v1.1.72 on: "Inkling 2 Mini arrives as an
+#              experimental preview on its own engine"), quality unmeasured (8-pack pending), no bench. Needs Maya
+#              v1.1.72 or newer, in an image whose recipe builds maya-ik2. Text only. One request at a time (Maya's
+#              setup leaves --parallel off; with it, maya-ik2 turns drafting off). The first start measures the
+#              drafting choice before it says ready (about a minute; IK2_DRAFT_MEASURE=1 measures again). Linux,
+#              NVIDIA RTX 20 / V100 and newer.
+#              Measured on one 3090 at 230 W: on the pinned v1.1.77 image (2026-11-24) ready 20 s, verify-full all pass,
+#              draft acceptance 0.94, 23,578 MiB on the card at ready; on a local v1.1.75 + maya-ik2 image (2026-11-23)
+#              verify-stress all pass, recalled to 240,545 tokens, 23,652 MiB of 24,576 at its peak, host RAM -2.2 GB at
+#              most. No bench.
+#   Best for:  Inkling-2-Mini on ONE 3090 at the full 262K context, with reasoning effort as a setting
+# ---------------------------------------------------------------------------
+# Project Maya (github.com/mw00/project-maya) runs Inkling-2-Mini on its own maya-ik2 engine: see
+# docs/engines/STRATA_MAYA.md. The other Inkling-2-Mini slugs are on vllm-inkling (../../../../vllm-inkling/) and Strata
+# (../../../../strata/).
+#   bash scripts/switch.sh --force strata-maya/inkling-2-mini-single-ud-q4kxl
+# The launcher checks the files' SHA-256 once, exports the tokenizer (thinkingmachines' own chat template) on the data
+# volume, writes the config and starts Maya's server. The effort reaches the template by name (thinkingmachines'
+# effort_map: none 0.0 ... high 0.9, xhigh / max 0.99); none turns thinking off here (measured).
+services:
+  strata-maya:
+    image: ${STRATA_MAYA_IMAGE:-ghcr.io/noonghunna/strata-maya-club3090@sha256:3d4e5368e628ef07a67e7bb2f1e2779676c681414f35bf0070fef4f857abaa5f}
+    container_name: ${ESTATE_CONTAINER:-strata-maya-inkling-2-mini-single-ud-q4kxl}
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    # root, with the launcher's group: what Maya writes to the data volume stays removable by the user
+    # (the entrypoint sets umask 0002)
+    user: "0:${DOCKER_GID:-1000}"
+    entrypoint: ["/bin/sh", "/opt/club3090/ik2-entrypoint.sh", "ik2-ud-q4_k_xl"]
+    ulimits:
+      memlock: -1            # Maya pins (locks) host memory for the GPUs
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8230}}:8080"
+    environment:
+      CONTEXT: "${CONTEXT:-262144}"
+      SETUP_ONLY: "${SETUP_ONLY:-0}"
+      REPACK: "${REPACK:-0}"
+      VERIFY: "${VERIFY:-1}"
+      MAYA_GPUS: "${MAYA_GPUS:-0}"
+      # Maya's server defaults, written into maya-ik2.json at every boot by ik2_prepare.py
+      # (launcher/ik2_settings.py maps each); unset = effort high, sampling 1.0 / 1.0, the name inkling-2-mini,
+      # drafting auto, the cache in FP8, the loop guard on (Maya's own)
+      REASONING_EFFORT:
+      TEMP:
+      TOP_P:
+      TOP_K:
+      MIN_P:
+      PRESENCE_PENALTY:
+      REPEAT_PENALTY:
+      SERVED_NAME:
+      LOOP_GUARD:
+      KV:
+      DRAFTING:
+      THREADS:
+      # Maya's model load/unload endpoints and its model API (/api/tags, /api/ps, /api/chat, ...). This compose sets
+      # no API key, so anyone who reaches the port can unload the model; /api/pull, /api/delete and a model
+      # switch are refused from outside the container. MAYA_MODEL_MANAGEMENT=0 turns all of them off
+      MAYA_MODEL_MANAGEMENT:
+      # the entrypoint passes --host 0.0.0.0 and --port 8080 itself
+    volumes:
+      # each file under the name Maya's setup gives it in the model's folder
+      - "${MODEL_DIR:-../../../../../../models-cache}/inkling-2-mini-gguf/unsloth-ud-q4kxl/Inkling-2-Mini-UD-Q4_K_XL.gguf:/gguf/Inkling-2-Mini-UD-Q4_K_XL.gguf:ro"
+      - "${MODEL_DIR:-../../../../../../models-cache}/inkling-2-mini-gguf/unsloth-ud-q4kxl/drafter/dspark-Inkling-2-Mini-Q8_0.gguf:/gguf/dspark-Inkling-2-Mini-Q8_0.gguf:ro"
+      # one folder per quant (the tokenizer, the config, the drafting record, the engine's log); the launchers put it
+      # under ~/.local/share/club-3090, beside the other Maya models' folders
+      - "${STRATA_MAYA_DATA_DIR:-${CLUB3090_DATA_DIR:-../../..}/strata-maya-data}:/data"
+      - "../../../launcher:/opt/club3090:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}']
+              capabilities: [gpu]

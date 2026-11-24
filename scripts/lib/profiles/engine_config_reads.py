@@ -206,9 +206,34 @@ def render_maya_hy4_prepare(entry: dict, settings: dict) -> dict:
         return json.loads(text)
 
 
+MAYA_IK2_RENDER = r"""
+import sys, types
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import ik2_prepare
+d = Path(sys.argv[2])
+f = {"model": Path("/gguf/Inkling-2-Mini-UD-Q4_K_XL.gguf"), "drafter": Path("/gguf/dspark-Inkling-2-Mini-Q8_0.gguf")}
+ik2_prepare.config("ik2-ud-q4_k_xl", d, f, d / "maya-ik2" / "tokenizer",
+                   types.SimpleNamespace(gpus="0", context=int(sys.argv[3])))
+"""
+
+
+def render_maya_ik2_prepare(entry: dict, settings: dict) -> dict:
+    """Inkling-2-Mini on Maya's maya-ik2 (models/inkling-2-mini/strata-maya/launcher/ik2_prepare.py): the same shape as
+    render_maya_hy4_prepare, its own config file (maya-ik2.json) and quant folder; no pack (the engine reads the GGUF)."""
+    launcher = ROOT / Path(entry["programs"][-1]).parent
+    settings = dict(settings)
+    context = settings.pop("CONTEXT", "262144")   # the entrypoint passes CONTEXT as ik2_prepare.py --context
+    with tempfile.TemporaryDirectory() as d:
+        _run([sys.executable, "-c", MAYA_IK2_RENDER, str(launcher), d, context], _env_for(entry, settings),
+             f"ik2_prepare.config() {settings or '(no settings)'}")
+        text = (Path(d) / "maya-ik2.json").read_text(encoding="utf-8").replace(json.dumps(d)[1:-1], "/data/ik2-ud-q4_k_xl")
+        return json.loads(text)
+
+
 RENDERERS = {"strata_config": render_strata_config, "maya_prepare": render_maya_prepare,
              "maya_ds4_prepare": render_maya_ds4_prepare, "maya_mm3_prepare": render_maya_mm3_prepare,
-             "maya_hy4_prepare": render_maya_hy4_prepare}
+             "maya_hy4_prepare": render_maya_hy4_prepare, "maya_ik2_prepare": render_maya_ik2_prepare}
 
 
 def arg_pairs(args) -> dict:

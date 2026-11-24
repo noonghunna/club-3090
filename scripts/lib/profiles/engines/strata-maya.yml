@@ -1,6 +1,6 @@
 schema_version: 1
 id: strata-maya
-display_name: Project Maya (a Strata fork for GLM-5.3-Flash, DeepSeek-V4.1-Flash, MiniMax-M3.1-Flash and Hy4-Flash; club-3090's image of the upstream release)
+display_name: Project Maya (a Strata fork for GLM-5.3-Flash, DeepSeek-V4.1-Flash, MiniMax-M3.1-Flash, Hy4-Flash and Inkling-2-Mini; club-3090's image of the upstream release)
 type: strata
 stability: experimental
 min_sm: 7.5
@@ -11,7 +11,7 @@ lineage:
   source: "https://github.com/mw00/project-maya"
   source_ref: "cfc825fbc90b56fd7e2625ca026b9924c7211ebb"
   chain: []
-  delta: "Strata's C++/CUDA engine and Python server rewritten for GLM-5.3-Flash only (the GLM5-Next runner, a per-layer VRAM expert pool, a pinned RAM tier and a CPU lane priced against PCIe, MTP drafting across a two-card split), with its own quants (peasantsmith/GLM-5.3-Flash-Maya-GGUF); a second engine, maya-ds4, for DeepSeek-V4.1-Flash-1017 (src/ds4: tensor parallel or a layer split, every CPU-side expert copied into RAM when it fits, a DSpark drafter, Engram tables); and a third, maya-mm3, for MiniMax-M3.1-Flash (src/mm3: a layer split for its GGUF quants, the experts VRAM doesn't hold computed on the CPU from RAM, streamed K / V, a DSpark drafter). Upstream publishes no image or Linux engine (from v1.1.53 a recipe for building one yourself, docker/, adapted from ours); our image compiles each release with our own Dockerfile (upstream's STRATA_PORTABLE option for an AVX2 baseline, text only), an image-provenance exception (docs/ADDING_ENGINES.md)"
+  delta: "Strata's C++/CUDA engine and Python server rewritten for GLM-5.3-Flash only (the GLM5-Next runner, a per-layer VRAM expert pool, a pinned RAM tier and a CPU lane priced against PCIe, MTP drafting across a two-card split), with its own quants (peasantsmith/GLM-5.3-Flash-Maya-GGUF); a second engine, maya-ds4, for DeepSeek-V4.1-Flash-1017 (src/ds4: tensor parallel or a layer split, every CPU-side expert copied into RAM when it fits, a DSpark drafter, Engram tables); and a third, maya-mm3, for MiniMax-M3.1-Flash (src/mm3: a layer split for its GGUF quants, the experts VRAM doesn't hold computed on the CPU from RAM, streamed K / V, a DSpark drafter); maya-hy4 for Hy4-Flash (v1.1.68 on) and maya-ik2 for Inkling-2-Mini (v1.1.72 on, an experimental preview upstream: unsloth's GGUF read in place, its DSpark drafter). Upstream publishes no image or Linux engine (from v1.1.53 a recipe for building one yourself, docker/, adapted from ours); our image compiles each release with our own Dockerfile (upstream's MAYA_PORTABLE option, STRATA_PORTABLE before v1.1.75, for an AVX2 baseline, text only), an image-provenance exception (docs/ADDING_ENGINES.md)"
 image_env: STRATA_MAYA_IMAGE
 install:
   method: docker_image
@@ -26,6 +26,7 @@ supported_model_families:
   - deepseek41-moe        # DeepSeek-V4.1-Flash-1017: the `maya-ds4` engine (the image builds both since #1801)
   - minimax-m3-moe        # MiniMax-M3.1-Flash: the `maya-mm3` engine (Project Maya v1.1.29 on)
   - hy4-moe               # Hy4-Flash: the `maya-hy4` engine (Project Maya v1.1.68 on)
+  - inkling2-loop-moe     # Inkling-2-Mini: the `maya-ik2` engine (Project Maya v1.1.72 on)
 supported_weight_formats:
   - gguf                  # Project Maya's own quants (Maya-S / Maya-M / Maya-L); ISTA's GSQ-RCO GGUF of DeepSeek-V4.1-Flash
   - maya-dspark           # Maya's DSpark drafter format (drafter_pack.py's .bin + .json), read by tools/ds4/pack_gguf.py
@@ -34,6 +35,7 @@ supported_kv_formats:
   - fp16                  # the engine's latent KV cache, as its /metrics reports it ("kv": "fp16")
   - int8_per_token_head   # maya-mm3's default K / V: each token's row per KV head in INT8 with its own scale
                           # (128 + 4 bytes; maya.py MM3_KV_BYTES), streamed from pinned RAM
+  - fp8_e4m3              # maya-ik2's cache (IK2_KV=fp8, E4M3: Maya's default; IK2_KV=f16 keeps 16 bits)
 supported_drafters:
   - dspark                # DeepSeek-V4.1-Flash's DSpark drafter (maya-ds4 --dspark on) and MiniMax-M3.1-Flash's
                           # (maya-mm3 --dspark on; Maya's own setup leaves it off). GLM's MTP is the model's own
@@ -77,6 +79,26 @@ effort:
         hy4-flash-dual-maya-xs (:8214): none and minimal -> 0 chars of
         reasoning_content; low / medium / xhigh / max reason like high
         (178-314 chars on a 900-token cap, no growth with the rung).
+    inkling-2-mini:
+      default_when_unset: high
+      # `none` reaches the template as 0.0 and turns thinking off here (measured below), unlike on vllm-inkling.yml
+      supports_none: true
+      maps: {max: xhigh}
+      evidence: >-
+        ik2_settings.py, Inkling-2-Mini's own launcher on this engine: DEFAULT_EFFORT = "high", written as the
+        config's reasoning_effort when REASONING_EFFORT is unset, and EFFORTS = the template's effort_map names
+        (none / minimal / low / medium / high / xhigh / max). Maya's server passes the level to the template by
+        name (serve/frontend.py at v1.1.75: Inkling's template takes "reasoning_effort by name (none .. max, its
+        effort_map) or a number"), which writes it as "Thinking effort level: X"; xhigh and max are both 0.99.
+        Wire-probed 2026-11-23 on strata-maya/inkling-2-mini-single-ud-q4kxl (:8230, Maya v1.1.75 + maya-ik2, a
+        local test image), an IPv4-validator coding prompt at temperature 0: minimal -> 0 chars of
+        reasoning_content (140 completion tokens), xhigh -> 3,002 chars (1,353 tokens), unset (high) -> 3,777 chars
+        (1,409 tokens); the top-level reasoning_effort and chat_template_kwargs.reasoning_effort gave the same.
+        Re-probed 2026-11-24 on the pinned v1.1.77 digest (3d4e5368): the same counts to the character, and the
+        other levels: none -> 0 chars (140 tokens; top-level and chat_template_kwargs alike), low 1,033 (470),
+        medium 1,962 (775), high 3,777 (1,409), max 3,002 (1,353). So none turns thinking off on maya-ik2
+        (supports_none: true), where on vllm-inkling none (0.0) still reasons. CORRECTION 2026-11-24: the first
+        version of this entry said supports_none: false, copied from vllm-inkling without a measurement.
   evidence: >-
     Engine-wide (off_switch / supports_none): all three launchers on this engine
     map a request's `none` to thinking off — maya_settings.py EFFORTS (:46),

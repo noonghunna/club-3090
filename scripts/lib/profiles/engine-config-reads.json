@@ -333,6 +333,63 @@
     "model_name": "main(): the served name (/v1/models, /props, every answer's model field)",
     "loop_guard": "loop_guard_setting(), from main(): svc.loop_guard (serve/loop_guard.py; MAYA_LOOP_GUARD in the environment wins, and no compose forwards it)"
    }
+  },
+  "strata-maya:ik2": {
+   "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:3d4e5368e628ef07a67e7bb2f1e2779676c681414f35bf0070fef4f857abaa5f",
+   "render": "maya_ik2_prepare",
+   "programs": [
+    "models/inkling-2-mini/strata-maya/launcher/ik2_settings.py",
+    "models/inkling-2-mini/strata-maya/launcher/ik2_prepare.py"
+   ],
+   "settings": {
+    "REASONING_EFFORT": "minimal",
+    "TEMP": "0.7",
+    "TOP_P": "0.9",
+    "TOP_K": "10",
+    "MIN_P": "0.05",
+    "PRESENCE_PENALTY": "0.5",
+    "REPEAT_PENALTY": "1.1",
+    "CONTEXT": "16384",
+    "SERVED_NAME": "llm",
+    "LOOP_GUARD": "false",
+    "KV": "f16",
+    "DRAFTING": "off",
+    "THREADS": "7"
+   },
+   "setup_only": {},
+   "server": "/opt/maya/serve/server.py",
+   "engine_help": [
+    "/bin/sh",
+    "-c",
+    "grep -o 'a == \"--[a-z][a-z0-9-]*\"' /opt/maya/src/ik2/ik2_main.cu | cut -d'\"' -f2"
+   ],
+   "config_receivers": [
+    "cfg",
+    "cfg or {}"
+   ],
+   "config_scopes": [
+    "main",
+    "sampling_defaults_from_config",
+    "loop_guard_setting",
+    "child_env"
+   ],
+   "reads": {
+    "reasoning_effort": "main(): svc.default_effort (Inkling-2-Mini's template takes the level by name through its effort_map)",
+    "sampling.temperature": "sampling_defaults_from_config(): a default for requests that leave the field out",
+    "sampling.top_p": "sampling_defaults_from_config()",
+    "sampling.top_k": "sampling_defaults_from_config()",
+    "sampling.min_p": "sampling_defaults_from_config()",
+    "sampling.presence_penalty": "sampling_defaults_from_config()",
+    "sampling.repetition_penalty": "sampling_defaults_from_config()",
+    "args:--max-context": "maya-ik2's own flag (its parser in src/ik2/ik2_main.cu compares it; the engine has no --help): the cache's capacity",
+    "args:--draft": "maya-ik2's own flag: the drafter GGUF (DRAFTING=off leaves it out)",
+    "args:--drafting": "maya-ik2's own flag: auto (measured once, IK2_DRAFT_FILE) | on | off",
+    "args:--threads": "maya-ik2's own flag: the CPU lane's threads (only the experts VRAM doesn't hold run there)",
+    "model_name": "main(): the served name (/v1/models, /props, every answer's model field)",
+    "loop_guard": "loop_guard_setting(), from main(): svc.loop_guard (serve/loop_guard.py)",
+    "env": "child_env(): the config's env is exported into the engine's environment; maya-ik2 reads IK2_KV at start, and the server only sets IK2_DRAFT_FILE where the config doesn't (setdefault)"
+   }
   }
  },
  "not_config_writers": {
