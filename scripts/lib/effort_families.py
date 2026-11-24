@@ -152,7 +152,8 @@ def _id_facts(variants):
 # its own default, which is the #1690 slowest-rung regression. These are the ways a
 # compose names itself; test-omp-setup scans them independently and pins the render.
 STRATA_FAMILY_NAMES = {"qwen": "qwen3.8-flash-next", "swift": "swift-1.5",
-                       "unsloth": "qwen3.8-flash-next-unsloth"}  # Strata setup.py FAMILIES
+                       "unsloth": "qwen3.8-flash-next-unsloth",  # Strata setup.py FAMILIES
+                       "inkling-2-mini": "inkling-2-mini"}       # inkling_family.TAG: "inkling-2-mini-sq-20"
 _SERVED_FLAGS = r"--(?:served-model-name|served-name|alias|model-name)"
 
 

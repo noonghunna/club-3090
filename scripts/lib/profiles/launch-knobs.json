@@ -562,7 +562,7 @@
    "status": "candidate",
    "description": "The engine's context capacity (--max-context; Strata: setup's --context): the KV/state ceiling every request shares.",
    "type": "int",
-   "unset": "the launcher's default for the slug's compose: 131072 (Strata and the GLM-5.3-Flash Maya composes), 65536 (DeepSeek-V4.1-Flash), 204800 (MiniMax-M3.1-Flash)",
+   "unset": "the launcher's default for the slug's compose: 131072 (Strata's Flash-Next and the GLM-5.3-Flash Maya composes), 262144 (Strata's Inkling-2-Mini), 65536 (DeepSeek-V4.1-Flash), 204800 (MiniMax-M3.1-Flash)",
    "engines": [
     "strata"
    ],
@@ -594,6 +594,44 @@
         "4096",
         "65536",
         "131072"
+       ],
+       "reject": [
+        "0",
+        "4095",
+        "-1",
+        "x",
+        "64K"
+       ]
+      }
+     ]
+    },
+    {
+     "match": {
+      "engine": [
+       "strata"
+      ],
+      "model": [
+       "inkling-2-mini"
+      ]
+     },
+     "enforced": "boot",
+     "min": 4096,
+     "source": {
+      "file": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+      "what": "settings(): CONTEXT must be a whole number >= 4096 or the boot exits 2 (the same check for every family); for Inkling-2-Mini, Strata's setup passes it to strata-inkling as --max-context, and engine 0.1.66+ maps the KV past what VRAM holds into host RAM"
+     },
+     "checks": [
+      {
+       "kind": "program",
+       "compose": "models/inkling-2-mini/strata/compose/single/strata-sq20/base.yml",
+       "program": "models/qwen3.8-flash-next/strata/launcher/strata_config.py",
+       "args": [
+        "validate"
+       ],
+       "accept": [
+        "4096",
+        "65536",
+        "262144"
        ],
        "reject": [
         "0",

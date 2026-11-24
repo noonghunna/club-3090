@@ -1,0 +1,87 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Inkling-2-Mini — Strata's own SQ-20 build (strata-engine/Inkling-2-Mini-Strata, revision 04996a1e:
+#              Inkling-2-Mini-SQ-20.strata 19.35 GB, "bit-exact lossless native SF4+MX8" against Thinking Machines'
+#              checkpoint, plus Inkling-2-Mini-Vision.strata 0.64 GB and the tokenizer). Strata's setup checks
+#              the files' pinned sizes at the first start.
+#   Engine:    Strata (the release engines/strata.yml pins) — upstream's own image ghcr.io/niko1221/strata:<release>-cuda13,
+#              pinned by digest, running its strata-inkling engine; club-3090's launcher
+#              (models/qwen3.8-flash-next/strata/launcher/) applies the launch settings
+#   Topology:  Single 3090 (GPU0; ESTATE_GPUS picks another), Strata `--gpu 0`
+#   Drafter:   DSpark — Strata's own, built into the SQ-20 file (--draft dspark)
+#   KV:        Strata default for Inkling with host KV offload: FP16 (kv_fmt 0), the global layers' KV
+#              mostly in mapped host RAM at this context (--kv-offload auto)
+#   Vision:    yes (Inkling-2-Mini-Vision.strata)
+#   Max ctx:   262144
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   Not gate-passing yet: quality unmeasured (8-pack pending), no bench. Needs Strata's Inkling engine
+#              0.1.66 or newer for this context on one card (0.2.21's image ships 0.1.67): 0.2.19's bundled 0.1.65 has
+#              no host KV offload and runs out of VRAM here (it shrinks the context to 39,872 tokens, then fails).
+#              The effort is the request's (0.2.21 on): Strata's Inkling dialect hands reasoning_effort to the template
+#              on thinkingmachines' levels (none = thinking off), and a request that names none gets low. Our launcher
+#              sets no default, so REASONING_EFFORT, ENABLE_THINKING and THINKING_BUDGET are not settings of this slug.
+#              The launcher makes Strata's update feed unreachable inside the container: setup otherwise fetches
+#              the feed's newest Inkling engine in every new container and runs it in place of the one the pinned
+#              image ships. One request at a time (Strata's pick on 0.2.21; 0.2.20 picked 3). Host needs NVIDIA
+#              driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only.
+#              Measured 2026-11-24 on one 3090 at 230 W (0.2.21's image, engine 0.1.67): ready 16 s; verify-full all
+#              pass, vision 4/4, DSpark acceptance 0.86; verify-stress all pass, recalled to 240,549 tokens (prompts
+#              read at 786 tok/s at 94K, 514 at 240K); 23,758 MiB on the card at its peak. No bench.
+# CPU-Offload-Host-RAM-GB: 12
+#   ⤷ MEASURED 2026-11-24 (0.2.21's image, Inkling engine 0.1.67, one card, page cache dropped first, sampled every
+#     5 s): MemAvailable fell 7.9 GB at ready and 9.8 GB at its lowest, during verify-stress. At 262144 the engine
+#     keeps 74,240 tokens of the global layers' KV in VRAM and maps 187,904 into host RAM (5.9 GB); the experts stay
+#     in VRAM. (0.2.20's 0.1.66: 28.1 GB at its lowest, 239,104 tokens and 22.4 GB in host RAM.) Registry
+#     `host_ram_gb` (12) must stay <= this.
+#   Best for:  Inkling-2-Mini on ONE 3090 at the full 262K context, with vision
+# ---------------------------------------------------------------------------
+# Strata (github.com/Niko1221/Strata) runs Inkling-2-Mini on its own strata-inkling engine: see
+# docs/engines/STRATA.md. The other Inkling-2-Mini slugs are on vllm-inkling (../../../../vllm-inkling/).
+#   bash scripts/switch.sh --force strata/inkling-2-mini-sq20-single
+# The SQ-20 folder is mounted read-only where Strata's setup looks for Inkling's files
+# (/data/Strata-data/models/inkling-2-mini): setup accepts files of the pinned size there and downloads
+# nothing. Every request needs `Authorization: Bearer <key>`: the container's API_KEY, club-3090's default
+# (club-3090-strata-local-key) unless STRATA_API_KEY is set; our scripts send it themselves.
+services:
+  strata:
+    image: ${STRATA_IMAGE:-ghcr.io/niko1221/strata@sha256:992c38a2c6dd42d5cf23cabf2f4ba7702abef0cc1b82cfeb17239da822e081b4}
+    container_name: ${ESTATE_CONTAINER:-strata-inkling-2-mini-sq20-single}
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    # root, with the launcher's group: what Strata writes to the data volume stays
+    # removable by the user (the entrypoint sets umask 0002)
+    user: "0:${DOCKER_GID:-1000}"
+    # tini first, as in the image: it reaps the launcher's children and passes `docker stop` on
+    entrypoint: ["/usr/bin/tini", "--", "/bin/sh", "/opt/club3090/strata-entrypoint.sh", "inkling-2-mini", "SQ-20"]
+    ulimits:
+      memlock: -1            # Strata pins (locks) RAM for the GPU; upstream's docker run uses -1
+    shm_size: "2g"           # and --shm-size 2g
+    stop_grace_period: 120s  # and --stop-timeout 120: on `docker stop` the server drains, then stops the model
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8229}}:8080"
+    environment:
+      CONTEXT: "${CONTEXT:-262144}"
+      STRATA_START_GPUS: "${STRATA_START_GPUS:-0}"
+      API_KEY: "${STRATA_API_KEY:-club-3090-strata-local-key}"
+      TEMP:
+      TOP_P:
+      TOP_K:
+      MIN_P:
+      PRESENCE_PENALTY:
+      REPEAT_PENALTY:
+      SERVED_NAME:
+    # The data volume is the Flash-Next Strata slugs' (the launchers set CLUB3090_DATA_DIR; a bare `docker compose`
+    # falls back to their folder in the repo): one Strata install, its own run config and preset for this model.
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}/inkling-2-mini-strata:/data/Strata-data/models/inkling-2-mini:ro"
+      - "${STRATA_DATA_DIR:-${CLUB3090_DATA_DIR:-../../../../../qwen3.8-flash-next/strata}/strata-data-v2}/single:/data"
+      - "${STRATA_DATA_DIR:-${CLUB3090_DATA_DIR:-../../../../../qwen3.8-flash-next/strata}/strata-data-v2}/Strata-data:/data/Strata-data"
+      - "../../../../../qwen3.8-flash-next/strata/launcher/strata-entrypoint.sh:/opt/club3090/strata-entrypoint.sh:ro"
+      - "../../../../../qwen3.8-flash-next/strata/launcher/strata_config.py:/opt/club3090/strata_config.py:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}']
+              capabilities: [gpu]

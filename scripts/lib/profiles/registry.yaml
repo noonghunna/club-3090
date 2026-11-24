@@ -2108,6 +2108,37 @@ entries:
     required_sm: 8.6
     supported_sm:
       - 8.6
+  strata/inkling-2-mini-sq20-single:
+    origin: core
+    model: inkling-2-mini
+    weights_variant: strata-sq20
+    workload: long-ctx-single
+    engine: strata
+    drafter: null
+    spec_method: dspark
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: engine
+    moe_cache: false
+    host_ram_gb: 12
+    kv_offload: null
+    chat_template: native
+    tp: 1
+    max_ctx: 262144
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/inkling-2-mini/strata/compose/single/strata-sq20/base.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8229
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Inkling-2-Mini on one card at 262144 (the maintainer's cap): Strata's own SQ-20 build on Strata's strata-inkling engine, FP16 KV with the global layers' KV partly mapped into host RAM (74,240 tokens in VRAM + 187,904 in host RAM, 5.9 GB, on engine 0.1.67), all 3,072 experts in VRAM, DSpark built in, vision on, one request at a time (Strata's pick on 0.2.21). Validated 2026-11-24 through switch.sh on the pinned 0.2.21 image (digest 992c38a2, its bundled Inkling engine 0.1.67; the launcher blocks the update feed), one RTX 3090 at 230 W: ready 16 s; verify-full all pass incl. thinking and vision 4/4, DSpark acceptance 0.86; verify-stress all 8 sections pass, the ceiling ladder recalled to 240,549 tokens (91% of 262,144; prompts read at 786 tok/s at 94K, 647 at 154K, 514 at 240K); 23,758 MiB on the card at its peak. Host RAM: MemAvailable fell 7.9 GB at ready and 9.8 GB at its lowest (page cache dropped first). Effort is the request's from 0.2.21 (none 0 reasoning chars, minimal 929, low 1,274 = the unset default, medium 1,548, high 2,510, xhigh 2,883; temperature 0); our launcher sets no default. History: on 0.2.20's image (engine 0.1.66) 2026-11-23, every request ran at effort none, 3 slots, 22.4 GB of KV in host RAM, 28.1 GB fall, prompts 556 to 490 tok/s at 94K to 154K. Not on Strata 0.2.19: its Inkling engine 0.1.65 has no host KV offload and runs out of VRAM at this context. No bench."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
   llamacpp-club3090/glm53-flash-dual-iq4xs-moecache:
     origin: core
     model: glm-5.3-flash

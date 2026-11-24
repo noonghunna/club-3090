@@ -221,6 +221,25 @@
     "file": "docs/engines/STRATA_MAYA.md",
     "contains": "Maya's `--spec` is documented for its DFlash2 drafter"
    }
+  },
+  {
+   "knobs": [
+    "REASONING_EFFORT",
+    "SPEC_N"
+   ],
+   "match": {
+    "engine": [
+     "strata"
+    ],
+    "model": [
+     "inkling-2-mini"
+    ]
+   },
+   "why": "Our launcher doesn't set Strata's Inkling default effort (the server's STRATA_INKLING_EFFORT, low unless set; requests choose their own from 0.2.21), and strata-inkling's DSpark drafter is built into the SQ-20 file with no depth setting (--spec is the Flash-Next engine's flag)",
+   "source": {
+    "file": "docs/engines/STRATA.md",
+    "contains": "the slug takes no effort, thinking or budget setting of its own"
+   }
   }
  ],
  "not_wired": [
