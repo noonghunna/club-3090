@@ -16,7 +16,7 @@ Its profile declares `type: llama.cpp` and `lineage.relation: fork`; the tooling
 
 `ghcr.io/noonghunna/llamacpp-prism` wraps PrismML's own Linux CUDA 12.8 release tarball unchanged: nothing is compiled or patched, and the image only adds `libgomp1`, without which every binary in the tarball fails at exec. That makes it an image-provenance exception, one that predates the rule ([ADDING_ENGINES.md](../ADDING_ENGINES.md), "CONTRACT — image provenance"). Recipe: [models/qwen3.8-27b/llama-cpp-prism/image/Dockerfile](../../models/qwen3.8-27b/llama-cpp-prism/image/Dockerfile).
 
-The profile pins release `prism-b12128-d7b2896` by digest, and the launchers inject it as `LLAMACPP_PRISM_IMAGE`. A prism tag counts the fork's own builds, so `b10776` is not a mainline build number.
+The profile pins release `prism-b12178-03ec600` by digest, and the launchers inject it as `LLAMACPP_PRISM_IMAGE`. A prism tag counts the fork's own builds, so `b10776` is not a mainline build number.
 
 **Bumping:**
 1. Pick a release whose assets include `linux-cuda-12.8-x64`; some ship Windows assets only. Check the tarball's sha256 against the release's published digest, then build as the Dockerfile header says.

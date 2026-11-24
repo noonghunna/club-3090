@@ -5,7 +5,7 @@
 #              per 128, stored in a blockwise Hadamard-rotated basis folded in
 #              offline. Architecture UNCHANGED from Qwen3.8-27B; the GGUF
 #              declares `general.architecture = qwen35`, 64 blocks, 851 tensors.
-#   Engine:    llama.cpp PrismML ternary fork, release prism-b12128-d7b2896 — the STOCK
+#   Engine:    llama.cpp PrismML ternary fork, release prism-b12178-03ec600 — the STOCK
 #              llama-cpp-prism image, same as the pq2 sibling (2026-10-06: #205/#216 ship
 #              upstream, #189 dropped; this slug was llama-cpp-prism-mtp/… on a source build)
 #   Topology:  Single 3090 — the whole 27B fits one card with room to spare.
@@ -27,7 +27,7 @@
 #              vs 45.80 tok/s, i.e. noise). q8_0 is this stack's serving floor.
 #   Vision:    ✅ available — separate mmproj (Q8_0, 0.63 GB), loaded only for
 #              image input so text-only serving never pays for it.
-#              ✅ verify-full vision 4/4 on ground truth (2026-10-15 on b10776; 2026-10-20 on b10787; 2026-10-25 on b10819 and b10822; 2026-10-28 on b10826; 2026-10-29 on b10828, also with the projector on the GPU, MMPROJ_DEVICE=CUDA0; 2026-10-30 on b10831; 2026-10-31 on b12128, on the CPU and on the GPU).
+#              ✅ verify-full vision 4/4 on ground truth (2026-10-15 on b10776; 2026-10-20 on b10787; 2026-10-25 on b10819 and b10822; 2026-10-28 on b10826; 2026-10-29 on b10828, also with the projector on the GPU, MMPROJ_DEVICE=CUDA0; 2026-10-30 on b10831; 2026-10-31 on b12128, on the CPU and on the GPU; 2026-11-24 on b12178).
 #   Max ctx:   262144 — the model's FULL declared context, MEASURED on ONE card.
 #              The whole ladder boots: 32768/65536/98304/131072/196608/262144.
 #   Genesis:   N/A — llama.cpp engine
@@ -105,7 +105,7 @@ services:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
     # The engine profile (engines/llama-cpp-prism.yml) is authoritative.
     # Image = upstream's linux-cuda-12.8 release tarball + libgomp1, nothing else.
-    image: ${LLAMACPP_PRISM_IMAGE:-ghcr.io/noonghunna/llamacpp-prism@sha256:c68dd5a70a81a364ac92ef7f63db44f2c158b7612b1a5d03b81c40553025f0f9}
+    image: ${LLAMACPP_PRISM_IMAGE:-ghcr.io/noonghunna/llamacpp-prism@sha256:7efa2d7d1f2221db5156afa88ed3d264a21bf321b39202dc68eec7f5ce234270}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-prism-qwen38-27b-ternary-mtp}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # Reap orphaned children — a wedged server otherwise becomes a <defunct>

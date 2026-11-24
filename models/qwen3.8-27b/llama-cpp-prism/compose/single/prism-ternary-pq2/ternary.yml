@@ -5,7 +5,7 @@
 #              per 128, stored in a blockwise Hadamard-rotated basis folded in
 #              offline. Architecture UNCHANGED from Qwen3.8-27B; the GGUF
 #              declares `general.architecture = qwen35`, 64 blocks, 851 tensors.
-#   Engine:    llama.cpp PrismML ternary fork, release prism-b12128-d7b2896 (since 2026-10-31; b10831 from 2026-10-30, b10828 from 2026-10-29, b10826 from 2026-10-28, b10822 from 2026-10-25, b10819 earlier that day, b10787 from 2026-10-20, b10776 from 2026-10-14, b10770 from 2026-10-10, b10754 from 2026-10-06)
+#   Engine:    llama.cpp PrismML ternary fork, release prism-b12178-03ec600 (since 2026-11-24; b12128 from 2026-10-31, b10831 from 2026-10-30, b10828 from 2026-10-29, b10826 from 2026-10-28, b10822 from 2026-10-25, b10819 earlier that day, b10787 from 2026-10-20, b10776 from 2026-10-14, b10770 from 2026-10-10, b10754 from 2026-10-06)
 #              (upstream's own linux-cuda-12.8 binary; we patch nothing)
 #   Topology:  Single 3090 — the whole 27B fits one card with room to spare.
 #              No offload, no expert cache, no split tuning.
@@ -82,7 +82,7 @@ services:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
     # The engine profile (engines/llama-cpp-prism.yml) is authoritative.
     # Image = upstream's linux-cuda-12.8 release tarball + libgomp1, nothing else.
-    image: ${LLAMACPP_PRISM_IMAGE:-ghcr.io/noonghunna/llamacpp-prism@sha256:c68dd5a70a81a364ac92ef7f63db44f2c158b7612b1a5d03b81c40553025f0f9}
+    image: ${LLAMACPP_PRISM_IMAGE:-ghcr.io/noonghunna/llamacpp-prism@sha256:7efa2d7d1f2221db5156afa88ed3d264a21bf321b39202dc68eec7f5ce234270}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-prism-qwen38-27b-ternary}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     # Reap orphaned children — a wedged server otherwise becomes a <defunct>
