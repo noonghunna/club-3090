@@ -9,7 +9,7 @@
 # its sibling satisfies the glob. Nothing errors — the column just lies.
 #
 # ⚠️ FOUND IN THE WILD 2026-09-18, twice:
-#   • qwen3.8-27b prism-ternary-pq2 (7.21 GB) + prism-ternary-mmproj-q8 (0.63 GB)
+#   • qwen3.8-27b prism-ternary-pq2 (7.25 GB, Bonsai 2.5) + prism-ternary-mmproj-q8 (0.63 GB)
 #     shared subdir AND "*.gguf" — the projector reported PRESENT once deleted,
 #     because the language model matched its glob.
 #   • qwen3.6-35b-a3b mudler-apex-compact + -quality: two different packs, one
