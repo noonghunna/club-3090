@@ -9,7 +9,7 @@ lineage:
   base: null
   base_version: null
   source: "https://github.com/Niko1221/Strata"
-  source_ref: "c6f6427d9de9016fd92d13e29740f65625261df7"
+  source_ref: "d46f5f268f8ed797e83a5c63a69bffbd7a581cf6"
   chain: []
   delta: "Independent C++/CUDA engine for Qwen3.8-Flash-Next with its own Python server and Terminal; uses ggml's CPU backend and llama.cpp's mtmd/gguf-py as libraries. Pinned to the image upstream publishes (ghcr.io/niko1221/strata:<release>-cuda13, from 0.2.1 on), built from its signed engine packages"
 image_env: STRATA_IMAGE
@@ -18,9 +18,9 @@ install:
   # Upstream's own image `<release>-cuda13` (RTX 20-50, driver >= 580), built by their docker-images
   # workflow from the signed engine packages; the engine version is its com.strata.engine label.
   # scripts/strata-pin-bump.sh writes the two pin- lines (the first earlier pin is the rollback).
-  # pin-current: 0.2.19 · upstream c6f6427d · engine 0.1.65 · pinned 2026-11-23 · booted strata/qwen3.8-flash-next-ud-iq4xs-dual (ready 48 s, verify-full 8/0; the standard DFlash2 drafter at spec 6, drafts accepted 1,630 of 2,836 over the boot's 16 requests (ready probes, 3 warm-ups, verify-full; engine log); STRATA_ROUTE_TAIL_SKIP off; the two-card CPU prefill share armed; MemAvailable fell 98.9 GB after the warm-ups and 99.9 GB after verify-full, against the 101 GB header). 0.2.20 (engine 0.1.66) not taken: every Unsloth UD-* pack stops at its first verify on RTX 30 and newer, Niko1221/Strata#6805, fix due in 0.2.21
-  # pin-earlier: 0.2.17 `51d39e3f…` (upstream 12d491da, engine 0.1.63, 2026-11-20); 0.2.13 `b6e18765…` (upstream d2f09647, engine 0.1.59, 2026-11-09); 0.2.12 `c3a85342…` (upstream 146df3c4, engine 0.1.58, 2026-11-07); 0.2.11 `871e1e79…` (upstream c3b3f503, engine 0.1.57, 2026-11-05); 0.2.9 `83e37db8…` (upstream c62d5e3a, engine 0.1.55, 2026-10-31); 0.2.8 `27f04a74…` (upstream 870aedd9, engine 0.1.54, 2026-10-30); 0.2.7 `db96cd9b…` (upstream 5e8a4cca, engine 0.1.52, 2026-10-27); 0.2.3 `d39ca9fc…` (upstream 5c8dd322, engine 0.1.48, 2026-10-23); 0.2.2 `17e96f76…` (upstream 011c9e60, engine 0.1.47, 2026-10-22); 0.2.1 `a0398afb…` (upstream 90767252, engine 0.1.46, #1764, 2026-10-20); club-3090's own builds of upstream's Dockerfile (strata-club3090): v0.1.45 `75deea40…` (2026-10-17), v0.1.44.1 `fb97d83b…` (2026-10-14), v0.1.43.1 `7f8643c8…` (2026-10-13, the one that also carried sm_90)
-  spec: ghcr.io/niko1221/strata@sha256:5cf423c2ad9d2f626da250ade74cb9b48087279bff636fca3c7c08eb4f786d26
+  # pin-current: 0.2.21 · upstream d46f5f26 · engine 0.1.67 · pinned 2026-11-24 · booted strata/qwen3.8-flash-next-ud-iq4xs-dual (ready 48 s, verify-full 8/0; the Unsloth pack 0.2.20 stopped at its first verify (Niko1221/Strata#6805) now serves with STRATA_HC_Q8=1, no "never rang" in the engine log: 0.2.21 lists the fix as #6713, the same root cause; the standard DFlash2 drafter at spec 6, drafts accepted 1,647 of 2,870 over the boot's 16 requests (ready probes, 3 warm-ups, verify-full; engine log); the two-card CPU prefill share armed; MemAvailable 140.0 GiB and swap 2.9 GiB after verify-full). 0.2.20 (engine 0.1.66) was skipped for #6805
+  # pin-earlier: 0.2.19 `5cf423c2…` (upstream c6f6427d, engine 0.1.65, 2026-11-23); 0.2.17 `51d39e3f…` (upstream 12d491da, engine 0.1.63, 2026-11-20); 0.2.13 `b6e18765…` (upstream d2f09647, engine 0.1.59, 2026-11-09); 0.2.12 `c3a85342…` (upstream 146df3c4, engine 0.1.58, 2026-11-07); 0.2.11 `871e1e79…` (upstream c3b3f503, engine 0.1.57, 2026-11-05); 0.2.9 `83e37db8…` (upstream c62d5e3a, engine 0.1.55, 2026-10-31); 0.2.8 `27f04a74…` (upstream 870aedd9, engine 0.1.54, 2026-10-30); 0.2.7 `db96cd9b…` (upstream 5e8a4cca, engine 0.1.52, 2026-10-27); 0.2.3 `d39ca9fc…` (upstream 5c8dd322, engine 0.1.48, 2026-10-23); 0.2.2 `17e96f76…` (upstream 011c9e60, engine 0.1.47, 2026-10-22); 0.2.1 `a0398afb…` (upstream 90767252, engine 0.1.46, #1764, 2026-10-20); club-3090's own builds of upstream's Dockerfile (strata-club3090): v0.1.45 `75deea40…` (2026-10-17), v0.1.44.1 `fb97d83b…` (2026-10-14), v0.1.43.1 `7f8643c8…` (2026-10-13, the one that also carried sm_90)
+  spec: ghcr.io/niko1221/strata@sha256:992c38a2c6dd42d5cf23cabf2f4ba7702abef0cc1b82cfeb17239da822e081b4
 supported_model_families:
   - qwen4exp              # Qwen3.8-Flash-Next family: Strata is written for this model only
 supported_weight_formats:
