@@ -16,7 +16,8 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #   4. The other delivery paths: every python request in the bench / verify-stress / bench-agentic /
 #      concurrency_probe / soak-helper / compaction / deep-context chain goes through
 #      scripts/lib/engine_http.py — which resolves the key from the URL through the helpers
-#      (401-lazily, §4b) — never a re-derived key; strata_metrics.py, switch.sh's wait_ready and
+#      (401-lazily, §4b; the estate launcher's readiness check too) — never a re-derived key;
+#      strata_metrics.py, switch.sh's wait_ready and
 #      Open WebUI registration read the key the helper found; the chain's shells enable it for the
 #      URL or CONTAINER they settle on; quality-test.sh's --api-key fallback reads CLUB_ENGINE_API_KEY.
 #
@@ -205,6 +206,24 @@ PY
 )"
 [[ "$got" == none ]] || fail "engine_http sent a key to a server that never asked for one ($got)"
 pass "engine_http: a server that does not 401 sees the identical keyless request"
+
+# The estate launcher's readiness check (launch.sh --estate-file, pod.sh up) goes through engine_http
+# too. A bare probe never saw a Strata instance ready (401 until it gets its key), so the boot waited
+# out its whole timeout on a healthy server. Positive and negative control: the keyed server reads
+# ready only when its container (and so its key) can be found.
+estate_ready() { python3 - "$1" <<'PY'
+import sys; sys.path.insert(0, "."); import scripts.lib.profiles.estate_cli as ec
+print(ec.endpoint_ready(int(sys.argv[1])))
+PY
+}
+! command grep -q -E 'urllib\.request\.urlopen\(' scripts/lib/profiles/estate_cli.py \
+  || fail "estate_cli.py: a request bypasses engine_http.urlopen"
+[[ "$(estate_ready "$(cat "$tmp/port401")")" == True ]] \
+  || fail "estate endpoint_ready: a keyed engine never read ready (its 401 did not resolve the container's key)"
+[[ "$(FAKE_ENGINE_PORT=1 estate_ready "$(cat "$tmp/port401")")" == False ]] \
+  || fail "estate endpoint_ready: a 401 with no container to take a key from must stay not-ready"
+[[ "$(estate_ready "$(cat "$tmp/port")")" == True ]] || fail "estate endpoint_ready: a keyless engine no longer reads ready"
+pass "estate endpoint_ready: a keyed engine is ready with its container's key, a keyless one as before"
 
 # club_engine_auth_enable_for_url: the shell half — URL in, container+key resolved by the helpers.
 got="$(bash -c 'source scripts/lib/engine-auth.sh; club_engine_auth_enable_for_url "$1"; curl -s "$1"' _ "$U2")"
