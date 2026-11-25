@@ -16,16 +16,17 @@
 #   Max ctx:   262144 (the maintainer's cap for Inkling-2-Mini; the model reaches 1M)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   Not gate-passing: an experimental preview upstream (Maya v1.1.72 on: "Inkling 2 Mini arrives as an
-#              experimental preview on its own engine"), quality unmeasured (8-pack pending), no bench. Needs Maya
-#              v1.1.72 or newer, in an image whose recipe builds maya-ik2. Text only. One request at a time (Maya's
-#              setup leaves --parallel off; with it, maya-ik2 turns drafting off). The first start measures the
-#              drafting choice before it says ready (about a minute; IK2_DRAFT_MEASURE=1 measures again). Linux,
-#              NVIDIA RTX 20 / V100 and newer.
-#              Measured on one 3090 at 230 W: on the pinned v1.1.77 image (2026-11-24) ready 20 s, verify-full all pass,
-#              draft acceptance 0.94, 23,578 MiB on the card at ready; on a local v1.1.75 + maya-ik2 image (2026-11-23)
-#              verify-stress all pass, recalled to 240,545 tokens, 23,652 MiB of 24,576 at its peak, host RAM -2.2 GB at
-#              most. No bench.
+#   Caveats:   Not gate-passing: quality unmeasured (8-pack pending). Needs Maya v1.1.72 or newer, in an image whose
+#              recipe builds maya-ik2 (from v1.1.79 upstream calls Inkling 2 Mini a supported model, no longer an
+#              "experimental preview"). Text only. One request at a time (Maya's setup leaves --parallel off; with
+#              it, maya-ik2 turns drafting off). The first start measures the drafting choice before it says ready
+#              (about a minute; IK2_DRAFT_MEASURE=1 measures again). Linux, NVIDIA RTX 20 / V100 and newer.
+#              Measured on one 3090 at 230 W: bench.sh on the pinned v1.1.80 image (2026-11-25, its own boot, GPU1)
+#              decode 109.54 / 148.90 tok/s narrative / code, prefill 2,131 / 1,799 tok/s at 10K / 90K, 23,594 MiB at
+#              its peak (v1.1.78, 2026-11-24: 114.11 / 150.00, 2,157 / 1,816); on v1.1.77 (2026-11-24) ready 20 s,
+#              verify-full all pass, draft acceptance 0.94, 23,578 MiB on the card at ready; on a local v1.1.75 +
+#              maya-ik2 image (2026-11-23) verify-stress all pass, recalled to 240,545 tokens, 23,652 MiB of 24,576 at
+#              its peak, host RAM -2.2 GB at most.
 #   Best for:  Inkling-2-Mini on ONE 3090 at the full 262K context, with reasoning effort as a setting
 # ---------------------------------------------------------------------------
 # Project Maya (github.com/mw00/project-maya) runs Inkling-2-Mini on its own maya-ik2 engine: see

@@ -15,7 +15,7 @@
 #   Max ctx:   262144
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   Not gate-passing yet: quality unmeasured (8-pack pending), no bench. Needs Strata's Inkling engine
+#   Caveats:   Not gate-passing yet: quality unmeasured (8-pack pending). Needs Strata's Inkling engine
 #              0.1.66 or newer for this context on one card (0.2.21's image ships 0.1.67): 0.2.19's bundled 0.1.65 has
 #              no host KV offload and runs out of VRAM here (it shrinks the context to 39,872 tokens, then fails).
 #              The effort is the request's (0.2.21 on): Strata's Inkling dialect hands reasoning_effort to the template
@@ -27,7 +27,10 @@
 #              driver >= 580 (CUDA 13) and an AVX2 CPU; x86-64 only.
 #              Measured 2026-11-24 on one 3090 at 230 W (0.2.21's image, engine 0.1.67): ready 16 s; verify-full all
 #              pass, vision 4/4, DSpark acceptance 0.86; verify-stress all pass, recalled to 240,549 tokens (prompts
-#              read at 786 tok/s at 94K, 514 at 240K); 23,758 MiB on the card at its peak. No bench.
+#              read at 786 tok/s at 94K, 514 at 240K); 23,758 MiB on the card at its peak. bench.sh on its own
+#              boot (2026-11-24, GPU1): decode 71.53 / 90.41 tok/s narrative / code, prefill 1,761 / 1,225 tok/s at
+#              10K / 90K; at 90K depth decode fell to 9.24 tok/s (one 128-token run: past 74,240 tokens the global
+#              layers' KV is read from host RAM, the likely cause, not isolated).
 # CPU-Offload-Host-RAM-GB: 12
 #   ⤷ MEASURED 2026-11-24 (0.2.21's image, Inkling engine 0.1.67, one card, page cache dropped first, sampled every
 #     5 s): MemAvailable fell 7.9 GB at ready and 9.8 GB at its lowest, during verify-stress. At 262144 the engine

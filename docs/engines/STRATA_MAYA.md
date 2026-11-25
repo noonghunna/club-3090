@@ -268,7 +268,7 @@ Maya runs Tencent's [Hy4-Flash](https://huggingface.co/tencent/Hy4-flash) on a f
 
 ## Inkling-2-Mini (maya-ik2)
 
-Maya runs Thinking Machines' Inkling-2-Mini on a sixth engine, `maya-ik2` (`src/ik2`, from v1.1.72, an experimental preview upstream). It reads unsloth's GGUF in place: there is no pack. The model is a 26B looped MoE (layers 6–17 run three times), with 128 experts per layer and 8 active per token, and a DSpark drafter of its own.
+Maya runs Thinking Machines' Inkling-2-Mini on a sixth engine, `maya-ik2` (`src/ik2`, from v1.1.72; a supported model upstream from v1.1.79, which dropped the "experimental preview" label). It reads unsloth's GGUF in place: there is no pack. The model is a 26B looped MoE (layers 6–17 run three times), with 128 experts per layer and 8 active per token, and a DSpark drafter of its own.
 
 | Quant | Single (1 card) |
 |---|---|
