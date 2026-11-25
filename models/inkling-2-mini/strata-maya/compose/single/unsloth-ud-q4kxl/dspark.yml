@@ -21,7 +21,7 @@
 #              "experimental preview"). Text only. One request at a time (Maya's setup leaves --parallel off; with
 #              it, maya-ik2 turns drafting off). The first start measures the drafting choice before it says ready
 #              (about a minute; IK2_DRAFT_MEASURE=1 measures again). Linux, NVIDIA RTX 20 / V100 and newer.
-#              Measured on one 3090 at 230 W: bench.sh on the pinned v1.1.80 image (2026-11-25, its own boot, GPU1)
+#              Measured on one 3090 at 230 W: bench.sh on v1.1.80 (5d0b1f8d; 2026-11-25, its own boot, GPU1)
 #              decode 109.54 / 148.90 tok/s narrative / code, prefill 2,131 / 1,799 tok/s at 10K / 90K, 23,594 MiB at
 #              its peak (v1.1.78, 2026-11-24: 114.11 / 150.00, 2,157 / 1,816); on v1.1.77 (2026-11-24) ready 20 s,
 #              verify-full all pass, draft acceptance 0.94, 23,578 MiB on the card at ready; on a local v1.1.75 +
