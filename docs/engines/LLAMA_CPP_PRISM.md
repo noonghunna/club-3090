@@ -6,7 +6,7 @@
 
 [PrismML's llama.cpp fork](https://github.com/PrismML-Eng/llama.cpp) adds ternary weight types: weights in {−1, 0, +1} with one FP16 scale per 128, stored in a Hadamard-rotated basis, plus the activation transform that undoes the rotation at run time. There are two packings, PQ2_0 (2.13 bpw) and PTQ1_0 (1.75 bpw).
 
-prism-ml's **Ternary-Bonsai-2.5-27B** (released 2026-11-24, tuned for agentic and tool use) is a ternary quant of Qwen3.8-27B with the architecture unchanged (the GGUF declares `qwen35`), so the catalog treats it as a weights variant of `qwen3.8-27b`, not a new model. At PQ2_0 the weights are 7.25 GB, so the whole dense model sits on one card: no offload, no expert cache. Both slugs served Bonsai 2 27B until 2026-11-24; its files stay on disk, and 2.5 keeps the same GGUF layout, the same chat template (byte for byte) and the same vision projector.
+prism-ml's **Ternary-Bonsai-2.5-27B** (released 2026-11-24, tuned for agentic and tool use) is a ternary quant of Qwen3.8-27B with the architecture unchanged (the GGUF declares `qwen35`), so the catalog treats it as a weights variant of `qwen3.8-27b`, not a new model. At PQ2_0 the weights are 7.25 GB, so the whole dense model sits on one card: no offload, no expert cache. Both slugs served Bonsai 2 27B until 2026-11-24; 2.5 keeps the same GGUF layout, the same chat template (byte for byte) and the same vision projector.
 
 ⚠️ **Mainline llama.cpp can't run these files, and fails silently.** It rejects PQ2_0 and PTQ1_0 as unknown types, and it loads Q2_0 with no warning and produces garbage, because it has no Hadamard activation runtime. Never point a Bonsai slug at `llama-cpp-local`, `llamacpp-club3090` or an ik_llama build.
 

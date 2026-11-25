@@ -1,8 +1,8 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.8-27B — prism-ml "Ternary-Bonsai-2.5-27B" (2026-11-24), TERNARY
-#              g128 PQ2_0 (7.25 GB, 2.13 bpw; Bonsai 2 27B until 2026-11-24, whose
-#              files stay on disk). Weights are {-1, 0, +1} with one FP16 scale
+#              g128 PQ2_0 (7.25 GB, 2.13 bpw; Bonsai 2 27B until 2026-11-24).
+#              Weights are {-1, 0, +1} with one FP16 scale
 #              per 128, stored in a blockwise Hadamard-rotated basis folded in
 #              offline. Architecture UNCHANGED from Qwen3.8-27B; the GGUF
 #              declares `general.architecture = qwen35`, 64 blocks, 851 tensors.
