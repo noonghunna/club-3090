@@ -481,9 +481,29 @@ cap_kv_type() {
     v="$(cap_argv_flag "$argv" -ct -ctk -ctv --cache-type-k --cache-type-v --kv-cache-dtype --cache-mode || true)"
     [[ -n "$v" ]] && { echo "$v (source: argv)"; return 0; }
   fi
-  # QEngine has one KV format and no flag for it. Its /props (from 1.3.1) is llama.cpp-shaped but
-  # carries no cache type, so without this the llama.cpp default below answered "f16".
-  if [[ "$kind" == qengine ]]; then echo "fp8_e4m3 (QEngine's only KV format)"; return 0; fi
+  # QEngine has no KV flag, and its /props (from 1.3.1) is llama.cpp-shaped but carries no cache type,
+  # so without this the llama.cpp default below answered "f16". Each of its engines has one KV format:
+  # FP8 e4m3 on the Qwen engines (27B, Flash-Next), bf16 on the Inkling-2-Mini engine (libqinkling,
+  # 1.6.0 on: AppState's bf16 K and V). Which engine served is in its start-up lines: "KV pool: N tokens
+  # shared by …" from a Qwen engine, "inkling: K/V pool N rows …" from Inkling; the last one is this boot's.
+  # With no log, the model folder in argv names Inkling; anything else is a Qwen engine, as before 1.6.0.
+  if [[ "$kind" == qengine ]]; then
+    local qe_line=""
+    if [[ -n "$CAP_LOG" && -r "$CAP_LOG" ]]; then
+      qe_line="$(command grep -E '^(inkling: K/V pool |KV pool: [0-9]+ tokens)' "$CAP_LOG" 2>/dev/null | tail -1 || true)"
+    fi
+    case "$qe_line" in
+      inkling:*) echo "bf16 (QEngine's Inkling engine: its only KV format; source: boot log)"; return 0 ;;
+      KV\ pool:*) echo "fp8_e4m3 (QEngine's Qwen engines: their only KV format; source: boot log)"; return 0 ;;
+    esac
+    v="$(cap_argv_flag "$argv" --model || true)"
+    if [[ "${v##*/}" =~ [Ii]nkling ]]; then
+      echo "bf16 (QEngine's Inkling engine: its only KV format; source: the model folder in argv)"
+    else
+      echo "fp8_e4m3 (QEngine's Qwen engines: their only KV format)"
+    fi
+    return 0
+  fi
   # Strata: the port belongs to its Python server, and the KV belongs to the engine it starts as a
   # child (`strata --serve ... --kv int8 --kv-resident 32768`), so neither the argv above nor /props
   # carries it. Read the child's own command line in the container, as llamacpp_spec_args does
