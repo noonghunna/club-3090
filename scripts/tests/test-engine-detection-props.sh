@@ -84,10 +84,33 @@ kv() {  # <port> <argv> <kind>
   bash -c 'source "$1/scripts/lib/capture.sh"; URL="http://127.0.0.1:$2"; CAP_LOG=""
     cap_kv_type "$3" "$4" 2>/dev/null || echo UNAVAILABLE' _ "$ROOT" "$1" "$2" "$3"
 }
-check "QEngine, kind from owned_by -> fp8_e4m3" "fp8_e4m3 (QEngine's only KV format)" \
+check "QEngine, kind from owned_by -> fp8_e4m3" "fp8_e4m3 (QEngine's Qwen engines: their only KV format)" \
   "$(kv "$QE" "python3 server/app.py --model /app/models/Qwen3.8-27B-INT4" "")"
-check "QEngine, kind from the caller -> fp8_e4m3" "fp8_e4m3 (QEngine's only KV format)" \
+check "QEngine, kind from the caller -> fp8_e4m3" "fp8_e4m3 (QEngine's Qwen engines: their only KV format)" \
   "$(kv "$QE" "python3 server/app.py --model /app/models/Qwen3.8-27B-INT4" qengine)"
+# QEngine 1.6.0 added an Inkling-2-Mini engine whose K and V are bf16; every Inkling bench said fp8_e4m3
+# until the label asked which engine served. Its boot log says so first; with no log, the model folder.
+check "QEngine Inkling, no log -> bf16 from the model folder" \
+  "bf16 (QEngine's Inkling engine: its only KV format; source: the model folder in argv)" \
+  "$(kv "$QE" "python3 server/app.py --model /app/models/Inkling-2-Mini --served-name inkling-2-mini" qengine)"
+kvlog() {  # <port> <argv> <kind> <log file>
+  bash -c 'source "$1/scripts/lib/capture.sh"; URL="http://127.0.0.1:$2"; CAP_LOG="$5"
+    cap_kv_type "$3" "$4" 2>/dev/null || echo UNAVAILABLE' _ "$ROOT" "$1" "$2" "$3" "$4"
+}
+printf '%s\n' "[ink] server pool: 2 slots, 124928 rows (7.26 GB free after the weights; drafter on)" \
+  "inkling: K/V pool 124928 rows for 2 slots (every row that fits), context per conversation 124896 tokens, drafter on, 34.1 KB per row" \
+  > "$TMP/qe-inkling.log"
+printf '%s\n' "KV pool: 538624 tokens shared by 16 sequence slots (max context 262144)" > "$TMP/qe-qwen.log"
+cat "$TMP/qe-qwen.log" "$TMP/qe-inkling.log" > "$TMP/qe-both.log"
+check "QEngine Inkling, its boot log -> bf16, whatever the folder is called" \
+  "bf16 (QEngine's Inkling engine: its only KV format; source: boot log)" \
+  "$(kvlog "$QE" "python3 server/app.py --model /app/models/m" qengine "$TMP/qe-inkling.log")"
+check "QEngine Qwen, its boot log -> fp8_e4m3" \
+  "fp8_e4m3 (QEngine's Qwen engines: their only KV format; source: boot log)" \
+  "$(kvlog "$QE" "python3 server/app.py --model /app/models/Inkling-2-Mini" qengine "$TMP/qe-qwen.log")"
+check "QEngine, a log with two boots -> the last boot's engine" \
+  "bf16 (QEngine's Inkling engine: its only KV format; source: boot log)" \
+  "$(kvlog "$QE" "python3 server/app.py --model /app/models/m" qengine "$TMP/qe-both.log")"
 check "llama.cpp with no KV flag -> its f16 default (unchanged)" "f16 (engine default; no -ctk/-ctv in argv)" \
   "$(kv "$LC" "llama-server -m /m/x.gguf -ngl 99" "")"
 check "a family that names another engine -> no f16 guess" "UNAVAILABLE" \
