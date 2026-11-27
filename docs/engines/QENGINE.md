@@ -22,7 +22,7 @@ What it does, from its README:
 
 ## Image
 
-The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<release>`, text only (about 1 GB to pull since 1.5.0 added three more engines), and `:<release>-vision`, which adds PyTorch for the vision encoder (about 4 GB to pull). Each image's `org.opencontainers.image.revision` label names its source commit. The profile pins **`1.5.1-vision`** by digest (`sha256:3f5f54d4…`, source `2d171c07` = git tag `v1.5.1`), upstream's stable release: `latest` and `vision` moved to it. The rollback is 1.3.6-vision (`sha256:5064093b…`), the previous stable pin, or 1.3.5.7-vision (`sha256:2d790174…`), the last under the PolyForm Noncommercial licence, and the launchers inject the pin as `QENGINE_IMAGE`. Its server, engine libraries and entrypoint are byte-identical to the text image's, so text serving is the same in either; the vision image is what lets the slugs take images.
+The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<release>`, text only (about 1 GB to pull since 1.5.0 added three more engines), and `:<release>-vision`, which adds PyTorch for the vision encoder (about 4 GB to pull). Each image's `org.opencontainers.image.revision` label names its source commit. The profile pins **`1.6.2-vision`** by digest (`sha256:1276f24c…`, source `380e3c7a` = git tag `v1.6.2`), upstream's stable release: `latest` and `vision` moved to it. The rollback is 1.5.1-vision (`sha256:3f5f54d4…`), the previous stable pin, or 1.3.5.7-vision (`sha256:2d790174…`), the last under the PolyForm Noncommercial licence, and the launchers inject the pin as `QENGINE_IMAGE`. Its server, engine libraries and entrypoint are byte-identical to the text image's, so text serving is the same in either; the vision image is what lets the slugs take images.
 
 **1.3.3.1** (pinned 2026-11-01, a fix-only release for both engines) fixes replies that could pick up text from another conversation running at the same time: when a new request was admitted between two chunks of another prompt's prefill, the next generation step of a running request ran on the new request's sequence slot, so it continued that conversation and sent the tokens to the wrong client (or ended early with empty content). Only a server handling several requests at once is affected, which both slugs allow (several slots); upstream recommends that everyone upgrade. Flash-Next also had the same mix-up after a failed prompt in a batched prefill. Both engines now refuse a generation step on a slot that is still prefilling or no longer in use, and log a `BUG:` line if one is attempted.
 
@@ -184,6 +184,24 @@ The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<releas
     - That start waited 28 s for the 42.9 GB archive, of which only 4.5 GB landed on 2 MB pages (the log warns that decode steps may be slower). 216 GB of the host's memory was page cache at the time.
     - A second start, after the Flash-Next boot had left 4 GB of page cache, pinned it in 6.3 s, all on 2 MB pages as on 1.3.6, and was ready in 32 s. So 1.5.1 gets every page with little page cache. 1.3.6 wasn't tried with that much page cache, and the decode cost of the first start's coverage wasn't measured. Upstream's `docs/advanced.md` says a fragmented host costs the archive load time, not decode speed ([bpx03/QEngine#28](https://github.com/bpx03/QEngine/issues/28)).
   - **Flash-Next:** ready in 132 s, verify-full all pass with vision 4/4, MTP acceptance length 5.90, context 262144. 31.7 GB of experts are in host memory, and the 51.8 GB n-gram table was pinned in 11 s.
+
+  No bench was run.
+
+**1.6.2** (pinned 2026-11-27) is upstream's new stable release. 1.6.0, 1.6.1 and 1.6.2 all came out on 2026-11-26, and `latest` and `vision` moved with each. The weights of both Qwen models are unchanged.
+- **1.6.0:**
+  - **Inkling-2-Mini, as a preview:** the official checkpoint plus two files of the author's (INT8 dense weights and a fine-tuned DSpark drafter), up to 8 conversations on 2 cards with GPU P2P. No slug here runs it.
+  - **Flash-Next restore points at the start of a prompt's last two messages** ([bpx03/QEngine#48](https://github.com/bpx03/QEngine/issues/48)): an agent client that drops a short reminder message, or the reasoning of its last reply, resumes there instead of recomputing from the system prompt (upstream: 125K-token conversation, 15.5-16.3 s → 0.4-0.6 s per turn). `FLASH_CKPT_TAIL=0` turns it off. On 2 cards with more than 10 GB of host-backed experts per card it stays off unless `FLASH_CKPT_TAIL_SNAP=1`. The composes forward neither.
+  - **Opt-in `--disk-eager`** (27B and Flash-Next) writes each conversation to the disk cache after every reply ([#33](https://github.com/bpx03/QEngine/issues/33)). The 27B's disk cache now saves a conversation together with its shared system prompt ([#47](https://github.com/bpx03/QEngine/issues/47)). The composes don't turn the disk cache on.
+  - Upstream: the 27B's greedy output and Flash-Next's deterministic output are identical to 1.5.1, and decode is within 1 %.
+- **1.6.1** fixes word salad from two or more conversations decoded together on the 27B's bf16 KV cache (`QE_KV_FP8=0`, [#49](https://github.com/bpx03/QEngine/issues/49)). The composes use the default FP8 cache, whose output upstream reports unchanged.
+- **1.6.2:**
+  - An explicit `top_k: 0`, `top_p: 0` or `min_p: 0` is now kept instead of taking the default (`top_k: 0` = no cut, `top_p: 0` = greedy), and `seed: 0` is a seed. bench.sh sends `top_k 20` and `min_p 0`, and the engine's own `min_p` default is already 0.00 (its start log), so the bench's sampler is unchanged.
+  - `server/run.sh` with no GPU list uses every GPU the container sees. The composes narrow the container to the chosen cards and set `QE_GPUS`, which the entrypoint still maps to `QE_DEVICES`.
+- **Interfaces:**
+  - Every `QE_*` / `FLASH_*` name the composes forward (80) is in the 1.6.2 build.
+  - `app.py` lost no flag; it gained `--dense-weights` and `--disk-eager`.
+  - The entrypoint still reads `QE_REASONING_EFFORT`, and `/v1/models` still says `owned_by: "qengine"`.
+- **Booted `qengine/qwen38-27b-dual`** (2026-11-27, 230 W): ready in 157 s, verify-full all pass with vision 4/4, MTP acceptance length 7.93, KV pool 538,624 tokens at 16 slots (as on 1.5.1), every conversation served 262144. Flash-Next wasn't booted: this sweep booted one small slug per engine, at the maintainer's call. The runbook also asks for a `qengine/qwen38-flash-next-dual` boot when a release changes the Flash-Next engine, and 1.6.0 does (the restore points), so that boot is still owed.
 
   No bench was run.
 
