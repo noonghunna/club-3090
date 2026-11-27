@@ -108,7 +108,7 @@
   },
   "strata-maya": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:070656df27f4f5a22ad562cf2ee772558be9101b2cbfa764d606934e88594b97",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:5d5bead296f0860a8618b175126f0caec32d28fd7d8ce6a6a8428eb896ef8a86",
    "render": "maya_prepare",
    "programs": [
     "models/glm-5.3-flash/strata-maya/launcher/maya_settings.py",
@@ -161,7 +161,7 @@
   },
   "strata-maya:ds4": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:070656df27f4f5a22ad562cf2ee772558be9101b2cbfa764d606934e88594b97",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:5d5bead296f0860a8618b175126f0caec32d28fd7d8ce6a6a8428eb896ef8a86",
    "render": "maya_ds4_prepare",
    "programs": [
     "models/deepseek-v4.1-flash-1017/strata-maya/launcher/ds4_settings.py",
@@ -216,7 +216,7 @@
   },
   "strata-maya:hy4": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:070656df27f4f5a22ad562cf2ee772558be9101b2cbfa764d606934e88594b97",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:5d5bead296f0860a8618b175126f0caec32d28fd7d8ce6a6a8428eb896ef8a86",
    "render": "maya_hy4_prepare",
    "programs": [
     "models/hy4-flash/strata-maya/launcher/hy4_settings.py",
@@ -279,7 +279,7 @@
   },
   "strata-maya:mm3": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:070656df27f4f5a22ad562cf2ee772558be9101b2cbfa764d606934e88594b97",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:5d5bead296f0860a8618b175126f0caec32d28fd7d8ce6a6a8428eb896ef8a86",
    "render": "maya_mm3_prepare",
    "programs": [
     "models/minimax-m3.1-flash/strata-maya/launcher/mm3_settings.py",
@@ -336,7 +336,7 @@
   },
   "strata-maya:ik2": {
    "engine_profile": "scripts/lib/profiles/engines/strata-maya.yml",
-   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:070656df27f4f5a22ad562cf2ee772558be9101b2cbfa764d606934e88594b97",
+   "verified_image": "ghcr.io/noonghunna/strata-maya-club3090@sha256:5d5bead296f0860a8618b175126f0caec32d28fd7d8ce6a6a8428eb896ef8a86",
    "render": "maya_ik2_prepare",
    "programs": [
     "models/inkling-2-mini/strata-maya/launcher/ik2_settings.py",
