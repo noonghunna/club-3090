@@ -11,15 +11,31 @@ lineage:
   base: "llama.cpp"
   base_version: null
   source: "https://github.com/PrismML-Eng/llama.cpp"
-  source_ref: "03ec60072cdd32a03ae931969af62e57bfb0c8dc"
+  source_ref: "f70247610e588c7f843349f769c9a6fe7f683695"
   chain: []
-  delta: "PrismML's fork with ternary (PQ2_0) kernels, release prism-b12178-03ec600. Our image wraps their release tarball unmodified (predates the maintainer-published-image rule)"
+  delta: "PrismML's fork with ternary (PQ2_0) kernels, release prism-b12232-f702476. Our image wraps their release tarball unmodified (predates the maintainer-published-image rule)"
 install:
   method: docker_image
   # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
   # Built by WRAPPING upstream's own release tarball — NOT from source. Recipe:
   # models/qwen3.8-27b/llama-cpp-prism/image/Dockerfile (checked in 2026-09-24;
   # the b10685 image's recipe existed only in its layers).
+  #   2026-11-27  prism-b12232-f702476  `llama-prism-b12232-f702476-bin-linux-cuda-12.8-x64.tar.gz`
+  #               sha256 5aeef1a6…e106d329f (= the release asset's published digest).
+  #               Image tag b12232-f702476, registry digest sha256:f1d3dc1a…685e2a853.
+  #               SASS sm_75/86/89/120a, PTX to sm_90 (cuobjdump), as on b12178. Every flag and LLAMA_ARG_* our
+  #               composes pass is still in --help; the one new option is --spec-draft-window. Takes b12220 too
+  #               (no b12220 pin). For a 3090: flash attention for prompt batches of 64+ tokens is faster on models
+  #               with 6 query heads per KV head (#410), a PTQ1_0 MMQ block-scale change (#411; both can differ in
+  #               the last bits of rounding), the n-gram cache drafter's out-of-bounds read fixed (#435, #436), the
+  #               Qwen3-Coder parser needs the closing </think> before a response-format JSON body (#440), and the
+  #               server retries a prompt-cache restore after clearing idle slots and keeps the entry until it
+  #               succeeds (b12232, from mainline). Opt-in, not set here: --spec-draft-window, --checkpoint-every-nt,
+  #               LLAMA_MTP_PREFILL_LEAN=1; the faster prefill kernels stay default-on only off the 3090 (Hopper,
+  #               A100, B200, RTX PRO 6000). New 2-bit KV pq2_0m: below our q8_0 serving floor, not added.
+  #               The MTP slug, greedy /completion on the code prompt: SPEC_N 0, 2 and 4 byte-identical, and
+  #               identical to b12178 at SPEC_N 0 (drafts accepted 64 of 64 at 2, 75 of 80 at 4).
+  #               verify-full 9/9 (vision 4/4, draft acceptance 0.900) at SPEC_N 4. pq2 not booted (one-slug rule).
   #   2026-11-24  prism-b12178-03ec600  `llama-prism-b12178-03ec600-bin-linux-cuda-12.8-x64.tar.gz`
   #               sha256 a50997fb…6af1899 (= the release asset's published digest).
   #               Image tag b12178-03ec600, registry digest sha256:7efa2d7d…5ce234270.
@@ -141,9 +157,9 @@ install:
   # The pin's record: pin-current is what spec pins now; pin-earlier lists earlier pins, newest first (the first
   # is the rollback). docs/UPSTREAM.md's Pinned images table holds why it's pinned, not these.
   # The dated notes above are each pin's detail.
-  # pin-current: prism-b12178-03ec600 · image tag b12178-03ec600 · pinned 2026-11-24
-  # pin-earlier: prism-b12128-d7b2896 `c68dd5a7…` (2026-10-31); prism-b10831-9d9efea `e2adf9c9…` (2026-10-30); prism-b10828-a153697 `6ea99567…` (2026-10-29); prism-b10826-c9c34bc `65e3fd2a…` (2026-10-28); prism-b10822-bf8c069 `7724902b…` (2026-10-25); prism-b10819-909f0ca `ae963910…` (2026-10-25); prism-b10787-73bfe6c `8426b957…` (2026-10-20); prism-b10776-d00e252 `e4ad4998…` (2026-10-14, ships PrismML #355); prism-b10770-6684606 `8dbbd2a6…` (2026-10-10); prism-b10754-2459f68 (2026-10-06); prism-b10735-842b188 (2026-09-24); prism-b10685-7dffb15 `919ee810…` (2026-09-18)
-  spec: ghcr.io/noonghunna/llamacpp-prism@sha256:7efa2d7d1f2221db5156afa88ed3d264a21bf321b39202dc68eec7f5ce234270
+  # pin-current: prism-b12232-f702476 · image tag b12232-f702476 · pinned 2026-11-27
+  # pin-earlier: prism-b12178-03ec600 `7efa2d7d…` (2026-11-24); prism-b12128-d7b2896 `c68dd5a7…` (2026-10-31); prism-b10831-9d9efea `e2adf9c9…` (2026-10-30); prism-b10828-a153697 `6ea99567…` (2026-10-29); prism-b10826-c9c34bc `65e3fd2a…` (2026-10-28); prism-b10822-bf8c069 `7724902b…` (2026-10-25); prism-b10819-909f0ca `ae963910…` (2026-10-25); prism-b10787-73bfe6c `8426b957…` (2026-10-20); prism-b10776-d00e252 `e4ad4998…` (2026-10-14, ships PrismML #355); prism-b10770-6684606 `8dbbd2a6…` (2026-10-10); prism-b10754-2459f68 (2026-10-06); prism-b10735-842b188 (2026-09-24); prism-b10685-7dffb15 `919ee810…` (2026-09-18)
+  spec: ghcr.io/noonghunna/llamacpp-prism@sha256:f1d3dc1aaac89467232dd470b414a54904070ddfa92ddf17baef4cc685e2a853
 
 # ---------------------------------------------------------------------------
 # WHY A SEPARATE ENGINE RATHER THAN A FLAG ON AN EXISTING ONE

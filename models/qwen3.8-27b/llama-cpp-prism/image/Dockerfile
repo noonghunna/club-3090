@@ -4,7 +4,7 @@
 # 2026-09-24, so the next bump does not have to reverse-engineer it.)
 #
 # Build (from this directory):
-#   TAG=prism-b12178-03ec600
+#   TAG=prism-b12232-f702476
 #   curl -sSLO https://github.com/PrismML-Eng/llama.cpp/releases/download/$TAG/llama-$TAG-bin-linux-cuda-12.8-x64.tar.gz
 #   sha256sum llama-$TAG-bin-linux-cuda-12.8-x64.tar.gz   # must equal the release asset's published digest
 #   mkdir prism && tar xzf llama-$TAG-*.tar.gz -C prism --strip-components=1 llama-$TAG
