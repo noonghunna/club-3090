@@ -3,8 +3,8 @@
 #   Model:     Qwen3.8-27B — RedHatAI INT4 (compressed-tensors W4A16, group 128, symmetric) with
 #              its MTP head, plus QEngine's fine-tuned MTP head and draft vocabulary (its release
 #              assets, unchanged since v1.0; the server downloads them when they're missing)
-#   Engine:    QEngine 1.5.1 (bpx03; upstream's stable release): its own
-#              C++/CUDA engine and server, the author's own image ghcr.io/bpx03/qengine (source 2d171c07, the
+#   Engine:    QEngine 1.6.2 (bpx03; upstream's stable release): its own
+#              C++/CUDA engine and server, the author's own image ghcr.io/bpx03/qengine (source 380e3c7a, the
 #              :vision image: PyTorch for the encoder)
 #   Topology:  Three 3090s PCIe (tensor parallel 3, QEngine's tuned setup; GPU-to-GPU P2P when the
 #              driver grants it) — NOT the reference rig
@@ -207,7 +207,7 @@
 #   bash scripts/settings.sh set QE_KV_ARCHIVE_GB=8
 services:
   qengine-qwen38-27b-multi3:
-    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:3f5f54d4df74e5c4494cc3458b5fe588991681fc9441319345e12870f6d58d90}
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:1276f24ce79fb9dded6504c8b842af4b01a28ca58d98fca905a0b8807df65daf}
     # qengine- is the container prefix our tooling discovers the engine by
     container_name: "${ESTATE_CONTAINER:-qengine-qwen38-27b-multi3}"
     user: "0:${DOCKER_GID:-1000}"
