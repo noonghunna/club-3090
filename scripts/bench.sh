@@ -695,6 +695,14 @@ if [[ "$CAPTURE" == "1" && -f "${ROOT_DIR}/scripts/lib/capture.sh" ]]; then
   echo "  GPUs measured  : ${BENCH_GPUS:-all} (${CAP_NGPU} card(s); ${CAP_GPUS_SOURCE:-BENCH_GPUS})"
   _v="$(cap_props_get "default_generation_settings.n_ctx" || true)"
   _s="$(cap_props_get "total_slots" || true)"
+  # ★ 2026-11-28 — the served context is not only a fingerprint LINE. The prefill probe's
+  # token calibrator inflates its request from one warm-up sample and had no ceiling to
+  # inflate against, so a depth that fits the window can be measured at a request that
+  # does not (see run_prefill_probe). Bind the value where it is already read. An engine
+  # with no /props (vLLM; the Strata/Maya of #1915) yields empty, and the probe fails
+  # open: no value, no clamp, today's behaviour unchanged.
+  SERVED_CTX="$_v"
+  export SERVED_CTX
   [[ -n "$_v" ]] && echo "  served ctx     : ${_v}${_s:+  (slots=${_s})}"
   _v="$(cap_props_get "model_ftype" || true)"
   [[ -n "$_v" ]] && echo "  weights ftype  : ${_v}"
@@ -1592,6 +1600,28 @@ def run_prefill_probe():
     except ValueError:
         _depth_toks = 128
     _gen_cap = _depth_toks if _depth_toks > 0 else PP_MAX_TOKENS
+    # ★ THE WINDOW THE CALIBRATOR IS NOT ALLOWED TO LEAVE (reproducer: a 2-card QEngine
+    # boot, served ctx 92 128 from /props, 92 119 admitted by its own 400). The warm-up
+    # asked for 90 000 words and the engine counted 88 457, so the probe scaled its
+    # measured request UP to 91 569 — and the engine then counted 93 097: HTTP 400, and
+    # the depth printed a FAIL line and no summary at all.
+    # The calibrator infers tokens-per-request-word from ONE sample, and that sample does
+    # not hold for the runs it calibrates. Four depths, three engines, this estate:
+    #   Inkling-2-Mini 90 k  warm 0.983 tok/word → measured run counted 1.017  (+3.4 %)
+    #   Inkling-2-Mini 10 k  warm 0.984          → counted 1.019               (+3.6 %)
+    #   Qwen3.5-2B     3 k   warm 1.020          → counted 0.984               (-3.5 %)
+    #   llama-3.2-3B   6 k   warm 1.063          → counted 1.102               (+3.7 %)
+    # So the sample is good to about +-4 % and the dangerous direction is the one where the
+    # warm-up UNDER-counts: the request is then inflated and the depth is lost. Hence a
+    # ceiling derived from the warm-up's OWN ratio (not a constant), plus a 5 % tolerance
+    # that covers the swing observed above. This is a ceiling, not a repair of the
+    # calibration's accuracy — a depth the window can hold is measured exactly as before,
+    # and one it cannot is named on the card instead of failing silently.
+    try:
+        _served_ctx = int(os.environ.get("SERVED_CTX", "") or 0)
+    except ValueError:
+        _served_ctx = 0
+    _CTX_TOL = 0.05   # covers the +-4 % counted-per-word swing in the four rows above
     _warm_mt = FORCE if FORCE > 0 else PP_MAX_TOKENS
     _meas_mt = FORCE if FORCE > 0 else _gen_cap
     _mt_label = (f"max_tokens={_meas_mt}" if _warm_mt == _meas_mt
@@ -1629,6 +1659,22 @@ def run_prefill_probe():
             if ptoks > 0:
                 request_tokens = max(200, int(target * target / ptoks))
                 print(f"  [calibrated: {ptoks} tok at request={target} → measured runs request {request_tokens}]")
+                # ★ The clamp, sized from THIS warm-up's own ratio rather than a constant:
+                # an engine that counts >1 token per request word (every llama.cpp build
+                # tested: 1.006-1.07) must keep its depths, and one that counts <1 (the
+                # Inkling engine above) is the only one that can inflate out of its window.
+                # Say so on the card when it bites — a depth label that quietly became
+                # another number is the class of defect #1942 and #2164 were fixed for.
+                if _served_ctx > 0:
+                    _r_warm = (ptoks / target) if target > 0 else 1.0
+                    _budget = int((_served_ctx - _gen_cap - 16) / max(_r_warm, 1.0)
+                                  * (1 - _CTX_TOL))
+                    if request_tokens > _budget:
+                        print(f"  [clamped: {request_tokens} → {_budget} request words — served ctx "
+                              f"{_served_ctx}, warm-up counted {ptoks} at request {target} "
+                              f"({_r_warm:.3f} tok/word), {int(_CTX_TOL * 100)} % tolerance, "
+                              f"{_gen_cap} gen tokens; the depth label stays {target}]")
+                        request_tokens = _budget
         except Exception as e:
             msg = str(e)
             # The STATUS, not the digits: "400" anywhere in the reason read a 422 that named
@@ -1675,6 +1721,18 @@ def run_prefill_probe():
                 ttfts.append(ttft)
                 ptoks_seen.append(ptoks)
             except Exception as e:
+                # A window overflow here is the harness's request, not the engine's fault —
+                # and on an engine that publishes no /props there is no clamp to prevent it.
+                # Say which it was, and stop spending runs at a depth this window cannot hold
+                # (the runs that did land still get their summary).
+                _m = str(e)
+                if _m.startswith("HTTP 400") or any(x in _m for x in ("maximum context", "max_model_len",
+                                                                      "context length", "context window")):
+                    print(f"  run-{i+1}    SKIP: request {request_tokens} does not fit this served "
+                          f"context ({_m[:100]}) — remaining runs at {label} skipped")
+                    progress(f"[bench] {label} run {i+1}/{n}: SKIP: served context overflow at request "
+                             f"{request_tokens}")
+                    break
                 print(f"  run-{i+1}    FAIL: {e}")
                 progress(f"[bench] {label} run {i+1}/{n}: FAIL: {e}")
         mark_phase("prefill", phase_t0)
