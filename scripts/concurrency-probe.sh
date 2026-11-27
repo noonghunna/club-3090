@@ -545,6 +545,7 @@ if [[ "$MATRIX" == "1" ]]; then
   t0_matrix=$(date +%s)
   budget_hit=0
   declare -A ROW_DEAD=()
+  declare -A ROW_QUEUED=()   # clean rungs the engine under-admitted — an envelope, not a fault
   cells_jsonl="$(mktemp /tmp/cprobe-cells.XXXXXX)"
   trap 'rm -f "$cells_jsonl"' EXIT
 
@@ -572,9 +573,25 @@ PY
       emit_row "$(python3 -c 'import json,sys; print(json.dumps({"ctx":int(sys.argv[1]),"n":int(sys.argv[2]),"skip":sys.argv[3]}))' "$ctx" "$n" "${reason:-clipped}")"
       continue
     fi
+    # ★ The same stop, the honest name. A rung that completed everything while the engine
+    # admitted fewer streams than asked is the concurrency ENVELOPE, not a failure — so the
+    # higher N values are still skipped (they would measure queueing), but the card and the
+    # JSONL say which of the two happened and quote the admitted peak. The verdict rule above
+    # is unchanged; only the record is. (Our 2- and 3-card Inkling-2-Mini rows both stopped at
+    # the same place with `clean=1`, and the filed cell could only read as "not run".)
+    # One emit_row call site for both kinds on purpose: the count of skip paths is pinned by
+    # scripts/tests/test-concurrency-probe.sh (#1502 — a row piped into emit_row is swallowed
+    # by the heredoc, so every skip path must pass its row as an ARGUMENT).
+    _stop_row=""
     if [[ "$EARLY_STOP" == "1" && -n "${ROW_DEAD[$ctx]:-}" ]]; then
       echo "[sweep] ${ctx} tok  N=${n}: skip (early-stop — N=${ROW_DEAD[$ctx]} failed)"
-      emit_row "$(python3 -c 'import json,sys; print(json.dumps({"ctx":int(sys.argv[1]),"n":int(sys.argv[2]),"skip":"early-stop"}))' "$ctx" "$n")"
+      _stop_row="$(python3 -c 'import json,sys; print(json.dumps({"ctx":int(sys.argv[1]),"n":int(sys.argv[2]),"skip":"early-stop"}))' "$ctx" "$n")"
+    elif [[ "$EARLY_STOP" == "1" && -n "${ROW_QUEUED[$ctx]:-}" ]]; then
+      echo "[sweep] ${ctx} tok  N=${n}: skip (ceiling — ${ROW_QUEUED[$ctx]}; nothing failed)"
+      _stop_row="$(python3 -c 'import json,sys; print(json.dumps({"ctx":int(sys.argv[1]),"n":int(sys.argv[2]),"skip":"ceiling","stop_detail":sys.argv[3]}))' "$ctx" "$n" "${ROW_QUEUED[$ctx]}")"
+    fi
+    if [[ -n "$_stop_row" ]]; then
+      emit_row "$_stop_row"
       continue
     fi
     echo
@@ -620,6 +637,14 @@ row = {
     "running": fields.get("running", "-"),
     "queued": fields.get("queued", "-"),
     "waiting": fields.get("waiting", "-"),
+    # ★ The PEAKS, not only the last samples. The sweep's early-stop below judges the rung on
+    # running_max/waiting_max (#1212, #1782) — and until now those two numbers were parsed,
+    # acted on, and thrown away, so a card that stopped at N=4 carried no evidence of WHY.
+    # A filed row then has to say "not run", when what happened is a measurement: the engine
+    # admitted 3 of 4 at this depth. (Seen on a 2/3/4-card Inkling-2-Mini pass: the same three
+    # N=8 rungs early-stopped at both widths, every rung that ran clean.)
+    "running_max": fields.get("running_max", "-"),
+    "waiting_max": fields.get("waiting_max", "-"),
     "result": line,
 }
 with open(path, "a", encoding="utf-8") as fh:
@@ -640,8 +665,21 @@ PY
     # that had already finished, not one the engine refused (#1782; admission_ok()).
     if [[ "$running_max" =~ ^[0-9]+$ && "$running_max" -lt "$n" \
           && "$waiting_max" =~ ^[0-9]+$ && "$waiting_max" -gt 0 ]]; then
-      fail=1
-      echo "[sweep] admitted peak ${running_max}/${n} (waiting ${waiting_max:-?}) — treating as fail for early-stop"
+      # ★ A CLEAN rung that the engine under-admitted is not a failed rung. Every request
+      # completed (`clean=1`, `rc=0`); the engine ran fewer streams at once than were asked
+      # and held the rest in Waiting. That is a measurement — the concurrency envelope at
+      # this depth — and the single-shot verdict in this same script already calls it QUEUED
+      # and refuses to treat it as a knee (#2096, `admission_ok()`). The early-stop itself is
+      # kept: rungs above the envelope measure queueing, not concurrency (the script's own
+      # WARNING at the slot check says so). What changes is the RECORD — the row carries the
+      # peak, and the line says what happened instead of "failed".
+      if [[ "$rc" == "0" && "$clean" == "1" ]]; then
+        ROW_QUEUED[$ctx]="N=${n}: admitted ${running_max}/${n}, ${waiting_max} waiting"
+        echo "[sweep] ${ctx} tok  N=${n}: QUEUED — clean, but the engine admitted ${running_max} of ${n} (${waiting_max} waiting); stopping the ladder above the envelope, not above a failure"
+      else
+        fail=1
+        echo "[sweep] admitted peak ${running_max}/${n} (waiting ${waiting_max:-?}) — treating as fail for early-stop"
+      fi
     fi
     if [[ "$fail" == "1" && "$EARLY_STOP" == "1" ]]; then
       ROW_DEAD[$ctx]="$n"
