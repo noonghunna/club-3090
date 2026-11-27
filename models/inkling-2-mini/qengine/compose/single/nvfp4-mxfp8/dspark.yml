@@ -1,0 +1,183 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Inkling-2-Mini — Thinking Machines' official checkpoint (NVFP4 / MXFP8 experts as
+#              shipped, read as it is), plus QEngine's two files for it (bpx03/Inkling-2-Mini-QEngine):
+#              the dense attention weights in GPTQ INT8 (dense8.safetensors) and the model's DSpark drafter
+#              fine-tuned on its own outputs (mtp_qe.safetensors)
+#   Engine:    QEngine 1.6.2 (bpx03; upstream's stable release; Inkling-2-Mini is a preview from 1.6.0): its
+#              own Inkling engine (libqinkling.so, sm_86 only) and server, the author's own image
+#              ghcr.io/bpx03/qengine (source 380e3c7a, the :vision image the engine profile pins; Inkling
+#              runs text only)
+#   Topology:  Single 3090 (one card; QEngine's two-card Inkling needs GPU P2P and isn't a slug here)
+#   Drafter:   DSpark, up to 7 drafts a step, from mtp_qe.safetensors (INK_DRAFTER_FILE); exact for greedy
+#              and sampled replies (top_k / top_p / min_p on the GPU), so drafts never change the text
+#   KV:        bf16 (QEngine's Inkling K / V cache: AppState's bf16 K / V, src/inkling/ink.cu), one pool
+#              shared by the slots; sliding-window applications keep a 1,024-row ring
+#   Vision:    no (QEngine's Inkling preview is text only: an image part is answered with
+#              "[image omitted: this server runs without vision]")
+#   Max ctx:   124896 (MEASURED 2026-11-27: what the pool of 124,928 rows QEngine fits on one card holds at 2
+#              slots; the compose asks for exactly that. INK_SLOTS=1 leaves room for ~137K: raise it with
+#              QE_EXTRA_ARGS="--max-ctx <n>", up to the maintainer's 262144 cap; the engine serves what fits)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   QEngine's Inkling-2-Mini is an upstream PREVIEW (1.6.0): text only; no structured output
+#              and no logprobs (HTTP 400); tool_choice `required` / named decode as auto (`none` works);
+#              the thinking budget is ignored, so max_tokens can end inside the reasoning; with
+#              reasoning_effort none the model still writes a short thought (MEASURED: 782 reasoning chars
+#              on an IPv4-validator prompt at temperature 0), so there is no off switch. RTX 3090-class
+#              cards (sm_86) only. Booted here 2026-11-27 through switch.sh (230 W): ready 31 s, verify-full
+#              all pass (vision skipped: text only), DSpark acceptance length 4.31. Bench on its own boot
+#              (bench.sh, GPU0 at 230 W): 127.6 / 167.1 tok/s narrative / code, prefill 3,805 / 3,105 @10K / 90K
+#              (BENCHMARKS.md, Inkling-2-Mini K17). No verify-stress, soak or 8-pack yet.
+#   Best for:  Inkling-2-Mini on one 3090 with fast drafted decode, 2 conversations at ~125K each
+# ---------------------------------------------------------------------------
+# Requires-min-vram-gb: 24
+# Requires-min-gpu-count: 1
+# Tensor-parallel: 1
+#
+# QEngine (github.com/bpx03/QEngine, Krzysztof Jagus, MIT) runs Inkling-2-Mini with its own engine from 1.6.0
+# (upstream docs/models/inkling-2-mini.md): the official checkpoint as shipped on one 24 GB card, the dense
+# attention weights in INT8 from dense8.safetensors (`--dense-weights g15` / INK_DENSE8=0 runs the original
+# weights, lossless, ~117K context), and the DSpark drafter from mtp_qe.safetensors. Upstream's own figures on
+# one RTX 3090 (1.6.0, power not stated): ~141 tok/s plain decode, ~214 with drafts on a 9-prompt mix;
+# club-3090 bench narrative / code 162 / 223 (ours at 230 W: 127.6 / 167.1, above); next-token KL 0.00538 against an fp32 reference with the INT8
+# weights (the official bf16 forward: 0.00592).
+#
+# Two folders, both read-only:
+#   Inkling-2-Mini            the official checkpoint, shared with the vllm/inkling-2-mini-* slugs
+#                             (QEngine tested revision b85c3cfa; our pinned ed40e7da differs from it only in
+#                             README.md, every weight file identical)
+#   inkling-2-mini-qengine    QEngine's two files. They do NOT go into the checkpoint's folder: vLLM loads
+#                             every *.safetensors there. INK_DENSE8_FILE and INK_DRAFTER_FILE point at them
+#                             (upstream docs/advanced.md); a path that doesn't exist stops the start.
+#
+#   bash scripts/setup.sh qengine/inkling-2-mini-single
+#   bash scripts/switch.sh --force qengine/inkling-2-mini-single
+#
+# Knobs (ours, mapped onto QEngine's variables by the entrypoint below):
+#   REASONING_EFFORT  high (default, the template's own 0.9) | none | minimal | low | medium | xhigh | max:
+#                     QE_REASONING_EFFORT, the default effort for requests that send none (MEASURED read on
+#                     Inkling: set to low, a request without an effort reasons exactly as one sending low).
+#                     The template maps the names to its dial: none 0.0, minimal 0.1, low 0.2, medium 0.7,
+#                     high 0.9, xhigh and max 0.99; any other name is HTTP 400
+# QEngine's own settings, passed through when set (its defaults otherwise; upstream docs/models/inkling-2-mini.md):
+#   INK_SLOTS            conversations decoded at once, 1-16 (2 on one card): 2 leave ~125K tokens each, 1 ~137K,
+#                        8 ~62K; when they don't fit the server serves fewer and says so
+#   INK_DRAFTER          0 = no drafter (plain decoding, about 1 GB more K/V room)
+#   INK_DENSE8           0 = the original dense weights (g15, lossless, ~117K context); 1 = INT8 (the default
+#                        with dense8.safetensors)
+#   INK_MAX_CTX          caps the context per conversation below what the pool holds
+#   INK_BG_REARM         0 = don't copy an idle conversation to host RAM after every reply
+#   INK_ADMIT_REPLY_ROWS rows a new prompt leaves free for the running replies to grow (2048)
+#   INK_ARCHIVE_SYNC_ROWS bound on an evicted conversation's copy to host RAM (all)
+#   QE_KV_ARCHIVE_GB     host RAM for idle conversations (128 GiB)
+#   QE_KV_ARCHIVE_MARGIN_GB  what the archive leaves free below MemAvailable (8 GiB)
+#   QE_PRESENCE_PENALTY / QE_FREQUENCY_PENALTY  defaults for requests that send none
+#   QE_METRICS_PORT      the monitoring port inside the container (9393)
+#   QE_EXTRA_ARGS        more server/app.py flags, after ours (`--dense-weights g15`, `--park 1`, ...)
+# `switch.sh --set` saves only our knob above for this slug; QEngine's own names are set for one launch, or
+# for every QEngine slug:
+#   INK_SLOTS=1 bash scripts/switch.sh --force qengine/inkling-2-mini-single
+services:
+  qengine-inkling-2-mini-single:
+    image: ${QENGINE_IMAGE:-ghcr.io/bpx03/qengine@sha256:1276f24ce79fb9dded6504c8b842af4b01a28ca58d98fca905a0b8807df65daf}
+    # qengine- is the container prefix our tooling discovers the engine by
+    container_name: "${ESTATE_CONTAINER:-qengine-inkling-2-mini-single}"
+    user: "0:${DOCKER_GID:-1000}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    # upstream's docker run: --ipc=host --ulimit memlock=-1 (the engine pins its host-RAM archive)
+    ipc: host
+    ulimits:
+      memlock: -1
+    stop_grace_period: 30s
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8231}}:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              # the container sees only the chosen card, numbered 0 (QE_GPUS below)
+              device_ids: ['${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}']
+              capabilities: [gpu]
+    volumes:
+      # the official checkpoint, as the vllm-inkling slugs read it
+      - ${MODEL_DIR:-../../../../../../models-cache}/Inkling-2-Mini:/app/models/Inkling-2-Mini:ro
+      # QEngine's INT8 dense weights and trained drafter, in a folder of their own
+      - ${MODEL_DIR:-../../../../../../models-cache}/inkling-2-mini-qengine:/app/models/inkling-2-mini-qengine:ro
+      # ~/.cache/qengine: stats, logs and the one-engine-per-GPU locks
+      - ${CLUB3090_ENGINE_CACHE_DIR:-../../../cache}/qengine:/root/.cache/qengine
+    environment:
+      # the card as the container numbers it (device_ids above picks which)
+      - QE_GPUS=0
+      - QE_PORT=8080
+      - QE_MODEL=/app/models/Inkling-2-Mini
+      # QEngine's two files, from their own folder (a set path that doesn't exist stops the start)
+      - INK_DENSE8_FILE=/app/models/inkling-2-mini-qengine/dense8.safetensors
+      - INK_DRAFTER_FILE=/app/models/inkling-2-mini-qengine/mtp_qe.safetensors
+      - INK_SLOTS
+      - INK_DRAFTER
+      - INK_DENSE8
+      - INK_MAX_CTX
+      - INK_BG_REARM
+      - INK_ADMIT_REPLY_ROWS
+      - INK_ARCHIVE_SYNC_ROWS
+      - QE_KV_ARCHIVE_GB
+      - QE_KV_ARCHIVE_MARGIN_GB
+      - QE_PRESENCE_PENALTY
+      - QE_FREQUENCY_PENALTY
+      - QE_METRICS_PORT
+      - QE_EXTRA_ARGS
+      # our launch knob, mapped onto QEngine's variable by the entrypoint below
+      - REASONING_EFFORT
+    entrypoint:
+      - bash
+      - -c
+      - |
+        umask 0002
+        set -euo pipefail
+        # QEngine's Inkling engine ships from 1.6.0; an older image would start the Qwen engine on it and fail later.
+        if [ ! -f /app/build_srv/libqinkling.so ]; then
+          echo "[inkling] this image has no Inkling engine (build_srv/libqinkling.so): QEngine runs Inkling-2-Mini from 1.6.0." >&2
+          echo "[inkling] Fix: the image engines/qengine.yml pins (QEngine 1.6.0 or later); see docs/engines/QENGINE.md." >&2
+          exit 1
+        fi
+        for _f in "$$INK_DENSE8_FILE" "$$INK_DRAFTER_FILE"; do
+          if [ ! -f "$$_f" ]; then
+            echo "[inkling] $$_f is missing: QEngine's two files for Inkling-2-Mini go in <models>/inkling-2-mini-qengine/." >&2
+            echo "[inkling] Fix: bash scripts/setup.sh qengine/inkling-2-mini-single (bpx03/Inkling-2-Mini-QEngine, 1.3 GB)." >&2
+            exit 1
+          fi
+        done
+        _args=()
+        # The model id every Inkling-2-Mini slug serves, so the gateway routes and omp's effort overrides
+        # (scripts/omp-setup.sh) apply.
+        _args+=( --served-name inkling-2-mini )
+        # What the K/V pool holds on one 24 GB card at 2 slots (measured; the registry's max_ctx). QEngine serves
+        # less if less fits (one start-up `context` line); QE_EXTRA_ARGS="--max-ctx <n>" asks for more (INK_SLOTS=1).
+        _args+=( --max-ctx 124896 )
+        # REASONING_EFFORT (our knob) -> QE_REASONING_EFFORT, QEngine's default effort for requests that send none.
+        # Unset, it is the template's own default, high (0.9).
+        _reff="$${REASONING_EFFORT:-high}"
+        case "$$_reff" in none|minimal|low|medium|high|xhigh|max) : ;; *) echo "[reasoning] REASONING_EFFORT='$$_reff' must be none|minimal|low|medium|high|xhigh|max" >&2; exit 1 ;; esac
+        if ! grep -qF QE_REASONING_EFFORT /app/server/app.py; then
+          echo "[reasoning] this image's server/app.py doesn't read QE_REASONING_EFFORT, so the default effort can't be set." >&2
+          echo "[reasoning] Fix: QEngine 1.3.1 or later; see docs/engines/QENGINE.md." >&2
+          exit 1
+        fi
+        export QE_REASONING_EFFORT="$$_reff"
+        echo "[reasoning] default reasoning_effort=$$_reff (QE_REASONING_EFFORT; a request's own effort wins)" >&2
+        # The engine library makes ~/.cache/qengine/locks 0755 whatever the umask; group-writable, the
+        # lock files it leaves in the shared engine cache stay removable by the user.
+        mkdir -p /root/.cache/qengine/locks && chmod g+w /root/.cache/qengine/locks
+        # Ours first, so a flag in QE_EXTRA_ARGS wins (server/app.py takes the last one).
+        export QE_EXTRA_ARGS="$${_args[*]} $${QE_EXTRA_ARGS:-}"
+        exec /usr/local/bin/qengine-entrypoint
+    healthcheck:
+      # The image has no curl. The container's own hostname, not loopback, so a bad bind
+      # address can't look healthy.
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://' + os.environ['HOSTNAME'] + ':8080/health', timeout=4)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 600s

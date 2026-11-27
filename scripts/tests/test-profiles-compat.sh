@@ -191,7 +191,7 @@ run_test "C2 engine TP list: QEngine runs three cards, vLLM still may not" <<'PY
 from scripts.lib.profiles.compat import load_profiles, fits
 p = load_profiles()
 qe = p.engines["qengine"]
-assert qe.valid_tp_by_family == {"qwen35-dense": (1, 2, 3, 4), "qwen4exp": (2, 3, 4)}, qe.valid_tp_by_family
+assert qe.valid_tp_by_family == {"qwen35-dense": (1, 2, 3, 4), "qwen4exp": (2, 3, 4), "inkling2-loop-moe": (1, 2)}, qe.valid_tp_by_family
 hw3 = [p.hardware["rtx-3090"]] * 3
 wl = p.workloads["multi-stream-tenant"]
 def c2(model, engine, tp, hw):
@@ -204,6 +204,10 @@ for model in ("qwen3.8-27b", "qwen3.8-flash-next"):
     assert bad and "model.valid_tp" in bad[0], bad
 bad = c2("qwen3.8-flash-next", "qengine", 1, [p.hardware["rtx-3090"]])
 assert bad and "valid_tp_by_family.qwen4exp" in bad[0], bad
+# Inkling-2-Mini on QEngine: one card passes, three (outside its list) are refused
+assert not c2("inkling-2-mini", "qengine", 1, [p.hardware["rtx-3090"]]), c2("inkling-2-mini", "qengine", 1, [p.hardware["rtx-3090"]])
+bad = c2("inkling-2-mini", "qengine", 3, hw3)
+assert bad and "valid_tp_by_family.inkling2-loop-moe" in bad[0], bad
 # an engine with no list keeps the model's: vLLM at tp=2 passes C2
 assert not c2("qwen3.8-27b", "vllm-stable", 2, hw3[:2])
 PY

@@ -4935,6 +4935,41 @@ entries:
     gateway: false
     serve_aliases: []
     required_sm: 8.6
+  qengine/inkling-2-mini-single:
+    origin: core
+    model: inkling-2-mini
+    weights_variant: nvfp4-mxfp8
+    workload: long-ctx-single
+    engine: qengine
+    drafter: null
+    spec_method: dspark
+    kv_format: bf16
+    act_format: 16bit
+    act8_capable: false
+    offload: null
+    moe_cache: false
+    host_ram_gb: null
+    kv_offload: null
+    chat_template: native
+    tp: 1
+    max_ctx: 124896
+    max_num_seqs: 2
+    mem_util: null
+    compose_path: models/inkling-2-mini/qengine/compose/single/nvfp4-mxfp8/dspark.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8231
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "Inkling-2-Mini on one card on QEngine's own Inkling engine (libqinkling.so, a preview from 1.6.0; pinned 1.6.2): the official checkpoint as shipped (nvfp4-mxfp8, shared with the vllm-inkling slugs) plus the author's INT8 dense weights and trained DSpark drafter from their own folder (qengine-int8-dspark), bf16 KV in one pool for 2 slots. MEASURED 2026-11-27 (230 W): ready ~15 s, K/V pool 124,928 rows, 124,896 tokens served per conversation (the compose asks for exactly that; INK_SLOTS=1 leaves ~137K, asked for through QE_EXTRA_ARGS --max-ctx), verify-full all pass through switch.sh (vision skipped: text only), DSpark acceptance length 4.31. bench.sh on its own boot (GPU0, 230 W): 127.6 / 167.1 tok/s narrative / code, prefill 3,805 / 3,105 @10K / 90K (BENCHMARKS K17). Text only, no logprobs or structured output, named tool_choice decodes as auto, the thinking budget is ignored, and reasoning_effort none still reasons (782 chars on the IPv4 probe), so there is no off switch. Upstream's one-card figures (power not stated): 162 / 223 tok/s narrative / code in club-3090's bench, next-token KL 0.00538 against fp32."
+    weights_companions:
+      - qengine-int8-dspark
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    supported_sm:
+      - 8.6
   vllm/qwen38-27b-multi4-fast:
     origin: core
     model: qwen3.8-27b

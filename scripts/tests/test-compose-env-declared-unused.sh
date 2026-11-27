@@ -78,6 +78,10 @@ ENGINE_EXACT = {"PATH", "HOME", "HOSTNAME", "LD_LIBRARY_PATH", "PWD", "IFS",
                 "FLASH_RUN_TIMEOUT_S",
                 # 1.3.4's parallel mode (tensor parallel / layer pipeline)
                 "FLASH_PAR", "FLASH_GRAPH_MB", "FLASH_PFGRAPH_WINDOW", "FLASH_ATTN_DMIN",
+                # QEngine's Inkling engine (libqinkling.so) and server read these (1.6.0 on); named one by one,
+                # like FLASH_ above
+                "INK_SLOTS", "INK_DRAFTER", "INK_DRAFTER_FILE", "INK_DENSE8", "INK_DENSE8_FILE", "INK_MAX_CTX",
+                "INK_BG_REARM", "INK_ADMIT_REPLY_ROWS", "INK_ARCHIVE_SYNC_ROWS",
                 # 1.3.5: the VRAM-pressure handling, the start-up context fit, kernel preload, repeatable text
                 "FLASH_VRAM_ADAPT", "FLASH_VRAM_LOW_MB", "FLASH_VRAM_TARGET_MB", "FLASH_CTX_FIT",
                 "FLASH_PRELOAD", "FLASH_ATTN_CHUNK",
