@@ -59,6 +59,12 @@ FAKE_SCENARIO:
   no_ignore_eos   healthy, but a request carrying ignore_eos gets HTTP 400 with
                   maya-mm3's reason ("ignore_eos: this engine does not apply token
                   biases"); min_tokens alone is served. FAKE_400_MSG rewords the 400
+  honours_force   healthy, but a forced request (ignore_eos or min_tokens) runs to its
+                  max_tokens, as vLLM / llama.cpp / QEngine do: the positive control for
+                  bench.sh's decode-at-depth reading.
+  ignores_force   healthy, takes ignore_eos and min_tokens, and still ends after 4 tokens,
+                  as Strata does (and Maya's Inkling engine with min_tokens), unless the
+                  prompt asks for a long answer (bench.sh's LONG_ANSWER_ASK).
   stream_error    healthy start, then the stream ends on an ERROR CHUNK, the way
                   Project Maya v1.1.65 ends an answer the engine faulted on (#827):
                   a few content deltas, data: {"error": {...}} with no choices,
@@ -335,8 +341,15 @@ class H(BaseHTTPRequestHandler):
             gen = int(req.get("max_tokens", TOKS))
         except Exception:
             gen = TOKS
+        long_ask = "keep writing until you are stopped" in str(prompt_text or "")
+        if long_ask:
+            log("[fake] long-answer prompt")
         if SC == "no_tokens":
             emit = 0
+        elif SC == "honours_force" and (req.get("ignore_eos") or req.get("min_tokens")):
+            emit = gen
+        elif SC == "ignores_force":
+            emit = gen if long_ask else min(gen, 4)
         elif SC == "short_eos":
             # EOSes far below max_tokens no matter what was asked for — a chat-tuned
             # model answering briefly. Degenerates a 5-run shape to n=1 in silence.

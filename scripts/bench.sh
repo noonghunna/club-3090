@@ -1532,7 +1532,14 @@ def run_pp_fallback():
         print(stats("PP tok/s", pp_vals))
         print(f"  TTFT          mean={s.mean(ttfts)*1000:6.0f}ms  std=    0ms  min={min(ttfts)*1000:.0f}ms  max={max(ttfts)*1000:.0f}ms")
 
-def prefill_prompt(target_tokens, salt):
+# The depth runs' instruction when the server doesn't honour the forcing (ignore_eos /
+# min_tokens): ask for a long answer, so the decode-at-depth window is the model writing,
+# not one word. Only used after a forced run came back short (run_prefill_probe).
+LONG_ANSWER_ASK = ("Read the following calibration text. Then write a long, detailed essay about "
+                   "why measuring instruments need regular calibration, and keep writing until you are stopped.")
+
+
+def prefill_prompt(target_tokens, salt, long_answer=False):
     """Cache-busted long prompt (catalog-baselines 2c).
 
     Composes serve ``enable_prefix_caching=True`` — an identical prompt
@@ -1550,10 +1557,8 @@ def prefill_prompt(target_tokens, salt):
     # tokenized to 55K), which is the run nothing corrects.
     words_per_chunk = max(len(filler.split()), 1)
     chunks = max(1, int(target_tokens / (words_per_chunk * token_ratio())))
-    return (
-        f"[probe {salt}] Read the following calibration text. Reply with the single word DONE.\n\n"
-        + filler * chunks
-    )
+    ask = LONG_ANSWER_ASK if long_answer else "Read the following calibration text. Reply with the single word DONE."
+    return f"[probe {salt}] {ask}\n\n" + filler * chunks
 
 def run_prefill_probe():
     """Canonical two-depth prefill/TTFT probe (catalog-baselines 2c): warm
@@ -1591,6 +1596,18 @@ def run_prefill_probe():
     _meas_mt = FORCE if FORCE > 0 else _gen_cap
     _mt_label = (f"max_tokens={_meas_mt}" if _warm_mt == _meas_mt
                  else f"max_tokens={_warm_mt} warm-up / {_meas_mt} measured")
+    # A depth run's decode reading needs the answer to run to the forced count. Strata
+    # accepts ignore_eos / min_tokens and ends at the prompt's one-word reply anyway, and
+    # Project Maya's Inkling engine refuses ignore_eos and ignores min_tokens: ~4 tokens.
+    # The old gate (2+ tokens over 0.25 s) let 4 tokens after a 90K prefill through as
+    # "decode 12.03 tok/s @ 90k" (2026-11-27). So a run counts only when it produced at
+    # least 90% of what was forced; the first one that didn't switches the remaining depth
+    # runs to a prompt that asks for a long answer (LONG_ANSWER_ASK), labelled "prompted".
+    # A server that honours the forcing never sees the switch: its requests are unchanged.
+    _forced_n = FORCE if FORCE > 0 else _depth_toks
+    _need = max(2, int(0.9 * _forced_n)) if _forced_n > 0 else 0
+    _prompted = [False]
+    _short = []        # (depth label, tokens) of the runs that ended short of the forced count
     for _di, target in enumerate(depths):
         n = _runs_for(_di)
         label = f"prefill-{target // 1000}k"
@@ -1624,10 +1641,12 @@ def run_prefill_probe():
         print(f"\n=== measured ({n}) ===")
         pps, ttfts, ptoks_seen = [], [], []
         dtps = []          # decode-at-depth: the leg this probe used to discard
+        _short.clear()     # this depth's runs that ended short of the forced count: (tokens, prompted?)
         phase_t0 = phase_start()
         for i in range(n):
             try:
-                w, t, _k, ptoks = run_once(prefill_prompt(request_tokens, salt()), _gen_cap, force=_depth_toks)
+                w, t, _k, ptoks = run_once(prefill_prompt(request_tokens, salt(), long_answer=_prompted[0]),
+                                           _gen_cap, force=_depth_toks)
                 # ⚠️ Do NOT reuse decode_window() here. Its degeneracy test is the
                 # RATIO dt < 5% of wall, which assumes decode is essentially the
                 # whole wall — true for a short prompt, FALSE at depth where prefill
@@ -1636,8 +1655,17 @@ def run_prefill_probe():
                 # "unmeasurable". At depth the only degenerate case is a
                 # non-existent window, so test that absolutely.
                 _dt = w - t
-                if _depth_toks > 0 and _k > 1 and _dt > 0.25:
+                if _depth_toks > 0 and _k >= _need and _dt > 0.25:
                     dtps.append(_k / _dt)
+                elif _depth_toks > 0 and 0 < _k < _need:
+                    _short.append((_k, _prompted[0]))
+                    if not _prompted[0]:
+                        _prompted[0] = True
+                        print(f"  [bench] run-{i+1} ended after {_k} of the {_forced_n} tokens forced: the server "
+                              f"doesn't honour {'min_tokens' if _IGNORE_EOS_REFUSED else 'ignore_eos / min_tokens'}. "
+                              f"The remaining depth runs ask for a long answer instead (decode-at-depth readings "
+                              f"from here on are PROMPTED, not forced, and not comparable with a forced one).")
+                        progress(f"[bench] forced depth run ended after {_k} tokens; remaining depth runs are prompted")
                 pp, ttft, line = fmt_pp(f"run-{i+1}", w, t, ptoks)
                 if not QUIET:
                     print(line)
@@ -1661,12 +1689,25 @@ def run_prefill_probe():
                 # MATCHED depth. NOT comparable to the narrative/code decode_TPS
                 # above, which is measured at shallow context.
                 print(stats(f"decode tok/s @ {label.replace('prefill-','')} depth", dtps))
+                if _prompted[0]:
+                    print(f"  (prompted, not forced: {len(dtps)} run(s) asked for a long answer because the server "
+                          f"doesn't honour the forcing; not comparable with a forced reading)")
             elif _depth_toks > 0:
                 # Say so: a leg that vanishes reads as one that was never asked for.
-                print(f"  decode tok/s @ {label.replace('prefill-','')} depth  n/a (no measured run "
-                      f"decoded 2+ tokens over 0.25 s or more"
-                      + ("; the server refused ignore_eos, and min_tokens alone did not hold "
-                         "the runs open)" if _IGNORE_EOS_REFUSED else ")"))
+                if _short:
+                    _why = ("; the server refused ignore_eos, and min_tokens alone did not hold the runs open"
+                            if _IGNORE_EOS_REFUSED else "; the server doesn't honour ignore_eos / min_tokens")
+                    _ks = [k for k, _p in _short]
+                    _span = f"{min(_ks)}" if min(_ks) == max(_ks) else f"{min(_ks)}-{max(_ks)}"
+                    print(f"  decode tok/s @ {label.replace('prefill-','')} depth  n/a (the answers ended after "
+                          f"{_span} of the {_forced_n} tokens forced{_why}"
+                          + ("; asked for a long answer, the model still stopped short)"
+                             if any(_p for _k2, _p in _short) else ")"))
+                else:
+                    print(f"  decode tok/s @ {label.replace('prefill-','')} depth  n/a (no measured run "
+                          f"decoded {_need}+ tokens over 0.25 s or more"
+                          + ("; the server refused ignore_eos, and min_tokens alone did not hold "
+                             "the runs open)" if _IGNORE_EOS_REFUSED else ")"))
             print(
                 f"  TTFT          mean={s.mean(ttfts)*1000:6.0f}ms  "
                 f"std={(s.stdev(ttfts)*1000 if len(ttfts) > 1 else 0):5.0f}ms  "

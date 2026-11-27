@@ -1433,15 +1433,15 @@ command grep -q 'the server refused ignore_eos (HTTP 400: ignore_eos: this engin
   || fail "no_ignore_eos: after one refusal ignore_eos must not be sent again ($(command grep -c 'refused: ignore_eos' "$SRV_LOG") refusals)"
 command grep -q 'forcing ignore_eos=False min_tokens=128' "$SRV_LOG" \
   || fail "no_ignore_eos: the forced runs must keep min_tokens when ignore_eos goes"
-command grep -q 'depth  n/a (no measured run decoded 2+ tokens over 0.25 s or more; the server refused ignore_eos' "$E" \
-  || fail "no_ignore_eos: an empty decode-at-depth leg must say so: $(command grep -m1 'decode tok/s @' "$E")"
+command grep -q 'depth  n/a (the answers ended after 40 of the 128 tokens forced; the server refused ignore_eos, and min_tokens alone did not hold the runs open' "$E" \
+  || fail "no_ignore_eos: an empty decode-at-depth leg must say why: $(command grep -m1 'decode tok/s @' "$E")"
 # Positive control, case 10's healthy server: it takes ignore_eos, so the forcing is
 # unchanged there and nothing is reported refused.
 command grep -q 'forcing ignore_eos=True min_tokens=128' "$TMP/server-healthy-$((PORT_BASE+8)).log" \
   || fail "control: a server that accepts ignore_eos must still be sent it"
 command grep -q 'refused ignore_eos' "$TMP/ratio.out" && fail "control: nothing was refused on the healthy server"
-command grep -q 'depth  n/a (no measured run decoded 2+ tokens over 0.25 s or more)' "$TMP/ratio.out" \
-  || fail "control: the empty decode-at-depth line must not blame ignore_eos when it was accepted"
+command grep -q "depth  n/a (the answers ended after 40 of the 128 tokens forced; the server doesn't honour ignore_eos / min_tokens)" "$TMP/ratio.out" \
+  || fail "control: a short forced run on a server that accepted ignore_eos must say so, without blaming a refusal: $(command grep -m1 'decode tok/s @' "$TMP/ratio.out")"
 # A 400 that does not name ignore_eos is not retried, and the run's failure carries
 # the server's reason instead of the bare status line.
 export FAKE_400_MSG="unsupported request field"
@@ -1455,6 +1455,38 @@ command grep -q 'refused ignore_eos' "$O" && fail "another 400: must not be read
 [[ "$(command grep -c '\[fake\] refused: ignore_eos' "$SRV_LOG")" == 2 ]] \
   || fail "another 400: each forced run is sent once, not retried ($(command grep -c 'refused: ignore_eos' "$SRV_LOG") requests)"
 echo "  ✓ a server that refuses ignore_eos: forced runs keep min_tokens, said once; other 400s show their reason"
+
+# --- 24b. decode at depth needs the forced count, not "2+ tokens over 0.25 s" (2026-11-27) ---
+# Strata takes ignore_eos and min_tokens and still ends at the depth prompt's one-word
+# reply (~4 tokens); after a 90K prefill those 4 tokens took 0.34 s, so the old gate
+# printed "decode tok/s @ 90k depth mean= 12.03" from them. A run now counts only at
+# 90% of the forced tokens; the first short one switches the remaining depth runs to a
+# long-answer prompt, labelled "prompted, not forced". Ports +23 / +24 again.
+export FAKE_TOKEN_DELAY=0.004      # 128 forced tokens = 0.5 s: past the 0.25 s window floor
+run_bench honours_force "$((PORT_BASE+23))" "$TMP/force-ok.out" \
+  ONLY=narr RUNS=1 WARMUPS=0 PREFILL_PROBE=1 PREFILL_DEPTHS=2000 PREFILL_RUNS=2
+F="$TMP/force-ok.out"
+command grep -qE '^  decode tok/s @ 2k depth mean= +[0-9.]+' "$F" \
+  || fail "honours_force: a server that runs to the forced count must give a decode-at-depth reading: $(command grep -m1 'decode tok/s @' "$F")"
+command grep -qE 'prompted, not forced|ended after [0-9]+ of the' "$F" \
+  && fail "honours_force: nothing may be read as short or prompted on a server that honours the forcing"
+command grep -q '\[fake\] long-answer prompt' "$SRV_LOG" \
+  && fail "honours_force: a server that honours the forcing must get the unchanged depth prompt"
+run_bench ignores_force "$((PORT_BASE+24))" "$TMP/force-ignored.out" \
+  ONLY=narr RUNS=1 WARMUPS=0 PREFILL_PROBE=1 PREFILL_DEPTHS=2000 PREFILL_RUNS=3
+unset FAKE_TOKEN_DELAY
+G="$TMP/force-ignored.out"
+[[ "$(command grep -c "ended after 4 of the 128 tokens forced: the server doesn't honour ignore_eos / min_tokens" "$G")" == 1 ]] \
+  || fail "ignores_force: the first short run must be reported once: $(command grep -m2 'ended after' "$G")"
+command grep -qE '^  decode tok/s @ 2k depth mean= +[0-9.]+' "$G" \
+  || fail "ignores_force: the prompted runs must give a reading: $(command grep -m1 'decode tok/s @' "$G")"
+command grep -q '(prompted, not forced: 2 run(s) asked for a long answer' "$G" \
+  || fail "ignores_force: the reading must be labelled prompted, with its run count"
+[[ "$(command grep -c '\[fake\] long-answer prompt' "$SRV_LOG")" == 2 ]] \
+  || fail "ignores_force: exactly the two runs after the short one ask for a long answer ($(command grep -c 'long-answer prompt' "$SRV_LOG"))"
+command grep -q '^=== summary \[prefill-2k\] (n=3) ===' "$G" \
+  || fail "ignores_force: every run still counts for prefill: $(command grep -m1 'summary \[prefill-2k\]' "$G")"
+echo "  ✓ decode at depth: counted only at the forced length; a short run switches the rest to a labelled prompted reading"
 
 # --- 24. an engine's error is a failed request, never a short or skipped run ------
 # Project Maya v1.1.65 (#827) ends an answer the engine faulted on with a choices-less
