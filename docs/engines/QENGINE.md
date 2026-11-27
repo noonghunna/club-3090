@@ -201,7 +201,7 @@ The author publishes `ghcr.io/bpx03/qengine` in two forms per release: `:<releas
   - Every `QE_*` / `FLASH_*` name the composes forward (80) is in the 1.6.2 build.
   - `app.py` lost no flag; it gained `--dense-weights` and `--disk-eager`.
   - The entrypoint still reads `QE_REASONING_EFFORT`, and `/v1/models` still says `owned_by: "qengine"`.
-- **Booted `qengine/qwen38-27b-dual`** (2026-11-27, 230 W): ready in 157 s, verify-full all pass with vision 4/4, MTP acceptance length 7.93, KV pool 538,624 tokens at 16 slots (as on 1.5.1), every conversation served 262144. Flash-Next wasn't booted (one slug per bump).
+- **Booted `qengine/qwen38-27b-dual`** (2026-11-27, 230 W): ready in 157 s, verify-full all pass with vision 4/4, MTP acceptance length 7.93, KV pool 538,624 tokens at 16 slots (as on 1.5.1), every conversation served 262144. Flash-Next wasn't booted: this sweep booted one small slug per engine, at the maintainer's call. The runbook also asks for a `qengine/qwen38-flash-next-dual` boot when a release changes the Flash-Next engine, and 1.6.0 does (the restore points), so that boot is still owed.
 
   No bench was run.
 
