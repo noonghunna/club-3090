@@ -30,6 +30,8 @@ supported_model_families:
   - qwen35-dense          # Qwen3.8-27B, RedHatAI's INT4 only (libqengine.so)
   - qwen4exp              # Qwen3.8-Flash-Next, the author's own INT4 layout (libqflash.so, from 1.3; upstream calls it a
                           # preview: tested on one machine, no quality benchmark yet)
+  - inkling2-loop-moe     # Inkling-2-Mini, the official checkpoint on its own engine (libqinkling.so, sm_86 only), a
+                          # preview from 1.6.0: text only, one card, or two with GPU P2P
 # The card counts QEngine runs, in place of the models' valid_tp (vLLM's list: 1, 2, 4, 8). QEngine has its own tensor
 # parallel and is tuned for three cards. README "Recipes by card count" (1.3.5.7): the 27B on 3 (tuned), 2, and 1 as an
 # experiment; Flash-Next on 3 (tuned) and 2, 4 or more in tensor parallel or pipeline mode (FLASH_PAR), never on 1.
@@ -37,19 +39,27 @@ supported_model_families:
 valid_tp_by_family:
   qwen35-dense: [1, 2, 3, 4]
   qwen4exp: [2, 3, 4]
+  # upstream docs/models/inkling-2-mini.md (1.6.0): one card by default, two with GPU P2P (the 1.6 checks);
+  # three work with an uneven head split but aren't in those checks. Only one card has a slug here.
+  inkling2-loop-moe: [1, 2]
 supported_weight_formats:
   - compressed-tensors    # RedHatAI/Qwen3.8-27B-INT4 (pack-quantized W4A16, group 128, symmetric). It reads only
                           # weight_packed / weight_scale, so other INT4 formats (AutoRound's auto_gptq packing) don't load
   - qengine-int4          # bpx03/Qwen3.8-Flash-Next-QEngine: Intel's AutoRound INT4 regrouped per layer for libqflash.so,
                           # with an INT8 n-gram table; only QEngine reads it
+  - modelopt              # thinkingmachines/Inkling-2-Mini as shipped (NVFP4 / MXFP8 experts), read by libqinkling.so,
+                          # with the author's INT8 dense weights and trained drafter beside it (bpx03/Inkling-2-Mini-QEngine)
 supported_kv_formats:
-  - fp8_e4m3              # its one K / V format: FP8 e4m3 in a shared pool per GPU
+  - fp8_e4m3              # the Qwen engines' K / V format: FP8 e4m3 in a shared pool per GPU
+  - bf16                  # the Inkling engine's K / V (AppState's bf16 K / V, src/inkling/ink.cu at 380e3c7a)
 supported_drafters:
   - mtp                   # the checkpoint's MTP head, or the author's head fine-tuned on the engine's own answers
                           # (model_mtp_ft.safetensors, a release asset); it also drafts by lookup from the token history.
                           # From 1.3.5.8 the 27B also runs a DFlash2 block drafter (syvai/Qwen3.8-27B-DFlash2-W4A16) while
                           # one conversation decodes alone: the engine fetches and loads it itself (QE_DRAFTER), so it
                           # isn't a drafter profile of ours
+  - dspark                # Inkling-2-Mini's DSpark drafter (the checkpoint's mtp.safetensors, or the author's trained
+                          # mtp_qe.safetensors), exact for greedy and sampled replies; built in, no drafter profile of ours
 # #1951 — what this engine changes about effort (see the model profiles for
 # what the MODEL accepts; the compose keeps the DEFAULT).
 effort:
@@ -92,6 +102,27 @@ effort:
         high->xhigh fold the QEngine's lacks), but their thinking-off
         rendering paths are identical — both render enable_thinking:false as
         `\n\n` with no reasoning content, which is what the probe measured.
+    inkling-2-mini:
+      default_when_unset: high
+      # `none` reaches the template as 0.0, which still reasons on this engine too (upstream says so, measured below).
+      supports_none: false
+      maps: {max: xhigh}
+      evidence: >-
+        QEngine's Inkling preview (1.6.0 on; docs/models/inkling-2-mini.md)
+        renders the checkpoint's own chat_template.jinja: reasoning_effort
+        none 0.0, minimal 0.1, low 0.2, medium 0.7, high 0.9, xhigh and max
+        0.99, or a number; unset = 0.9; any other name is HTTP 400 (the
+        template refuses it: "Unknown reasoning_effort"), not the engine-wide
+        medium fold. The compose passes QE_REASONING_EFFORT (default high).
+        Wire-probed 2026-11-27 on QEngine 1.6.2 (one 3090, the
+        qengine/inkling-2-mini-single setup), an IPv4-validator prompt at
+        temperature 0, reasoning_content chars (completion tokens): none 782
+        (376), minimal 1,403 (663), low 1,004 (467), medium 1,893 (771), high
+        1,844 (737), xhigh 4,352 (1,724); unset gave exactly high's
+        1,844 (737) with QE_REASONING_EFFORT=high and exactly low's 1,004
+        (467) with QE_REASONING_EFFORT=low, so the server reads the default
+        on Inkling too. `none` reasons, as upstream documents ("the model
+        still writes a short thought").
   evidence: >-
     Engine-wide: the fold of an UNRECOGNISED name to medium and the `none` →
     thinking-off handling (1.3.5.5 on) are the server's own code, so they hold

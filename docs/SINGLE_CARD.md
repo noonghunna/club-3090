@@ -33,7 +33,8 @@ before you put an agent on it.
 |  | `strata-maya/hy4-flash-single-maya-m` | 🐣 incubating | 262144 | [single/maya-m/mtp.yml](../models/hy4-flash/strata-maya/compose/single/maya-m/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 76 GB |
 |  | `strata-maya/hy4-flash-single-maya-s` | 🐣 incubating | 262144 | [single/maya-s/mtp.yml](../models/hy4-flash/strata-maya/compose/single/maya-s/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 64 GB |
 |  | `strata-maya/hy4-flash-single-maya-xs` | 🐣 incubating | 262144 | [single/maya-xs/mtp.yml](../models/hy4-flash/strata-maya/compose/single/maya-xs/mtp.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 52 GB |
-| **Inkling-2-Mini (26B MoE, looped, Thinking Machines)** | `strata-maya/inkling-2-mini-single-ud-q4kxl` | 🐣 incubating | 262144 | [single/unsloth-ud-q4kxl/dspark.yml](../models/inkling-2-mini/strata-maya/compose/single/unsloth-ud-q4kxl/dspark.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) |  |
+| **Inkling-2-Mini (26B MoE, looped, Thinking Machines)** | `qengine/inkling-2-mini-single` | 🐣 incubating | 124896 | [single/nvfp4-mxfp8/dspark.yml](../models/inkling-2-mini/qengine/compose/single/nvfp4-mxfp8/dspark.yml) | — |  |
+|  | `strata-maya/inkling-2-mini-single-ud-q4kxl` | 🐣 incubating | 262144 | [single/unsloth-ud-q4kxl/dspark.yml](../models/inkling-2-mini/strata-maya/compose/single/unsloth-ud-q4kxl/dspark.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) |  |
 |  | `strata/inkling-2-mini-sq20-single` | 🐣 incubating | 262144 | [single/strata-sq20/base.yml](../models/inkling-2-mini/strata/compose/single/strata-sq20/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 12 GB |
 |  | `vllm/inkling-2-mini-single-fast` | 🐣 incubating | 100000 | [single/nvfp4-mxfp8/dspark-fp8.yml](../models/inkling-2-mini/vllm-inkling/compose/single/nvfp4-mxfp8/dspark-fp8.yml) | — |  |
 |  | `vllm/inkling-2-mini-single-max` | 🐣 incubating | 180000 | [single/nvfp4-mxfp8/fp8.yml](../models/inkling-2-mini/vllm-inkling/compose/single/nvfp4-mxfp8/fp8.yml) | — |  |
@@ -54,7 +55,7 @@ before you put an agent on it.
 | **Qwen3.8-Flash-Next (MoE, Qwen)** | `strata/qwen3.8-flash-next-iq3s-single` | 🐣 incubating | 131072 | [single/ista-iq3s/base.yml](../models/qwen3.8-flash-next/strata/compose/single/ista-iq3s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 93 GB |
 |  | `strata/qwen3.8-flash-next-swift15-abliterated-iq3s-single` | 🐣 incubating | 131072 | [single/sc117-swift15-abliterated-iq3s/base.yml](../models/qwen3.8-flash-next/strata/compose/single/sc117-swift15-abliterated-iq3s/base.yml) | [#1700](https://github.com/noonghunna/club-3090/discussions/1700) | host RAM ≥ 93 GB |
 
-31 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+32 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table single -->
 
 ## Launch

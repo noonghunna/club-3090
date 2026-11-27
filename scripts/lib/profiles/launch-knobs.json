@@ -2367,6 +2367,59 @@
        ]
       }
      ]
+    },
+    {
+     "match": {
+      "engine": [
+       "qengine"
+      ],
+      "model": [
+       "inkling-2-mini"
+      ]
+     },
+     "enforced": "boot",
+     "values": [
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ],
+     "default": "high",
+     "every_consumer_contains": [
+      "case \"$$_reff\" in none|minimal|low|medium|high|xhigh|max) : ;;",
+      "grep -qF QE_REASONING_EFFORT /app/server/app.py",
+      "export QE_REASONING_EFFORT=\"$$_reff\""
+     ],
+     "source": {
+      "file": "models/inkling-2-mini/qengine/compose/single/nvfp4-mxfp8/dspark.yml",
+      "what": "`case \"$$_reff\" in none|minimal|low|medium|high|xhigh|max) : ;; *) exit 1`, the checkpoint template's effort names; the entrypoint exports the value as QE_REASONING_EFFORT, QEngine's default effort for requests that send none (exit 1 when the image's server/app.py doesn't read it). MEASURED read on Inkling 2026-11-27 (QEngine 1.6.2): with QE_REASONING_EFFORT=low a request without an effort reasoned exactly as one sending low (1,004 chars, 467 tokens), with high exactly as high. Unset = high, the template's own 0.9; a request's own effort wins, and the template refuses any other name (HTTP 400)"
+     },
+     "checks": [
+      {
+       "kind": "shell",
+       "compose": "models/inkling-2-mini/qengine/compose/single/nvfp4-mxfp8/dspark.yml",
+       "from": "^\\s*_reff=\"\\$\\$\\{REASONING_EFFORT",
+       "to": "^\\s*case \"\\$\\$_reff\" in",
+       "accept": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+       ],
+       "reject": [
+        "auto",
+        "HIGH",
+        "0.5",
+        "x"
+       ]
+      }
+     ]
     }
    ],
    "interacts": [

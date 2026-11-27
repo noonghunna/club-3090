@@ -181,7 +181,7 @@ PER_ID_ENGINES = {
     "swift-1.5-iq3_s": {"strata"},
     "glm-5.3-flash": {"llamacpp-club3090-v1.6", "strata-maya"},
     "hy4-flash": {"strata-maya"},
-    "inkling-2-mini": {"strata-maya", "vllm-inkling"},
+    "inkling-2-mini": {"qengine", "strata-maya", "vllm-inkling"},
     "inkling-2-mini-sq-20": {"strata"},
 }
 

@@ -127,3 +127,21 @@ weights:
       - drafter/dspark-Inkling-2-Mini-Q8_0.gguf
     verify_glob: drafter/dspark-Inkling-2-Mini-Q8_0.gguf
     manual_note: "The model's own DSpark drafter as unsloth's GGUF of it (0.40 GB), from Maya's repo: maya-ik2 drafts with it (--draft, --drafting auto)."
+  qengine-int8-dspark:
+    path: inkling-2-mini-qengine
+    local_subdir: inkling-2-mini-qengine
+    size_gb: 1.29
+    format: safetensors
+    status: incubating
+    hf_repo: bpx03/Inkling-2-Mini-QEngine
+    # The revision qengine/inkling-2-mini-single was booted on (2026-11-27). sha256 of the two files (= the repo's
+    # LFS digests, checked here): dense8 3d441718…aec3b6e2, mtp_qe 72d24109…b86f67.
+    revision: 1f5e055919c01d98da626b7fd5a1eba2a3a003ca
+    engine: qengine
+    kind: draft
+    files:
+      - dense8.safetensors
+      - mtp_qe.safetensors
+      - README.md
+    verify_glob: "*.safetensors"
+    manual_note: "QEngine's two files for the official checkpoint (bpx03, Apache-2.0, 1.29 GB): the dense attention weights in GPTQ INT8, one scale per 128 inputs (dense8.safetensors, 0.65 GB), and the model's DSpark drafter fine-tuned on its own outputs (mtp_qe.safetensors, 0.64 GB). Only QEngine's Inkling engine reads them, from their OWN folder (INK_DENSE8_FILE / INK_DRAFTER_FILE): never put them in Inkling-2-Mini/, where vLLM loads every *.safetensors file. They go with nvfp4-mxfp8, the checkpoint itself."

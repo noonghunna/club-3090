@@ -240,6 +240,24 @@
     "file": "docs/engines/STRATA.md",
     "contains": "the slug takes no effort, thinking or budget setting of its own"
    }
+  },
+  {
+   "knobs": [
+    "SPEC_N"
+   ],
+   "match": {
+    "engine": [
+     "qengine"
+    ],
+    "model": [
+     "inkling-2-mini"
+    ]
+   },
+   "why": "QEngine's Inkling drafter takes no draft depth: it drafts up to 7 tokens a step with its own confidence stop (INK_TAU, from the drafter file), and INK_DRAFTER=0, QEngine's own name, turns it off",
+   "source": {
+    "file": "docs/engines/QENGINE.md",
+    "contains": "the Inkling drafter has no depth setting"
+   }
   }
  ],
  "not_wired": [

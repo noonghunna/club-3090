@@ -302,6 +302,7 @@ The shutdown saves took 2.3–13.1 s (2.37 GB for the first conversation). After
 |---|---|---|---|
 | `qengine/qwen38-27b-dual` | Qwen3.8-27B, `RedHatAI/Qwen3.8-27B-INT4` (`redhat-int4`) | 8197 | 16 slots (QEngine's default and, from 1.5, the README's two-card setting; `QE_MAX_SEQS=32` seats 32 on a smaller KV pool), 262K context, MTP up to 7 drafts a step |
 | `qengine/qwen38-flash-next-dual` | Qwen3.8-Flash-Next, `bpx03/Qwen3.8-Flash-Next-QEngine` (`qengine-int4`, 129 GB) | 8198 | 8 slots (QEngine's default is 16; fewer leave VRAM to the expert cache, which measured faster here, see the compose's `FLASH_MAX_SEQS` line), 262K context, MTP up to 3 drafts a step; about half the expert groups in pinned host RAM, ~130 GB of host RAM at the defaults (upstream's figure) |
+| `qengine/inkling-2-mini-single` | Inkling-2-Mini, `thinkingmachines/Inkling-2-Mini` (`nvfp4-mxfp8`, shared with the vllm-inkling slugs) + `bpx03/Inkling-2-Mini-QEngine` (`qengine-int8-dspark`, 1.29 GB) | 8231 | one card, 2 slots at 124,896 tokens each (QEngine's one-card default), DSpark drafts, bf16 KV, text only; 🐣 Incubating, QEngine 1.6.0+ |
 
 The 27B slug is ⚠️ Production w/ caveats from 2026-10-31: eddietheengineer's rebench on a 3090 + 3090 Ti (#1862, QEngine 1.3) passed the full gate (verify-full, verify-stress 8/8 with the ceiling ladder to 240K, both soaks, the 8-pack at 108 / 132 of 150), and its caveats are the licence and that the gate ran on other rigs, not this one. bpx03, QEngine's author, ran the same gate on 1.3.5.5 on two 3090s at stock power with our scripts at `3e395893` ([#1979](https://github.com/noonghunna/club-3090/issues/1979)): verify-full, verify-stress 8/8 with the ladder to 240,664 tokens, both soaks (0 silent, 0 MiB growth), the 8-pack at 110 / 131 of 150, all passing; bench 197.8 / 312.9 tok/s decode ([BENCHMARKS.md](../../BENCHMARKS.md)). The Flash-Next slug stays 🐣 Incubating. The 27B slug was booted and benched on 2026-10-28 on two 3090s at 230 W: 147.2 / 216.3 tok/s decode (narrative / code), 2,430 prefill @10K and 1,786 @90K, MTP acceptance length 3.4, 23.4 GB a card, verify-full 8 + 2 n/a ([BENCHMARKS.md](../../BENCHMARKS.md)). The Flash-Next slug was booted and benched the same day: 164.0 / 170.6 tok/s decode, 1,921 prefill @10K and 2,373 @90K, MTP acceptance length 2.8, 24.1 GB a card, host RAM 88 GB at ready (up to ~114 GB as the archive fills), verify-full 8 + 2 n/a. Benched again on 2026-11-02 on 1.3.4.2 with the new default weights, at the slug's 8 slots with vision on: 165.5 / 158.4 decode, 1,879 prefill @10K and 3,615 @90K, MTP acceptance length 2.9, 23.9 GB a card, host RAM 93.5 GB at ready (the header's figure is 94 from that date).
 
@@ -324,6 +325,52 @@ QEngine itself starts on smaller cards, fitting fewer slots or a smaller context
 - Flash-Next on 3 × 8 GB, and on 2 × 8 GB at a 65K context.
 
 @Hazelhof also ran both models on those cards at 8 slots on the 27B and 6 on Flash-Next ([#1966](https://github.com/noonghunna/club-3090/issues/1966)). For a two-card slug on cards under 24 GB, or any slug on cards under 16 GB, launch by name and lower `QE_MAX_SEQS` or `FLASH_MAX_SEQS`.
+
+### Inkling-2-Mini on one card (`qengine/inkling-2-mini-single`)
+
+QEngine runs Inkling-2-Mini from 1.6.0 with an engine of its own (`build_srv/libqinkling.so`, sm_86 only), as an upstream **preview** ([docs/models/inkling-2-mini.md](https://github.com/bpx03/QEngine/blob/v1.6.2/docs/models/inkling-2-mini.md)).
+
+**Weights: two folders, both read-only.**
+- `Inkling-2-Mini/` is Thinking Machines' official checkpoint as shipped (NVFP4 / MXFP8 experts), the folder the vllm-inkling slugs read. Upstream tested revision `b85c3cfa`; our pinned `ed40e7da` differs from it only in `README.md`.
+- `inkling-2-mini-qengine/` holds the author's two files from `bpx03/Inkling-2-Mini-QEngine`:
+  - `dense8.safetensors`: the dense attention weights in GPTQ INT8, one scale per 128 inputs;
+  - `mtp_qe.safetensors`: the DSpark drafter fine-tuned on the model's own outputs.
+- The compose points `INK_DENSE8_FILE` and `INK_DRAFTER_FILE` at those two files. They must not go into `Inkling-2-Mini/`, where vLLM loads every `.safetensors` file.
+- The entrypoint stops with a fix hint when either file is missing, or when the image has no Inkling engine.
+
+**Served (measured 2026-11-27, QEngine 1.6.2, 230 W):**
+- Ready in about 15 s.
+- Dense weights int8 from `dense8.safetensors`, and the drafter `mtp_qe.safetensors` (trained stop policy).
+- 2 slots sharing a K/V pool of 124,928 rows, so 124,896 tokens a conversation, which is what the compose asks for (`--max-ctx 124896`). QEngine serves less if less fits.
+- `INK_SLOTS=1` leaves room for about 137K (upstream): ask for it with `QE_EXTRA_ARGS="--max-ctx <n>"`. `INK_DENSE8=0`, the original weights, gives about 117K.
+- K / V is bf16 (`src/inkling/ink.cu`).
+
+**Limits (upstream's preview list):**
+- text only;
+- no structured output and no logprobs (HTTP 400);
+- `tool_choice` `required` / named decode as auto (`none` works);
+- the thinking budget is ignored.
+
+**Effort:** `REASONING_EFFORT` (default `high`, the template's own 0.9) reaches `QE_REASONING_EFFORT`, which this engine reads too.
+- Measured: with it set to `low`, a request without an effort reasoned exactly as one sending `low`.
+- The template's names are none, minimal, low, medium, high, xhigh and max; any other is HTTP 400.
+- `none` still reasons, as upstream says (782 characters on the IPv4 probe), so there is no off switch.
+
+**Drafts:** the Inkling drafter has no depth setting. It drafts up to 7 tokens a step with its own confidence stop, so `SPEC_N` isn't wired; `INK_DRAFTER=0` (QEngine's name) turns drafting off.
+
+**Speed, measured here** (`bench.sh` on its own boot, 2026-11-27, GPU0 at 230 W):
+- 127.6 / 167.1 tok/s narrative / code (wall), CV 2.0 / 1.5%;
+- prefill 3,805 / 3,105 tok/s at 10K / 90K (first token 2.7 / 30 s);
+- decode 136 at 10K depth, 85 at 90K;
+- draft acceptance length 2.4, peak 23.9 GB.
+
+**Upstream's figures** for one RTX 3090 on 1.6.0 (power not stated):
+- 141 tok/s plain decode, 214 with drafts on a 9-prompt mix;
+- club-3090's bench 162 / 223, prefill 6,186 / 4,945.
+
+Ours are about 21–25% lower; the 230 W cap (SM median 1,305 MHz) is the obvious suspect, not traced.
+
+**Quality (upstream):** next-token KL 0.00538 against an fp32 reference with the INT8 weights; the official bf16 forward measures 0.00592.
 
 ## Thinking and effort
 
