@@ -23,6 +23,7 @@
 #     validated with;
 #   - both op libraries carry sm_86 code, and the image's labels name its base and recipe commit;
 #   - Inkling's quantization config admits sm_80+ and the software-E4M3 module imports;
+#   - the int8-weights module (r2, VLLM_INKLING_W8) imports and reads its switch;
 #   - TORCH_CUDA_ARCH_LIST is 8.6, as in every run behind the published numbers.
 set -euo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"
@@ -31,7 +32,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE="${VLLM_INKLING_IMAGE:-ghcr.io/noonghunna/vllm-inkling-club3090}"
 # The recipe revision. Bump it with any change to the Dockerfile, the diff or the base, so a new image
 # never re-uses a tag an engine profile may point at.
-REV="r1"
+REV="r2"
 BASE_DIGEST="sha256:c2dc759f5984f69c1e2418c6af7c26eb756f5ed2a8934c768ae1253645d1449e"
 PKG=/usr/local/lib/python3.14/dist-packages/vllm
 
@@ -89,6 +90,10 @@ check "the quantization config admits sm_80+ and the E4M3 module imports" \
 from vllm.models.inkling2.quant_config import Inkling2QuantConfig as C
 assert C.get_min_capability() == 80, C.get_min_capability()
 import vllm.models.inkling2.nvidia.ops.e4m3_sw"
+check "the W8 module imports and reads VLLM_INKLING_W8" \
+  docker run --rm -e VLLM_INKLING_W8=attn,head --entrypoint python3 "$img" -c "
+from vllm.models.inkling2.nvidia.ops import w8_gemm
+assert w8_gemm.W8 == {'attn', 'head'}, w8_gemm.W8"
 check "TORCH_CUDA_ARCH_LIST=8.6" \
   bash -c "docker image inspect '$img' --format '{{json .Config.Env}}' | command grep -q '\"TORCH_CUDA_ARCH_LIST=8.6\"'"
 check "base label names the launch image digest" test "$(label org.opencontainers.image.base.digest)" = "$BASE_DIGEST"

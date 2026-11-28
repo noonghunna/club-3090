@@ -2,7 +2,8 @@
 
 `ghcr.io/noonghunna/vllm-inkling-club3090` runs [Inkling-2-Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini)
 on RTX 3090s (sm_86). It is vLLM's own Inkling image, `vllm/vllm-openai:inkling-2-mini`, with two changes. The
-vLLM image itself refuses anything below Hopper.
+vLLM image itself refuses anything below Hopper. From r2 the diff also carries int8 weights for a few layers
+(below).
 
 | File | What it does |
 |---|---|
@@ -52,6 +53,14 @@ The diff, file by file (each change is marked `club-3090 sm86 overlay` in the co
 | `nvidia/vision.py` | FlashAttention 2 for the vision encoder (FA3 is Hopper-only). |
 | `nvidia/ops/e4m3_sw.py` (new), `nvidia/ops/attention_sm90.py`, `nvidia/ops/sconv.py`, `nvidia/attention.py` | FP8 (E4M3) KV cache on sm_8x, in software: Triton has no `fp8e4nv` below sm_89, so the cache reaches the kernels as bytes. Decode: `(b & 0x7F) << 7` as fp16 × 256 (exact, subnormals included), NaN for 0x7F; encode: round to nearest even, saturate at ±448. |
 | `speculator_config.py` | The DSpark draft keeps a BF16 KV cache on sm_8x too, as upstream does on SM12x. |
+| `nvidia/ops/w8_gemm.py` (new, third-party), `nvidia/attention.py`, `nvidia/model.py`, `nvidia/dspark.py` | **int8 per-channel weights, quantized at load** (r2): attention `qkvr`, the LM head (shared by the target and the drafter), DSpark's Markov fold and its draft-layer projections. Symmetric per output channel (scale = amax / 127), so the bf16 copies are freed and the KV pool grows; decode batches (≤ 64 rows) run a split-K int8 Triton GEMM, bigger ones dequantize to bf16 for cuBLAS. Switch: `VLLM_INKLING_W8`, a comma list of `attn`, `head`, `markov`, `draft`; unset or empty keeps everything bf16, so the image behaves as r1 until a compose sets it. Experts, `wo_ud` and everything else are unchanged. |
+
+**Third-party code.** `nvidia/ops/w8_gemm.py` and the W8 hunks in `attention.py`, `model.py` and `dspark.py` are
+from [lulakien/inkling2-mini-3090-recipe](https://github.com/lulakien/inkling2-mini-3090-recipe) (Apache-2.0) at
+commit `9f246b3a`: `w8_gemm.py` is copied unchanged under an attribution header, and the hunks are theirs, ported
+onto this diff. Ours: the LM head is quantized at load when there is no drafter too (their path quantizes it at
+the drafter's load), so the one-card no-drafter slug's memory profile never counts the bf16 head; and one log line
+per W8 piece, so a boot log shows which ran.
 
 **sm_86 only.** The launch image's other compiled code doesn't run on a 5090 either: its FlashAttention 2 library
 (used for vision) has sm_80 cubins only. A fat build of the two libraries would not change that. sm_86 cubins also
