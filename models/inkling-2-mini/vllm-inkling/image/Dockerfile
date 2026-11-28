@@ -6,7 +6,8 @@
 #   1. `_C_stable_libtorch` + `_moe_C_stable_libtorch` rebuilt for sm_86 from the vLLM source the
 #      image's Python was built from (stage 1);
 #   2. a diff to vllm/models/inkling2 (inkling2-sm86.diff: sm_8x takes the existing SM12x / Hopper
-#      paths, PDL off, software E4M3 for the FP8 KV cache), checked against the tested files
+#      paths, PDL off, software E4M3 for the FP8 KV cache, and from r2 int8 per-channel weights at load
+#      behind VLLM_INKLING_W8, from lulakien/inkling2-mini-3090-recipe), checked against the tested files
 #      (inkling2-sm86.sha256).
 # A bridge until a vLLM release runs Inkling-2-Mini on sm_86 itself (README.md). Build with build.sh.
 
