@@ -7,31 +7,40 @@
 #   Drafter:   none
 #   KV:        fp8 (E4M3, converted in software on sm_8x: Triton has no fp8e4nv below sm_89)
 #   Vision:    yes (the checkpoint's vision encoder; image input)
-#   Max ctx:   180000 (the maintainer's one-card cap since 2026-11-22); KV pool 187,450 tokens
+#   Max ctx:   240000 (the most that fits at util 0.94 on image r2, 2026-11-28; the maintainer's cap is 262K);
+#              KV pool 243,989 tokens
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
 #   Caveats:   sm_86 only: the image has no code for sm_90+ or a 5090 (its FA2 vision library is sm_80
 #              cubins). A club-built image. This slug stays on it for FP8 KV after a vLLM release runs
 #              Inkling-2-Mini on sm_86 (stock vLLM gates Inkling's FP8 KV to SM12x; maintainer decision
 #              2026-11-22; models/inkling-2-mini/vllm-inkling/image/README.md).
-#              This window needs FP8 KV (BF16 tops out at ~97K on one card) and --max-num-batched-tokens 512
-#              --max-num-seqs 2 --no-async-scheduling (the sliding-window and conv-state caches reserve window +
-#              in-flight tokens per request). 200K also fits (util 0.95, pool 203,730 tokens) but leaves 1,017
-#              MB free, under verify-stress's 1,024 MB margin; 180K at util 0.94 leaves 1,259 MB. The model
-#              card documents long reasoning loops "particularly when debugging code" and recommends
-#              output-token caps: cap max_tokens on agent traffic. ALWAYS REASONS (default effort high); `none`
-#              is not off. Quality not measured (no 8-pack); no soak.
+#              This window needs FP8 KV (BF16 topped out at ~97K on one card on image r1) and
+#              --max-num-batched-tokens 512 --max-num-seqs 2 --no-async-scheduling (the sliding-window and
+#              conv-state caches reserve window + in-flight tokens per request). 262K doesn't fit: one request
+#              needs 4.51 GiB of KV against 4.24 GiB at util 0.94 (vLLM's estimate: 244,480 tokens), and util
+#              0.95 leaves under verify-stress's 1,024 MB margin (1,017 MB on r1). Int8 weights
+#              (VLLM_INKLING_W8, on by default): quality not measured here; lulakien/inkling2-mini-3090-recipe
+#              reports MMLU 911 vs 908 in bf16. The model card documents long reasoning loops "particularly when
+#              debugging code" and recommends output-token caps: cap max_tokens on agent traffic. ALWAYS REASONS
+#              (default effort high); `none` is not off. Quality not measured (no 8-pack); no soak.
 #   Best for:  Inkling-2-Mini's longest window on one 24 GB card
 # ---------------------------------------------------------------------------
 # Requires-min-vram-gb: 24
 # Requires-min-gpu-count: 1
 # Tensor-parallel: 1
 #
-# Measured 2026-11-22 through switch.sh on the pinned image, one RTX 3090 (GPU1) at 230 W (bench.sh 3 warm + 5 on
-# its own boot, temperature 0.6 / top_p 0.95 / top_k 20): narrative 76.87 / code 76.85 wall tok/s, TTFT 119 ms,
-# prefill 2,881 tok/s at 10K and 1,822 at 90K, KV pool 187,450 tokens (1.04x of 180K), peak VRAM 22,866 MiB;
-# verify-full all pass; verify-stress all pass, the ceiling ladder recalled to 165,220 tokens (91% of 180K) with
-# 1,259 MB free throughout. The overlay the image bakes (2026-11-21, at 200K / util 0.95): 76.68 / 76.68.
+# Measured 2026-11-27 through switch.sh on a local build of image r2 (int8 weights on), one RTX 3090 (GPU0) at 230 W
+# (bench.sh 3 warm + 5 on its own boot at a 180K window, temperature 0.6 / top_p 0.95 / top_k 20): narrative 88.03
+# / code 87.55 wall tok/s, TTFT 117 / 119 ms, prefill 2,737 tok/s at 10K (the first of three runs read 1,214,
+# cold) and 1,643 at 90K, peak VRAM 22,902 MiB. On r1, same card, 2026-11-27: 76.65 / 76.39, prefill ~2,780 /
+# 1,683 (r2's run had a 7% higher SM clock). At 240K (2026-11-28, same build): KV pool 243,989 tokens (1.02x);
+# verify-full all pass; verify-stress all pass, the ceiling ladder recalled to 220,254 tokens (91% of 240K) with
+# 1,218 MB free throughout. The pushed build (80afbe99, built from master)
+# booted through switch.sh, verify-full all pass, 2026-11-28.
+# On image r1 (bf16 weights; 2026-11-22, the old GPU1, 180K): 76.87 / 76.85, prefill 2,881 / 1,822, pool 187,450
+# tokens, ladder to 165,220 with 1,259 MB free. The overlay the image bakes (2026-11-21, at 200K / util 0.95):
+# 76.68 / 76.68.
 #
 #   bash scripts/setup.sh vllm/inkling-2-mini-single-max
 #   bash scripts/switch.sh --force vllm/inkling-2-mini-single-max
@@ -40,13 +49,17 @@
 #   REASONING_EFFORT      server-default effort for requests that send none: minimal | low | medium | high
 #                         (default, the template's own) | xhigh | max (= xhigh) | none (0.0: NOT off). A request's
 #                         own chat_template_kwargs.reasoning_effort or top-level reasoning_effort wins.
-#   MAX_MODEL_LEN         default 180000 (the KV pool holds 187,450 tokens at these settings)
-#   GPU_MEMORY_UTILIZATION  default 0.94 (leaves 1,259 MB free; 0.95 leaves 1,017 MB, under verify-stress's
-#                         1,024 MB margin)
+#   MAX_MODEL_LEN         default 240000 (vLLM's estimate of what fits at util 0.94: 244,480 tokens)
+#   GPU_MEMORY_UTILIZATION  default 0.94 (1,218 MB free at the ceiling; 0.95 left 1,017 MB on r1, under
+#                         verify-stress's 1,024 MB margin)
+#   VLLM_INKLING_W8       layers stored as int8 per output channel, quantized at load: attn (attention qkvr), head
+#                         (the LM head); markov and draft apply only with a drafter, which this slug has none of.
+#                         Default attn,head,markov,draft. Empty keeps them bf16, as image r1 ran: then the window
+#                         has to come down to 180000
 # Sampling: the checkpoint's generation_config (temperature 1.0), what a request that names none gets.
 services:
   vllm-inkling-2-mini-single-max:
-    image: ${VLLM_IMAGE:-ghcr.io/noonghunna/vllm-inkling-club3090@sha256:dc54479d7eae7dedc41c450d605fb19a3e0126028d931ccf3c8119038d6bc544}
+    image: ${VLLM_IMAGE:-ghcr.io/noonghunna/vllm-inkling-club3090@sha256:80afbe992065e8d1e6e91079c23e72e9cd1ffe15a0e005731aac97bc0c9fe275}
     container_name: "${ESTATE_CONTAINER:-vllm-inkling-2-mini-single-max}"
     user: "0:${DOCKER_GID:-1000}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
@@ -68,6 +81,9 @@ services:
     environment:
       # Our launch knob, read by the entrypoint below.
       - REASONING_EFFORT
+      # int8 per-channel weights, quantized at load (r2 image; from lulakien/inkling2-mini-3090-recipe):
+      # attention qkvr, the LM head, DSpark's Markov fold and draft layers. VLLM_INKLING_W8= (empty) keeps bf16.
+      - VLLM_INKLING_W8=${VLLM_INKLING_W8-attn,head,markov,draft}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask (#610): launch.sh --gpus exports GPU UUIDs here. Unset -> absent.
       - CUDA_VISIBLE_DEVICES
@@ -104,13 +120,13 @@ services:
       - --tensor-parallel-size
       - "1"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-180000}"
+      - "${MAX_MODEL_LEN:-240000}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.94}"
       # vLLM v0.34's extensible KV cache holds back ~2.9 GiB a card on this model (vllm#68184, docs/UPSTREAM.md).
       - --no-enable-extensible-kv-cache
       # One card: the sliding-window and conv-state caches reserve window + in-flight tokens per request, so
-      # small batches are what leave room for 180K.
+      # small batches are what leave room for 240K.
       - --max-num-batched-tokens
       - "512"
       - --max-num-seqs

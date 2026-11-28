@@ -9,16 +9,19 @@
 #   KV:        fp8 (E4M3, converted in software on sm_8x: Triton has no fp8e4nv below sm_89); the draft's own
 #              KV stays BF16
 #   Vision:    yes (the checkpoint's vision encoder; image input)
-#   Max ctx:   100000 (the maintainer's one-card cap with the drafter, 2026-11-21); KV pool 112,381 tokens
+#   Max ctx:   150000 (the most that fits at util 0.94 on image r2, 2026-11-28; the maintainer's cap is 262K);
+#              KV pool 155,935 tokens
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🐣 Incubating
 #   Caveats:   sm_86 only: the image has no code for sm_90+ or a 5090 (its FA2 vision library is sm_80
 #              cubins). A club-built image. This slug stays on it for FP8 KV after a vLLM release runs
 #              Inkling-2-Mini on sm_86 (stock vLLM gates Inkling's FP8 KV to SM12x; maintainer decision
 #              2026-11-22; models/inkling-2-mini/vllm-inkling/image/README.md).
-#              The drafter costs 80K of the one-card window (vllm/inkling-2-mini-single-max has 180K without
-#              it). VRAM margin unchecked at this window (verify-stress's ceiling ladder starts at 95K): it runs
-#              util 0.95, at which single-max kept 1,017 MB free, under the 1,024 MB margin. The model card
+#              The drafter costs 90K of the one-card window (vllm/inkling-2-mini-single-max has 240K without
+#              it): its own KV is BF16, so one 262K request needs 5.54 GiB of KV against 3.48 GiB at util 0.94
+#              (vLLM's estimate: 154,240 tokens). Util 0.95 fits 160K but left 954 MB free at the ceiling, under
+#              verify-stress's 1,024 MB margin. Int8 weights (VLLM_INKLING_W8, on by default): quality not
+#              measured here; lulakien/inkling2-mini-3090-recipe reports MMLU 911 vs 908 in bf16. The model card
 #              documents long reasoning loops "particularly when debugging code" and recommends output-token
 #              caps: cap max_tokens on agent traffic. ALWAYS REASONS (default effort high); `none` is not off.
 #              Quality not measured (no 8-pack); no soak.
@@ -28,14 +31,18 @@
 # Requires-min-gpu-count: 1
 # Tensor-parallel: 1
 #
-# Measured 2026-11-22 through switch.sh on the pinned image, one RTX 3090 (GPU1) at 230 W (bench.sh 3 warm + 5 on
-# its own boot, temperature 0.6 / top_p 0.95 / top_k 20): narrative 90.85 / code 135.31 wall tok/s (no drafter,
-# vllm/inkling-2-mini-single-max: 76.87 / 76.85), TTFT 66-68 ms, prefill 2,837 tok/s at 10K and 1,806 at 90K, KV
-# pool 112,381 tokens (1.12x of 100K), peak VRAM 23,166 MiB; verify-full all pass (DSpark acceptance length
-# 2.59); verify-stress all pass (60K / 90K recalled; the ceiling ladder starts at 95K, so it doesn't run at this
-# window). The overlay the image bakes (2026-11-21): 87.39 / 129.16. DSpark's gain was measured at temperature
-# 0.6; the checkpoint's own default is 1.0, and the vLLM recipe says acceptance depends on the sampling
-# temperature, so treat +76% on code as an upper bound.
+# Measured 2026-11-27 through switch.sh on a local build of image r2 (int8 weights on), one RTX 3090 (GPU0) at 230 W
+# (bench.sh 3 warm + 5 on its own boot at a 100K window, temperature 0.6 / top_p 0.95 / top_k 20): narrative 91.67
+# / code 138.72 wall tok/s (no drafter, vllm/inkling-2-mini-single-max: 88.03 / 87.55), TTFT 65 / 69 ms, prefill
+# 2,692 tok/s at 10K and 1,660 at 90K, peak VRAM 23,160 MiB, DSpark acceptance 2.69 over the bench. At 150K / util
+# 0.94 (2026-11-28, same build): KV pool 155,935 tokens (1.04x); verify-full all pass (vision 4/4, DSpark acceptance
+# length 3.06); verify-stress all pass, the ceiling ladder recalled to 137,700 tokens (91% of 150K) with 1,196 MB
+# free throughout. The pushed build (80afbe99, built from master)
+# booted through switch.sh, verify-full all pass, 2026-11-28.
+# On image r1 (bf16 weights; 2026-11-22, the old GPU1, 100K / util 0.95): 90.85 / 135.31, prefill 2,837 / 1,806,
+# pool 112,381 tokens. The overlay the image bakes (2026-11-21): 87.39 / 129.16. DSpark's gain was measured at
+# temperature 0.6; the checkpoint's own default is 1.0, and the vLLM recipe says acceptance depends on the sampling
+# temperature, so treat +58% on code over single-max as an upper bound.
 #
 #   bash scripts/setup.sh vllm/inkling-2-mini-single-fast
 #   bash scripts/switch.sh --force vllm/inkling-2-mini-single-fast
@@ -46,12 +53,16 @@
 #   REASONING_EFFORT      server-default effort for requests that send none: minimal | low | medium | high
 #                         (default, the template's own) | xhigh | max (= xhigh) | none (0.0: NOT off). A request's
 #                         own chat_template_kwargs.reasoning_effort or top-level reasoning_effort wins.
-#   MAX_MODEL_LEN         default 100000 (the KV pool holds 112,381 tokens at these settings)
-#   GPU_MEMORY_UTILIZATION  default 0.95 (as measured)
+#   MAX_MODEL_LEN         default 150000 (vLLM's estimate of what fits at util 0.94: 154,240 tokens)
+#   GPU_MEMORY_UTILIZATION  default 0.94 (1,196 MB free at the ceiling; 0.95 left 954 MB, under verify-stress's
+#                         1,024 MB margin)
+#   VLLM_INKLING_W8       layers stored as int8 per output channel, quantized at load: attn (attention qkvr), head
+#                         (the LM head), markov (DSpark's Markov fold), draft (the draft layers); default all four.
+#                         Empty keeps them bf16, as image r1 ran: then the window has to come down to 100000
 # Sampling: the checkpoint's generation_config (temperature 1.0), what a request that names none gets.
 services:
   vllm-inkling-2-mini-single-fast:
-    image: ${VLLM_IMAGE:-ghcr.io/noonghunna/vllm-inkling-club3090@sha256:dc54479d7eae7dedc41c450d605fb19a3e0126028d931ccf3c8119038d6bc544}
+    image: ${VLLM_IMAGE:-ghcr.io/noonghunna/vllm-inkling-club3090@sha256:80afbe992065e8d1e6e91079c23e72e9cd1ffe15a0e005731aac97bc0c9fe275}
     container_name: "${ESTATE_CONTAINER:-vllm-inkling-2-mini-single-fast}"
     user: "0:${DOCKER_GID:-1000}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
@@ -76,6 +87,9 @@ services:
       - SPEC
       - DRAFT_SAMPLE_METHOD
       - REASONING_EFFORT
+      # int8 per-channel weights, quantized at load (r2 image; from lulakien/inkling2-mini-3090-recipe):
+      # attention qkvr, the LM head, DSpark's Markov fold and draft layers. VLLM_INKLING_W8= (empty) keeps bf16.
+      - VLLM_INKLING_W8=${VLLM_INKLING_W8-attn,head,markov,draft}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask (#610): launch.sh --gpus exports GPU UUIDs here. Unset -> absent.
       - CUDA_VISIBLE_DEVICES
@@ -135,9 +149,9 @@ services:
       - --tensor-parallel-size
       - "1"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-100000}"
+      - "${MAX_MODEL_LEN:-150000}"
       - --gpu-memory-utilization
-      - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      - "${GPU_MEMORY_UTILIZATION:-0.94}"
       # vLLM v0.34's extensible KV cache holds back ~2.9 GiB a card on this model (vllm#68184, docs/UPSTREAM.md).
       - --no-enable-extensible-kv-cache
       # One card: the sliding-window and conv-state caches reserve window + in-flight tokens per request.
